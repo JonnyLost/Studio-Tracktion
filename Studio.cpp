@@ -9,6 +9,7 @@ using namespace tracktion::literals;
 #include "Components.h"
 #include "PluginWindow.h"
 #include "MidiMonitor.h"
+#include "PianoRoll.h"
 
 class MidiMonitorWindow final : public DocumentWindow
 {
@@ -105,6 +106,14 @@ public:
         {
             showWorkspace (workspace == Workspace::mix ? Workspace::closed : Workspace::mix);
         };
+        addAndMakeVisible (pianoButton);
+        pianoButton.onClick = [this]
+        {
+            if (piano.getClip() != nullptr)
+                showWorkspace (workspace == Workspace::piano ? Workspace::closed : Workspace::piano);
+            else
+                message.setText ("Select a MIDI clip first, or create one with + MIDI Clip.", dontSendNotification);
+        };
         addAndMakeVisible (closeWorkspace);
         closeWorkspace.onClick = [this] { showWorkspace (Workspace::closed); };
 
@@ -138,6 +147,9 @@ public:
 
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
+        addAndMakeVisible (piano);
+        piano.setVisible (false);
+        piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
         for (auto* label : { &title, &position, &tempo, &mixerLabel, &message, &trackHeading, &trackDetails, &volumeLabel, &panLabel, &workspaceTitle })
             addAndMakeVisible (*label);
         title.setFont (FontOptions (23.0f, Font::bold));
@@ -203,6 +215,8 @@ public:
         };
         record.onClick = [this] { toggleRecordKeepingTake(); };
         addMidi.onClick = [this] { addTrack ("Instrument"); };
+        addAndMakeVisible (addMidiClip);
+        addMidiClip.onClick = [this] { createMidiClip(); };
         addAudio.onClick = [this] { addTrack ("Audio"); };
         importAudio.onClick = [this] { chooseAudio(); };
 
@@ -218,6 +232,7 @@ public:
         if (monitorWindow != nullptr)
             monitorWindow->clearContentComponent();
         monitor.setCaptureOpen (false);
+        piano.setClip (nullptr);
         timeline.setViewedComponent (nullptr);
         stopTimer();
         setLookAndFeel (nullptr);
@@ -329,9 +344,10 @@ public:
         tempo.setBounds (controls.removeFromLeft (93));
         monitorButton.setBounds (controls.removeFromRight (132).reduced (3, 2));
         mixButton.setBounds (controls.removeFromRight (74).reduced (3, 2));
+        pianoButton.setBounds (controls.removeFromRight (98).reduced (3, 2));
 
         message.setBounds (area.removeFromBottom (26).reduced (10, 0));
-        workspaceLimit = jmax (146, area.getHeight() - 270);
+        workspaceLimit = jmax (146, area.getHeight() - 180);
         workspacePanel = workspace == Workspace::closed ? Rectangle<int>()
                        : area.removeFromBottom (jlimit (146, workspaceLimit, workspaceHeight));
         auto panel = workspacePanel.reduced (10, 0);
@@ -344,6 +360,8 @@ public:
         volume.setBounds (volumeRow.removeFromLeft (jmin (430, volumeRow.getWidth())));
         if (monitor.getParentComponent() == this && workspace == Workspace::midi)
             monitor.setBounds (workspacePanel.withTrimmedTop (30));
+        if (workspace == Workspace::piano)
+            piano.setBounds (workspacePanel.withTrimmedTop (30));
         auto panRow = panel.removeFromTop (34);
         panLabel.setBounds (panRow.removeFromLeft (74));
         pan.setBounds (panRow.removeFromLeft (jmin (430, panRow.getWidth())));
@@ -358,6 +376,7 @@ public:
         left.removeFromTop (6);
         for (auto* button : { &addMidi, &addAudio, &importAudio })
             button->setBounds (left.removeFromTop (31).reduced (0, 3));
+        addMidiClip.setBounds (left.removeFromTop (31).reduced (0, 3));
         left.removeFromTop (7);
         zoom.setBounds (left.removeFromTop (31).reduced (0, 3));
         retryAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
@@ -371,7 +390,7 @@ public:
     }
 
 private:
-    enum class Workspace { closed, mix, midi };
+    enum class Workspace { closed, mix, midi, piano };
 
     LookAndFeel_V4 style;
     Workspace workspace = Workspace::closed;
@@ -411,9 +430,10 @@ private:
           volumeLabel, panLabel, workspaceTitle;
     ComboBox zoom, trackPicker;
     StringArray trackNames;
-    TextButton mixButton { "Mixer" }, closeWorkspace { "Hide" };
+    TextButton mixButton { "Mixer" }, pianoButton { "Piano Roll" }, closeWorkspace { "Hide" };
     Slider volume, pan;
     StudioMidiMonitor monitor;
+    StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
     TextButton retryAriaButton { "Retry ARIA" };
@@ -421,7 +441,8 @@ private:
     TextButton newProject { "New Project" }, openProject { "Open Project" }, saveProject { "Save" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                rewind { "To Start" }, play { "Play" }, record { "Record" },
-               addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" };
+               addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
+               addMidiClip { "+ MIDI Clip" };
 
     void showWorkspace (Workspace next)
     {
@@ -435,7 +456,11 @@ private:
         workspaceTitle.setVisible (open);
         workspaceDivider.setVisible (open);
         workspaceTitle.setText (mixing ? "Selected Track Mixer" : "MIDI Monitor", dontSendNotification);
+        if (next == Workspace::piano)
+            workspaceTitle.setText ("MIDI Piano Roll", dontSendNotification);
         mixButton.setToggleState (mixing, dontSendNotification);
+        pianoButton.setToggleState (next == Workspace::piano, dontSendNotification);
+        piano.setVisible (next == Workspace::piano);
         monitorButton.setToggleState (next == Workspace::midi, dontSendNotification);
         if (monitor.getParentComponent() == this)
         {
@@ -443,6 +468,28 @@ private:
             monitor.setCaptureOpen (next == Workspace::midi);
         }
         resized();
+    }
+
+    void createMidiClip()
+    {
+        if (edit == nullptr || busy || edit->getTransport().isRecording())
+            return;
+        auto* track = selectedTrack();
+        if (track == nullptr)
+            track = addTrack ("Instrument");
+        if (track == nullptr)
+            return;
+
+        const auto start = edit->getTransport().getPosition();
+        const auto startBeat = edit->tempoSequence.toBeats (start);
+        const auto end = edit->tempoSequence.toTime (startBeat + te::BeatDuration::fromBeats (16.0));
+        if (auto clip = track->insertMIDIClip ("MIDI Clip", { start, end }, &selection))
+        {
+            piano.setClip (clip);
+            workspaceHeight = 360;
+            showWorkspace (Workspace::piano);
+            message.setText ("Draw notes in the piano roll, then Save to keep your edits.", dontSendNotification);
+        }
     }
 
     void toggleMonitorDock()
@@ -509,8 +556,10 @@ private:
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
-        for (auto* button : { &saveProject, &rewind, &addMidi, &addAudio, &importAudio })
+        for (auto* button : { &saveProject, &rewind, &addMidi, &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
+        piano.setEditingEnabled (ready && ! recording && ! ariaReviewPending);
+        pianoButton.setEnabled (ready && piano.getClip() != nullptr);
         play.setEnabled (ready);
         record.setEnabled (ready);
         zoom.setEnabled (ready);
@@ -529,6 +578,14 @@ private:
             tempo.setText (String (edit->tempoSequence.getBpmAt (now), 1) + " BPM", dontSendNotification);
             sizeEditor();
         }
+
+        if (auto* selectedClip = dynamic_cast<te::MidiClip*> (selection.getSelectedObject (0)))
+            if (piano.getClip() != selectedClip)
+            {
+                piano.setClip (selectedClip);
+                workspaceHeight = 360;
+                showWorkspace (Workspace::piano);
+            }
 
         auto* track = selectedTrack();
         StringArray names;
@@ -850,6 +907,8 @@ private:
 
         if (edit != nullptr)
             edit->getTransport().stop (false, false);
+        piano.setClip (nullptr);
+        showWorkspace (Workspace::closed);
         selection.deselectAll();
         timeline.setViewedComponent (nullptr);
         editor.reset();
