@@ -81,6 +81,11 @@ public:
         addAndMakeVisible (monitorButton);
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
+        addChildComponent (ariaReviewNotice);
+        ariaReviewNotice.setText ("ARIA CHECK: Play the instrument,\nthen Confirm ARIA to unlock Save.",
+                                 dontSendNotification);
+        ariaReviewNotice.setColour (Label::textColourId, Colour (0xffffcb70));
+        ariaReviewNotice.setJustificationType (Justification::centredLeft);
         retryAriaButton.onClick = [this] { retryAriaRestoration(); };
         confirmAriaButton.onClick = [this]
         {
@@ -90,6 +95,7 @@ public:
             autoAriaRetryPending = false;
             writeRestoreLog ("User confirmed instrument state; project may now be saved.");
             message.setText ("ARIA state confirmed. Save is enabled.", dontSendNotification);
+            resized();
         };
         addChildComponent (monitor);
         monitorButton.onClick = [this]
@@ -372,6 +378,21 @@ public:
         auto left = sidebar.reduced (10, 6);
         trackHeading.setBounds (left.removeFromTop (27));
         trackPicker.setBounds (left.removeFromTop (32).reduced (0, 3));
+        ariaReviewNotice.setVisible (ariaReviewPending);
+        retryAriaButton.setVisible (ariaReviewPending);
+        confirmAriaButton.setVisible (ariaReviewPending);
+        if (ariaReviewPending)
+        {
+            ariaReviewNotice.setBounds (left.removeFromTop (42));
+            retryAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
+            confirmAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
+        }
+        else
+        {
+            ariaReviewNotice.setBounds ({});
+            retryAriaButton.setBounds ({});
+            confirmAriaButton.setBounds ({});
+        }
         trackDetails.setBounds (left.removeFromTop (27));
         left.removeFromTop (6);
         for (auto* button : { &addMidi, &addAudio, &importAudio })
@@ -379,8 +400,6 @@ public:
         addMidiClip.setBounds (left.removeFromTop (31).reduced (0, 3));
         left.removeFromTop (7);
         zoom.setBounds (left.removeFromTop (31).reduced (0, 3));
-        retryAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
-        confirmAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
 
         rulerRow = area.removeFromTop (26);
         timeline.setBounds (area);
@@ -427,7 +446,7 @@ private:
 
 
     Label title, position, tempo, mixerLabel, message, trackHeading, trackDetails,
-          volumeLabel, panLabel, workspaceTitle;
+          volumeLabel, panLabel, workspaceTitle, ariaReviewNotice;
     ComboBox zoom, trackPicker;
     StringArray trackNames;
     TextButton mixButton { "Mixer" }, pianoButton { "Piano Roll" }, closeWorkspace { "Hide" };
@@ -558,7 +577,9 @@ private:
             button->setEnabled (! busy && ! recording);
         for (auto* button : { &saveProject, &rewind, &addMidi, &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
-        piano.setEditingEnabled (ready && ! recording && ! ariaReviewPending);
+        // ARIA review protects Save and the original AU state, not MIDI editing.
+        // A loaded project must remain editable while its ARIA slots are checked.
+        piano.setEditingEnabled (ready && ! recording);
         pianoButton.setEnabled (ready && piano.getClip() != nullptr);
         play.setEnabled (ready);
         record.setEnabled (ready);
@@ -961,6 +982,7 @@ private:
             writeRestoreLog ("Automatic restore queued for " + String (originalAriaStates.size())
                              + " original AU state(s); Save remains locked until user confirmation.");
         }
+        resized();
     }
 
     te::AudioTrack* addTrack (const String& kind)
