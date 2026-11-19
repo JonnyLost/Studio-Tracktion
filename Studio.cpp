@@ -402,7 +402,7 @@ class StudioApplication final : public JUCEApplication
         {
             setUsingNativeTitleBar (true);
             setResizable (true, false);
-            setResizeLimits (850, 430, 2600, 1800);
+            setResizeLimits (960, 430, 2600, 1800);
             setContentOwned (new StudioView(), true);
             centreWithSize (getWidth(), getHeight());
             setVisible (true);
