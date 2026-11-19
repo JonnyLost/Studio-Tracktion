@@ -1,0 +1,29 @@
+name: Intel macOS build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned Tracktion Engine and JUCE
+        run: |
+          git init "$RUNNER_TEMP/tracktion-engine"
+          git -C "$RUNNER_TEMP/tracktion-engine" remote add origin https://github.com/Tracktion/tracktion_engine.git
+          git -C "$RUNNER_TEMP/tracktion-engine" fetch --depth 1 origin c6293127cdc0a8488aea2ae0907f4709ee89c228
+          git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
+      - name: Configure and build Studio
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+          cmake --build build --config Debug --target Studio --parallel 4
+          test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
