@@ -1,94 +1,41 @@
-# Studio 0.1
+# Studio 0.1 — Automatic ARIA Restoration Milestone
 
-A standalone macOS DAW prototype using the existing Tracktion Engine and JUCE checkout.
-Studio is a separate CMake target and git repository. Its editor adapts Tracktion's
-example timeline at configure time. Tested source baseline for generating the editor
-is Tracktion commit `c6293127cdc0a8488aea2ae0907f4709ee89c228`.
-The generator accepts both upstream code and the local Oxygen 25 patch.
+This is a **separate experimental copy** of the working Studio 0.1 application, based on the successful original-state/manual-retry source. It does not change the previous working Studio build or any GitHub repository.
 
-## Build on the Intel Mac
+## Change in this milestone
 
-Extract the archive into Downloads, then paste this block into Terminal.
-The CMake application and existing Tracktion checkout must be in the paths shown.
+- Captures immutable ARIA state from `.tracktionedit` XML **before** Tracktion loads plugins.
+- Schedules a single automatic restore attempt on JUCE's message thread after at least 1 second, once *all* matched ARIA plugin instances are present and no longer reporting asynchronous initialization. No restoration is performed inside the real-time audio callback.
+- Waits up to 10 seconds for AU instances; leaves **Retry ARIA** available if not ready. Stops retrying automatically after one submission, with no repeated state writes.
+- Submits the saved original AU state using Tracktion's existing `restorePluginStateFromValueTree` method, the same route that worked with the manual button.
+- Keeps **Confirm ARIA** and save protection until the user verifies both the loaded instrument names and that they make sound. Automatic submission **does not** automatically unlock saving.
+- Keeps MIDI recording's `transport.stop (false, false)` fix, MIDI Monitor, mixer, and Tracktion editor unchanged.
+- Keeps original project recovery backup behavior. The supplied recovery file contains Intimate D in saved slot 1 (673-byte state).
+
+## Build and launch on your Intel MacBook
+
+1. Quit other Studio instances.
+2. Extract ZIP in `~/Downloads`; folder must be `Studio-ARIA-Auto-Restore`.
+3. Paste into Terminal:
 
 ```bash
-studio_src="$HOME/Downloads/Studio-MIDI-Monitor"
-studio_cmake="/Applications/CMake.app/Contents/bin/cmake"
-"$studio_cmake" -S "$studio_src" -B "$studio_src/build" -G Xcode \
+cd "$HOME/Downloads/Studio-ARIA-Auto-Restore" || exit 1
+/Applications/CMake.app/Contents/bin/cmake -S . -B build -G Xcode \
   -DTRACKTION_ROOT="$HOME/Developer/Tracktion-Studio" \
-  -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 &&
-"$studio_cmake" --build "$studio_src/build" --config Debug --target Studio --parallel 4 &&
-open "$studio_src/build/Studio_artefacts/Debug/Studio.app"
+  -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 && \
+/Applications/CMake.app/Contents/bin/cmake --build build --config Debug --target Studio --parallel 4 && \
+open "$HOME/Downloads/Studio-ARIA-Auto-Restore/build/Studio_artefacts/Debug/Studio.app"
 ```
 
-## MIDI Monitor
+## Test
 
-Open **MIDI Monitor** in the top row, even before opening a project. Play the
-Oxygen 25 and check the Device and Ch columns. Its current configuration should
-show channel 16. Choose **Float** to move the same log to a window and **Dock**
-or close that window to return it to the bottom panel.
+1. Choose **Open Project** and open `RECOVERED_TEST_PROJECT/Aria State Test - Intimate D RECOVERY.tracktionedit`, *not* the 454-byte empty-state project under Documents.
+2. Wait briefly, then open ARIA. Check whether **Intimate D** appears in slot 1 **without clicking Retry ARIA**. If it does, play notes and verify sound.
+3. If empty, stop playback, click **Retry ARIA** once, reopen ARIA, and test again.
+4. **Do not click Confirm ARIA or Save unless the instrument loaded and played.** Keep the recovered project unchanged during the test.
+5. For diagnostics, use: `tail -n 35 "$HOME/Library/Studio/aria-restore.log"`.
 
-Select a device, channel, or message type to narrow the display. The monitor
-shows the newest events first. Time is in seconds since the log started or was
-cleared. **Pause** freezes the log while the toolbar activity indicator keeps
-responding. **Clear** resets the log and its time origin. The monitor keeps up
-to 512 events. The input queue drops events under contention or heavy load and
-reports a count. Closing the panel stops capture. Changing the connected MIDI
-device list refreshes the subscriptions and resets the log.
+Expected logged phrases: `Captured original on-disk ARIA state ... bytes=673`, `Automatic ARIA retry`, `Retry original ARIA ... disk bytes=673`.
 
-This release observes MIDI at the device input. The Track Output and Instrument
-Input menu entries are unavailable, and track filtering awaits those taps.
-The monitor connects through JUCE alongside Tracktion's device inputs and
-leaves the recording, plug-in, and routing paths alone.
-
-For a hardware check, arm the existing ARIA track and set its receiving slot
-to channel 16 or Omni if the Oxygen is still sending on 16. Play and record with
-the panel open, then close it and play again. Confirm that the ARIA sound and
-recording work in both states. Use the mod wheel to check CC1 and the pitch wheel
-to check pitch bend.
-
-## First session
-
-1. Click **New Project** and pick a new filename. Studio saves a Tracktion edit
-   and starts with a track. Add tracks with **+ Instrument** or **+ Audio**.
-2. Open **Plugin Manager** and scan for Audio Units. Click **+** at the right
-   end of the instrument track and choose ARIA Player. Open ARIA from the
-   new plug-in button and load an instrument in slot 1.
-3. With the Oxygen 25 connected before opening the project, use **I** on that
-   track to select it. Selecting a MIDI input arms recording automatically.
-   **A** toggles recording arm. Match the ARIA slot to the channel shown in the monitor, then use
-   **Record** and **Stop Recording** to capture a take. Return to start and play
-   it back. The timeline should show a MIDI clip containing your notes.
-4. Click a track header to adjust volume and pan. Track headers also provide
-   mute and solo. Import a WAV with **Import Audio** to place it on a new
-   audio track at the playhead. Studio references imported audio in place.
-   To try audio recording, choose an audio input under **I** on the audio
-   track and arm it explicitly with **A**. For a microphone, use headphones
-   and grant macOS microphone permission if prompted.
-5. Click **Save**, then close and reopen the project. Check placement, mixer
-   settings, MIDI notes, and ARIA patch recall.
-
-The timeline has a seekable seconds ruler, zoom presets and vertical
-scrolling, audio waveforms and MIDI note previews. This prototype uses
-Tracktion's shared audio/MIDI track model. The track buttons set the track's
-initial name and intended workflow. Detailed note editing, clip move and trim,
-dedicated channel strips, MIDI channel selectors, and picture scoring are
-outside this first build.
-
-The build directory owns the generated editor. The Tracktion source checkout,
-DemoRunner target, and original Swift/Alpha 1 work are independent of Studio's
-build. This prototype source is GPL-3.0-or-later. Tracktion and JUCE are
-separately licensed dependencies.
-
-## Verification status
-
-The CMake editor generation was checked against the upstream editor and a
-fixture with the local Oxygen 25 patch applied. Both generated identical
-Studio editor source. A full configure in the Linux workspace reached JUCE
-and stopped in its build helper because Linux GUI development headers were
-unavailable. The Intel app build and the hardware workflow above need
-verification on macOS.
-
-The Studio and MIDI Monitor translation units passed a C++20 syntax check with
-the Tracktion baseline and its pinned JUCE headers. Intel macOS linking, window
-behavior, and MIDI hardware tests require a Mac.
+**Limitations**: static checks pass here, but this environment cannot compile or run an Intel macOS Audio Unit. Actual automatic restore and multi-instance reliability require testing on your Mac. Once verified, further work should include multiple ARIA instances and save/reopen regression checks. GPL-3.0-or-later; see LICENSE.

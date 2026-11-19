@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<EDIT appVersion="Unknown" projectID="0/1577c5a" creationTime="1795119565469"
+      modifiedBy="Jonathon Cox" lastSignificantChange="1a1f5778fa9">
+  <TRANSPORT endToEnd="1"/>
+  <PITCHSEQUENCE>
+    <PITCH startBeat="0.0" pitch="60"/>
+  </PITCHSEQUENCE>
+  <TEMPOSEQUENCE>
+    <TEMPO startBeat="0.0" bpm="120.0" curve="1.0"/>
+    <TIMESIG numerator="4" denominator="4" startBeat="0.0"/>
+  </TEMPOSEQUENCE>
+  <VIDEO/>
+  <CLICKTRACK level="0.6000000238418579"/>
+  <MASTERVOLUME>
+    <PLUGIN type="volume" volume="0.6376281380653381" id="1001" enabled="1">
+      <MODIFIERASSIGNMENTS/>
+    </PLUGIN>
+  </MASTERVOLUME>
+  <RACKS/>
+  <MASTERPLUGINS/>
+  <INPUTDEVICES>
+    <INPUTDEVICE deviceID="midiin_e86338fa" name="Oxygen 25">
+      <INPUTDEVICEDESTINATION targetID="1003" targetIndex="0" armed="1"/>
+    </INPUTDEVICE>
+    <INPUTDEVICE deviceID="all_midi_in" name="All MIDI Ins"/>
+    <INPUTDEVICE deviceID="wavein_d7bd293b" name="Input 1"/>
+  </INPUTDEVICES>
+  <TRACKCOMPS/>
+  <ARRANGERTRACK name="Arranger" id="1006"/>
+  <CHORDTRACK name="Chord" id="1008"/>
+  <MARKERTRACK id="1002" name="Marker"/>
+  <TEMPOTRACK name="Global" id="1007">
+    <MODIFIERS/>
+  </TEMPOTRACK>
+  <MASTERTRACK name="Master" id="1009">
+    <MODIFIERS/>
+  </MASTERTRACK>
+  <TRACK id="1003">
+    <MODIFIERS/>
+    <OUTPUTDEVICES>
+      <DEVICE name="(default audio output)"/>
+    </OUTPUTDEVICES>
+    <CLIPSLOTS/>
+    <PLUGIN type="vst" uniqueId="61556d66" uid="61556d66" filename="AudioUnit:Synths/aumu,GARA,GaRR"
+            name="ARIA Player" manufacturer="Garritan" id="1010" enabled="1"
+            remapOnTempoChange="1" state="673.hAGaoMGcv.y0AHv.DTfAGfPBJr.CM3.WsEla0YVXiQWcxUlbTQVXzEFVAIWZgQTXzE1UyUmXzkGbkckckI2bo8laTQWdvUFUtEVakIwQgIkT.8TDAf+PEcDTMU...fGmERYSOtILPX364WgkuVEvlPHIRPVktYUEpJpqD6dtZ.7lhpwNELnM+66vGIvgMx4B1ielwy7FOS3SeVJIshp5BsJhxcXTxS6WDdnp.RfVwzQdLu.J4RkNuIyDeDYYbO59ED7WXhvXJTmqI+qAjElq3oTRsoR.kn4H5JOJoD9Lo2xAoTmc56Qz0X.HmhOF+qFyIctn2KnwnKACdmIRsIhxlaRJZExHZgBicSoPYnDYQqXvYjrNKhto6CHAz.mrjH5RIm5L4n4mQuDUQz.D+rTmBx2ZT8IIZv8V8fWMoHu2lBJwfmX.UNTk6xVS9o3ZpFWW69rVkIpLjWK.kt1MVYJvDUPNRIof5uw4c5FeEclByXXLy9CnTcUxRrhunkWGjHyTlbI82Uf5rXDwfap6Onb1RclA+OZdkW1X52OTG80xInPcqVZAYyfL69UD76DrGP3YkXkUBeqDqsRDXkXiUhsVI1YkfyriXWU41kUtcckaWX4OTYeEpfxwjYRXVxb3dqeH4pYklyNODc2VOle.2aS2y4G40rp0w2msy2e6Vlm+FNOX5kYnaWS335W93CQlYdW4368glSrMr8aGJSm555GN8ECuxtOp3107i2iuESHyfCShml6zu+k66qERLKD4uAoCskXLBcuMpb+h+qzgosfDGEjTAAA.RDVcsUGVU4FcoQGakQF.H.vE.PB.o.fL.nC.BAvQ.vD.QAfTB3j.SIPUBnE.......f.A.........vC..................f.iA"
+            base64:layout="55.LETVOUEU..P.A7TUTAUUTME..DP.BU0T.Df.o4FYkgG.ATP......vVX48VczAP.ET.SfHE...">
+      <MODIFIERASSIGNMENTS/>
+    </PLUGIN>
+    <PLUGIN type="volume" id="1004" enabled="1" remapOnTempoChange="1">
+      <MODIFIERASSIGNMENTS/>
+    </PLUGIN>
+    <PLUGIN type="level" id="1005" enabled="1"/>
+  </TRACK>
+  <EDITVIEWSTATE showFooters="1" showMidiDevices="1" showWaveDevices="1" viewX1="0.0"
+                 viewX2="30.0"/>
+</EDIT>
