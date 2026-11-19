@@ -85,7 +85,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp)
+target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE

@@ -6,6 +6,22 @@ using namespace tracktion::literals;
 #include "Utilities.h"
 #include "Components.h"
 #include "PluginWindow.h"
+#include "MidiMonitor.h"
+
+class MidiMonitorWindow final : public DocumentWindow
+{
+public:
+    MidiMonitorWindow()
+        : DocumentWindow ("Studio — MIDI Monitor", Colour (0xff172027), closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (true, false);
+        setResizeLimits (770, 200, 2200, 1000);
+    }
+
+    std::function<void()> onClose;
+    void closeButtonPressed() override { if (onClose) onClose(); }
+};
 
 class StudioView final : public Component, private Timer
 {
@@ -16,6 +32,21 @@ public:
         for (auto* control : { &newProject, &openProject, &saveProject, &audioSettings, &plugins,
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
+
+        addAndMakeVisible (monitorButton);
+        addChildComponent (monitor);
+        monitorButton.onClick = [this]
+        {
+            if (monitorWindow != nullptr && monitorWindow->isVisible())
+            {
+                monitorWindow->toFront (true);
+                return;
+            }
+            monitor.setVisible (! monitor.isVisible());
+            monitor.setCaptureOpen (monitor.isVisible());
+            resized();
+        };
+        monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
@@ -82,6 +113,9 @@ public:
 
     ~StudioView() override
     {
+        if (monitorWindow != nullptr)
+            monitorWindow->clearContentComponent();
+        monitor.setCaptureOpen (false);
         timeline.setViewedComponent (nullptr);
     }
 
@@ -129,6 +163,7 @@ public:
         auto files = area.removeFromTop (34);
         for (auto* button : { &newProject, &openProject, &saveProject, &audioSettings, &plugins })
             button->setBounds (files.removeFromLeft (121).reduced (2));
+        monitorButton.setBounds (files.removeFromLeft (145).reduced (2));
         auto controls = area.removeFromTop (34);
         for (auto* button : { &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             button->setBounds (controls.removeFromLeft (112).reduced (2));
@@ -139,6 +174,8 @@ public:
         mixerLabel.setBounds (mixer.removeFromLeft (180));
         volume.setBounds (mixer.removeFromLeft (275).reduced (4));
         pan.setBounds (mixer.removeFromLeft (245).reduced (4));
+        if (monitor.getParentComponent() == this && monitor.isVisible())
+            monitor.setBounds (area.removeFromBottom (jmin (240, area.getHeight() * 3 / 5)));
         auto rulerRow = area.removeFromTop (24);
         timeline.setBounds (area);
         ruler = rulerRow.withTrimmedLeft (150).withTrimmedRight (150 + timeline.getScrollBarThickness());
@@ -160,10 +197,39 @@ private:
     Label title, position, mixerLabel, message;
     ComboBox zoom;
     Slider volume, pan;
+    StudioMidiMonitor monitor;
+    std::unique_ptr<MidiMonitorWindow> monitorWindow;
+    TextButton monitorButton { "MIDI Monitor" };
     TextButton newProject { "New Project" }, openProject { "Open Project" }, saveProject { "Save" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                rewind { "Return to Start" }, play { "Play" }, record { "Record" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" };
+
+    void toggleMonitorDock()
+    {
+        if (monitorWindow != nullptr && monitorWindow->isVisible())
+        {
+            monitorWindow->setVisible (false);
+            monitorWindow->clearContentComponent();
+            addAndMakeVisible (monitor);
+            monitor.setFloating (false);
+        }
+        else
+        {
+            if (monitorWindow == nullptr)
+            {
+                monitorWindow = std::make_unique<MidiMonitorWindow>();
+                monitorWindow->onClose = [this] { toggleMonitorDock(); };
+                monitorWindow->centreWithSize (860, 350);
+            }
+            monitorWindow->setContentNonOwned (&monitor, false);
+            monitor.setVisible (true);
+            monitor.setFloating (true);
+            monitorWindow->setVisible (true);
+            monitorWindow->toFront (true);
+        }
+        resized();
+    }
 
     void setupSlider (Slider& slider, const String& name, double min, double max, double interval, const String& suffix)
     {
@@ -190,6 +256,9 @@ private:
 
     void timerCallback() override
     {
+        monitorButton.setButtonText (monitor.isActive() ? "●  MIDI Monitor" : "MIDI Monitor");
+        monitorButton.setColour (TextButton::textColourOffId,
+                                 monitor.isActive() ? Colour (0xff8edec0) : Colours::white);
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })

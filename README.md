@@ -12,7 +12,7 @@ Extract the archive into Downloads, then paste this block into Terminal.
 The CMake application and existing Tracktion checkout must be in the paths shown.
 
 ```bash
-studio_src="$HOME/Downloads/Studio-Tracktion"
+studio_src="$HOME/Downloads/Studio-MIDI-Monitor"
 studio_cmake="/Applications/CMake.app/Contents/bin/cmake"
 "$studio_cmake" -S "$studio_src" -B "$studio_src/build" -G Xcode \
   -DTRACKTION_ROOT="$HOME/Developer/Tracktion-Studio" \
@@ -20,6 +20,32 @@ studio_cmake="/Applications/CMake.app/Contents/bin/cmake"
 "$studio_cmake" --build "$studio_src/build" --config Debug --target Studio --parallel 4 &&
 open "$studio_src/build/Studio_artefacts/Debug/Studio.app"
 ```
+
+## MIDI Monitor
+
+Open **MIDI Monitor** in the top row, even before opening a project. Play the
+Oxygen 25 and check the Device and Ch columns. Its current configuration should
+show channel 16. Choose **Float** to move the same log to a window and **Dock**
+or close that window to return it to the bottom panel.
+
+Select a device, channel, or message type to narrow the display. The monitor
+shows the newest events first. Time is in seconds since the log started or was
+cleared. **Pause** freezes the log while the toolbar activity indicator keeps
+responding. **Clear** resets the log and its time origin. The monitor keeps up
+to 512 events. The input queue drops events under contention or heavy load and
+reports a count. Closing the panel stops capture. Changing the connected MIDI
+device list refreshes the subscriptions and resets the log.
+
+This release observes MIDI at the device input. The Track Output and Instrument
+Input menu entries are unavailable, and track filtering awaits those taps.
+The monitor connects through JUCE alongside Tracktion's device inputs and
+leaves the recording, plug-in, and routing paths alone.
+
+For a hardware check, arm the existing ARIA track and set its receiving slot
+to channel 16 or Omni if the Oxygen is still sending on 16. Play and record with
+the panel open, then close it and play again. Confirm that the ARIA sound and
+recording work in both states. Use the mod wheel to check CC1 and the pitch wheel
+to check pitch bend.
 
 ## First session
 
@@ -30,7 +56,7 @@ open "$studio_src/build/Studio_artefacts/Debug/Studio.app"
    new plug-in button and load an instrument in slot 1.
 3. With the Oxygen 25 connected before opening the project, use **I** on that
    track to select it. Selecting a MIDI input arms recording automatically.
-   **A** toggles recording arm. Play a few notes on MIDI channel 1, then use
+   **A** toggles recording arm. Match the ARIA slot to the channel shown in the monitor, then use
    **Record** and **Stop Recording** to capture a take. Return to start and play
    it back. The timeline should show a MIDI clip containing your notes.
 4. Click a track header to adjust volume and pan. Track headers also provide
@@ -62,3 +88,7 @@ Studio editor source. A full configure in the Linux workspace reached JUCE
 and stopped in its build helper because Linux GUI development headers were
 unavailable. The Intel app build and the hardware workflow above need
 verification on macOS.
+
+The Studio and MIDI Monitor translation units passed a C++20 syntax check with
+the Tracktion baseline and its pinned JUCE headers. Intel macOS linking, window
+behavior, and MIDI hardware tests require a Mac.
