@@ -25,12 +25,54 @@ public:
     void closeButtonPressed() override { if (onClose) onClose(); }
 };
 
+class WorkspaceDivider final : public Component
+{
+public:
+    explicit WorkspaceDivider (bool horizontalDrag)
+        : across (horizontalDrag)
+    {
+        setMouseCursor (across ? MouseCursor::LeftRightResizeCursor : MouseCursor::UpDownResizeCursor);
+    }
+
+    std::function<int()> getSize;
+    std::function<void(int)> resizePane;
+
+    void paint (Graphics& g) override
+    {
+        g.setColour (Colour (isMouseOverOrDragging() ? 0xffc5a56b : 0xff3c4954));
+        auto bounds = getLocalBounds();
+        if (across)
+            g.fillRect (bounds.withSizeKeepingCentre (2, jmin (36, getHeight())));
+        else
+            g.fillRect (bounds.withSizeKeepingCentre (jmin (36, getWidth()), 2));
+    }
+
+    void mouseEnter (const MouseEvent&) override { repaint(); }
+    void mouseExit (const MouseEvent&) override { repaint(); }
+    void mouseDown (const MouseEvent&) override { initialSize = getSize(); }
+    void mouseDrag (const MouseEvent& e) override
+    {
+        resizePane (initialSize + (across ? e.getDistanceFromDragStartX() : -e.getDistanceFromDragStartY()));
+    }
+
+private:
+    bool across;
+    int initialSize = 0;
+};
+
 class StudioView final : public Component, private Timer
 {
 public:
     StudioView()
     {
-        LookAndFeel::getDefaultLookAndFeel().setColour (ResizableWindow::backgroundColourId, Colour (0xff172027));
+        style.setColour (TextButton::buttonColourId, Colour (0xff303b45));
+        style.setColour (TextButton::buttonOnColourId, Colour (0xff665333));
+        style.setColour (TextButton::textColourOffId, Colour (0xffe6edf2));
+        style.setColour (ComboBox::backgroundColourId, Colour (0xff29343e));
+        style.setColour (ComboBox::outlineColourId, Colour (0xff4b5964));
+        style.setColour (Slider::trackColourId, Colour (0xffc5a56b));
+        setLookAndFeel (&style);
+        setWantsKeyboardFocus (true);
         for (auto* control : { &newProject, &openProject, &saveProject, &audioSettings, &plugins,
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
@@ -56,23 +98,65 @@ public:
                 monitorWindow->toFront (true);
                 return;
             }
-            monitor.setVisible (! monitor.isVisible());
-            monitor.setCaptureOpen (monitor.isVisible());
+            showWorkspace (workspace == Workspace::midi ? Workspace::closed : Workspace::midi);
+        };
+        addAndMakeVisible (mixButton);
+        mixButton.onClick = [this]
+        {
+            showWorkspace (workspace == Workspace::mix ? Workspace::closed : Workspace::mix);
+        };
+        addAndMakeVisible (closeWorkspace);
+        closeWorkspace.onClick = [this] { showWorkspace (Workspace::closed); };
+
+        addAndMakeVisible (sidebarDivider);
+        sidebarDivider.getSize = [this] { return sidebar.getWidth(); };
+        sidebarDivider.resizePane = [this] (int size)
+        {
+            sidebarWidth = jlimit (155, 280, size);
             resized();
+        };
+        addAndMakeVisible (workspaceDivider);
+        workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
+        workspaceDivider.resizePane = [this] (int size)
+        {
+            workspaceHeight = jlimit (146, workspaceLimit, size);
+            resized();
+        };
+        addAndMakeVisible (trackPicker);
+        trackPicker.setTextWhenNothingSelected ("Select a track");
+        trackPicker.setTitle ("Select a track");
+        trackPicker.onChange = [this]
+        {
+            if (edit == nullptr)
+                return;
+            const auto tracks = te::getAudioTracks (*edit);
+            const int index = trackPicker.getSelectedItemIndex();
+            if (isPositiveAndBelow (index, tracks.size()))
+                selection.selectOnly (tracks[index]);
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
-        for (auto* label : { &title, &position, &mixerLabel, &message })
+        for (auto* label : { &title, &position, &tempo, &mixerLabel, &message, &trackHeading, &trackDetails, &volumeLabel, &panLabel, &workspaceTitle })
             addAndMakeVisible (*label);
         title.setFont (FontOptions (23.0f, Font::bold));
-        title.setText ("Studio 0.1", dontSendNotification);
+        title.setText ("Studio 0.2", dontSendNotification);
+        title.setColour (Label::textColourId, Colour (0xffedcc8d));
+        position.setFont (FontOptions (19.0f, Font::bold));
+        position.setJustificationType (Justification::centred);
+        position.setText ("00:00.00", dontSendNotification);
+        tempo.setJustificationType (Justification::centred);
+        trackHeading.setText ("Tracks", dontSendNotification);
+        volumeLabel.setText ("Volume", dontSendNotification);
+        panLabel.setText ("Pan", dontSendNotification);
+        zoom.setTitle ("Timeline zoom");
         addAndMakeVisible (zoom);
         zoom.addItem ("10 seconds", 1);
         zoom.addItem ("30 seconds", 2);
         zoom.addItem ("60 seconds", 3);
         zoom.addItem ("180 seconds", 4);
+        zoom.addItem ("Fit project", 5);
         zoom.setSelectedId (2);
         zoom.onChange = [this]
         {
@@ -81,7 +165,10 @@ public:
                 constexpr double spans[] { 10, 30, 60, 180 };
                 auto& view = editor->getEditViewState();
                 view.viewX1 = 0s;
-                view.viewX2 = te::TimePosition::fromSeconds (spans[jlimit (1, 4, zoom.getSelectedId()) - 1]);
+                const double seconds = zoom.getSelectedId() == 5
+                    ? jmax (10.0, edit->getLength().inSeconds() * 1.05)
+                    : spans[jlimit (1, 4, zoom.getSelectedId()) - 1];
+                view.viewX2 = te::TimePosition::fromSeconds (seconds);
                 repaint (ruler);
             }
         };
@@ -121,6 +208,7 @@ public:
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
         setSize (1100, 650);
+        showWorkspace (Workspace::closed);
         timerCallback();
         startTimerHz (12);
     }
@@ -131,6 +219,8 @@ public:
             monitorWindow->clearContentComponent();
         monitor.setCaptureOpen (false);
         timeline.setViewedComponent (nullptr);
+        stopTimer();
+        setLookAndFeel (nullptr);
     }
 
     void requestQuit()
@@ -156,21 +246,43 @@ public:
 
     void paint (Graphics& graphics) override
     {
+        graphics.fillAll (Colour (0xff151c24));
+        graphics.setColour (Colour (0xff202a33));
+        graphics.fillRect (topBar);
+        graphics.fillRect (sidebar);
+        graphics.fillRect (workspacePanel);
+        graphics.setColour (Colour (0xff293540));
+        graphics.fillRect (rulerRow);
+        graphics.setColour (Colour (0xffaebdc9));
+        graphics.drawText ("Track controls", rulerRow.withWidth (150).reduced (10, 0),
+                           Justification::centredLeft);
         auto area = ruler;
-        graphics.setColour (Colour (0xff25343d));
-        graphics.fillRect (area);
+        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (10, 0),
+                           Justification::centredLeft);
+        if (editor == nullptr)
+        {
+            graphics.setColour (Colour (0xffaebdc9));
+            graphics.drawText ("Create or open a project to start arranging.", timeline.getBounds(),
+                               Justification::centred);
+        }
         if (editor == nullptr || area.isEmpty())
             return;
 
         auto span = editor->getEditViewState().viewX2.get().inSeconds();
-        auto interval = span <= 10.0 ? 1 : span <= 30.0 ? 5 : span <= 60.0 ? 10 : 30;
-        for (int second = 0; second < span; second += interval)
+        const double ideal = span / jmax (1, area.getWidth() / 65);
+        const double magnitude = std::pow (10.0, std::floor (std::log10 (jmax (1.0, ideal))));
+        const double normalized = ideal / magnitude;
+        const double interval = magnitude * (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0
+                                                          : normalized <= 5.0 ? 5.0 : 10.0);
+        for (double second = 0; second < span; second += interval)
         {
             int x = area.getX() + roundToInt (area.getWidth() * second / span);
             graphics.setColour (Colour (0xff869da8));
             graphics.drawVerticalLine (x, static_cast<float> (area.getBottom() - 6),
                                          static_cast<float> (area.getBottom()));
-            graphics.drawText (String (second) + " s", x + 4, area.getY(), 42,
+            if (x + 4 >= area.getRight())
+                break;
+            graphics.drawText (String (second, 0) + " s", x + 4, area.getY(), jmin (60, area.getRight() - x - 4),
                                area.getHeight(), Justification::centredLeft);
         }
     }
@@ -184,36 +296,88 @@ public:
         edit->getTransport().setPosition (view.xToTime (event.x - ruler.getX(), ruler.getWidth()));
     }
 
+    bool keyPressed (const KeyPress& key) override
+    {
+        if (key == KeyPress::spaceKey && play.isEnabled())
+        {
+            play.onClick();
+            return true;
+        }
+        if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'S' || key.getKeyCode() == 's')
+            && saveProject.isEnabled())
+        {
+            save();
+            return true;
+        }
+        return false;
+    }
+
     void resized() override
     {
-        auto area = getLocalBounds().reduced (14);
-        title.setBounds (area.removeFromTop (38));
-        auto files = area.removeFromTop (34);
-        for (auto* button : { &newProject, &openProject, &saveProject, &audioSettings, &plugins })
-            button->setBounds (files.removeFromLeft (121).reduced (2));
-        monitorButton.setBounds (files.removeFromLeft (145).reduced (2));
-        retryAriaButton.setBounds (files.removeFromLeft (130).reduced (2));
-        confirmAriaButton.setBounds (files.removeFromLeft (135).reduced (2));
-        auto controls = area.removeFromTop (34);
-        for (auto* button : { &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
-            button->setBounds (controls.removeFromLeft (112).reduced (2));
-        zoom.setBounds (controls.removeFromLeft (115).reduced (2));
-        position.setBounds (controls.reduced (3));
-        message.setBounds (area.removeFromBottom (28));
-        auto mixer = area.removeFromBottom (45);
-        mixerLabel.setBounds (mixer.removeFromLeft (180));
-        volume.setBounds (mixer.removeFromLeft (275).reduced (4));
-        pan.setBounds (mixer.removeFromLeft (245).reduced (4));
-        if (monitor.getParentComponent() == this && monitor.isVisible())
-            monitor.setBounds (area.removeFromBottom (jmin (240, area.getHeight() * 3 / 5)));
-        auto rulerRow = area.removeFromTop (24);
+        auto area = getLocalBounds();
+        topBar = area.removeFromTop (88);
+        auto files = topBar.reduced (12, 5).removeFromTop (34);
+        for (auto* button : { &plugins, &audioSettings, &saveProject, &openProject, &newProject })
+            button->setBounds (files.removeFromRight (button == &plugins ? 116 : 94).reduced (3, 2));
+        title.setBounds (files);
+
+        auto controls = topBar.withTrimmedTop (44).reduced (12, 5);
+        rewind.setBounds (controls.removeFromLeft (92).reduced (3, 2));
+        play.setBounds (controls.removeFromLeft (70).reduced (3, 2));
+        record.setBounds (controls.removeFromLeft (126).reduced (3, 2));
+        position.setBounds (controls.removeFromLeft (110));
+        tempo.setBounds (controls.removeFromLeft (93));
+        monitorButton.setBounds (controls.removeFromRight (132).reduced (3, 2));
+        mixButton.setBounds (controls.removeFromRight (74).reduced (3, 2));
+
+        message.setBounds (area.removeFromBottom (26).reduced (10, 0));
+        workspaceLimit = jmax (146, area.getHeight() - 270);
+        workspacePanel = workspace == Workspace::closed ? Rectangle<int>()
+                       : area.removeFromBottom (jlimit (146, workspaceLimit, workspaceHeight));
+        auto panel = workspacePanel.reduced (10, 0);
+        auto panelHeader = panel.removeFromTop (30);
+        closeWorkspace.setBounds (panelHeader.removeFromRight (66).reduced (0, 3));
+        workspaceTitle.setBounds (panelHeader);
+        mixerLabel.setBounds (panel.removeFromTop (30));
+        auto volumeRow = panel.removeFromTop (34);
+        volumeLabel.setBounds (volumeRow.removeFromLeft (74));
+        volume.setBounds (volumeRow.removeFromLeft (jmin (430, volumeRow.getWidth())));
+        if (monitor.getParentComponent() == this && workspace == Workspace::midi)
+            monitor.setBounds (workspacePanel.withTrimmedTop (30));
+        auto panRow = panel.removeFromTop (34);
+        panLabel.setBounds (panRow.removeFromLeft (74));
+        pan.setBounds (panRow.removeFromLeft (jmin (430, panRow.getWidth())));
+        workspaceDivider.setBounds (workspace == Workspace::closed ? Rectangle<int>() : area.removeFromBottom (7));
+
+        sidebar = area.removeFromLeft (sidebarWidth);
+        sidebarDivider.setBounds (area.removeFromLeft (7));
+        auto left = sidebar.reduced (10, 6);
+        trackHeading.setBounds (left.removeFromTop (27));
+        trackPicker.setBounds (left.removeFromTop (32).reduced (0, 3));
+        trackDetails.setBounds (left.removeFromTop (27));
+        left.removeFromTop (6);
+        for (auto* button : { &addMidi, &addAudio, &importAudio })
+            button->setBounds (left.removeFromTop (31).reduced (0, 3));
+        left.removeFromTop (7);
+        zoom.setBounds (left.removeFromTop (31).reduced (0, 3));
+        retryAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
+        confirmAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
+
+        rulerRow = area.removeFromTop (26);
         timeline.setBounds (area);
+        sizeEditor();
         ruler = rulerRow.withTrimmedLeft (150).withTrimmedRight (150 + timeline.getScrollBarThickness());
         repaint();
-        sizeEditor();
     }
 
 private:
+    enum class Workspace { closed, mix, midi };
+
+    LookAndFeel_V4 style;
+    Workspace workspace = Workspace::closed;
+    WorkspaceDivider sidebarDivider { true }, workspaceDivider { false };
+    int sidebarWidth = 184, workspaceHeight = 210, workspaceLimit = 210;
+    Rectangle<int> topBar, sidebar, workspacePanel, rulerRow;
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -243,8 +407,11 @@ private:
     std::vector<OriginalAriaState> originalAriaStates;
 
 
-    Label title, position, mixerLabel, message;
-    ComboBox zoom;
+    Label title, position, tempo, mixerLabel, message, trackHeading, trackDetails,
+          volumeLabel, panLabel, workspaceTitle;
+    ComboBox zoom, trackPicker;
+    StringArray trackNames;
+    TextButton mixButton { "Mixer" }, closeWorkspace { "Hide" };
     Slider volume, pan;
     StudioMidiMonitor monitor;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
@@ -253,8 +420,30 @@ private:
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" }, saveProject { "Save" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
-               rewind { "Return to Start" }, play { "Play" }, record { "Record" },
+               rewind { "To Start" }, play { "Play" }, record { "Record" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" };
+
+    void showWorkspace (Workspace next)
+    {
+        workspace = next;
+        const bool open = next != Workspace::closed;
+        const bool mixing = next == Workspace::mix;
+        for (Component* component : std::initializer_list<Component*> {
+                 &mixerLabel, &volumeLabel, &panLabel, &volume, &pan })
+            component->setVisible (mixing);
+        closeWorkspace.setVisible (open);
+        workspaceTitle.setVisible (open);
+        workspaceDivider.setVisible (open);
+        workspaceTitle.setText (mixing ? "Selected Track Mixer" : "MIDI Monitor", dontSendNotification);
+        mixButton.setToggleState (mixing, dontSendNotification);
+        monitorButton.setToggleState (next == Workspace::midi, dontSendNotification);
+        if (monitor.getParentComponent() == this)
+        {
+            monitor.setVisible (next == Workspace::midi);
+            monitor.setCaptureOpen (next == Workspace::midi);
+        }
+        resized();
+    }
 
     void toggleMonitorDock()
     {
@@ -264,6 +453,7 @@ private:
             monitorWindow->clearContentComponent();
             addAndMakeVisible (monitor);
             monitor.setFloating (false);
+            showWorkspace (Workspace::midi);
         }
         else
         {
@@ -278,8 +468,8 @@ private:
             monitor.setFloating (true);
             monitorWindow->setVisible (true);
             monitorWindow->toFront (true);
+            showWorkspace (Workspace::closed);
         }
-        resized();
     }
 
     void setupSlider (Slider& slider, const String& name, double min, double max, double interval, const String& suffix)
@@ -331,11 +521,37 @@ private:
             auto& transport = edit->getTransport();
             play.setButtonText (transport.isPlaying() ? "Stop" : "Play");
             record.setButtonText (recording ? "Stop Recording" : "Record");
-            position.setText (String (transport.getPosition().inSeconds(), 2) + " s", dontSendNotification);
+            const auto now = transport.getPosition();
+            const auto centiseconds = static_cast<int64> (juce::jmax (0.0, now.inSeconds()) * 100.0);
+            position.setText (String (centiseconds / 6000).paddedLeft ('0', 2) + ":"
+                                  + String (centiseconds / 100 % 60).paddedLeft ('0', 2) + "."
+                                  + String (centiseconds % 100).paddedLeft ('0', 2), dontSendNotification);
+            tempo.setText (String (edit->tempoSequence.getBpmAt (now), 1) + " BPM", dontSendNotification);
             sizeEditor();
         }
 
         auto* track = selectedTrack();
+        StringArray names;
+        int selectedIndex = -1;
+        if (edit != nullptr)
+            for (auto* item : te::getAudioTracks (*edit))
+            {
+                if (item == track)
+                    selectedIndex = names.size();
+                names.add (item->getName());
+            }
+        if (names != trackNames)
+        {
+            trackPicker.clear (dontSendNotification);
+            trackPicker.addItemList (names, 1);
+            trackNames = std::move (names);
+        }
+        trackPicker.setEnabled (ready && ! trackNames.isEmpty());
+        trackPicker.setSelectedItemIndex (selectedIndex, dontSendNotification);
+        trackDetails.setText (track == nullptr ? String (trackNames.size()) + " tracks"
+            : EngineHelpers::isTrackArmed (*track) ? "Record armed"
+            : EngineHelpers::trackHasInput (*track) ? "Input assigned" : "No input assigned", dontSendNotification);
+
         auto plugin = track != nullptr ? track->getVolumePlugin() : nullptr;
         volume.setEnabled (ready && plugin != nullptr);
         pan.setEnabled (ready && plugin != nullptr);
@@ -673,7 +889,7 @@ private:
         timeline.setViewedComponent (editor.get(), false);
         zoom.onChange();
         sizeEditor();
-        title.setText ("Studio 0.1  /  " + file.getFileNameWithoutExtension(), dontSendNotification);
+        title.setText ("Studio 0.2  /  " + file.getFileNameWithoutExtension(), dontSendNotification);
         message.setText ("I selects input. A arms recording. + at right adds an instrument or effect.", dontSendNotification);
         if (create)
             save();
@@ -760,7 +976,7 @@ class StudioApplication final : public JUCEApplication
         {
             setUsingNativeTitleBar (true);
             setResizable (true, false);
-            setResizeLimits (960, 430, 2600, 1800);
+            setResizeLimits (920, 610, 2600, 1800);
             setContentOwned (new StudioView(), true);
             centreWithSize (getWidth(), getHeight());
             setVisible (true);
@@ -771,7 +987,7 @@ class StudioApplication final : public JUCEApplication
 
 public:
     const String getApplicationName() override { return "Studio"; }
-    const String getApplicationVersion() override { return "0.1.0"; }
+    const String getApplicationVersion() override { return "0.2.0"; }
     bool moreThanOneInstanceAllowed() override { return false; }
     void initialise (const String&) override { window = std::make_unique<Window>(); }
     void shutdown() override { window.reset(); }

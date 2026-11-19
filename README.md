@@ -1,41 +1,34 @@
-# Studio 0.1 — Automatic ARIA Restoration Milestone
+# Studio 0.2 Arrangement
 
-This is a **separate experimental copy** of the working Studio 0.1 application, based on the successful original-state/manual-retry source. It does not change the previous working Studio build or any GitHub repository.
+This is the first interface milestone for the standalone JUCE and Tracktion Engine app. It starts from the Studio 0.1 automatic ARIA restoration edition and builds as a separate app bundle in this folder.
 
-## Change in this milestone
+## Arrangement window
 
-- Captures immutable ARIA state from `.tracktionedit` XML **before** Tracktion loads plugins.
-- Schedules a single automatic restore attempt on JUCE's message thread after at least 1 second, once *all* matched ARIA plugin instances are present and no longer reporting asynchronous initialization. No restoration is performed inside the real-time audio callback.
-- Waits up to 10 seconds for AU instances; leaves **Retry ARIA** available if not ready. Stops retrying automatically after one submission, with no repeated state writes.
-- Submits the saved original AU state using Tracktion's existing `restorePluginStateFromValueTree` method, the same route that worked with the manual button.
-- Keeps **Confirm ARIA** and save protection until the user verifies both the loaded instrument names and that they make sound. Automatic submission **does not** automatically unlock saving.
-- Keeps MIDI recording's `transport.stop (false, false)` fix, MIDI Monitor, mixer, and Tracktion editor unchanged.
-- Keeps original project recovery backup behavior. The supplied recovery file contains Intimate D in saved slot 1 (673-byte state).
+- The top bar shows project controls, transport, time position, and tempo. Space controls playback from the arrangement and Command-S saves.
+- Drag the left divider to resize the sidebar. Select a track to inspect its recording status and adjust its volume and pan in the Mixer.
+- Click the ruler to seek. Change the time range with the sidebar zoom menu, including **Fit project**. Track lanes show MIDI notes and audio waveforms. Use the track's **I** and **A** controls for input and recording, and the **+** in Inserts to load an instrument or effect.
+- **Mixer** and **MIDI Monitor** share the bottom workspace. Drag its upper divider to change its height, or click **Hide** to reclaim timeline space. The monitor can still open in a separate window and dock again.
 
-## Build and launch on your Intel MacBook
+## Build and launch on Intel macOS
 
-1. Quit other Studio instances.
-2. Extract ZIP in `~/Downloads`; folder must be `Studio-ARIA-Auto-Restore`.
-3. Paste into Terminal:
+Quit any running Studio instance. Extract the source ZIP into Downloads, then run:
 
 ```bash
-cd "$HOME/Downloads/Studio-ARIA-Auto-Restore" || exit 1
+cd "$HOME/Downloads/Studio-0.2-Arrangement" &&
 /Applications/CMake.app/Contents/bin/cmake -S . -B build -G Xcode \
   -DTRACKTION_ROOT="$HOME/Developer/Tracktion-Studio" \
   -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 && \
-/Applications/CMake.app/Contents/bin/cmake --build build --config Debug --target Studio --parallel 4 && \
-open "$HOME/Downloads/Studio-ARIA-Auto-Restore/build/Studio_artefacts/Debug/Studio.app"
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 &&
+/Applications/CMake.app/Contents/bin/cmake --build build --config Debug --target Studio --parallel 4 &&
+open "$PWD/build/Studio_artefacts/Debug/Studio.app"
 ```
 
-## Test
+## Mac verification
 
-1. Choose **Open Project** and open `RECOVERED_TEST_PROJECT/Aria State Test - Intimate D RECOVERY.tracktionedit`, *not* the 454-byte empty-state project under Documents.
-2. Wait briefly, then open ARIA. Check whether **Intimate D** appears in slot 1 **without clicking Retry ARIA**. If it does, play notes and verify sound.
-3. If empty, stop playback, click **Retry ARIA** once, reopen ARIA, and test again.
-4. **Do not click Confirm ARIA or Save unless the instrument loaded and played.** Keep the recovered project unchanged during the test.
-5. For diagnostics, use: `tail -n 35 "$HOME/Library/Studio/aria-restore.log"`.
+1. Open a new project, add or select an instrument track, and assign the Oxygen 25 using **I**. Check that the track arms and the MIDI Monitor displays the keyboard's actual channel. Record, stop, and check that the MIDI clip remains and plays after reopening.
+2. Import a short audio clip and verify the waveform and playback. Open the Mixer, select the track, and test volume and pan. Resize the sidebar and the bottom workspace, then float and re-dock the monitor.
+3. Open a copy of the bundled Intimate D recovery project. Allow automatic restoration to run, then open ARIA and confirm that Intimate D appears and plays. Click **Confirm ARIA** once you have verified sound. Save the copy, reopen it, and check again. See [RESTORATION_TEST.md](RESTORATION_TEST.md) for the restore log and recovery behavior.
 
-Expected logged phrases: `Captured original on-disk ARIA state ... bytes=673`, `Automatic ARIA retry`, `Retry original ARIA ... disk bytes=673`.
+The Tracktion checkout is read during configuration. Studio writes the adapted example editor into its own build directory. Project files use the existing `.tracktionedit` format and Studio retains the previous audio-device and plugin settings location.
 
-**Limitations**: static checks pass here, but this environment cannot compile or run an Intel macOS Audio Unit. Actual automatic restore and multi-instance reliability require testing on your Mac. Once verified, further work should include multiple ARIA instances and save/reopen regression checks. GPL-3.0-or-later; see LICENSE.
+GPL-3.0-or-later. See LICENSE.

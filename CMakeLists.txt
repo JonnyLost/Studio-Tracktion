@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Studio VERSION 0.1.0 LANGUAGES C CXX)
+project(Studio VERSION 0.2.0 LANGUAGES C CXX)
 
 set(TRACKTION_ROOT "" CACHE PATH "Existing Tracktion Engine checkout with JUCE")
 if(NOT EXISTS "${TRACKTION_ROOT}/modules/juce/CMakeLists.txt")
@@ -73,6 +73,10 @@ string(REPLACE "${refresh}" "        };\n        armButton.onClick" editor "${ed
 string(REPLACE "        };\n        armButton.onClick" "${refresh}" editor "${editor}")
 string(REPLACE "inputsState = track->edit.state.getChildWithName (te::IDs::INPUTDEVICES);"
                "inputsState = track->edit.inputDeviceState;" editor "${editor}")
+# Give the generated arrangement editor the same palette as the Studio window.
+string(REPLACE "g.setColour (Colours::grey);" "g.setColour (Colour (0xff303d48));" editor "${editor}")
+string(REPLACE "g.setColour (Colours::red);" "g.setColour (Colour (0xffc5a56b));" editor "${editor}")
+string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (Colour (0xff24303b));" editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 juce_add_gui_app(Studio
