@@ -585,7 +585,7 @@ private:
         record.setEnabled (ready);
         zoom.setEnabled (ready);
         retryAriaButton.setEnabled (ready && ! recording && ariaReviewPending);
-        confirmAriaButton.setEnabled (ready && ! recording && ariaReviewPending);
+        confirmAriaButton.setEnabled (ready && ! recording && ariaReviewPending && ! autoAriaRetryPending);
         if (edit != nullptr)
         {
             auto& transport = edit->getTransport();
@@ -835,6 +835,9 @@ private:
     {
         if (edit == nullptr)
             return;
+        // A held piano-roll audition must release before record is engaged,
+        // so no preview note or trailing note-off leaks into a new take.
+        piano.silencePreview();
         auto& transport = edit->getTransport();
         if (transport.isRecording())
             transport.stop (false, false); // false: retain the take

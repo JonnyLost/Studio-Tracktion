@@ -71,7 +71,11 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
     if (editingEnabled == enabled)
         return;
     if (! enabled)
+    {
         stopAudition();
+        gesture = Gesture::none;
+        draggedNote = {};
+    }
     editingEnabled = enabled;
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo })
         c->setEnabled (enabled && clip != nullptr);
@@ -251,7 +255,10 @@ void StudioPianoRoll::audition (int pitch, int velocity)
 
     for (auto* instance : clip->edit.getAllInputDevices())
     {
-        if (! te::getTargetTracks (*instance).contains (target))
+        const auto destinations = te::getTargetTracks (*instance);
+        // A shared MIDI input would also sound other instruments: do not
+        // preview through it until Studio has a dedicated audition route.
+        if (destinations.size() != 1 || ! destinations.contains (target))
             continue;
         auto* midi = dynamic_cast<te::MidiInputDevice*> (&instance->getInputDevice());
         if (midi == nullptr || ! midi->isEnabled())
@@ -273,7 +280,7 @@ void StudioPianoRoll::audition (int pitch, int velocity)
     auditionChannel = jlimit (1, 16, clip->getMidiChannel().getChannelNumber());
     auditionDevice->handleIncomingMidiMessage (nullptr,
         MidiMessage::noteOn (auditionChannel, auditionPitch, (uint8) jlimit (1, 127, velocity)));
-    startTimer (220); // A short key tap is audible even when mouseUp is immediate.
+    startTimer (450); // Audibly preview slow-attack sounds even on quick clicks.
 }
 
 void StudioPianoRoll::stopAudition()
@@ -284,6 +291,11 @@ void StudioPianoRoll::stopAudition()
             MidiMessage::noteOff (auditionChannel, auditionPitch));
     auditionPitch = -1;
     auditionDevice.reset();
+}
+
+void StudioPianoRoll::silencePreview()
+{
+    stopAudition();
 }
 
 void StudioPianoRoll::timerCallback()
@@ -626,6 +638,8 @@ void StudioPianoRoll::quantizeNotes()
 
 bool StudioPianoRoll::keyPressed (const KeyPress& key)
 {
+    if (! editingEnabled)
+        return false;
     if (key.getKeyCode() == KeyPress::deleteKey || key.getKeyCode() == KeyPress::backspaceKey)
     {
         deleteSelected();

@@ -20,6 +20,7 @@ public:
     te::MidiClip* getClip() const noexcept { return clip.get(); }
     void refresh();
     void setEditingEnabled (bool);
+    void silencePreview();
     std::function<void()> onMidiChanged;
 
     void paint (juce::Graphics&) override;
