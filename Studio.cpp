@@ -676,7 +676,7 @@ private:
 
     void showWorkspace (Workspace next)
     {
-        if (next == Workspace::piano && next != workspace && dockMode == DockMode::compact)
+        if (next == Workspace::piano && dockMode == DockMode::compact)
             dockMode = DockMode::split;
         workspace = next;
         syncWorkspace();
@@ -783,6 +783,8 @@ private:
             monitorWindow->clearContentComponent();
             addAndMakeVisible (monitor);
             monitor.setFloating (false);
+            if (dockMode == DockMode::compact)
+                dockMode = DockMode::split;
             showWorkspace (Workspace::midi);
         }
         else
