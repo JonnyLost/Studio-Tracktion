@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioEnvironments.h"
 #include "StudioUI.h"
-#include <BinaryData.h>
+#include <StudioEnvironmentData.h>
 
 #include <algorithm>
 #include <array>
@@ -40,6 +40,15 @@ Rectangle<float> cropToFill (const Image& image, Rectangle<float> destination)
     return source;
 }
 
+void drawCover (Graphics& graphics, const Image& image, Rectangle<float> destination)
+{
+    if (! image.isValid() || destination.isEmpty()) return;
+    const auto target = destination.getSmallestIntegerContainer();
+    const auto source = cropToFill (image, destination).getSmallestIntegerContainer();
+    graphics.drawImage (image, target.getX(), target.getY(), target.getWidth(), target.getHeight(),
+                        source.getX(), source.getY(), source.getWidth(), source.getHeight());
+}
+
 environments::Rotation currentRotation (const ComboBox& box)
 {
     switch (box.getSelectedId())
@@ -76,7 +85,7 @@ void StudioEnvironmentWelcome::SceneTile::paintButton (Graphics& g, bool hovered
     {
         Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (bounds.getSmallestIntegerContainer());
-        g.drawImage (preview, bounds, cropToFill (preview, bounds));
+        drawCover (g, preview, bounds);
     }
     auto title = bounds.removeFromBottom ((float) appearance.control (25, 11));
     g.setColour (Colour (0xe810141c));
@@ -109,8 +118,7 @@ StudioEnvironmentWelcome::StudioEnvironmentWelcome (PropertiesFile& prefs) : pre
         {
             preview = Image (Image::RGB, 300, 175, true);
             Graphics graphics (preview);
-            graphics.drawImage (decoded, preview.getBounds().toFloat(),
-                                cropToFill (decoded, preview.getBounds().toFloat()));
+            drawCover (graphics, decoded, preview.getBounds().toFloat());
         }
         tile->setPreview (std::move (preview), scenes[(std::size_t) i].title);
         tile->onClick = [this, i] { selectScene (i, true); };
@@ -216,9 +224,9 @@ bool StudioEnvironmentWelcome::essentialControlsFit() const
         return ! component.getBounds().isEmpty()
             && getLocalBounds().contains (component.getBounds());
     };
-    for (const auto* control : { &newProject, &openProject, &continueButton,
-                                  &launchToggle, &cycleToggle, &favouriteToggle,
-                                  &rotationMode, &previousButton, &nextButton })
+    for (const Component* control : std::array<const Component*, 9> {
+             &newProject, &openProject, &continueButton, &launchToggle, &cycleToggle,
+             &favouriteToggle, &rotationMode, &previousButton, &nextButton })
         if (! inside (*control)) return false;
     for (const auto& tile : tiles)
         if (! inside (*tile)) return false;
@@ -279,7 +287,7 @@ Image StudioEnvironmentWelcome::loadArtwork (int index) const
 {
     if (! isPositiveAndBelow (index, environments::sceneCount)) return {};
     int length = 0;
-    const char* bytes = BinaryData::getNamedResource (scenes[(std::size_t) index].resource, length);
+    const char* bytes = StudioEnvironmentData::getNamedResource (scenes[(std::size_t) index].resource, length);
     if (bytes == nullptr || length <= 0) return {};
     return ImageFileFormat::loadFrom (bytes, (std::size_t) length);
 }
@@ -309,7 +317,7 @@ void StudioEnvironmentWelcome::paint (Graphics& g)
     const auto bounds = getLocalBounds();
     g.fillAll (colours::canvas);
     if (artwork.isValid())
-        g.drawImage (artwork, bounds.toFloat(), cropToFill (artwork, bounds.toFloat()));
+        drawCover (g, artwork, bounds.toFloat());
 
     // The artwork stays unobstructed toward the right; the left gradient keeps
     // project actions legible regardless of the selected photograph.

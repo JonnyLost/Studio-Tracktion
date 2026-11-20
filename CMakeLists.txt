@@ -288,7 +288,10 @@ juce_add_gui_app(Studio
     NEEDS_CURL FALSE
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
-juce_add_binary_data(StudioEnvironmentsAssets SOURCES
+juce_add_binary_data(StudioEnvironmentsAssets
+    NAMESPACE StudioEnvironmentData
+    HEADER_NAME StudioEnvironmentData.h
+    SOURCES
     assets/environments/BlueHourStudy.jpg
     assets/environments/MidnightScoring.jpg
     assets/environments/OrchestralStage.jpg
