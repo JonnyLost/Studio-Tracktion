@@ -80,6 +80,13 @@ public:
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
 
+        addAndMakeVisible (arrangementZoomOut);
+        addAndMakeVisible (arrangementZoomIn);
+        arrangementZoomOut.setTooltip ("Zoom out in the arrangement timeline");
+        arrangementZoomIn.setTooltip ("Zoom in on the arrangement playhead");
+        arrangementZoomOut.onClick = [this] { zoomArrangement (1.25); };
+        arrangementZoomIn.onClick = [this] { zoomArrangement (1.0 / 1.25); };
+
         addAndMakeVisible (monitorButton);
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
@@ -181,11 +188,14 @@ public:
         zoom.addItem ("60 seconds", 3);
         zoom.addItem ("180 seconds", 4);
         zoom.addItem ("Fit project", 5);
+        zoom.addItem ("Custom zoom", 6);
         zoom.setSelectedId (2);
         zoom.onChange = [this]
         {
             if (editor != nullptr)
             {
+                if (zoom.getSelectedId() == 6)
+                    return;
                 constexpr double spans[] { 10, 30, 60, 180 };
                 auto& view = editor->getEditViewState();
                 view.viewX1 = 0s;
@@ -282,7 +292,7 @@ public:
         graphics.setColour (Colour (0xff293540));
         graphics.fillRect (rulerRow);
         graphics.setColour (Colour (0xffaebdc9));
-        graphics.drawText ("Track controls", rulerRow.withWidth (150).reduced (10, 0),
+        graphics.drawText ("Tracks", rulerRow.withWidth (72).reduced (10, 0),
                            Justification::centredLeft);
         auto area = ruler;
         graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (10, 0),
@@ -441,6 +451,8 @@ public:
         timeline.setBounds (area);
         sizeEditor();
         ruler = rulerRow.withTrimmedLeft (150).withTrimmedRight (150 + timeline.getScrollBarThickness());
+        arrangementZoomOut.setBounds (rulerRow.getX() + 73, rulerRow.getY() + 2, 34, 22);
+        arrangementZoomIn.setBounds (rulerRow.getX() + 112, rulerRow.getY() + 2, 34, 22);
         repaint();
     }
 
@@ -486,6 +498,7 @@ private:
           volumeLabel, panLabel, workspaceTitle, ariaReviewNotice;
     ComboBox zoom, trackPicker;
     StringArray trackNames;
+    TextButton arrangementZoomOut { "-" }, arrangementZoomIn { "+" };
     TextButton mixButton { "Mixer" }, pianoButton { "Piano Roll" }, closeWorkspace { "Hide" };
     Slider volume, pan;
     StudioMidiMonitor monitor;
@@ -604,6 +617,28 @@ private:
         }
     }
 
+    void zoomArrangement (double scale)
+    {
+        if (edit == nullptr || editor == nullptr)
+            return;
+
+        auto& view = editor->getEditViewState();
+        const double start = view.viewX1.get().inSeconds();
+        const double end = view.viewX2.get().inSeconds();
+        const double oldSpan = jmax (0.001, end - start);
+        const double newSpan = jlimit (1.0, 3600.0, oldSpan * scale);
+        double anchor = edit->getTransport().getPosition().inSeconds();
+        if (anchor < start || anchor > end)
+            anchor = (start + end) / 2.0;
+
+        const double anchorRatio = (anchor - start) / oldSpan;
+        const double nextStart = jmax (0.0, anchor - anchorRatio * newSpan);
+        view.viewX1 = te::TimePosition::fromSeconds (nextStart);
+        view.viewX2 = te::TimePosition::fromSeconds (nextStart + newSpan);
+        zoom.setSelectedId (6, dontSendNotification);
+        repaint();
+    }
+
     void timerCallback() override
     {
         monitorButton.setButtonText (monitor.isActive() ? "●  MIDI Monitor" : "MIDI Monitor");
@@ -628,6 +663,8 @@ private:
         play.setEnabled (ready);
         record.setEnabled (ready);
         zoom.setEnabled (ready);
+        arrangementZoomOut.setEnabled (ready);
+        arrangementZoomIn.setEnabled (ready);
         retryAriaButton.setEnabled (ready && ! recording && ariaReviewPending);
         confirmAriaButton.setEnabled (ready && ! recording && ariaReviewPending && ! autoAriaRetryPending);
         if (edit != nullptr)

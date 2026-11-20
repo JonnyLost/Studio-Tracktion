@@ -155,7 +155,19 @@ double StudioPianoRoll::gridBeats() const
 double StudioPianoRoll::snap (double beat) const
 {
     const auto step = gridBeats();
-    return jmax (0.0, step > 0.0 ? std::round (beat / step) * step : beat);
+    if (step <= 0.0 || clip == nullptr)
+        return jmax (0.0, beat);
+
+    // Anchor the snap interval at the musical bar, matching the drawn grid.
+    const auto& sequence = clip->edit.tempoSequence;
+    const int bar = jmax (0, sequence.toBarsAndBeats (
+        clip->getTimeOfContentBeat (te::BeatPosition::fromBeats (beat))).bars);
+    const double barStart = toSourceBeat (sequence.toBeats (
+        te::tempo::BarsAndBeats { bar, {} }).inBeats());
+    const double barEnd = toSourceBeat (sequence.toBeats (
+        te::tempo::BarsAndBeats { bar + 1, {} }).inBeats());
+    const auto closestLine = barStart + std::round ((beat - barStart) / step) * step;
+    return jmax (0.0, jmin (barEnd, closestLine));
 }
 
 double StudioPianoRoll::beatAt (int x) const
@@ -415,24 +427,6 @@ void StudioPianoRoll::paintGrid (Graphics& g)
 
     g.saveState();
     g.reduceClipRegion (notesArea);
-    const auto subdivision = gridBeats();
-    // Only draw the selected snap subdivision when it can be distinguished
-    // from the adjacent line. Snapping itself is unchanged at every zoom.
-    if (subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
-    {
-        const auto first = std::ceil (horizontal.getCurrentRangeStart() / subdivision) * subdivision;
-        const auto last = horizontal.getCurrentRangeStart() + notesArea.getWidth() / pixelsPerBeat;
-        g.setColour (Colour (0xff34424e));
-        // Compute each line directly from its index to avoid floating drift.
-        const auto firstIndex = (int64) std::round (first / subdivision);
-        const auto lastIndex = (int64) std::floor (last / subdivision);
-        for (int64 i = firstIndex; i <= lastIndex; ++i)
-        {
-            const int x = xAt (i * subdivision);
-            if (x >= notesArea.getX() && x < notesArea.getRight())
-                g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
-        }
-    }
     if (clip != nullptr)
     {
         const auto& sequence = clip->edit.tempoSequence;
@@ -441,6 +435,20 @@ void StudioPianoRoll::paintGrid (Graphics& g)
         const auto to = sequence.toTime (te::BeatPosition::fromBeats (
             jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
                                    + notesArea.getWidth() / pixelsPerBeat))));
+        const auto subdivision = gridBeats();
+        // Lines and note-snapping now share bar-relative origins. At wide zoom
+        // only their ink is suppressed; the snap precision stays unchanged.
+        if (subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
+        {
+            g.setColour (Colour (0xff34424e));
+            studio::forEachMusicalSubdivision (sequence, from, to, subdivision,
+                [&] (double editBeat)
+                {
+                    const int x = xAt (toSourceBeat (editBeat));
+                    if (x >= notesArea.getX() && x < notesArea.getRight())
+                        g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+                });
+        }
         int lastBeatLineX = notesArea.getX() - 16;
         studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
         {
@@ -481,6 +489,18 @@ void StudioPianoRoll::paintRuler (Graphics& g)
     int lastBeatTickX = rulerArea.getX() - 14;
     g.saveState();
     g.reduceClipRegion (rulerArea);
+    if (const auto subdivision = gridBeats(); subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
+    {
+        g.setColour (Colour (0xff4d5e6d));
+        studio::forEachMusicalSubdivision (sequence, from, to, subdivision,
+            [&] (double editBeat)
+            {
+                const int x = xAt (toSourceBeat (editBeat));
+                if (x >= rulerArea.getX() && x < rulerArea.getRight())
+                    g.drawVerticalLine (x, (float) rulerArea.getBottom() - 4.0f,
+                                        (float) rulerArea.getBottom());
+            });
+    }
     studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
     {
         const int x = xAt (toSourceBeat (sequence.toBeats (tick.time).inBeats()));
@@ -591,6 +611,19 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
         return;
     grabKeyboardFocus();
     const auto point = event.getPosition();
+    if (rulerArea.contains (point))
+    {
+        if (clip->edit.getTransport().isRecording())
+            return;
+        // Clicking an actual subdivision in the piano ruler seeks transport
+        // to that musical grid point; it does not modify MIDI note data.
+        const auto position = clip->getTimeOfContentBeat (
+            te::BeatPosition::fromBeats (snap (beatAt (point.x))));
+        if (position >= clip->getPosition().getStart()
+            && position <= clip->getPosition().getEnd())
+            clip->edit.getTransport().setPosition (position);
+        return;
+    }
     if (keyboard.contains (point))
     {
         draggingKeyboard = true;
@@ -657,6 +690,11 @@ void StudioPianoRoll::mouseMove (const MouseEvent& event)
     if (! editingEnabled || clip == nullptr)
     {
         setMouseCursor (MouseCursor::NormalCursor);
+        return;
+    }
+    if (rulerArea.contains (event.getPosition()))
+    {
+        setMouseCursor (MouseCursor::PointingHandCursor);
         return;
     }
     if (auto* hit = noteAt (event.getPosition()))

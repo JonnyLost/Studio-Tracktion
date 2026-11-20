@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace studio
 {
@@ -49,6 +50,43 @@ void forEachMusicalTick (const tracktion::TempoSequence& sequence,
                 firstBeat + (barLength * beat / beats)));
             if (position >= from && position <= to)
                 handleTick (MusicalTick { position, bar, beat });
+        }
+    }
+}
+
+// Snap subdivisions are measured *from each actual bar boundary*, not from
+// the MIDI source's beat zero. That keeps a clip with a source offset aligned
+// with the bar lines shown in both rulers.
+template <typename Fn>
+void forEachMusicalSubdivision (const tracktion::TempoSequence& sequence,
+                                tracktion::TimePosition from,
+                                tracktion::TimePosition to,
+                                double stepInQuarterBeats,
+                                Fn&& handleBeat)
+{
+    if (to <= from || stepInQuarterBeats <= 0.0)
+        return;
+
+    const auto firstBeat = sequence.toBeats (from).inBeats();
+    const auto lastBeat = sequence.toBeats (to).inBeats();
+    const int firstBar = std::max (0, sequence.toBarsAndBeats (from).bars - 1);
+    for (int bar = firstBar; bar < firstBar + 2048; ++bar)
+    {
+        const auto start = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar, {} }).inBeats();
+        const auto end = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar + 1, {} }).inBeats();
+        if (start > lastBeat || end <= start)
+            break;
+
+        // The display also has a pixel-spacing limit, so this cap is only a
+        // safety guard against malformed tempo sequences or extreme zoom.
+        const int count = std::min (512, (int) std::ceil ((end - start) / stepInQuarterBeats));
+        for (int n = 0; n < count; ++n)
+        {
+            const double beat = start + n * stepInQuarterBeats;
+            if (beat >= end - 1.0e-9)
+                break;
+            if (beat >= firstBeat - 1.0e-9 && beat <= lastBeat + 1.0e-9)
+                handleBeat (beat);
         }
     }
 }
