@@ -30,6 +30,11 @@ public:
     }
 
     std::function<void()> onClose;
+    std::function<bool(const KeyPress&)> onAppearanceKey;
+    bool keyPressed (const KeyPress& key) override
+    {
+        return (onAppearanceKey && onAppearanceKey (key)) || DocumentWindow::keyPressed (key);
+    }
     void closeButtonPressed() override { if (onClose) onClose(); }
 };
 
@@ -68,7 +73,7 @@ public:
     {
         if (key != KeyPress::upKey && key != KeyPress::downKey)
             return false;
-        resizePane (getSize() + (key == KeyPress::upKey ? 16 : -16));
+        resizePane (getSize() + studio::appearance.px (key == KeyPress::upKey ? 16 : -16));
         return true;
     }
 
@@ -78,12 +83,71 @@ private:
     int initialSize = 0;
 };
 
+class AudioSettingsView final : public Viewport
+{
+public:
+    explicit AudioSettingsView (AudioDeviceManager& manager)
+        : selector (manager, 0, 512, 1, 512, false, false, true, true)
+    {
+        selector.setItemHeight (studio::appearance.control (24));
+        setScrollBarThickness (studio::appearance.scrollbar());
+        setScrollBarsShown (true, false);
+        setViewedComponent (&selector, false);
+    }
+
+    ~AudioSettingsView() override { setViewedComponent (nullptr); }
+
+    void resized() override
+    {
+        Viewport::resized();
+        // AudioDeviceSelectorComponent lays out its controls and updates its
+        // own height, including when the device or visible tabs change.
+        selector.setSize (jmax (1, getWidth() - getScrollBarThickness()), selector.getHeight());
+    }
+
+private:
+    AudioDeviceSelectorComponent selector;
+};
+
 class StudioView final : public Component, private Timer
 {
 public:
     StudioView()
     {
         setLookAndFeel (&style);
+        LookAndFeel::setDefaultLookAndFeel (&style);
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
+                                prefs.getIntValue ("studio.textScale", 100));
+        workspaceHeight = studio::appearance.px (workspaceHeight);
+        railViewport.setViewedComponent (&railContent, false);
+        railViewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (railViewport);
+        workspaceViewport.setViewedComponent (&workspaceBody, false);
+        workspaceViewport.setScrollBarsShown (true, false);
+        addChildComponent (workspaceViewport);
+        addAndMakeVisible (appearanceButton);
+        addChildComponent (projectMenu);
+        addChildComponent (trackMenu);
+        addChildComponent (dockMenu);
+        appearanceButton.onClick = [this] { showAppearance(); };
+        projectMenu.onClick = [this]
+        {
+            showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
+                                           &audioSettings, &plugins, &monitorButton });
+        };
+        trackMenu.onClick = [this]
+        {
+            showCommandMenu (trackMenu, { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions });
+        };
+        dockMenu.onClick = [this]
+        {
+            if (workspaceLinks[0].isVisible() || collapsedDockLinks)
+                showCommandMenu (dockMenu, { &compactButton, &splitButton, &expandedButton, &closeWorkspace,
+                                             &workspaceLinks[0], &workspaceLinks[1] });
+            else
+                showCommandMenu (dockMenu, { &compactButton, &splitButton, &expandedButton, &closeWorkspace });
+        };
         setWantsKeyboardFocus (true);
         for (auto* control : { &newProject, &openProject, &saveProject, &saveAsProject,
                                &audioSettings, &plugins,
@@ -122,7 +186,7 @@ public:
             message.setText ("ARIA state confirmed. Save is enabled.", dontSendNotification);
             resized();
         };
-        addChildComponent (monitor);
+        workspaceBody.addChildComponent (monitor);
         monitorButton.onClick = [this]
         {
             if (monitorWindow != nullptr && monitorWindow->isVisible())
@@ -134,10 +198,10 @@ public:
         };
         for (const auto& item : railItems())
         {
-            addAndMakeVisible (*item.button);
+            railContent.addAndMakeVisible (*item.button);
             item.button->onClick = [this, destination = item.destination] { toggleWorkspace (destination); };
         }
-        addAndMakeVisible (moreButton);
+        railContent.addAndMakeVisible (moreButton);
         moreButton.onClick = [this] { showMoreWorkspaces(); };
         addAndMakeVisible (closeWorkspace);
         closeWorkspace.onClick = [this] { showWorkspace (Workspace::closed); };
@@ -148,9 +212,9 @@ public:
         }
         addChildComponent (workspaceSummary);
         addChildComponent (placeholder);
-        addChildComponent (browser);
-        addChildComponent (channelInspector);
-        addChildComponent (mixer);
+        workspaceBody.addChildComponent (browser);
+        workspaceBody.addChildComponent (channelInspector);
+        workspaceBody.addChildComponent (mixer);
         configureInstrumentWorkflow();
         for (size_t index = 0; index < workspaceLinks.size(); ++index)
         {
@@ -172,7 +236,7 @@ public:
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
-            workspaceHeight = jlimit (minimumSplitHeight, splitLimit, size);
+            workspaceHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
             setDockMode (DockMode::split);
         };
         addAndMakeVisible (trackPicker);
@@ -191,7 +255,7 @@ public:
 
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
-        addAndMakeVisible (piano);
+        workspaceBody.addChildComponent (piano);
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
         for (auto* label : { &title, &message, &trackDetails, &workspaceTitle })
@@ -202,6 +266,11 @@ public:
             readout->setValue ("—");
         }
         title.setFont (FontOptions (15.0f, Font::bold));
+        for (auto* label : { &message, &trackDetails, &workspaceSummary, &placeholder })
+        {
+            label->setFont (FontOptions (13.0f));
+            label->setMinimumHorizontalScale (1.0f);
+        }
         title.setText ("Studio 0.2", dontSendNotification);
         workspaceTitle.setFont (FontOptions (15.0f, Font::bold));
         message.setColour (Label::textColourId, studio::colours::secondary);
@@ -239,7 +308,7 @@ public:
         openProject.onClick = [this] { chooseProject (false); };
         saveProject.onClick = [this] { save(); };
         saveAsProject.onClick = [this] { chooseSaveAs(); };
-        audioSettings.onClick = [this] { EngineHelpers::showAudioDeviceSettings (engine); };
+        audioSettings.onClick = [this] { showAudioSettings(); };
         plugins.onClick = [this] { showPlugins(); };
         rewind.onClick = [this] { edit->getTransport().setPosition (0s); };
         play.onClick = [this]
@@ -258,6 +327,7 @@ public:
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
         setSize (1024, 640);
+        applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
         timerCallback();
         startTimerHz (24);
@@ -277,6 +347,9 @@ public:
         pendingPlugin.reset();
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
+        workspaceViewport.setViewedComponent (nullptr);
+        railViewport.setViewedComponent (nullptr);
+        LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
     }
 
@@ -324,11 +397,12 @@ public:
         graphics.drawHorizontalLine (topBar.getBottom() - 1, 0.0f, (float) getWidth());
         graphics.drawVerticalLine (railBounds.getRight() - 1, (float) railBounds.getY(), (float) railBounds.getBottom());
         graphics.setColour (secondary);
-        graphics.setFont (FontOptions (11.0f, Font::bold));
-        graphics.drawText ("Tracks", rulerRow.withWidth (72).reduced (10, 0),
+        const auto& m = studio::appearance;
+        graphics.setFont (studio::uiFont (11.0f, Font::bold));
+        graphics.drawText ("Tracks", rulerTrackLabel.reduced (m.px (5), 0),
                            Justification::centredLeft);
         auto area = ruler;
-        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (10, 0),
+        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (m.px (8), 0),
                            Justification::centredLeft);
         if (editor == nullptr)
         {
@@ -340,7 +414,7 @@ public:
             return;
 
         auto& view = editor->getEditViewState();
-        int lastLabelRight = area.getX() - 50;
+        int lastLabelRight = area.getX() - m.span (50);
         studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
             [&] (const studio::MusicalTick& tick)
             {
@@ -349,13 +423,13 @@ public:
                     return;
                 const bool bar = tick.beatIndex == 0;
                 graphics.setColour (bar ? text : secondary.withAlpha (0.5f));
-                graphics.drawVerticalLine (x, (float) (area.getBottom() - (bar ? 13 : 7)),
+                graphics.drawVerticalLine (x, (float) (area.getBottom() - m.px (bar ? 13 : 7)),
                                             (float) area.getBottom());
                 if (bar && x >= lastLabelRight)
                 {
-                    graphics.drawText (String (tick.barIndex + 1), x + 4, area.getY(), 44,
-                                       area.getHeight() - 5, Justification::centredLeft);
-                    lastLabelRight = x + 42;
+                    graphics.drawText (String (tick.barIndex + 1), x + m.px (4), area.getY(), m.span (44),
+                                       area.getHeight() - m.px (5), Justification::centredLeft);
+                    lastLabelRight = x + m.span (42);
                 }
             });
     }
@@ -394,6 +468,7 @@ public:
 
     bool keyPressed (const KeyPress& key) override
     {
+        if (handleAppearanceKey (key)) return true;
         if (key == KeyPress::spaceKey && play.isEnabled())
         {
             play.onClick();
@@ -422,59 +497,181 @@ public:
 
     void resized() override
     {
+        const auto& m = studio::appearance;
         auto area = getLocalBounds();
-        topBar = area.removeFromTop (88);
-        auto files = topBar.reduced (10, 3).removeFromTop (32);
-        for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject,
-                              &openProject, &newProject })
-            button->setBounds (files.removeFromRight (button == &plugins ? 110 : 88).reduced (2, 2));
+        const auto projectRowHeight = m.control (34);
+        const auto transportWidth = area.getWidth() - m.px (20);
+        const bool showMonitor = transportWidth >= m.span (680);
+        const bool tightTransport = transportWidth < m.span (550);
+        const auto transport = { studio::ToolbarItem { &rewind, tightTransport ? 48 : 58 },
+            studio::ToolbarItem { &play, tightTransport ? 47 : 60 }, studio::ToolbarItem { &record, tightTransport ? 78 : 94 },
+            studio::ToolbarItem { &bars, tightTransport ? 66 : 82 }, studio::ToolbarItem { &position, tightTransport ? 80 : 95 },
+            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 } };
+        const int transportHeight = studio::toolbarHeight (transportWidth, transport);
+        topBar = area.removeFromTop (projectRowHeight + transportHeight + m.px (10));
+
+        auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
+        appearanceButton.setBounds (files.removeFromRight (m.span (110)).reduced (m.px (2), 0));
+        const bool fullFileRow = files.getWidth() >= m.span (735);
+        projectMenu.setVisible (! fullFileRow || ! showMonitor);
+        if (projectMenu.isVisible())
+            projectMenu.setBounds (files.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+        for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &openProject, &newProject })
+        {
+            button->setVisible (fullFileRow);
+            if (fullFileRow)
+                button->setBounds (files.removeFromRight (m.span (button == &plugins ? 110 : 88)).reduced (m.px (2), 0));
+        }
         title.setBounds (files);
 
-        auto controls = topBar.withTrimmedTop (37).reduced (10, 6);
-        rewind.setBounds (controls.removeFromLeft (62).reduced (2, 5));
-        play.setBounds (controls.removeFromLeft (64).reduced (2, 5));
-        record.setBounds (controls.removeFromLeft (115).reduced (2, 5));
-        controls.removeFromLeft (8);
-        bars.setBounds (controls.removeFromLeft (90).reduced (3, 0));
-        position.setBounds (controls.removeFromLeft (101).reduced (3, 0));
-        tempo.setBounds (controls.removeFromLeft (67).reduced (3, 0));
-        meter.setBounds (controls.removeFromLeft (57).reduced (3, 0));
-        monitorButton.setBounds (controls.removeFromRight (124).reduced (2, 5));
+        auto controls = topBar.withTrimmedTop (projectRowHeight + m.px (4)).reduced (m.px (10), 0);
+        monitorButton.setVisible (showMonitor);
+        if (showMonitor)
+            monitorButton.setBounds (controls.removeFromRight (m.span (125)).withHeight (m.control (30)).reduced (m.px (2)));
+        studio::layoutToolbar (controls, transport);
 
-        message.setBounds (area.removeFromBottom (22).reduced (10, 0));
-        ariaBanner = ariaReviewPending ? area.removeFromTop (32) : Rectangle<int>();
+        message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
+        ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
         ariaReviewNotice.setVisible (ariaReviewPending);
         retryAriaButton.setVisible (ariaReviewPending);
         confirmAriaButton.setVisible (ariaReviewPending);
-        auto bannerControls = ariaBanner.reduced (8, 3);
-        confirmAriaButton.setBounds (bannerControls.removeFromRight (114).reduced (2, 1));
-        retryAriaButton.setBounds (bannerControls.removeFromRight (90).reduced (2, 1));
+        auto bannerControls = ariaBanner.reduced (m.px (8), m.px (3));
+        confirmAriaButton.setBounds (bannerControls.removeFromRight (m.span (114)).reduced (m.px (2), 0));
+        retryAriaButton.setBounds (bannerControls.removeFromRight (m.span (90)).reduced (m.px (2), 0));
         ariaReviewNotice.setBounds (bannerControls);
 
-        railBounds = area.removeFromLeft (getWidth() < 1100 ? 66 : 74);
-        auto rail = railBounds.reduced (4, 6);
-        const int tileHeight = getHeight() < 700 ? 48 : 54;
+        railBounds = area.removeFromLeft (m.span (getWidth() < m.px (1100) ? 76 : 80));
+        railViewport.setBounds (railBounds);
+        const int tileHeight = m.px (50) + m.line (11, 1) - m.px (14);
+        railContent.setSize (railViewport.getMaximumVisibleWidth(), tileHeight * 7 + m.px (8));
+        // Reserve the scrollbar only when the complete rail needs it.
+        if (railContent.getHeight() > railBounds.getHeight())
+            railContent.setSize (jmax (1, railBounds.getWidth() - railViewport.getScrollBarThickness()), railContent.getHeight());
+        auto destinations = railContent.getLocalBounds().reduced (m.px (3), m.px (4));
         for (const auto& item : railItems())
-            item.button->setBounds (rail.removeFromTop (tileHeight).reduced (0, 1));
-        moreButton.setBounds (rail.removeFromTop (tileHeight).reduced (0, 1));
+            item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
+        moreButton.setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
         layoutDock (area);
-        arrangementTools = area.removeFromTop (32);
-        auto tools = arrangementTools.reduced (5, 3);
-        trackPicker.setBounds (tools.removeFromLeft (140).reduced (2, 0));
+        arrangementTools = area.removeFromTop (m.control (32));
+        auto tools = arrangementTools.reduced (m.px (5), m.px (2));
+        const bool showAllTrackTools = tools.getWidth() >= m.span (828);
+        trackPicker.setBounds (tools.removeFromLeft (m.span (145)).reduced (m.px (2), 0));
+        zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
+        trackMenu.setVisible (! showAllTrackTools);
+        if (trackMenu.isVisible())
+            trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
         for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions })
-            button->setBounds (tools.removeFromLeft (button == &addAudio ? 69 : 94).reduced (2, 0));
-        zoom.setBounds (tools.removeFromRight (107).reduced (2, 0));
+        {
+            button->setVisible (showAllTrackTools);
+            if (showAllTrackTools)
+                button->setBounds (tools.removeFromLeft (m.span (button == &addAudio ? 69 : 94)).reduced (m.px (2), 0));
+        }
         trackDetails.setBounds (tools);
 
-        rulerRow = area.removeFromTop (26);
+        rulerRow = area.removeFromTop (m.control (26));
         timeline.setBounds (area);
         sizeEditor();
-        ruler = rulerRow.withTrimmedLeft (150).withTrimmedRight (150 + timeline.getScrollBarThickness());
-        arrangementZoomOut.setBounds (rulerRow.getX() + 73, rulerRow.getY() + 2, 34, 22);
-        arrangementZoomIn.setBounds (rulerRow.getX() + 112, rulerRow.getY() + 2, 34, 22);
+        ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (m.trackFooter() + timeline.getScrollBarThickness());
+        auto zoomButtons = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
+        const int zoomWidth = m.span (35);
+        arrangementZoomIn.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
+        arrangementZoomOut.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
+        rulerTrackLabel = zoomButtons;
         repaint();
     }
+
+    void applyAppearance (int scale, int textSize, bool persist)
+    {
+        auto& m = studio::appearance;
+        const auto oldScale = m.interfacePercent();
+        m.set (scale, textSize);
+        workspaceHeight = workspaceHeight * m.interfacePercent() / oldScale;
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.interfaceScale", m.interfacePercent());
+            prefs.setValue ("studio.textScale", m.textPercent());
+            prefs.saveIfNeeded();
+        }
+        for (auto* view : { &timeline, &railViewport, &workspaceViewport })
+            view->setScrollBarThickness (m.scrollbar());
+        browser.appearanceChanged();
+        channelInspector.appearanceChanged();
+        mixer.appearanceChanged();
+        piano.appearanceChanged();
+        monitor.appearanceChanged();
+        fitFloatingMonitor();
+        if (editor != nullptr) editor->refreshStudioLayout();
+        resized();
+        repaint();
+    }
+
+    bool handleAppearanceKey (const KeyPress& key)
+    {
+        const auto mods = key.getModifiers();
+        if (! mods.isCommandDown() || ! mods.isAltDown() || mods.isShiftDown()) return false;
+        const auto& m = studio::appearance;
+        const auto code = key.getKeyCode();
+        const bool isIncrease = code == '=' || code == '+' || code == KeyPress::numberPadAdd;
+        const bool isDecrease = code == '-' || code == KeyPress::numberPadSubtract;
+        const bool isReset = code == '0' || code == KeyPress::numberPad0;
+        if (! (isIncrease || isDecrease || isReset)) return false;
+        // Resizing during a pointer gesture would move a clip or fader under
+        // the pointer. Finish the current gesture before adjusting appearance.
+        if (ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown()) return true;
+        if (isIncrease)
+            applyAppearance (m.adjacentInterfacePercent (1), m.textPercent(), true);
+        else if (isDecrease)
+            applyAppearance (m.adjacentInterfacePercent (-1), m.textPercent(), true);
+        else
+            applyAppearance (100, m.textPercent(), true);
+        return true;
+    }
+
+    void showAppearance()
+    {
+        PopupMenu scale, textSize;
+        const auto& metrics = studio::appearance;
+        auto safe = SafePointer<StudioView> (this);
+        for (auto percent : studio::AppearanceMetrics::interfaceOptions)
+            scale.addItem (String (percent) + "%", true, metrics.interfacePercent() == percent,
+                [safe, percent] { if (safe != nullptr) safe->applyAppearance (percent, studio::appearance.textPercent(), true); });
+        static constexpr const char* labels[] { "Standard", "Large", "Extra Large" };
+        for (size_t i = 0; i < studio::AppearanceMetrics::textOptions.size(); ++i)
+        {
+            const auto percent = studio::AppearanceMetrics::textOptions[i];
+            textSize.addItem (labels[i], true, metrics.textPercent() == percent,
+                [safe, percent] { if (safe != nullptr) safe->applyAppearance (studio::appearance.interfacePercent(), percent, true); });
+        }
+        PopupMenu menu;
+        menu.addSubMenu ("Interface Scale", scale);
+        menu.addSubMenu ("Text Size", textSize);
+        menu.addSeparator();
+        menu.addItem ("Increase Interface Scale", metrics.interfacePercent() < 175, false,
+            [safe] { if (safe != nullptr) safe->applyAppearance (studio::appearance.adjacentInterfacePercent (1),
+                                                                studio::appearance.textPercent(), true); });
+        menu.addItem ("Decrease Interface Scale", metrics.interfacePercent() > 100, false,
+            [safe] { if (safe != nullptr) safe->applyAppearance (studio::appearance.adjacentInterfacePercent (-1),
+                                                                studio::appearance.textPercent(), true); });
+        menu.addItem ("Reset Appearance", [safe] { if (safe != nullptr) safe->applyAppearance (100, 100, true); });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&appearanceButton));
+    }
+
+    void showCommandMenu (TextButton& anchor, std::initializer_list<TextButton*> commands)
+    {
+        PopupMenu menu;
+        for (auto* button : commands)
+        {
+            const SafePointer<TextButton> safe (button);
+            menu.addItem (button->getButtonText(), button->isEnabled(), false, [safe]
+            {
+                if (safe != nullptr && safe->isEnabled() && safe->onClick) safe->onClick();
+            });
+        }
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
 
 private:
     enum class Workspace
@@ -482,7 +679,7 @@ private:
         closed, instruments, channel, stage, articulations, piano, mix, midi,
         rooms, microphones, synth, sampler, effects, templates, picture
     };
-    enum class DockMode { compact, split, expanded };
+    using DockMode = studio::DockMode;
 
     studio::StudioLookAndFeel style;
     Workspace workspace = Workspace::closed;
@@ -490,7 +687,12 @@ private:
     WorkspaceDivider workspaceDivider;
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
-    Rectangle<int> topBar, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow;
+    Rectangle<int> topBar, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
+    Component railContent, workspaceBody;
+    TooltipWindow tooltips { this, 650 };
+    Viewport railViewport, workspaceViewport;
+    bool collapsedDockLinks = false;
+    TextButton appearanceButton { "Appearance…" }, projectMenu { "Project…" }, trackMenu { "Tracks…" }, dockMenu { "Layout…" };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -616,42 +818,65 @@ private:
 
     void layoutDock (Rectangle<int>& arrangement)
     {
+        const auto& m = studio::appearance;
         const int available = arrangement.getHeight();
-        const bool richEditor = workspace == Workspace::instruments || workspace == Workspace::channel || workspace == Workspace::mix;
-        const auto minimumHeight = richEditor ? 237 : minimumSplitHeight;
-        splitLimit = jmax (minimumSplitHeight, available - 168);
-        int panelHeight = 0;
-        if (workspace != Workspace::closed)
-        {
-            if (dockMode == DockMode::compact)
-                panelHeight = 65;
-            else if (dockMode == DockMode::expanded)
-                panelHeight = jmax (minimumSplitHeight, available - 122);
-            else
-                panelHeight = jlimit (jmin (minimumHeight, splitLimit), splitLimit, workspaceHeight);
-        }
+        const int headerHeight = m.control (34);
+        const int dividerHeight = m.px (9);
+        const auto room = m.dockRoom (available, workspaceHeight, dockMode);
+        splitLimit = room.splitLimit;
+        const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
         workspacePanel = arrangement.removeFromBottom (panelHeight);
-        workspaceDivider.setBounds (panelHeight > 0 ? arrangement.removeFromBottom (9) : Rectangle<int>());
+        workspaceDivider.setBounds (panelHeight > 0 ? arrangement.removeFromBottom (dividerHeight) : Rectangle<int>());
         auto body = workspacePanel;
-        auto header = body.removeFromTop (34).reduced (9, 4);
-        closeWorkspace.setBounds (header.removeFromRight (52).reduced (2, 0));
-        expandedButton.setBounds (header.removeFromRight (82).reduced (2, 0));
-        splitButton.setBounds (header.removeFromRight (48).reduced (2, 0));
-        compactButton.setBounds (header.removeFromRight (76).reduced (2, 0));
+        auto header = body.removeFromTop (headerHeight).reduced (m.px (9), m.px (3));
+        const bool hasLinks = contextLinks()[0].destination != Workspace::closed;
+        const bool collapse = header.getWidth() < m.span (hasLinks ? 676 : 470);
+        collapsedDockLinks = hasLinks && collapse;
+        dockMenu.setVisible (panelHeight > 0 && collapse);
+        for (const auto& item : dockItems())
+            item.button->setVisible (panelHeight > 0 && ! collapse);
+        closeWorkspace.setVisible (panelHeight > 0 && ! collapse);
+        if (dockMenu.isVisible())
+            dockMenu.setBounds (header.removeFromRight (m.span (96)));
+        if (! collapse)
+        {
+            closeWorkspace.setBounds (header.removeFromRight (m.span (54)).reduced (m.px (2), 0));
+            expandedButton.setBounds (header.removeFromRight (m.span (85)).reduced (m.px (2), 0));
+            splitButton.setBounds (header.removeFromRight (m.span (48)).reduced (m.px (2), 0));
+            compactButton.setBounds (header.removeFromRight (m.span (76)).reduced (m.px (2), 0));
+        }
         for (auto it = workspaceLinks.rbegin(); it != workspaceLinks.rend(); ++it)
+        {
+            it->setVisible (panelHeight > 0 && hasLinks && ! collapse);
             if (it->isVisible())
-                it->setBounds (header.removeFromRight (94).reduced (2, 0));
+                it->setBounds (header.removeFromRight (m.span (94)).reduced (m.px (2), 0));
+        }
         workspaceTitle.setBounds (header);
-        workspaceSummary.setBounds (body.reduced (9, 1));
-        placeholder.setBounds (body.reduced (12, 0));
-        if (piano.isVisible())
-            piano.setBounds (body);
-        if (monitor.getParentComponent() == this && monitor.isVisible())
-            monitor.setBounds (body);
+        workspaceSummary.setBounds (body.reduced (m.px (9), m.px (1)));
+        placeholder.setBounds (body.reduced (m.px (12), 0));
 
-        if (browser.isVisible()) browser.setBounds (body);
-        if (channelInspector.isVisible()) channelInspector.setBounds (body);
-        if (mixer.isVisible()) mixer.setBounds (body);
+        const bool dockedMonitor = monitor.getParentComponent() == &workspaceBody && monitor.isVisible();
+        const auto minimumContentHeight = [this, dockedMonitor] (int width)
+        {
+            if (browser.isVisible()) return browser.minimumContentHeight (width);
+            if (channelInspector.isVisible()) return channelInspector.minimumContentHeight (width);
+            if (mixer.isVisible()) return mixer.minimumContentHeight();
+            if (piano.isVisible()) return piano.minimumContentHeight (width);
+            return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
+        };
+        auto width = body.getWidth();
+        auto height = minimumContentHeight (width);
+        workspaceViewport.setVisible (height > 0 && ! body.isEmpty());
+        workspaceViewport.setBounds (body);
+        if (height > body.getHeight())
+        {
+            width = jmax (1, width - workspaceViewport.getScrollBarThickness());
+            height = minimumContentHeight (width);
+        }
+        workspaceBody.setSize (width, jmax (height, body.getHeight()));
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano })
+            if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
+        if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
     }
 
     void toggleWorkspace (Workspace destination)
@@ -683,6 +908,7 @@ private:
     {
         if (next == Workspace::piano && dockMode == DockMode::compact)
             dockMode = DockMode::split;
+        if (workspace != next) workspaceViewport.setViewPosition (0, 0);
         workspace = next;
         syncWorkspace();
     }
@@ -749,7 +975,7 @@ private:
             piano.silencePreview();
         piano.setVisible (editingMidi && ! compact);
         monitorButton.setToggleState (monitoring, dontSendNotification);
-        if (monitor.getParentComponent() == this)
+        if (monitor.getParentComponent() == &workspaceBody)
         {
             monitor.setVisible (monitoring && ! compact);
             monitor.setCaptureOpen (monitoring);
@@ -773,10 +999,20 @@ private:
         if (auto clip = track->insertMIDIClip ("MIDI Clip", { start, end }, &selection))
         {
             piano.setClip (clip);
-            workspaceHeight = 360;
+            workspaceHeight = studio::appearance.px (360);
             showWorkspace (Workspace::piano);
             message.setText ("Draw notes in the piano roll, then Save to keep your edits.", dontSendNotification);
         }
+    }
+
+    void fitFloatingMonitor()
+    {
+        if (monitorWindow == nullptr || monitor.getParentComponent() != monitorWindow.get())
+            return;
+        const int height = monitor.minimumContentHeight (monitor.getWidth()) + studio::appearance.px (40);
+        monitorWindow->setResizeLimits (770, jmax (200, height), 2200, 1000);
+        if (monitorWindow->getHeight() < height)
+            monitorWindow->setSize (monitorWindow->getWidth(), height);
     }
 
     void toggleMonitorDock()
@@ -785,7 +1021,7 @@ private:
         {
             monitorWindow->setVisible (false);
             monitorWindow->clearContentComponent();
-            addAndMakeVisible (monitor);
+            workspaceBody.addAndMakeVisible (monitor);
             monitor.setFloating (false);
             if (dockMode == DockMode::compact)
                 dockMode = DockMode::split;
@@ -797,12 +1033,14 @@ private:
             {
                 monitorWindow = std::make_unique<MidiMonitorWindow>();
                 monitorWindow->setLookAndFeel (&style);
+                monitorWindow->onAppearanceKey = [this] (const KeyPress& key) { return handleAppearanceKey (key); };
                 monitorWindow->onClose = [this] { toggleMonitorDock(); };
                 monitorWindow->centreWithSize (860, 350);
             }
             monitorWindow->setContentNonOwned (&monitor, false);
             monitor.setVisible (true);
             monitor.setFloating (true);
+            fitFloatingMonitor();
             monitorWindow->setVisible (true);
             monitorWindow->toFront (true);
             showWorkspace (Workspace::closed);
@@ -820,7 +1058,7 @@ private:
         {
             const int width = jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness());
             const int height = jmax (timeline.getMaximumVisibleHeight(),
-                                     52 * (int) te::getAudioTracks (*edit).size());
+                                     (studio::appearance.trackHeight() + studio::appearance.trackGap()) * editor->getVisibleTrackCount());
             if (editor->getWidth() != width || editor->getHeight() != height)
                 editor->setSize (width, height);
         }
@@ -1012,7 +1250,7 @@ private:
         menu.addItem (7, "Undo", edit != nullptr && edit->getUndoManager().canUndo());
         menu.addItem (8, "Redo", edit != nullptr && edit->getUndoManager().canRedo());
         Component::SafePointer<StudioView> safe (this);
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&regionActions),
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (regionActions.isVisible() ? &regionActions : &trackMenu),
                             [safe] (int choice)
                             {
                                 if (safe == nullptr || choice == 0 || ! safe->canEditRegions())
@@ -1064,7 +1302,8 @@ private:
         {
             auto& transport = edit->getTransport();
             play.setButtonText (transport.isPlaying() ? "Stop" : "Play");
-            record.setButtonText (recording ? "Stop Recording" : "Record");
+            record.setButtonText (recording ? "Stop Rec" : "Record");
+            record.setTooltip (recording ? "Stop recording and keep the take" : "Start recording");
             record.setToggleState (recording, dontSendNotification);
             const auto now = transport.getPosition();
             piano.setTransportPosition (now);
@@ -1093,7 +1332,7 @@ private:
             if (piano.getClip() != primary)
             {
                 piano.setClip (primary);
-                workspaceHeight = 360;
+                workspaceHeight = studio::appearance.px (360);
                 showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
@@ -2075,6 +2314,20 @@ private:
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
     }
 
+    void showAudioSettings()
+    {
+        DialogWindow::LaunchOptions options;
+        options.dialogTitle = "Audio Settings";
+        options.dialogBackgroundColour = studio::colours::canvas;
+        options.escapeKeyTriggersCloseButton = true;
+        options.useNativeTitleBar = true;
+        options.resizable = true;
+        options.content.setOwned (new AudioSettingsView (engine.getDeviceManager().deviceManager));
+        options.content->setSize (jmin (getWidth() - 32, studio::appearance.span (420)),
+                                  jmin (getHeight() - 60, studio::appearance.px (580)));
+        options.launchAsync();
+    }
+
     void showPlugins()
     {
         auto& manager = engine.getPluginManager();
@@ -2084,10 +2337,15 @@ private:
         options.escapeKeyTriggersCloseButton = true;
         options.useNativeTitleBar = true;
         options.resizable = true;
-        options.content.setOwned (new PluginListComponent (manager.pluginFormatManager,
+        auto scanner = std::make_unique<PluginListComponent> (manager.pluginFormatManager,
             manager.knownPluginList, engine.getTemporaryFileManager().getTempFile ("PluginScanDeadMansPedal"),
-            std::addressof (engine.getPropertyStorage().getPropertiesFile()), true));
-        options.content->setSize (760, 480);
+            std::addressof (engine.getPropertyStorage().getPropertiesFile()), true);
+        scanner->getTableListBox().setRowHeight (studio::appearance.line (14, 7));
+        scanner->getTableListBox().setHeaderHeight (studio::appearance.control (24, 12));
+        scanner->getTableListBox().getViewport()->setScrollBarThickness (studio::appearance.scrollbar());
+        options.content.setOwned (scanner.release());
+        options.content->setSize (jmin (getWidth() - 32, studio::appearance.px (760)),
+                                  jmin (getHeight() - 60, studio::appearance.px (480)));
         options.launchAsync();
     }
 };

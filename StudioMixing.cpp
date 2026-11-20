@@ -31,6 +31,31 @@ PluginType* lastTrackPlugin (te::AudioTrack& track)
     return nullptr;
 }
 
+int channelColumns (int width)
+{
+    return width >= appearance.span (785) ? 5 : width >= appearance.span (340) ? 2 : 1;
+}
+
+int cardHeight (int card)
+{
+    const auto& m = appearance;
+    const int heading = m.line (12, 4);
+    const int detail = 2 * m.line (12, 1);
+    const int control = m.control (23);
+    if (card == 0) return heading + detail + 3 * control + m.px (6);
+    if (card == 2) return heading + control + m.px (6);
+    if (card == 3) return heading + detail + m.px (6);
+    return heading + detail + control + m.px (6);
+}
+
+int cardRowHeight (int start, int count)
+{
+    int height = 0;
+    for (int i = start; i < jmin (start + count, 5); ++i)
+        height = jmax (height, cardHeight (i));
+    return height;
+}
+
 class StereoMeter final : public Component, public SettableTooltipClient
 {
 public:
@@ -64,10 +89,11 @@ public:
 
     void paint (Graphics& g) override
     {
-        auto area = getLocalBounds().reduced (2);
+        auto area = getLocalBounds().reduced (appearance.px (2));
         if (meter == nullptr)
         {
             g.setColour (colours::secondary);
+            g.setFont (uiFont (11.0f));
             g.drawText ("—", area, Justification::centred);
             return;
         }
@@ -166,20 +192,26 @@ void MixControls::refresh (te::VolumeAndPanPlugin* plugin, bool enabled)
 
 void MixControls::resized()
 {
+    const auto& m = appearance;
+    const auto valueWidth = m.span (70);
+    const auto valueHeight = m.line (12, 2);
     auto area = getLocalBounds();
+    for (auto* slider : { &volume, &pan })
+        slider->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
+                                 false, valueWidth, valueHeight);
     if (vertical)
     {
-        panLabel.setBounds (area.removeFromTop (13));
-        pan.setBounds (area.removeFromTop (33));
-        volumeLabel.setBounds (area.removeFromTop (13));
+        panLabel.setBounds (area.removeFromTop (m.line (11, 1)));
+        pan.setBounds (area.removeFromTop (m.control (31, 12)));
+        volumeLabel.setBounds (area.removeFromTop (m.line (11, 1)));
         volume.setBounds (area);
     }
     else
     {
-        auto volumeRow = area.removeFromTop (24);
-        volumeLabel.setBounds (volumeRow.removeFromLeft (58));
+        auto volumeRow = area.removeFromTop (m.control (25));
+        volumeLabel.setBounds (volumeRow.removeFromLeft (m.span (61)));
         volume.setBounds (volumeRow);
-        panLabel.setBounds (area.removeFromLeft (58));
+        panLabel.setBounds (area.removeFromLeft (m.span (61)));
         pan.setBounds (area);
     }
 }
@@ -195,7 +227,7 @@ ChannelInspector::ChannelInspector (TrackActions& callbacks) : actions (callback
     {
         label->setColour (Label::textColourId, colours::secondary);
         label->setFont (FontOptions (11.5f));
-        label->setMinimumHorizontalScale (0.9f);
+        label->setMinimumHorizontalScale (1.0f);
     }
     audioInput.onClick = [this] { actions.showMenu (id, TrackMenu::audioInput, audioInput); };
     midiInput.onClick = [this] { actions.showMenu (id, TrackMenu::midiInput, midiInput); };
@@ -229,6 +261,9 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     auto* plugin = selected != nullptr ? findInstrument (*selected) : nullptr;
     instrument.setText (plugin != nullptr ? plugin->getName() : selected != nullptr ? "No instrument" : "—", dontSendNotification);
     output.setText (selected != nullptr ? outputLabel (*selected) : "—", dontSendNotification);
+    instrument.setTooltip (instrument.getText());
+    output.setTooltip (output.getText());
+    identity.setTooltip (identity.getText());
     StringArray assigned, sendNames;
     bool isArmed = false, isMonitoring = false, fixedMonitor = false;
     if (selected != nullptr)
@@ -254,6 +289,7 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     sends.setText (sendNames.isEmpty() ? "No sends" : sendNames.joinIntoString (" · "), dontSendNotification);
     sends.setTooltip (sendNames.joinIntoString ("\n"));
     ariaStatus.setText (recovery, dontSendNotification);
+    ariaStatus.setTooltip (recovery);
     const bool configurable = canRoute && selected != nullptr && ! selected->isFrozen (te::Track::anyFreeze);
     for (auto* button : { &audioInput, &midiInput, &routing, &inserts })
         button->setEnabled (configurable);
@@ -265,47 +301,73 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     mix.refresh (selected != nullptr ? lastTrackPlugin<te::VolumeAndPanPlugin> (*selected) : nullptr, ready);
 }
 
+int ChannelInspector::minimumContentHeight (int width) const
+{
+    const auto& m = appearance;
+    int height = m.line (14, 5) + 2 * m.control (25) + m.line (12, 6) + m.px (4);
+    const int count = channelColumns (width);
+    for (int i = 0; i < 5; i += count)
+        height += cardRowHeight (i, count) + m.px (3);
+    return height;
+}
+
+void ChannelInspector::appearanceChanged()
+{
+    resized();
+    repaint();
+}
+
 void ChannelInspector::resized()
 {
-    auto area = getLocalBounds().reduced (9, 2);
-    identity.setBounds (area.removeFromTop (23));
-    ariaStatus.setBounds (area.removeFromBottom (19));
-    auto bottom = area.removeFromBottom (49);
-    mix.setBounds (bottom.removeFromLeft (jmin (480, bottom.getWidth())));
-    for (size_t i = 0; i < columns.size(); ++i)
-        columns[i] = area.removeFromLeft (area.getWidth() / (int) (columns.size() - i)).reduced (2, 0);
-    auto input = columns[0].reduced (4, 2).withTrimmedTop (21);
-    inputSummary.setBounds (input.removeFromTop (18));
-    audioInput.setBounds (input.removeFromTop (22));
-    midiInput.setBounds (input.removeFromTop (22));
-    arm.setBounds (input.removeFromLeft (45).removeFromTop (21));
-    monitor.setBounds (input.removeFromTop (21).reduced (2, 0));
-    auto instr = columns[1].reduced (4, 2).withTrimmedTop (21);
-    instrument.setBounds (instr.removeFromTop (20));
-    editor.setBounds (instr.removeFromTop (23));
-    inserts.setBounds (columns[2].reduced (4, 2).withTrimmedTop (22).removeFromTop (23));
-    sends.setBounds (columns[3].reduced (4, 2).withTrimmedTop (21).removeFromTop (50));
-    auto out = columns[4].reduced (4, 2).withTrimmedTop (21);
-    output.setBounds (out.removeFromTop (20));
-    routing.setBounds (out.removeFromTop (23));
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (8), m.px (2));
+    identity.setBounds (area.removeFromTop (m.line (14, 5)));
+    const int count = channelColumns (getWidth());
+    for (int start = 0; start < 5; start += count)
+    {
+        auto row = area.removeFromTop (cardRowHeight (start, count));
+        area.removeFromTop (m.px (3));
+        for (int i = 0; i < count && start + i < 5; ++i)
+            columns[(size_t) (start + i)] = row.removeFromLeft (row.getWidth() / (count - i)).reduced (m.px (2), 0);
+    }
+    auto bottom = area.removeFromTop (2 * m.control (25));
+    mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
+    ariaStatus.setBounds (area.removeFromTop (m.line (12, 6)));
+    const auto heading = m.line (12, 4);
+    const auto detail = 2 * m.line (12, 1);
+    const auto control = m.control (23);
+    auto input = columns[0].reduced (m.px (4), m.px (2)).withTrimmedTop (heading);
+    inputSummary.setBounds (input.removeFromTop (detail));
+    audioInput.setBounds (input.removeFromTop (control));
+    midiInput.setBounds (input.removeFromTop (control));
+    auto toggles = input.removeFromTop (control);
+    arm.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3));
+    monitor.setBounds (toggles.reduced (m.px (2), 0));
+    auto instr = columns[1].reduced (m.px (4), m.px (2)).withTrimmedTop (heading);
+    instrument.setBounds (instr.removeFromTop (detail));
+    editor.setBounds (instr.removeFromTop (control));
+    inserts.setBounds (columns[2].reduced (m.px (4), m.px (2)).withTrimmedTop (heading).withHeight (control));
+    sends.setBounds (columns[3].reduced (m.px (4), m.px (2)).withTrimmedTop (heading).withHeight (detail));
+    auto out = columns[4].reduced (m.px (4), m.px (2)).withTrimmedTop (heading);
+    output.setBounds (out.removeFromTop (detail));
+    routing.setBounds (out.removeFromTop (control));
 }
 
 void ChannelInspector::paint (Graphics& g)
 {
     constexpr const char* stages[] { "Input", "Instrument", "Inserts", "Sends", "Output" };
-    g.setFont (FontOptions (12.0f, Font::bold));
+    const auto& m = appearance;
+    const int count = channelColumns (getWidth());
+    g.setFont (uiFont (12.0f, Font::bold));
     for (size_t i = 0; i < columns.size(); ++i)
     {
         g.setColour (i == 1 ? colours::selected : colours::control);
-        g.fillRoundedRectangle (columns[i].toFloat(), 4.0f);
+        g.fillRoundedRectangle (columns[i].toFloat(), (float) m.px (4));
         g.setColour (colours::text);
-        g.drawText (stages[i], columns[i].reduced (7, 0).removeFromTop (22), Justification::centredLeft);
-        if (i + 1 < columns.size())
-        {
-            const auto right = columns[i].withLeft (columns[i].getRight() - 16).withHeight (22);
-            g.setColour (colours::secondary);
-            g.drawText ("→", right, Justification::centred);
-        }
+        auto heading = columns[i].reduced (m.px (7), 0).withHeight (m.line (12, 4));
+        if (i + 1 < columns.size() && ((int) i + 1) % count != 0)
+            g.drawText ("→", heading.removeFromRight (m.span (17)), Justification::centred);
+        g.drawFittedText (stages[i], heading, Justification::centredLeft, 1, 1.0f);
     }
 }
 
@@ -367,11 +429,13 @@ public:
         else if (track != nullptr)
         {
             name.setButtonText (track->getName());
+            name.setTooltip (track->getName());
             auto* instrument = findInstrument (*track);
             identity.setText (instrument != nullptr ? instrument->getName() : "Audio / MIDI", dontSendNotification);
             if (instrument != nullptr) identity.setTooltip (instrument->getName());
             else identity.setTooltip ({});
             out.setButtonText (outputLabel (*track));
+            out.setTooltip (out.getButtonText());
             out.setEnabled (editable);
             inserts.setEnabled (editable);
             mute.setToggleState (track->isMuted (false), dontSendNotification);
@@ -404,19 +468,20 @@ public:
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (6, 4);
-        name.setBounds (area.removeFromTop (22));
-        identity.setBounds (area.removeFromTop (17));
-        if (! masterStrip) inserts.setBounds (area.removeFromTop (22));
-        else area.removeFromTop (22);
-        out.setBounds (area.removeFromBottom (22));
-        auto toggles = area.removeFromBottom (22);
+        const auto& m = appearance;
+        auto area = getLocalBounds().reduced (m.px (6), m.px (4));
+        name.setBounds (area.removeFromTop (m.control (22)));
+        identity.setBounds (area.removeFromTop (m.line (11, 3)));
+        if (! masterStrip) inserts.setBounds (area.removeFromTop (m.control (22)));
+        else area.removeFromTop (m.control (22));
+        out.setBounds (area.removeFromBottom (m.control (22)));
+        auto toggles = area.removeFromBottom (m.control (22));
         if (! masterStrip)
         {
-            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (1));
-            solo.setBounds (toggles.reduced (1));
+            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
+            solo.setBounds (toggles.reduced (m.px (1)));
         }
-        meter.setBounds (area.removeFromRight (20).withTrimmedTop (49));
+        meter.setBounds (area.removeFromRight (m.px (20)).withTrimmedTop (2 * m.line (11, 1) + m.control (31, 12)));
         mix.setBounds (area);
     }
 
@@ -499,11 +564,28 @@ void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack*
     master->refresh (nullptr, false, ready, false);
 }
 
+void StudioMixer::appearanceChanged()
+{
+    viewport.setScrollBarThickness (appearance.scrollbar());
+    resized();
+    for (auto& strip : strips) strip->resized();
+    master->resized();
+    repaint();
+}
+
+int StudioMixer::minimumContentHeight() const
+{
+    const auto& m = appearance;
+    return m.px (12) + 4 * m.control (22) + m.line (11, 3) + 2 * m.line (11, 1)
+        + m.control (31, 12) + m.line (12, 2) + m.px (33) + m.scrollbar();
+}
+
 void StudioMixer::resized()
 {
-    auto area = getLocalBounds().reduced (7, 2);
-    const int stripWidth = getWidth() < 950 ? 118 : 134;
-    master->setBounds (area.removeFromRight (stripWidth + 4).withTrimmedBottom (viewport.getScrollBarThickness()));
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (7), m.px (2));
+    const int stripWidth = m.span (getWidth() < m.span (950) ? 118 : 134);
+    master->setBounds (area.removeFromRight (stripWidth + m.px (4)).withTrimmedBottom (viewport.getScrollBarThickness()));
     viewport.setBounds (area);
     const auto height = jmax (0, area.getHeight() - viewport.getScrollBarThickness());
     stripBank.setSize (jmax (area.getWidth(), (int) strips.size() * stripWidth), height);

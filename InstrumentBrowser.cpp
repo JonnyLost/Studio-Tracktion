@@ -59,12 +59,8 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     familyList.setModel (&familyRows);
     typeList.setModel (&typeRows);
     resultList.setModel (&resultRows);
-    familyList.setRowHeight (24);
-    typeList.setRowHeight (24);
-    resultList.setRowHeight (34);
-
     for (Component* item : std::initializer_list<Component*> {
-             &search, &compactType, &manage, &detailsTitle, &instrumentName, &vendor,
+             &search, &compactFamily, &compactType, &manage, &detailsTitle, &instrumentName, &vendor,
              &explanation, &status, &count, &load, &add })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
@@ -72,6 +68,13 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     search.setColour (TextEditor::backgroundColourId, colours::control);
     search.setColour (TextEditor::outlineColourId, colours::divider);
     search.onTextChange = [this] { rebuildResults(); };
+    compactFamily.setTitle ("Instrument family");
+    compactFamily.onChange = [this]
+    {
+        const auto index = compactFamily.getSelectedItemIndex();
+        if (isPositiveAndBelow (index, families.size()))
+            familyList.selectRow (index);
+    };
     compactType.setTitle ("Instrument type");
     compactType.onChange = [this]
     {
@@ -85,13 +88,16 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     for (auto* label : { &detailsTitle, &vendor, &explanation, &status, &count })
         label->setColour (Label::textColourId, colours::secondary);
     explanation.setMinimumHorizontalScale (1.0f);
-    status.setMinimumHorizontalScale (0.85f);
+    status.setMinimumHorizontalScale (1.0f);
+    vendor.setMinimumHorizontalScale (1.0f);
+    instrumentName.setMinimumHorizontalScale (1.0f);
     count.setJustificationType (Justification::centredRight);
     load.setColour (TextButton::buttonColourId, colours::action);
     load.setColour (TextButton::textColourOffId, colours::rail);
     load.onClick = [this] { if (const auto* e = selected(); e && e->available && loadInstrument) loadInstrument (e->plugin, false); };
     add.onClick = [this] { if (const auto* e = selected(); e && e->available && loadInstrument) loadInstrument (e->plugin, true); };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
+    appearanceChanged();
     known.addChangeListener (this);
     rebuildCatalog();
 }
@@ -144,6 +150,9 @@ void InstrumentBrowser::rebuildCatalog()
         ScopedValueSetter<bool> updating (refreshing, true);
         familyList.updateContent();
         familyList.selectRow (families.indexOf (family));
+        compactFamily.clear (dontSendNotification);
+        compactFamily.addItemList (families, 1);
+        compactFamily.setSelectedItemIndex (families.indexOf (family), dontSendNotification);
     }
     rebuildTypes();
 }
@@ -223,6 +232,8 @@ void InstrumentBrowser::updateDetails()
     const bool available = e != nullptr && e->available;
     instrumentName.setText (e != nullptr ? e->name : "No results", dontSendNotification);
     vendor.setText (e != nullptr ? e->vendor : String(), dontSendNotification);
+    vendor.setTooltip (vendor.getText());
+    instrumentName.setTooltip (instrumentName.getText());
     explanation.setText (e != nullptr ? e->description : "Change the search or filters.", dontSendNotification);
     load.setEnabled (available && canCreate && targetRestriction.isEmpty());
     add.setEnabled (available && canCreate);
@@ -232,6 +243,7 @@ void InstrumentBrowser::updateDetails()
     status.setText (statusMessage.isNotEmpty() ? statusMessage
                    : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track · " + targetName,
                    dontSendNotification);
+    status.setTooltip (status.getText());
     repaint (detailPanel);
 }
 
@@ -255,22 +267,22 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     auto bounds = Rectangle<int> (0, 0, w, h).reduced (3, 1);
     g.setColour (selectedRow ? colours::selected : kind == results ? colours::control : colours::canvas);
     g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
-    bounds.reduce (6, 0);
+    bounds.reduce (appearance.px (6), 0);
     g.setColour (colours::text);
-    g.setFont (FontOptions (12.0f));
+    g.setFont (uiFont (12.0f));
     if (kind != results)
     {
-        g.drawFittedText ((kind == families ? browser.families : browser.types)[row], bounds, Justification::centredLeft, 1);
+        g.drawFittedText ((kind == families ? browser.families : browser.types)[row], bounds, Justification::centredLeft, 1, 1.0f);
         return;
     }
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    drawInstrument (g, bounds.removeFromLeft (25).reduced (2).toFloat(), entry.family == "Orchestral", colours::action);
-    bounds.removeFromLeft (4);
-    g.drawFittedText (entry.name, bounds.removeFromTop (17), Justification::centredLeft, 1);
-    g.setFont (FontOptions (10.5f));
+    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", colours::action);
+    bounds.removeFromLeft (appearance.px (4));
+    g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
+    g.setFont (uiFont (10.5f));
     g.setColour (selectedRow ? colours::text.withAlpha (0.86f) : colours::secondary);
     g.drawFittedText (entry.type + " · " + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
-                      bounds, Justification::centredLeft, 1);
+                      bounds, Justification::centredLeft, 1, 1.0f);
 }
 
 void InstrumentBrowser::Rows::selectedRowsChanged (int row)
@@ -279,6 +291,7 @@ void InstrumentBrowser::Rows::selectedRowsChanged (int row)
     if (kind == families)
     {
         browser.family = browser.families[row];
+        browser.compactFamily.setSelectedItemIndex (row, dontSendNotification);
         browser.type = "All Types";
         browser.rebuildTypes();
     }
@@ -296,33 +309,81 @@ void InstrumentBrowser::Rows::selectedRowsChanged (int row)
     }
 }
 
+void InstrumentBrowser::appearanceChanged()
+{
+    const auto& m = appearance;
+    familyList.setRowHeight (m.control (24, 12));
+    typeList.setRowHeight (m.control (24, 12));
+    resultList.setRowHeight (m.line (12, 2) + m.line (11, 2));
+    for (auto* list : { &familyList, &typeList, &resultList })
+        list->getViewport()->setScrollBarThickness (m.scrollbar());
+    search.setFont (uiFont (13.0f));
+    search.applyFontToAllText (uiFont (13.0f));
+    resized();
+    repaint();
+}
+
+int InstrumentBrowser::minimumContentHeight (int width) const
+{
+    const auto& m = appearance;
+    const int details = m.line (11) + m.px (35) + m.line (14) + m.line (12)
+        + 2 * m.line (13, 1) + 2 * m.control (25) + m.px (10);
+    const int list = 3 * (m.line (12, 2) + m.line (11, 2));
+    const bool stacked = m.stackedBrowserDetails (width);
+    const bool stackedFilters = m.browserFilterRow (width);
+    return m.control (30) * (stackedFilters ? 2 : 1) + m.line (13, 6) + m.px (6)
+        + (stacked ? details + list + m.px (5) : jmax (details, list));
+}
+
 void InstrumentBrowser::resized()
 {
-    auto area = getLocalBounds().reduced (8, 2);
-    auto toolbar = area.removeFromTop (30).reduced (0, 2);
-    manage.setBounds (toolbar.removeFromRight (90));
-    count.setBounds (toolbar.removeFromRight (126));
-    // The dock width excludes Studio's rail. A 1024-point window has about
-    // 958 points available here; make room for results before shrinking them.
-    compact = getWidth() < 1000;
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (8), m.px (2));
+    auto toolbar = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
+    manage.setBounds (toolbar.removeFromRight (m.span (95)));
+    const bool compactFamilyFilter = m.browserFilterRow (getWidth());
+    compact = m.compactBrowser (getWidth());
+    const bool stackDetails = m.stackedBrowserDetails (getWidth());
+    compactFamily.setVisible (compactFamilyFilter);
+    familyList.setVisible (! compactFamilyFilter);
     compactType.setVisible (compact);
     typeList.setVisible (! compact);
-    if (compact) compactType.setBounds (toolbar.removeFromRight (132).reduced (3, 0));
-    search.setBounds (toolbar.reduced (3, 0));
-    auto bottom = area.removeFromBottom (22).reduced (5, 0);
-    status.setBounds (bottom);
-    detailPanel = area.removeFromRight (jlimit (205, 275, getWidth() / 4));
-    familyList.setBounds (area.removeFromLeft (compact ? 108 : 130));
-    if (! compact) typeList.setBounds (area.removeFromLeft (125));
-    resultList.setBounds (area);
-    auto detail = detailPanel.reduced (8, 1);
-    add.setBounds (detail.removeFromBottom (23).reduced (0, 1));
-    load.setBounds (detail.removeFromBottom (23).reduced (0, 1));
-    explanation.setBounds (detail.removeFromBottom (jmin (40, jmax (18, detail.getHeight() - 54))));
-    vendor.setBounds (detail.removeFromBottom (17));
-    instrumentName.setBounds (detail.removeFromBottom (21));
-    detailsTitle.setBounds (detail.removeFromTop (14));
-    art = detail.reduced (2, 1);
+    count.setVisible (toolbar.getWidth() >= m.span (370));
+    if (count.isVisible()) count.setBounds (toolbar.removeFromRight (m.span (122)));
+    if (compactFamilyFilter)
+    {
+        auto filters = area.removeFromTop (m.control (30));
+        compactFamily.setBounds (filters.removeFromLeft (filters.getWidth() / 2).reduced (m.px (2), 0));
+        compactType.setBounds (filters.reduced (m.px (2), 0));
+    }
+    else if (compact)
+        compactType.setBounds (toolbar.removeFromRight (m.span (128)).reduced (m.px (2), 0));
+    search.setBounds (toolbar.reduced (m.px (2), 0));
+    status.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (4), 0));
+    if (stackDetails)
+    {
+        const int rows = 3 * resultList.getRowHeight();
+        const auto result = area.removeFromTop (rows);
+        resultList.setBounds (result);
+        detailPanel = area.withTrimmedTop (m.px (5));
+    }
+    else
+    {
+        detailPanel = area.removeFromRight (jmin (area.getWidth() / 2, m.span (258)));
+        if (! compactFamilyFilter) familyList.setBounds (area.removeFromLeft (m.span (110)));
+        if (! compact) typeList.setBounds (area.removeFromLeft (m.span (120)));
+        resultList.setBounds (area);
+    }
+    const auto shortActions = detailPanel.getWidth() < m.span (222);
+    load.setButtonText (shortActions ? "Load on Track" : "Load on Selected Track");
+    auto detail = detailPanel.reduced (m.px (8), m.px (2));
+    add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    load.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    explanation.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
+    vendor.setBounds (detail.removeFromBottom (m.line (12)));
+    instrumentName.setBounds (detail.removeFromBottom (m.line (14)));
+    detailsTitle.setBounds (detail.removeFromTop (m.line (11)));
+    art = detail.reduced (m.px (2), m.px (1));
 }
 
 void InstrumentBrowser::paint (Graphics& g)

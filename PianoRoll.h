@@ -26,6 +26,8 @@ public:
     std::function<void()> onMidiChanged;
 
     void paint (juce::Graphics&) override;
+    void appearanceChanged();
+    int minimumContentHeight (int width);
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -60,7 +62,7 @@ private:
     int originalVelocity = 100, previewVelocity = 100;
     int startX = 0, startY = 0;
     double pixelsPerBeat = 56.0;
-    static constexpr int keyWidth = 54, velocityHeight = 72;
+    int keyWidth = 54;
     int rowHeight = 14;
     bool editingEnabled = true;
     bool initialViewport = true;

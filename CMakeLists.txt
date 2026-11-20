@@ -64,6 +64,14 @@ string(REPLACE "${track_header_anchor}" [=[    void resized() override;
 
 private:
     void changeListenerCallback (ChangeBroadcaster*) override;]=] editor_header "${editor_header}")
+set(edit_view_accessor "    EditViewState& getEditViewState()   { return editViewState; }")
+string(FIND "${editor_header}" "${edit_view_accessor}" edit_view_match)
+if(edit_view_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example EditComponent accessor has changed.")
+endif()
+string(REPLACE "${edit_view_accessor}"
+    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }"
+    editor_header "${editor_header}")
 file(CONFIGURE OUTPUT generated/Components.h CONTENT "${editor_header}" @ONLY)
 file(READ "${common}/Components.cpp" editor)
 set(midi_assignment [=[else if (res >= 100)
@@ -143,6 +151,49 @@ string(REPLACE "g.setColour (Colours::yellow);" "g.setColour (studio::colours::p
 string(REPLACE "g.fillAll (clip->getColour().withAlpha (0.5f));"
                "g.fillAll (studio::colours::selected.interpolatedWith (clip->getColour().withAlpha (1.0f), 0.27f));"
                editor "${editor}")
+# Keep the ruler and generated arrangement in the same logical-point geometry.
+set(track_geometry [=[    const int trackHeight = 50, trackGap = 2;
+    const int headerWidth = editViewState.showHeaders ? 150 : 0;
+    const int footerWidth = editViewState.showFooters ? 150 : 0;]=])
+string(FIND "${editor}" "${track_geometry}" track_geometry_match)
+if(track_geometry_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example arrangement geometry has changed.")
+endif()
+string(REPLACE "${track_geometry}" [=[    const auto& metrics = studio::appearance;
+    const int trackHeight = metrics.trackHeight(), trackGap = metrics.trackGap();
+    const int headerWidth = editViewState.showHeaders ? metrics.trackHeader() : 0;
+    const int footerWidth = editViewState.showFooters ? metrics.trackFooter() : 0;]=]
+    editor "${editor}")
+
+set(footer_geometry [=[    auto r = getLocalBounds().reduced (4);
+    const int cx = 21;
+
+    addButton.setBounds (r.removeFromLeft (cx).withSizeKeepingCentre (cx, cx));
+    r.removeFromLeft (6);
+
+    for (auto p : plugins)
+    {
+        p->setBounds (r.removeFromLeft (cx).withSizeKeepingCentre (cx, cx));
+        r.removeFromLeft (2);
+    }]=])
+string(FIND "${editor}" "${footer_geometry}" footer_geometry_match)
+if(footer_geometry_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example insert-button geometry has changed.")
+endif()
+string(REPLACE "${footer_geometry}" [=[    const auto& metrics = studio::appearance;
+    auto available = getLocalBounds().reduced (metrics.px (3));
+    const int size = metrics.control (21, 12);
+    auto row = available.removeFromTop (size);
+    auto place = [&] (Component& component)
+    {
+        if (row.getWidth() < size)
+            row = available.removeFromTop (size);
+        component.setBounds (row.getHeight() >= size && row.getWidth() >= size
+            ? row.removeFromLeft (size).reduced (metrics.px (1)) : juce::Rectangle<int>());
+    };
+    place (addButton);
+    for (auto* plugin : plugins)
+        place (*plugin);]=] editor "${editor}")
 string(PREPEND editor "#include \"StudioUI.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
 # additive/toggle selection without modifying the Tracktion checkout itself.
@@ -168,7 +219,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
+target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE

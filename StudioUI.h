@@ -2,9 +2,48 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cmath>
+#include "AppearanceMetrics.h"
 
 namespace studio
 {
+inline juce::FontOptions uiFont (float points, int style = juce::Font::plain)
+{
+    return juce::FontOptions (appearance.fontSize (points), style);
+}
+
+struct ToolbarItem { juce::Component* component; int baseWidth; };
+
+inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& items)
+{
+    int rows = 1, used = 0;
+    for (const auto& item : items)
+    {
+        const int next = juce::jmin (width, appearance.span (item.baseWidth));
+        if (used > 0 && used + next > width)
+        {
+            ++rows;
+            used = 0;
+        }
+        used += next;
+    }
+    return rows * appearance.control (30);
+}
+
+inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_list<ToolbarItem>& items)
+{
+    const auto rowHeight = appearance.control (30);
+    const int width = area.getWidth();
+    auto row = area.removeFromTop (rowHeight);
+    for (const auto& item : items)
+    {
+        const int next = juce::jmin (width, appearance.span (item.baseWidth));
+        if (row.getWidth() < next)
+            row = area.removeFromTop (rowHeight);
+        item.component->setBounds (row.removeFromLeft (next).reduced (appearance.px (1)));
+    }
+}
+
 namespace colours
 {
 inline const juce::Colour rail      { 0xff111317 };
@@ -52,7 +91,73 @@ public:
 
     juce::Font getTextButtonFont (juce::TextButton&, int height) override
     {
-        return juce::FontOptions (juce::jlimit (10.0f, 13.0f, height * 0.55f));
+        return juce::FontOptions (juce::jmin (appearance.fontSize (13.0f), (float) height * 0.8f));
+    }
+
+    juce::Font getLabelFont (juce::Label& label) override
+    {
+        const auto base = label.getFont();
+        return base.withHeight (appearance.fontSize (base.getHeight()));
+    }
+
+    // ComboBox installs this as the child's base Label font. getLabelFont
+    // applies the user's appearance when the label draws it.
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::FontOptions (13.0f); }
+    juce::Font getPopupMenuFont() override { return uiFont (14.0f); }
+    int getDefaultScrollbarWidth() override { return appearance.scrollbar(); }
+
+    int getSliderThumbRadius (juce::Slider& slider) override
+    {
+        return juce::jmin (appearance.px (12), (slider.isHorizontal() ? slider.getHeight() : slider.getWidth()) / 2);
+    }
+
+    void drawButtonText (juce::Graphics& g, juce::TextButton& button, bool, bool) override
+    {
+        g.setFont (getTextButtonFont (button, button.getHeight()));
+        g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                               : juce::TextButton::textColourOffId)
+                          .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
+        g.drawFittedText (button.getButtonText(), button.getLocalBounds().reduced (appearance.px (3), 0),
+                          juce::Justification::centred, 1, 1.0f);
+    }
+
+    juce::Rectangle<int> getTooltipBounds (const juce::String& text, juce::Point<int> position,
+                                           juce::Rectangle<int> available) override
+    {
+        const int inset = appearance.px (7);
+        const auto width = juce::jmax (1, juce::jmin (available.getWidth() - 2 * inset, appearance.span (355)));
+        auto layout = tooltipLayout (text, width);
+        return juce::Rectangle<int> (position.x + inset, position.y + appearance.px (16),
+            juce::roundToInt (std::ceil (layout.getWidth())) + 2 * inset,
+            juce::roundToInt (std::ceil (layout.getHeight())) + 2 * inset).constrainedWithin (available);
+    }
+
+    void drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height) override
+    {
+        const int inset = appearance.px (7);
+        auto bounds = juce::Rectangle<int> (width, height).toFloat();
+        g.setColour (colours::control);
+        g.fillRoundedRectangle (bounds, (float) appearance.px (4));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (bounds.reduced (0.5f), (float) appearance.px (4), 1.0f);
+        tooltipLayout (text, juce::jmax (1, width - 2 * inset)).draw (g, bounds.reduced ((float) inset));
+    }
+
+    void drawTableHeaderColumn (juce::Graphics& g, juce::TableHeaderComponent&, const juce::String& name,
+                                int, int width, int height, bool hovered, bool down, int flags) override
+    {
+        auto area = juce::Rectangle<int> (width, height).reduced (appearance.px (5), 0);
+        if (hovered || down)
+            g.fillAll (colours::selected);
+        g.setColour (colours::text);
+        g.setFont (uiFont (12.0f, juce::Font::bold));
+        if ((flags & (juce::TableHeaderComponent::sortedForwards | juce::TableHeaderComponent::sortedBackwards)) != 0)
+        {
+            auto direction = area.removeFromRight (appearance.px (14));
+            g.drawText ((flags & juce::TableHeaderComponent::sortedForwards) != 0 ? "↑" : "↓",
+                        direction, juce::Justification::centred);
+        }
+        g.drawFittedText (name, area, juce::Justification::centredLeft, 1, 1.0f);
     }
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& button,
@@ -61,12 +166,22 @@ public:
         auto bounds = button.getLocalBounds().toFloat().reduced (0.75f);
         const auto fill = down ? colour.brighter (0.2f) : hover ? colour.brighter (0.1f) : colour;
         g.setColour (fill.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
-        g.fillRoundedRectangle (bounds, 4.0f);
+        g.fillRoundedRectangle (bounds, (float) appearance.px (4));
         if (button.hasKeyboardFocus (false))
         {
             g.setColour (colours::focus);
-            g.drawRoundedRectangle (bounds, 4.0f, 1.25f);
+            g.drawRoundedRectangle (bounds, (float) appearance.px (4), 1.25f);
         }
+    }
+
+private:
+    static juce::TextLayout tooltipLayout (const juce::String& text, int width)
+    {
+        juce::AttributedString content;
+        content.append (text, uiFont (13.0f), colours::text);
+        juce::TextLayout layout;
+        layout.createLayout (content, (float) width);
+        return layout;
     }
 };
 
@@ -91,13 +206,13 @@ public:
     void paint (juce::Graphics& g) override
     {
         g.setColour (colours::raised);
-        g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), (float) appearance.px (4));
     }
 
     void resized() override
     {
-        auto bounds = getLocalBounds().reduced (2, 1);
-        caption.setBounds (bounds.removeFromTop (13));
+        auto bounds = getLocalBounds().reduced (appearance.px (2), appearance.px (1));
+        caption.setBounds (bounds.removeFromTop (appearance.line (9, 1)));
         value.setBounds (bounds);
     }
 
@@ -121,8 +236,9 @@ public:
     void paintButton (juce::Graphics& g, bool hover, bool down) override
     {
         auto bounds = getLocalBounds();
-        const auto iconArea = bounds.removeFromTop (getHeight() - 17)
-                                   .withSizeKeepingCentre (18, 18).toFloat();
+        auto label = bounds.removeFromBottom (appearance.line (11, 2));
+        const int side = juce::jmin (appearance.px (18), bounds.getHeight());
+        const auto iconArea = bounds.withSizeKeepingCentre (side, side).toFloat();
         const bool active = getToggleState();
         if (active || hover || down)
         {
@@ -135,10 +251,11 @@ public:
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 5.0f, 1.25f);
         }
         g.setColour (active ? colours::text : colours::secondary);
-        g.setFont (juce::FontOptions (10.5f));
-        g.drawFittedText (getButtonText(), bounds, juce::Justification::centredTop, 1);
+        g.setFont (uiFont (10.5f));
+        g.drawFittedText (getButtonText(), label, juce::Justification::centredTop, 1, 1.0f);
         juce::Graphics::ScopedSaveState state (g);
-        g.addTransform (juce::AffineTransform::translation (iconArea.getX(), iconArea.getY()));
+        g.addTransform (juce::AffineTransform::scale ((float) side / 18.0f)
+                                              .translated (iconArea.getX(), iconArea.getY()));
         paintIcon (g);
     }
 

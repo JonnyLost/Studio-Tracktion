@@ -44,6 +44,8 @@ public:
     explicit ChannelInspector (TrackActions&);
     void setEdit (tracktion::Edit*);
     void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery);
+    int minimumContentHeight (int width) const;
+    void appearanceChanged();
     void resized() override;
     void paint (juce::Graphics&) override;
 
@@ -66,6 +68,8 @@ public:
     explicit StudioMixer (TrackActions&);
     ~StudioMixer() override;
     void pauseMeters();
+    int minimumContentHeight() const;
+    void appearanceChanged();
     void setEdit (tracktion::Edit*);
     void refresh (const juce::Array<tracktion::AudioTrack*>&, tracktion::AudioTrack* selected, bool ready, bool canRoute);
     void resized() override;

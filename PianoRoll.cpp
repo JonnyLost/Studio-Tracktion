@@ -136,33 +136,40 @@ void StudioPianoRoll::refresh()
         onMidiChanged();
 }
 
+void StudioPianoRoll::appearanceChanged()
+{
+    resized();
+    repaint();
+}
+
+int StudioPianoRoll::minimumContentHeight (int width)
+{
+    const auto& m = studio::appearance;
+    return studio::toolbarHeight (jmax (1, width - m.px (8)),
+        { { &tool, 85 }, { &grid, 94 }, { &quantize, 83 }, { &undo, 54 }, { &redo, 54 },
+          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 } })
+        + m.line (13, 2) + m.control (24) + m.scrollbar() + m.px (118);
+}
+
 void StudioPianoRoll::resized()
 {
-    auto area = getLocalBounds().reduced (4, 2);
-    auto controls = area.removeFromTop (27);
-    tool.setBounds (controls.removeFromLeft (90).reduced (1));
-    grid.setBounds (controls.removeFromLeft (102).reduced (1));
-    quantize.setBounds (controls.removeFromLeft (85).reduced (1));
-    undo.setBounds (controls.removeFromLeft (58).reduced (1));
-    redo.setBounds (controls.removeFromLeft (58).reduced (1));
-    zoomOut.setBounds (controls.removeFromRight (30).reduced (1));
-    zoomIn.setBounds (controls.removeFromRight (30).reduced (1));
-    verticalZoomOut.setBounds (controls.removeFromRight (30).reduced (1));
-    verticalZoomIn.setBounds (controls.removeFromRight (30).reduced (1));
-    caption.setBounds (controls);
-
-    auto rulerRow = area.removeFromTop (24);
-    rulerArea = rulerRow.withTrimmedLeft (keyWidth).withTrimmedRight (14);
-    area.removeFromBottom (14);
-    vertical.setBounds (area.removeFromRight (14));
-    auto velocityRow = area.removeFromBottom (velocityHeight);
+    const auto& m = studio::appearance;
+    keyWidth = m.span (60);
+    auto area = getLocalBounds().reduced (m.px (4), m.px (2));
+    studio::layoutToolbar (area,
+        { { &tool, 85 }, { &grid, 94 }, { &quantize, 83 }, { &undo, 54 }, { &redo, 54 },
+          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 } });
+    caption.setBounds (area.removeFromTop (m.line (13, 2)));
+    auto rulerRow = area.removeFromTop (m.control (24));
+    const auto scrollbar = m.scrollbar();
+    rulerArea = rulerRow.withTrimmedLeft (keyWidth).withTrimmedRight (scrollbar);
+    auto horizontalRow = area.removeFromBottom (scrollbar);
+    vertical.setBounds (area.removeFromRight (scrollbar));
+    auto velocityRow = area.removeFromBottom (jmin (m.px (72), area.getHeight() / 2));
     velocityArea = velocityRow.withTrimmedLeft (keyWidth);
-    auto keyboardAndGrid = area;
-    keyboard = keyboardAndGrid.removeFromLeft (keyWidth);
-    notesArea = keyboardAndGrid;
-    horizontal.setBounds (getWidth() > keyWidth + 24
-        ? Rectangle<int> (notesArea.getX(), getHeight() - 16, notesArea.getWidth(), 14)
-        : Rectangle<int>());
+    keyboard = area.removeFromLeft (keyWidth);
+    notesArea = area;
+    horizontal.setBounds (horizontalRow.withTrimmedLeft (keyWidth).withTrimmedRight (scrollbar));
     updateScrollBars();
 }
 
@@ -450,6 +457,7 @@ void StudioPianoRoll::paintGrid (Graphics& g)
     g.fillRect (keyboard);
     g.fillRect (notesArea);
 
+    const auto& metrics = studio::appearance;
     const auto topPitch = pitchAt (notesArea.getY());
     const auto bottomPitch = pitchAt (notesArea.getBottom());
     for (int pitch = topPitch; pitch >= bottomPitch; --pitch)
@@ -473,8 +481,8 @@ void StudioPianoRoll::paintGrid (Graphics& g)
             g.setColour (Colour (0xff384957));
             g.drawHorizontalLine (y, (float) notesArea.getX(), (float) notesArea.getRight());
             g.setColour (black ? Colour (0xfff5f8fb) : Colour (0xff26333c));
-            g.setFont (FontOptions (10.0f));
-            g.drawText ("C" + String (pitch / 12 - 1), keyboard.getX() + 4, y, keyWidth - 7,
+            g.setFont (FontOptions (jmin (metrics.fontSize (10.0f), (float) rowHeight - 1.0f)));
+            g.drawText ("C" + String (pitch / 12 - 1), keyboard.getX() + metrics.px (4), y, keyWidth - metrics.px (7),
                         rowHeight, Justification::centredLeft);
         }
     }
@@ -539,7 +547,8 @@ void StudioPianoRoll::paintRuler (Graphics& g)
     const auto to = sequence.toTime (te::BeatPosition::fromBeats (
         jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
                                + rulerArea.getWidth() / pixelsPerBeat))));
-    int lastLabelRight = rulerArea.getX() - 50;
+    const auto& m = studio::appearance;
+    int lastLabelRight = rulerArea.getX() - m.span (50);
     int lastBeatTickX = rulerArea.getX() - 14;
     g.saveState();
     g.reduceClipRegion (rulerArea);
@@ -569,10 +578,10 @@ void StudioPianoRoll::paintRuler (Graphics& g)
         lastBeatTickX = x;
         if (bar && x >= lastLabelRight)
         {
-            g.setFont (FontOptions (11.0f));
-            g.drawText (String (tick.barIndex + 1), x + 3, rulerArea.getY(), 43,
-                        rulerArea.getHeight() - 5, Justification::centredLeft);
-            lastLabelRight = x + 42;
+            g.setFont (studio::uiFont (11.0f));
+            g.drawText (String (tick.barIndex + 1), x + m.px (3), rulerArea.getY(), m.span (43),
+                        rulerArea.getHeight() - m.px (5), Justification::centredLeft);
+            lastLabelRight = x + m.span (42);
         }
     });
     g.restoreState();
@@ -647,10 +656,11 @@ void StudioPianoRoll::paintNotes (Graphics& g)
             g.fillRect (bounds.getX() + 2, bounds.getY() + 2, 2, bounds.getHeight() - 4);
             g.fillRect (bounds.getRight() - 4, bounds.getY() + 2, 2, bounds.getHeight() - 4);
         }
-        if (bounds.getWidth() >= 28)
+        if (bounds.getWidth() >= studio::appearance.span (28)
+            && bounds.getHeight() >= studio::appearance.fontSize (10.0f))
         {
             g.setColour (fraction < 0.3f ? Colours::white : Colour (0xff142330));
-            g.setFont (FontOptions (10.0f));
+            g.setFont (studio::uiFont (10.0f));
             g.drawText (MidiMessage::getMidiNoteName (note->getNoteNumber(), true, true, 4),
                         bounds.reduced (3, 0), Justification::centredLeft);
         }
@@ -663,7 +673,7 @@ void StudioPianoRoll::paintVelocity (Graphics& g)
     g.setColour (Colour (0xff19222b));
     g.fillRect (velocityArea);
     g.setColour (Colour (0xff9bacba));
-    g.setFont (FontOptions (11.0f));
+    g.setFont (studio::uiFont (11.0f));
     g.drawText ("Velocity", velocityArea.withX (0).withWidth (keyWidth), Justification::centred);
     if (clip == nullptr)
         return;
