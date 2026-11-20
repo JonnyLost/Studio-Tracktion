@@ -4,6 +4,7 @@
 #include <vector>
 #include <functional>
 #include <limits>
+#include <optional>
 using namespace juce;
 using namespace tracktion::literals;
 
@@ -14,6 +15,8 @@ using namespace tracktion::literals;
 #include "PianoRoll.h"
 #include "MusicalRuler.h"
 #include "StudioUI.h"
+#include "InstrumentBrowser.h"
+#include "StudioMixing.h"
 
 class MidiMonitorWindow final : public DocumentWindow
 {
@@ -145,6 +148,10 @@ public:
         }
         addChildComponent (workspaceSummary);
         addChildComponent (placeholder);
+        addChildComponent (browser);
+        addChildComponent (channelInspector);
+        addChildComponent (mixer);
+        configureInstrumentWorkflow();
         for (size_t index = 0; index < workspaceLinks.size(); ++index)
         {
             auto& link = workspaceLinks[index];
@@ -187,7 +194,7 @@ public:
         addAndMakeVisible (piano);
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
-        for (auto* label : { &title, &mixerLabel, &message, &trackDetails, &volumeLabel, &panLabel, &workspaceTitle })
+        for (auto* label : { &title, &message, &trackDetails, &workspaceTitle })
             addAndMakeVisible (*label);
         for (auto* readout : { &bars, &position, &tempo, &meter })
         {
@@ -202,8 +209,6 @@ public:
         record.setColour (TextButton::textColourOffId, studio::colours::record);
         record.setColour (TextButton::buttonOnColourId, studio::colours::record.darker (0.55f));
         rewind.setTooltip ("Return to project start");
-        volumeLabel.setText ("Volume", dontSendNotification);
-        panLabel.setText ("Pan", dontSendNotification);
         zoom.setTitle ("Timeline zoom");
         addAndMakeVisible (zoom);
         zoom.addItem ("10 seconds", 1);
@@ -228,21 +233,6 @@ public:
                 view.viewX2 = te::TimePosition::fromSeconds (seconds);
                 repaint();
             }
-        };
-
-        setupSlider (volume, "Volume", -60, 6, 0.1, " dB");
-        setupSlider (pan, "Pan", -1, 1, 0.01, {});
-        volume.onValueChange = [this]
-        {
-            if (auto* track = selectedTrack())
-                if (auto plugin = track->getVolumePlugin())
-                    plugin->setVolumeDb (static_cast<float> (volume.getValue()));
-        };
-        pan.onValueChange = [this]
-        {
-            if (auto* track = selectedTrack())
-                if (auto plugin = track->getVolumePlugin())
-                    plugin->setPan (static_cast<float> (pan.getValue()));
         };
 
         newProject.onClick = [this] { chooseProject (true); };
@@ -284,6 +274,9 @@ public:
         piano.setClip (nullptr);
         timeline.setViewedComponent (nullptr);
         stopTimer();
+        pendingPlugin.reset();
+        channelInspector.setEdit (nullptr);
+        mixer.setEdit (nullptr);
         setLookAndFeel (nullptr);
     }
 
@@ -537,7 +530,7 @@ private:
     int clipboardBaseTrack = 0;
 
 
-    Label title, mixerLabel, message, trackDetails, volumeLabel, panLabel, workspaceTitle,
+    Label title, message, trackDetails, workspaceTitle,
           workspaceSummary, placeholder, ariaReviewNotice;
     studio::TransportReadout bars { "Bars / Beats" }, position { "Time" }, tempo { "BPM" }, meter { "Meter" };
     ComboBox zoom, trackPicker;
@@ -553,7 +546,22 @@ private:
     TextButton compactButton { "Compact" }, splitButton { "Split" },
                expandedButton { "Expanded" }, closeWorkspace { "Hide" };
     std::array<TextButton, 2> workspaceLinks;
-    Slider volume, pan;
+    studio::TrackActions trackActions;
+    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
+    studio::ChannelInspector channelInspector { trackActions };
+    studio::StudioMixer mixer { trackActions };
+
+    struct PendingPlugin
+    {
+        te::Plugin::Ptr plugin;
+        te::EditItemID destination;
+        bool addTrack = false, instrument = false;
+        uint32 startedAt = 0;
+    };
+
+    std::optional<PendingPlugin> pendingPlugin;
+    uint64 projectGeneration = 0;
+    unsigned workspaceTicks = 0;
     StudioMidiMonitor monitor;
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
@@ -609,6 +617,8 @@ private:
     void layoutDock (Rectangle<int>& arrangement)
     {
         const int available = arrangement.getHeight();
+        const bool richEditor = workspace == Workspace::instruments || workspace == Workspace::channel || workspace == Workspace::mix;
+        const auto minimumHeight = richEditor ? 237 : minimumSplitHeight;
         splitLimit = jmax (minimumSplitHeight, available - 168);
         int panelHeight = 0;
         if (workspace != Workspace::closed)
@@ -618,7 +628,7 @@ private:
             else if (dockMode == DockMode::expanded)
                 panelHeight = jmax (minimumSplitHeight, available - 122);
             else
-                panelHeight = jlimit (minimumSplitHeight, splitLimit, workspaceHeight);
+                panelHeight = jlimit (jmin (minimumHeight, splitLimit), splitLimit, workspaceHeight);
         }
         workspacePanel = arrangement.removeFromBottom (panelHeight);
         workspaceDivider.setBounds (panelHeight > 0 ? arrangement.removeFromBottom (9) : Rectangle<int>());
@@ -639,14 +649,9 @@ private:
         if (monitor.getParentComponent() == this && monitor.isVisible())
             monitor.setBounds (body);
 
-        auto mixerBounds = body.reduced (10, 0);
-        mixerLabel.setBounds (mixerBounds.removeFromTop (25));
-        auto volumeRow = mixerBounds.removeFromTop (33);
-        volumeLabel.setBounds (volumeRow.removeFromLeft (64));
-        volume.setBounds (volumeRow.removeFromLeft (jmin (430, volumeRow.getWidth())));
-        auto panRow = mixerBounds.removeFromTop (33);
-        panLabel.setBounds (panRow.removeFromLeft (64));
-        pan.setBounds (panRow.removeFromLeft (jmin (430, panRow.getWidth())));
+        if (browser.isVisible()) browser.setBounds (body);
+        if (channelInspector.isVisible()) channelInspector.setBounds (body);
+        if (mixer.isVisible()) mixer.setBounds (body);
     }
 
     void toggleWorkspace (Workspace destination)
@@ -689,7 +694,9 @@ private:
         const bool mixing = workspace == Workspace::mix;
         const bool monitoring = workspace == Workspace::midi;
         const bool editingMidi = workspace == Workspace::piano;
-        const bool planned = open && ! (mixing || monitoring || editingMidi);
+        const bool browsing = workspace == Workspace::instruments;
+        const bool inspecting = workspace == Workspace::channel;
+        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting);
         String name;
         bool inPrimaryRail = false;
         for (const auto& item : railItems())
@@ -713,9 +720,11 @@ private:
         if (workspace == Workspace::stage)
             name = "Orchestral Stage";
 
-        for (Component* component : std::initializer_list<Component*> {
-                 &mixerLabel, &volumeLabel, &panLabel, &volume, &pan })
-            component->setVisible (mixing && ! compact);
+        browser.setVisible (browsing && ! compact);
+        channelInspector.setVisible (inspecting && ! compact);
+        mixer.setVisible (mixing && ! compact);
+        if (! mixer.isVisible()) mixer.pauseMeters();
+        workspaceTicks = 1; // Refresh the newly shown workspace on the next host tick.
         for (const auto& item : dockItems())
         {
             item.button->setVisible (open);
@@ -735,12 +744,7 @@ private:
         workspaceSummary.setText (planned ? "Planned workspace" : "Choose Split or Expanded to show controls.",
                                   dontSendNotification);
         placeholder.setVisible (planned && ! compact);
-        placeholder.setText (workspace == Workspace::instruments
-                                 ? "Instrument Browser is planned. Use a track’s Inserts + to load an installed instrument."
-                                 : workspace == Workspace::channel
-                                     ? "Channel is planned. Use the track header for input and arm, or Mixer for volume and pan."
-                                     : "Planned workspace",
-                             dontSendNotification);
+        placeholder.setText ("Planned workspace", dontSendNotification);
         if (! editingMidi || compact)
             piano.silencePreview();
         piano.setVisible (editingMidi && ! compact);
@@ -803,17 +807,6 @@ private:
             monitorWindow->toFront (true);
             showWorkspace (Workspace::closed);
         }
-    }
-
-    void setupSlider (Slider& slider, const String& name, double min, double max, double interval, const String& suffix)
-    {
-        slider.setName (name);
-        slider.setTooltip (name);
-        slider.setRange (min, max, interval);
-        slider.setTextValueSuffix (suffix);
-        slider.setSliderStyle (Slider::LinearHorizontal);
-        slider.setTextBoxStyle (Slider::TextBoxRight, false, 78, 24);
-        addAndMakeVisible (slider);
     }
 
     te::AudioTrack* selectedTrack()
@@ -1048,6 +1041,7 @@ private:
         // can restore ARIA. Defer one automatic attempt until instances are
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
+        completePendingPlugin();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
@@ -1110,8 +1104,9 @@ private:
         auto* track = selectedTrack();
         StringArray names;
         int selectedIndex = -1;
+        const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
         if (edit != nullptr)
-            for (auto* item : te::getAudioTracks (*edit))
+            for (auto* item : tracks)
             {
                 if (item == track)
                     selectedIndex = names.size();
@@ -1129,17 +1124,8 @@ private:
             : EngineHelpers::isTrackArmed (*track) ? "Record armed"
             : EngineHelpers::trackHasInput (*track) ? "Input assigned" : "No input assigned", dontSendNotification);
 
-        auto plugin = track != nullptr ? track->getVolumePlugin() : nullptr;
-        volume.setEnabled (ready && plugin != nullptr);
-        pan.setEnabled (ready && plugin != nullptr);
-        mixerLabel.setText (track != nullptr ? track->getName() + " mix" : "Select a track to mix", dontSendNotification);
-        if (plugin != nullptr)
-        {
-            if (! volume.isMouseButtonDown())
-                volume.setValue (plugin->getVolumeDb(), dontSendNotification);
-            if (! pan.isMouseButtonDown())
-                pan.setValue (plugin->getPan(), dontSendNotification);
-        }
+        if ((++workspaceTicks & 1u) == 0)
+            refreshInstrumentWorkflow (tracks);
     }
 
     // Diagnostics intentionally contain metadata only, never AU state bytes or sample paths.
@@ -1542,7 +1528,12 @@ private:
             }
         }
 
-        auto next = create ? te::createEmptyEdit (engine, file) : te::loadEditFromFile (engine, file);
+        pendingPlugin.reset();
+        auto next = [&]
+        {
+            const ScopedValueSetter<bool> loading (busy, true);
+            return create ? te::createEmptyEdit (engine, file) : te::loadEditFromFile (engine, file);
+        }();
         if (next == nullptr)
             return;
 
@@ -1554,7 +1545,13 @@ private:
         selection.deselectAll();
         timeline.setViewedComponent (nullptr);
         editor.reset();
+        browser.setStatus ({});
+        channelInspector.setEdit (nullptr);
+        mixer.setEdit (nullptr);
+        ++projectGeneration;
         edit = std::move (next);
+        channelInspector.setEdit (edit.get());
+        mixer.setEdit (edit.get());
         projectFile = file;
         lastRecordingStopRequestedAt = 0;
         ariaReviewPending = false;
@@ -1651,6 +1648,431 @@ private:
                         message.setText ("Could not insert the audio clip.", dontSendNotification);
                 }
             });
+    }
+
+    te::AudioTrack* trackById (te::EditItemID id) const
+    {
+        return edit != nullptr && id.isValid() ? te::findAudioTrackForID (*edit, id) : nullptr;
+    }
+
+    te::AudioTrack* workflowTrack()
+    {
+        te::AudioTrack* target = nullptr;
+        for (int i = 0; i < selection.getNumObjectsSelected(); ++i)
+        {
+            auto* item = selection.getSelectedObject (i);
+            auto* track = dynamic_cast<te::AudioTrack*> (item);
+            if (auto* clip = dynamic_cast<te::Clip*> (item))
+                track = dynamic_cast<te::AudioTrack*> (clip->getClipTrack());
+            else if (auto* plugin = dynamic_cast<te::Plugin*> (item))
+                track = dynamic_cast<te::AudioTrack*> (plugin->getOwnerTrack());
+            if (track == nullptr || (target != nullptr && target != track)) return nullptr;
+            target = track;
+        }
+        return target;
+    }
+
+    void configureInstrumentWorkflow()
+    {
+        browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
+        browser.loadInstrument = [this] (const PluginDescription& plugin, bool addNew)
+        {
+            auto* target = workflowTrack();
+            startExternalPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
+        };
+        trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
+        trackActions.selectTrack = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id))
+                selection.selectOnly (track);
+        };
+        trackActions.showMenu = [this] (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
+        {
+            showTrackMenu (id, kind, anchor);
+        };
+        trackActions.openInstrument = [this] (te::EditItemID id)
+        {
+            if (! busy)
+                if (auto* track = trackById (id))
+                    if (auto* instrument = studio::findInstrument (*track))
+                        instrument->showWindowExplicitly();
+        };
+        trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
+        {
+            if (! busy)
+                if (auto* track = trackById (id))
+                {
+                    if (solo) track->setSolo (! track->isSolo (false));
+                    else track->setMute (! track->isMuted (false));
+                }
+        };
+        trackActions.toggleArm = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id); track != nullptr && canEditRegions() && ! track->isFrozen (te::Track::anyFreeze))
+            {
+                auto inputs = edit->getAllInputDevices();
+                const auto assigned = [id] (te::InputDeviceInstance* i) { return i->getTargets().contains (id); };
+                const bool armed = std::any_of (inputs.begin(), inputs.end(), [&] (auto* i)
+                {
+                    return assigned (i) && i->isRecordingEnabled (id);
+                });
+                for (auto* input : inputs)
+                    if (assigned (input))
+                        input->setRecordingEnabled (id, ! armed);
+            }
+        };
+        trackActions.toggleMonitoring = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id); track != nullptr && canEditRegions() && ! track->isFrozen (te::Track::anyFreeze))
+            {
+                const auto inputs = edit->getAllInputDevices();
+                using Mode = te::InputDevice::MonitorMode;
+                const bool enabled = std::any_of (inputs.begin(), inputs.end(), [id] (auto* i)
+                {
+                    return i->getTargets().contains (id) && i->getInputDevice().getMonitorMode() == Mode::on;
+                });
+                for (auto* input : inputs)
+                    if (input->getTargets().contains (id))
+                        if (auto& device = input->getInputDevice(); device.getMonitorMode() != Mode::automatic)
+                            device.setMonitorMode (enabled ? Mode::off : Mode::on);
+            }
+        };
+    }
+
+    void refreshInstrumentWorkflow (const Array<te::AudioTrack*>& tracks)
+    {
+        if (dockMode == DockMode::compact || (workspace != Workspace::instruments
+             && workspace != Workspace::channel && workspace != Workspace::mix))
+            return;
+
+        auto* target = workflowTrack();
+        if (workspace == Workspace::instruments)
+        {
+            const auto restriction = edit == nullptr ? "Open or create a project to load an instrument."
+                : ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
+                : pendingPlugin ? "An Audio Unit is loading."
+                : canEditRegions() ? instrumentTrackRestriction (target) : "Finish the current task or stop recording.";
+            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(), restriction);
+        }
+        else if (workspace == Workspace::channel)
+        {
+            const auto recovery = ariaReviewPending
+                ? (autoAriaRetryPending ? "ARIA recovery · Automatic restore pending"
+                                        : "ARIA recovery · Verify sound, then Confirm ARIA below transport")
+                : "ARIA recovery · No verification pending";
+            channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery);
+        }
+        else
+            mixer.refresh (tracks, target, edit != nullptr && ! busy, canEditRegions());
+    }
+
+    bool canInsertPlugin() const
+    {
+        return canEditRegions() && ! ariaReviewPending && ! pendingPlugin.has_value();
+    }
+
+    String instrumentTrackRestriction (te::AudioTrack* track) const
+    {
+        if (track == nullptr) return "Select an instrument track or use Add as New Track.";
+        if (track->isFrozen (te::Track::anyFreeze)) return "The selected track is frozen.";
+        if (studio::findInstrument (*track) != nullptr) return "This track already hosts an instrument. Use Add as New Track.";
+        for (auto* clip : track->getClips())
+            if (dynamic_cast<te::AudioClipBase*> (clip) != nullptr)
+                return "The selected track contains audio. Use Add as New Track.";
+        for (auto* input : track->edit.getAllInputDevices())
+            if (input->getInputDevice().getDeviceType() == te::InputDevice::waveDevice
+                && input->getTargets().contains (track->itemID))
+                return "The selected track has an audio input. Use Add as New Track.";
+        return {};
+    }
+
+    void pluginStatus (const String& status)
+    {
+        browser.setStatus (status);
+        message.setText (status, dontSendNotification);
+    }
+
+    void startExternalPlugin (PluginDescription description, te::EditItemID target, bool addNew, bool instrument)
+    {
+        if (! canInsertPlugin())
+        {
+            pluginStatus (ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
+                                            : "Stop recording or wait for the current plug-in to finish.");
+            return;
+        }
+        if (! addNew)
+        {
+            auto* track = trackById (target);
+            const auto restriction = instrument ? instrumentTrackRestriction (track)
+                : (track == nullptr || track->isFrozen (te::Track::anyFreeze) ? "Choose an unfrozen track." : "");
+            if (restriction.isNotEmpty())
+            {
+                pluginStatus (restriction);
+                return;
+            }
+        }
+        if (description.pluginFormatName != "AudioUnit"
+            || engine.getPluginManager().knownPluginList.getTypeForIdentifierString (description.createIdentifierString()) == nullptr)
+        {
+            pluginStatus ("The Audio Unit is no longer in the host catalog. Scan for plug-ins again.");
+            return;
+        }
+
+        pluginStatus ("Loading " + description.name + "…");
+        {
+            const ScopedValueSetter<bool> loading (busy, true);
+            auto plugin = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, description);
+            if (plugin == nullptr)
+            {
+                pluginStatus ("Could not create " + description.name + ".");
+                return;
+            }
+            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter() };
+            plugin->initialiseFully();
+        }
+        completePendingPlugin();
+    }
+
+    void completePendingPlugin()
+    {
+        if (! pendingPlugin) return;
+        if (edit == nullptr || edit->getTransport().isRecording() || ariaReviewPending)
+        {
+            pendingPlugin.reset();
+            pluginStatus ("Plug-in load cancelled before changing the project.");
+            return;
+        }
+        if (busy) return;
+        auto& plugin = static_cast<te::ExternalPlugin&> (*pendingPlugin->plugin);
+        if (plugin.isInitialisingAsync())
+        {
+            if (Time::getMillisecondCounter() - pendingPlugin->startedAt < 15000u) return;
+            pendingPlugin.reset();
+            pluginStatus ("The Audio Unit did not finish loading. The project was not changed.");
+            return;
+        }
+        auto requested = std::move (*pendingPlugin);
+        pendingPlugin.reset();
+        if (plugin.getAudioPluginInstance() == nullptr)
+        {
+            pluginStatus (plugin.getName() + " could not be loaded. " + plugin.getLoadError());
+            return;
+        }
+        commitPlugin (requested.plugin, requested.destination, requested.addTrack, requested.instrument);
+    }
+
+    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew, bool instrument)
+    {
+        if (! canInsertPlugin() || plugin == nullptr) return;
+        auto* track = trackById (target);
+        if (! addNew && (track == nullptr || track->isFrozen (te::Track::anyFreeze)
+                        || (instrument && instrumentTrackRestriction (track).isNotEmpty())))
+        {
+            pluginStatus ("The original destination is no longer available for this plug-in.");
+            return;
+        }
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction (addNew ? "Add instrument track" : instrument ? "Load instrument" : "Add insert effect");
+        te::AudioTrack::Ptr newTrack;
+        if (addNew)
+        {
+            newTrack = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+            if (newTrack == nullptr)
+            {
+                pluginStatus ("Could not create a new instrument track.");
+                return;
+            }
+            track = newTrack.get();
+            track->setName (plugin->getName());
+        }
+
+        const auto* volume = track->getVolumePlugin();
+        // The instrument comes first. Effects go before the existing track fader.
+        const int index = instrument ? 0 : volume != nullptr ? track->pluginList.indexOf (volume) : -1;
+        track->pluginList.insertPlugin (plugin, index, nullptr);
+        if (track->pluginList.indexOf (plugin.get()) < 0)
+        {
+            if (newTrack != nullptr) edit->deleteTrack (newTrack.get());
+            pluginStatus ("Could not insert " + plugin->getName() + ".");
+            return;
+        }
+        if (newTrack != nullptr) selection.selectOnly (track);
+        auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
+        if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
+            status << " Choose the patch in Channel → Open Instrument.";
+        pluginStatus (status);
+    }
+
+    // Menu callbacks re-resolve the original track and project after the popup closes.
+    auto trackMenuAction (te::EditItemID id, std::function<void(StudioView&, te::AudioTrack&)> action)
+    {
+        return [safe = Component::SafePointer<StudioView> (this), id, generation = projectGeneration,
+                action = std::move (action)]
+        {
+            if (safe == nullptr || generation != safe->projectGeneration || ! safe->canEditRegions()) return;
+            if (auto* track = safe->trackById (id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
+                action (*safe, *track);
+        };
+    }
+
+    void showTrackMenu (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
+    {
+        auto* track = trackById (id);
+        if (track == nullptr || ! canEditRegions() || track->isFrozen (te::Track::anyFreeze)) return;
+        PopupMenu menu;
+        if (kind == studio::TrackMenu::inserts)
+            populateInsertMenu (menu, *track);
+        else if (kind == studio::TrackMenu::output)
+            populateOutputMenu (menu, *track);
+        else
+            populateInputMenu (menu, *track, kind == studio::TrackMenu::midiInput);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+    void populateInputMenu (PopupMenu& menu, te::AudioTrack& track, bool midi)
+    {
+        const auto type = midi ? te::InputDevice::physicalMidiDevice : te::InputDevice::waveDevice;
+        const auto id = track.itemID;
+        menu.addSectionHeader (midi ? "Physical MIDI inputs" : "Audio inputs");
+        bool found = false;
+        for (auto* instance : edit->getAllInputDevices())
+        {
+            auto& device = instance->getInputDevice();
+            if (device.getDeviceType() != type || ! device.isEnabled()) continue;
+            found = true;
+            const auto deviceId = device.getDeviceID();
+            const auto name = device.getName();
+            const auto targets = instance->getTargets();
+            const bool assigned = targets.contains (id);
+            const auto label = assigned ? "Disconnect " + name
+                : ! targets.isEmpty() ? "Move " + name + " to this track" : "Assign " + name;
+            menu.addItem (label, true, assigned, trackMenuAction (id,
+                [deviceId, type, assigned, midi] (StudioView& studio, te::AudioTrack& target)
+                {
+                    for (auto* in : target.edit.getAllInputDevices())
+                    {
+                        auto& current = in->getInputDevice();
+                        if (current.getDeviceType() != type || current.getDeviceID() != deviceId || ! current.isEnabled())
+                            continue;
+                        if (in->getTargets().contains (target.itemID) != assigned) return;
+                        auto& undo = target.edit.getUndoManager();
+                        undo.beginNewTransaction (assigned ? "Disconnect track input" : "Assign track input");
+                        if (assigned)
+                        {
+                            const auto result = in->removeTarget (target.itemID, &undo);
+                            if (result.failed()) studio.pluginStatus (result.getErrorMessage());
+                        }
+                        else if (auto result = in->setTarget (target.itemID, true, &undo, 0))
+                        {
+                            if (midi) in->setRecordingEnabled (target.itemID, true);
+                        }
+                        else
+                            studio.pluginStatus (result.error());
+                        return;
+                    }
+                }));
+            if (assigned && midi)
+                if (auto* midiDevice = dynamic_cast<te::MidiInputDevice*> (&device))
+                {
+                    PopupMenu channels;
+                    for (int channel = 1; channel <= 16; ++channel)
+                        channels.addItem ("Channel " + String (channel), true, midiDevice->isChannelAllowed (channel),
+                            trackMenuAction (id, [deviceId, channel] (StudioView&, te::AudioTrack& target)
+                            {
+                                for (auto* in : target.edit.getAllInputDevices())
+                                    if (in->getTargets().contains (target.itemID)
+                                        && in->getInputDevice().getDeviceID() == deviceId)
+                                        if (auto* device = dynamic_cast<te::MidiInputDevice*> (&in->getInputDevice()))
+                                        {
+                                            device->setChannelAllowed (channel, ! device->isChannelAllowed (channel));
+                                            return;
+                                        }
+                            }));
+                    menu.addSubMenu (name + " MIDI channels (device-wide)", channels);
+                }
+        }
+        if (! found) menu.addItem (1, "No enabled devices", false);
+    }
+
+    void populateOutputMenu (PopupMenu& menu, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        auto& output = track.getOutput();
+        menu.addSectionHeader ("Current output · " + studio::outputLabel (track));
+        menu.addItem ("Default Audio (Master)", true, output.usesDefaultAudioOut(),
+            trackMenuAction (id, [] (StudioView&, te::AudioTrack& target)
+            {
+                target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                target.getOutput().setOutputToDefaultDevice (false);
+            }));
+        auto& devices = engine.getDeviceManager();
+        if (auto* midi = devices.getDefaultMidiOutDevice(); midi != nullptr && midi->isEnabled())
+            menu.addItem ("Default MIDI", true, output.usesDefaultMIDIOut(),
+                trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& target)
+                {
+                    auto* device = studio.engine.getDeviceManager().getDefaultMidiOutDevice();
+                    if (device == nullptr || ! device->isEnabled()) return;
+                    target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                    target.getOutput().setOutputToDefaultDevice (true);
+                }));
+        for (int i = 0; i < devices.getNumOutputDevices(); ++i)
+            if (auto* device = devices.getOutputDeviceAt (i); device != nullptr && device->isEnabled())
+            {
+                const auto deviceId = device->getDeviceID();
+                menu.addItem (device->getName(), true, output.getOutputDeviceID() == deviceId,
+                    trackMenuAction (id, [deviceId] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        auto* current = studio.engine.getDeviceManager().findOutputDeviceForID (deviceId);
+                        if (current == nullptr || ! current->isEnabled()) return;
+                        target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                        target.getOutput().setOutputToDeviceID (deviceId);
+                    }));
+            }
+    }
+
+    void populateInsertMenu (PopupMenu& menu, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        menu.addSectionHeader ("Insert chain · " + track.getName());
+        bool any = false;
+        for (auto* plugin : track.pluginList.getPlugins())
+        {
+            if (plugin == track.getVolumePlugin() || plugin == track.getLevelMeterPlugin()) continue;
+            any = true;
+            const auto pluginId = plugin->itemID;
+            menu.addItem ("Open " + plugin->getName(), trackMenuAction (id,
+                [pluginId] (StudioView&, te::AudioTrack& target)
+                {
+                    for (auto* current : target.pluginList.getPlugins())
+                        if (current->itemID == pluginId)
+                        {
+                            current->showWindowExplicitly();
+                            break;
+                        }
+                }));
+        }
+        if (! any) menu.addItem (10, "No instruments or effects", false);
+        PopupMenu effects;
+        const std::pair<const char*, const char*> builtIns[] {
+            { "Equaliser", te::EqualiserPlugin::xmlTypeName },
+            { "Compressor", te::CompressorPlugin::xmlTypeName },
+            { "Delay", te::DelayPlugin::xmlTypeName }
+        };
+        for (const auto& [label, type] : builtIns)
+            effects.addItem (label, trackMenuAction (id, [type] (StudioView& studio, te::AudioTrack& target)
+            {
+                if (! studio.canInsertPlugin()) return;
+                studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
+            }));
+        for (const auto& description : engine.getPluginManager().knownPluginList.getTypes())
+            if (description.pluginFormatName == "AudioUnit" && ! description.isInstrument
+                && ! description.name.containsIgnoreCase ("ARIA Player"))
+                effects.addItem (description.name, trackMenuAction (id,
+                    [description] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        studio.startExternalPlugin (description, target.itemID, false, false);
+                    }));
+        menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
     }
 
     void showPlugins()
