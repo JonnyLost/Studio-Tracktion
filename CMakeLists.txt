@@ -125,10 +125,25 @@ string(REPLACE "${refresh}" "        };\n        armButton.onClick" editor "${ed
 string(REPLACE "        };\n        armButton.onClick" "${refresh}" editor "${editor}")
 string(REPLACE "inputsState = track->edit.state.getChildWithName (te::IDs::INPUTDEVICES);"
                "inputsState = track->edit.inputDeviceState;" editor "${editor}")
-# Give the generated arrangement editor the same palette as the Studio window.
-string(REPLACE "g.setColour (Colours::grey);" "g.setColour (Colour (0xff303d48));" editor "${editor}")
-string(REPLACE "g.setColour (Colours::red);" "g.setColour (Colour (0xffc5a56b));" editor "${editor}")
-string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (Colour (0xff24303b));" editor "${editor}")
+# Style only the generated editor's drawing code. Track/clip geometry,
+# hit testing, recording, and drag/trim still use the pinned implementation.
+set(header_fill [=[g.setColour (Colours::grey);
+    g.fillRect (getLocalBounds().withTrimmedRight (2));]=])
+string(FIND "${editor}" "${header_fill}" header_fill_match)
+if(header_fill_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example track header drawing has changed.")
+endif()
+string(REPLACE "${header_fill}" [=[g.setColour (editViewState.selectionManager.isSelected (track.get())
+                     ? studio::colours::selected : studio::colours::panel);
+    g.fillRect (getLocalBounds().withTrimmedRight (2));]=] editor "${editor}")
+string(REPLACE "g.setColour (Colours::grey);" "g.setColour (studio::colours::panel);" editor "${editor}")
+string(REPLACE "g.setColour (Colours::red);" "g.setColour (studio::colours::focus.withAlpha (0.65f));" editor "${editor}")
+string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (studio::colours::timeline);" editor "${editor}")
+string(REPLACE "g.setColour (Colours::yellow);" "g.setColour (studio::colours::playhead);" editor "${editor}")
+string(REPLACE "g.fillAll (clip->getColour().withAlpha (0.5f));"
+               "g.fillAll (studio::colours::selected.interpolatedWith (clip->getColour().withAlpha (1.0f), 0.27f));"
+               editor "${editor}")
+string(PREPEND editor "#include \"StudioUI.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
 # additive/toggle selection without modifying the Tracktion checkout itself.
 set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)
@@ -153,8 +168,8 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
-target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
+target_sources(Studio PRIVATE Studio.cpp StudioUI.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
+target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
     JUCE_PLUGINHOST_AU=1 JUCE_MODAL_LOOPS_PERMITTED=1

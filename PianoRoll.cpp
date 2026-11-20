@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "PianoRoll.h"
 #include "MusicalRuler.h"
+#include "StudioUI.h"
 #include <cmath>
 
 using namespace juce;
@@ -423,7 +424,7 @@ void StudioPianoRoll::scrollBarMoved (ScrollBar*, double)
 
 void StudioPianoRoll::paint (Graphics& g)
 {
-    g.fillAll (Colour (0xff1a2430));
+    g.fillAll (studio::colours::timeline);
     if (notesArea.isEmpty())
         return;
     paintGrid (g);
@@ -584,7 +585,7 @@ void StudioPianoRoll::paintPlayhead (Graphics& g)
     const int x = xAt (transportSourceBeat);
     if (x < notesArea.getX() || x >= notesArea.getRight())
         return;
-    g.setColour (Colour (0xfff0c978));
+    g.setColour (studio::colours::playhead);
     g.drawVerticalLine (x, (float) rulerArea.getY(), (float) velocityArea.getBottom());
     g.fillEllipse ((float) x - 3.0f, (float) rulerArea.getY() + 1.0f, 6.0f, 6.0f);
 }
