@@ -33,5 +33,5 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
           cmake --build build --config Debug --target Studio StudioMilestoneTests StudioSpatialTests --parallel 4
-          ctest --test-dir build -C Debug --output-on-failure
+          ctest --test-dir build -C Debug --verbose --output-on-failure
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
