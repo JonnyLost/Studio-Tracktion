@@ -46,11 +46,21 @@ juce::Result verify()
     auto blocked = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
     auto oldSend = edit->getPluginCache().createNewPlugin (te::AuxSendPlugin::xmlTypeName, {});
     if (blocked == nullptr || oldSend == nullptr) return Result::fail ("existing routing fixture");
+    blocked->getOutput().setOutputToDefaultDevice (false);
     dynamic_cast<te::AuxSendPlugin&> (*oldSend).busNumber = 15;
     blocked->pluginList.insertPlugin (oldSend, blocked->pluginList.size(), nullptr);
     if (setRoomSend (*blocked, true, {}, -12, {}).wasOk()) return Result::fail ("existing aux isolation");
     blocked = nullptr;
     oldSend = nullptr;
+    auto reverbTrack = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+    auto insert = edit->getPluginCache().createNewPlugin (te::ReverbPlugin::xmlTypeName, {});
+    if (reverbTrack == nullptr || insert == nullptr) return Result::fail ("existing reverb fixture");
+    reverbTrack->getOutput().setOutputToDefaultDevice (false);
+    reverbTrack->pluginList.insertPlugin (insert, reverbTrack->pluginList.size(), nullptr);
+    if (setRoomSend (*reverbTrack, true, {}, -12, {}).wasOk() || hasRoomSend (*reverbTrack))
+        return Result::fail ("existing reverb isolation");
+    reverbTrack = nullptr;
+    insert = nullptr;
     if (countReturns (*edit) != 0 || hasRoomSend (*source)) return Result::fail ("default routing");
 
     auto& undo = edit->getUndoManager();
@@ -70,6 +80,15 @@ juce::Result verify()
         return Result::fail ("live send gain or undo");
     const auto returnID = roomReturnTrack (*edit)->itemID;
     const auto bus = send->getBusNumber();
+    auto secondSource = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+    if (secondSource == nullptr) return Result::fail ("second source");
+    secondSource->getOutput().setOutputToDefaultDevice (false);
+    if (auto result = setRoomSend (*secondSource, true, { 0.3f, 0.3f }, -18, {}); result.failed()) return result;
+    if (countReturns (*edit) != 1 || auxSend (*secondSource) == nullptr || auxSend (*secondSource)->getBusNumber() != bus
+        || ! source->getOutput().usesDefaultAudioOut() || ! secondSource->getOutput().usesDefaultAudioOut())
+        return Result::fail ("shared return and independent direct routes");
+    const auto secondID = secondSource->itemID;
+    secondSource = nullptr;
     if (! te::EditFileOperations (*edit).writeToFile (file, false)) return Result::fail ("write project");
     edit.reset();
     edit = te::loadEditFromFile (engine, file);
@@ -86,7 +105,9 @@ juce::Result verify()
     nextUndo.beginNewTransaction ("Disable stage audio");
     if (auto result = setRoomSend (*source, false, seat, -12, {}); result.failed()) return result;
     nextUndo.beginNewTransaction();
-    if (hasRoomSend (*source) || ! nextUndo.undo() || ! hasRoomSend (*source) || countReturns (*edit) != 1)
+    auto* second = te::findAudioTrackForID (*edit, secondID);
+    if (hasRoomSend (*source) || second == nullptr || ! hasRoomSend (*second)
+        || ! nextUndo.undo() || ! hasRoomSend (*source) || countReturns (*edit) != 1)
         return Result::fail ("undo route removal");
     return Result::ok();
 }

@@ -137,8 +137,11 @@ void SpatialMap::paint (Graphics& g)
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
             g.setFont (uiFont (10.5f, active ? Font::bold : Font::plain));
             g.setColour (active ? colours::focus : colours::text);
-            const int labelY = roundToInt (point.y) + m.px (12);
-            g.drawFittedText (marker.name, { left, labelY, labelWidth, m.line (10, 2) },
+            const int labelHeight = m.line (10, 2);
+            int labelY = roundToInt (point.y) + m.px (13);
+            if (labelY + labelHeight > roundToInt (area.getBottom()))
+                labelY = roundToInt (point.y) - m.px (15) - labelHeight;
+            g.drawFittedText (marker.name, { left, labelY, labelWidth, labelHeight },
                               Justification::centred, 1, 1.0f);
         }
     };

@@ -311,6 +311,16 @@ Return ensureReturn (te::Edit& edit, Room settings)
     return { track.get(), room, bus };
 }
 
+bool isRecognisedReverb (te::Plugin& plugin)
+{
+    if (! plugin.isEnabled() || plugin.isSynth()) return false;
+    if (dynamic_cast<te::ReverbPlugin*> (&plugin) != nullptr || plugin.getName().containsIgnoreCase ("reverb"))
+        return true;
+    if (const auto* hosted = dynamic_cast<te::ExternalPlugin*> (&plugin))
+        return hosted->desc.category.containsIgnoreCase ("reverb");
+    return false;
+}
+
 bool stopped (te::Edit& edit)
 {
     const auto& transport = edit.getTransport();
@@ -341,8 +351,7 @@ String routeRestriction (te::AudioTrack& track)
     {
         if (auto* send = dynamic_cast<te::AuxSendPlugin*> (plugin); send != nullptr && dynamic_cast<RoomSendPlugin*> (send) == nullptr)
             return "This track already has an aux send. Review its routing before adding the room.";
-        if (! plugin->isSynth() && plugin->isEnabled()
-            && (dynamic_cast<te::ReverbPlugin*> (plugin) != nullptr || plugin->getName().containsIgnoreCase ("reverb")))
+        if (isRecognisedReverb (*plugin))
             return "This track already has an insert reverb. Review it before adding the shared room.";
     }
     return {};

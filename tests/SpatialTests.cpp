@@ -99,6 +99,13 @@ static void audio()
         for (int i = 0; i < frames; i += 137)
             render.process (left.data() + i, right.data() + i, std::min (137, frames - i));
         assert (render.allocatedBytes() == memory);
+        const auto partitionedL = left, partitionedR = right;
+        render.reset();
+        std::fill (left.begin(), left.end(), 0.0f);
+        std::fill (right.begin(), right.end(), 0.0f);
+        left[0] = 1;
+        render.process (left.data(), right.data(), frames);
+        assert (left == partitionedL && right == partitionedR);
         assert (left.front() == 0 && right.front() == 0);
         assert (left != right);
         assert (std::all_of (left.begin(), left.end(), [] (float x) { return std::isfinite (x) && std::abs (x) < 1.0f; }));
@@ -124,6 +131,12 @@ static void audio()
         assert (std::all_of (left.begin(), left.end(), [] (float x) { return std::isfinite (x); }));
         assert (std::inner_product (left.begin(), left.end(), left.begin(), 0.0) > 1.0e-5);
         assert (render.allocatedBytes() == memory);
+        bypass.bypass = true;
+        render.setRoom (bypass);
+        std::fill (left.begin(), left.end(), 0.1f);
+        std::fill (right.begin(), right.end(), -0.1f);
+        render.process (left.data(), right.data(), frames);
+        assert (left.back() == 0 && right.back() == 0);
     }
 }
 

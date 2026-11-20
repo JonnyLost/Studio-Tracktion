@@ -316,9 +316,18 @@ SpatialWorkspace::SpatialWorkspace()
     removeSetup.onClick = [this] { manageSetup (false, true); };
     micRoomBypass.onClick = [this]
     {
+        const bool hadDraft = roomDraftDirty;
+        const auto pending = readDraft();
+        const auto pendingName = roomName.getText();
         auto room = readRoom (activeRoom());
         room.bypass = ! room.bypass;
         apply (room, nameOf (activeRoom()));
+        if (hadDraft)
+        {
+            setDraft (pending, pendingName);
+            roomDraftDirty = true;
+            syncRooms();
+        }
     };
     setDraft ({}, "Chamber Hall");
     setView (View::stage);
@@ -522,14 +531,27 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
     if (! editable) return;
     const auto found = std::find_if (tracks.begin(), tracks.end(), [&] (const auto& row) { return row.id.toString() == key; });
     if (found == tracks.end()) return;
-    const float dx = point.x - found->seat.position.x, dz = point.depth - found->seat.position.depth;
+    auto delta = Position { point.x - found->seat.position.x, point.depth - found->seat.position.depth };
+    if (group)
+    {
+        float left = -2, right = 2, front = -1, back = 1;
+        for (const auto& row : tracks)
+            if (row.seat.section == found->seat.section)
+            {
+                const auto p = row.seat.position;
+                left = jmax (left, -1.0f - p.x); right = jmin (right, 1.0f - p.x);
+                front = jmax (front, -p.depth); back = jmin (back, 1.0f - p.depth);
+            }
+        delta = { jlimit (left, right, delta.x), jlimit (front, back, delta.depth) };
+    }
+    if (delta.x == 0.0f && delta.depth == 0.0f) return;
     begin (group ? "Move stage section" : "Move stage seat");
     for (const auto& row : tracks)
         if (row.id == found->id || (group && row.seat.section == found->seat.section))
             if (auto* track = lookup (row.id))
             {
                 auto value = row.seat;
-                value.position = validPosition ({ value.position.x + dx, value.position.depth + dz });
+                value.position = validPosition ({ value.position.x + delta.x, value.position.depth + delta.depth });
                 setSeat (*track, value);
             }
     statusMessage.clear();

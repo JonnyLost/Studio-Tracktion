@@ -137,6 +137,7 @@ void RoomReverb::process (float* left, float* right, int count) noexcept
         smoothTo (current.early, target.early);
         smoothTo (current.late, target.late);
         smoothTo (current.output, target.output);
+        if (target.output == 0.0f && current.output < 1.0e-6f) current.output = 0;
         const float wetL = (reflectionsL * current.early + current.late * 0.5f * (output[0] - output[3])) * current.output;
         const float wetR = (reflectionsR * current.early + current.late * 0.5f * (output[1] - output[2])) * current.output;
         left[frame] = right != nullptr ? wetL : 0.5f * (wetL + wetR);
