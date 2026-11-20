@@ -2,6 +2,9 @@ name: Intel macOS build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - development
 
 permissions:
   contents: read
@@ -12,6 +15,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Test Studio appearance metrics
+        run: |
+          c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o "$RUNNER_TEMP/studio-appearance-tests"
+          "$RUNNER_TEMP/studio-appearance-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"

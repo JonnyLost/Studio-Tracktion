@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <JuceHeader.h>
+#include <array>
 #include <vector>
 #include <functional>
+#include <limits>
+#include <optional>
 using namespace juce;
 using namespace tracktion::literals;
 
@@ -9,12 +12,26 @@ using namespace tracktion::literals;
 #include "Components.h"
 #include "PluginWindow.h"
 #include "MidiMonitor.h"
+#include "PianoRoll.h"
+#include "MusicalRuler.h"
+#include "StudioUI.h"
+#include "InstrumentBrowser.h"
+#include "StudioMixing.h"
+
+static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
+{
+    auto area = display.userBounds.toNearestInt();
+    if (auto* peer = window.getPeer())
+        if (const auto frame = peer->getFrameSizeIfPresent())
+            frame->subtractFrom (area);
+    return area;
+}
 
 class MidiMonitorWindow final : public DocumentWindow
 {
 public:
     MidiMonitorWindow()
-        : DocumentWindow ("Studio — MIDI Monitor", Colour (0xff172027), closeButton)
+        : DocumentWindow ("Studio — MIDI Monitor", studio::colours::canvas, closeButton)
     {
         setUsingNativeTitleBar (true);
         setResizable (true, false);
@@ -22,16 +39,23 @@ public:
     }
 
     std::function<void()> onClose;
+    std::function<bool(const KeyPress&)> onAppearanceKey;
+    bool keyPressed (const KeyPress& key) override
+    {
+        return (onAppearanceKey && onAppearanceKey (key)) || DocumentWindow::keyPressed (key);
+    }
     void closeButtonPressed() override { if (onClose) onClose(); }
 };
 
 class WorkspaceDivider final : public Component
 {
 public:
-    explicit WorkspaceDivider (bool horizontalDrag)
-        : across (horizontalDrag)
+    WorkspaceDivider()
     {
-        setMouseCursor (across ? MouseCursor::LeftRightResizeCursor : MouseCursor::UpDownResizeCursor);
+        setMouseCursor (MouseCursor::UpDownResizeCursor);
+        setWantsKeyboardFocus (true);
+        setTitle ("Resize lower workspace");
+        setDescription ("Press Up or Down to resize the lower workspace.");
     }
 
     std::function<int()> getSize;
@@ -39,12 +63,11 @@ public:
 
     void paint (Graphics& g) override
     {
-        g.setColour (Colour (isMouseOverOrDragging() ? 0xffc5a56b : 0xff3c4954));
-        auto bounds = getLocalBounds();
-        if (across)
-            g.fillRect (bounds.withSizeKeepingCentre (2, jmin (36, getHeight())));
-        else
-            g.fillRect (bounds.withSizeKeepingCentre (jmin (36, getWidth()), 2));
+        g.fillAll (studio::colours::divider);
+        g.setColour (hasKeyboardFocus (false) || isMouseOverOrDragging()
+                         ? studio::colours::focus : studio::colours::secondary);
+        for (int offset : { -10, -5, 0, 5, 10 })
+            g.fillEllipse ((float) (getWidth() / 2 + offset - 1), (float) (getHeight() / 2 - 1), 2.0f, 2.0f);
     }
 
     void mouseEnter (const MouseEvent&) override { repaint(); }
@@ -52,12 +75,47 @@ public:
     void mouseDown (const MouseEvent&) override { initialSize = getSize(); }
     void mouseDrag (const MouseEvent& e) override
     {
-        resizePane (initialSize + (across ? e.getDistanceFromDragStartX() : -e.getDistanceFromDragStartY()));
+        resizePane (initialSize - e.getDistanceFromDragStartY());
+    }
+
+    bool keyPressed (const KeyPress& key) override
+    {
+        if (key != KeyPress::upKey && key != KeyPress::downKey)
+            return false;
+        resizePane (getSize() + studio::appearance.px (key == KeyPress::upKey ? 16 : -16));
+        return true;
     }
 
 private:
-    bool across;
+    void focusGained (FocusChangeType) override { repaint(); }
+    void focusLost (FocusChangeType) override { repaint(); }
     int initialSize = 0;
+};
+
+class AudioSettingsView final : public Viewport
+{
+public:
+    explicit AudioSettingsView (AudioDeviceManager& manager)
+        : selector (manager, 0, 512, 1, 512, false, false, true, true)
+    {
+        selector.setItemHeight (studio::appearance.control (24));
+        setScrollBarThickness (studio::appearance.scrollbar());
+        setScrollBarsShown (true, false);
+        setViewedComponent (&selector, false);
+    }
+
+    ~AudioSettingsView() override { setViewedComponent (nullptr); }
+
+    void resized() override
+    {
+        Viewport::resized();
+        // AudioDeviceSelectorComponent lays out its controls and updates its
+        // own height, including when the device or visible tabs change.
+        selector.setSize (jmax (1, getWidth() - getScrollBarThickness()), selector.getHeight());
+    }
+
+private:
+    AudioDeviceSelectorComponent selector;
 };
 
 class StudioView final : public Component, private Timer
@@ -65,21 +123,67 @@ class StudioView final : public Component, private Timer
 public:
     StudioView()
     {
-        style.setColour (TextButton::buttonColourId, Colour (0xff303b45));
-        style.setColour (TextButton::buttonOnColourId, Colour (0xff665333));
-        style.setColour (TextButton::textColourOffId, Colour (0xffe6edf2));
-        style.setColour (ComboBox::backgroundColourId, Colour (0xff29343e));
-        style.setColour (ComboBox::outlineColourId, Colour (0xff4b5964));
-        style.setColour (Slider::trackColourId, Colour (0xffc5a56b));
         setLookAndFeel (&style);
+        LookAndFeel::setDefaultLookAndFeel (&style);
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
+                                prefs.getIntValue ("studio.textScale", 100));
+        workspaceHeight = studio::appearance.px (workspaceHeight);
+        railViewport.setViewedComponent (&railContent, false);
+        railViewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (railViewport);
+        workspaceViewport.setViewedComponent (&workspaceBody, false);
+        workspaceViewport.setScrollBarsShown (true, false);
+        addChildComponent (workspaceViewport);
+        addAndMakeVisible (appearanceButton);
+        addChildComponent (projectMenu);
+        addChildComponent (trackMenu);
+        addChildComponent (dockMenu);
+        appearanceButton.onClick = [this] { showAppearance(); };
+        projectMenu.onClick = [this]
+        {
+            showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
+                                           &audioSettings, &plugins, &monitorButton });
+        };
+        trackMenu.onClick = [this]
+        {
+            showCommandMenu (trackMenu, { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions });
+        };
+        dockMenu.onClick = [this]
+        {
+            if (workspaceLinks[0].isVisible() || collapsedDockLinks)
+                showCommandMenu (dockMenu, { &compactButton, &splitButton, &expandedButton, &closeWorkspace,
+                                             &workspaceLinks[0], &workspaceLinks[1] });
+            else
+                showCommandMenu (dockMenu, { &compactButton, &splitButton, &expandedButton, &closeWorkspace });
+        };
         setWantsKeyboardFocus (true);
-        for (auto* control : { &newProject, &openProject, &saveProject, &audioSettings, &plugins,
+        for (auto* control : { &newProject, &openProject, &saveProject, &saveAsProject,
+                               &audioSettings, &plugins,
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
+        addAndMakeVisible (regionActions);
+        regionActions.setTooltip ("Split, duplicate, copy or paste selected arrangement regions");
+        regionActions.onClick = [this] { showRegionActions(); };
+
+        addAndMakeVisible (arrangementZoomOut);
+        addAndMakeVisible (arrangementZoomIn);
+        arrangementZoomOut.setTooltip ("Zoom out in the arrangement timeline");
+        arrangementZoomIn.setTooltip ("Zoom in on the arrangement playhead");
+        arrangementZoomOut.onClick = [this] { zoomArrangement (1.25); };
+        arrangementZoomIn.onClick = [this] { zoomArrangement (1.0 / 1.25); };
 
         addAndMakeVisible (monitorButton);
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
+        addChildComponent (ariaReviewNotice);
+        ariaReviewNotice.setText ("ARIA CHECK  ·  Play the restored instrument, then confirm to save.",
+                                 dontSendNotification);
+        ariaReviewNotice.setFont (FontOptions (12.0f, Font::bold));
+        ariaReviewNotice.setColour (Label::textColourId, studio::colours::warning);
+        ariaReviewNotice.setJustificationType (Justification::centredLeft);
+        ariaReviewNotice.setTooltip ("When reopening an ARIA project, play the instrument to check its samples, "
+                                     "then click Confirm ARIA to unlock saving. Retry ARIA reloads the original AU state.");
         retryAriaButton.onClick = [this] { retryAriaRestoration(); };
         confirmAriaButton.onClick = [this]
         {
@@ -89,8 +193,9 @@ public:
             autoAriaRetryPending = false;
             writeRestoreLog ("User confirmed instrument state; project may now be saved.");
             message.setText ("ARIA state confirmed. Save is enabled.", dontSendNotification);
+            resized();
         };
-        addChildComponent (monitor);
+        workspaceBody.addChildComponent (monitor);
         monitorButton.onClick = [this]
         {
             if (monitorWindow != nullptr && monitorWindow->isVisible())
@@ -100,27 +205,48 @@ public:
             }
             showWorkspace (workspace == Workspace::midi ? Workspace::closed : Workspace::midi);
         };
-        addAndMakeVisible (mixButton);
-        mixButton.onClick = [this]
+        for (const auto& item : railItems())
         {
-            showWorkspace (workspace == Workspace::mix ? Workspace::closed : Workspace::mix);
-        };
+            railContent.addAndMakeVisible (*item.button);
+            item.button->onClick = [this, destination = item.destination] { toggleWorkspace (destination); };
+        }
+        railContent.addAndMakeVisible (moreButton);
+        moreButton.onClick = [this] { showMoreWorkspaces(); };
         addAndMakeVisible (closeWorkspace);
         closeWorkspace.onClick = [this] { showWorkspace (Workspace::closed); };
-
-        addAndMakeVisible (sidebarDivider);
-        sidebarDivider.getSize = [this] { return sidebar.getWidth(); };
-        sidebarDivider.resizePane = [this] (int size)
+        for (const auto& item : dockItems())
         {
-            sidebarWidth = jlimit (155, 280, size);
-            resized();
-        };
+            addAndMakeVisible (*item.button);
+            item.button->onClick = [this, mode = item.mode] { setDockMode (mode); };
+        }
+        addChildComponent (workspaceSummary);
+        addChildComponent (placeholder);
+        workspaceBody.addChildComponent (browser);
+        workspaceBody.addChildComponent (channelInspector);
+        workspaceBody.addChildComponent (mixer);
+        configureInstrumentWorkflow();
+        for (size_t index = 0; index < workspaceLinks.size(); ++index)
+        {
+            auto& link = workspaceLinks[index];
+            addChildComponent (link);
+            link.onClick = [this, index]
+            {
+                showWorkspace (contextLinks()[index].destination);
+                if (workspaceLinks[index].isVisible())
+                    workspaceLinks[index].grabKeyboardFocus();
+                else
+                    moreButton.grabKeyboardFocus();
+            };
+        }
+        workspaceSummary.setColour (Label::textColourId, studio::colours::secondary);
+        placeholder.setColour (Label::textColourId, studio::colours::secondary);
+        placeholder.setJustificationType (Justification::centred);
         addAndMakeVisible (workspaceDivider);
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
-            workspaceHeight = jlimit (146, workspaceLimit, size);
-            resized();
+            workspaceHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
+            setDockMode (DockMode::split);
         };
         addAndMakeVisible (trackPicker);
         trackPicker.setTextWhenNothingSelected ("Select a track");
@@ -138,18 +264,29 @@ public:
 
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
-        for (auto* label : { &title, &position, &tempo, &mixerLabel, &message, &trackHeading, &trackDetails, &volumeLabel, &panLabel, &workspaceTitle })
+        workspaceBody.addChildComponent (piano);
+        piano.setVisible (false);
+        piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
+        for (auto* label : { &title, &message, &trackDetails, &workspaceTitle })
             addAndMakeVisible (*label);
-        title.setFont (FontOptions (23.0f, Font::bold));
+        for (auto* readout : { &bars, &position, &tempo, &meter })
+        {
+            addAndMakeVisible (*readout);
+            readout->setValue ("—");
+        }
+        title.setFont (FontOptions (15.0f, Font::bold));
+        for (auto* label : { &message, &trackDetails, &workspaceSummary, &placeholder })
+        {
+            label->setFont (FontOptions (13.0f));
+            label->setMinimumHorizontalScale (1.0f);
+        }
         title.setText ("Studio 0.2", dontSendNotification);
-        title.setColour (Label::textColourId, Colour (0xffedcc8d));
-        position.setFont (FontOptions (19.0f, Font::bold));
-        position.setJustificationType (Justification::centred);
-        position.setText ("00:00.00", dontSendNotification);
-        tempo.setJustificationType (Justification::centred);
-        trackHeading.setText ("Tracks", dontSendNotification);
-        volumeLabel.setText ("Volume", dontSendNotification);
-        panLabel.setText ("Pan", dontSendNotification);
+        workspaceTitle.setFont (FontOptions (15.0f, Font::bold));
+        message.setColour (Label::textColourId, studio::colours::secondary);
+        trackDetails.setColour (Label::textColourId, studio::colours::secondary);
+        record.setColour (TextButton::textColourOffId, studio::colours::record);
+        record.setColour (TextButton::buttonOnColourId, studio::colours::record.darker (0.55f));
+        rewind.setTooltip ("Return to project start");
         zoom.setTitle ("Timeline zoom");
         addAndMakeVisible (zoom);
         zoom.addItem ("10 seconds", 1);
@@ -157,11 +294,14 @@ public:
         zoom.addItem ("60 seconds", 3);
         zoom.addItem ("180 seconds", 4);
         zoom.addItem ("Fit project", 5);
+        zoom.addItem ("Custom zoom", 6);
         zoom.setSelectedId (2);
         zoom.onChange = [this]
         {
             if (editor != nullptr)
             {
+                if (zoom.getSelectedId() == 6)
+                    return;
                 constexpr double spans[] { 10, 30, 60, 180 };
                 auto& view = editor->getEditViewState();
                 view.viewX1 = 0s;
@@ -169,29 +309,15 @@ public:
                     ? jmax (10.0, edit->getLength().inSeconds() * 1.05)
                     : spans[jlimit (1, 4, zoom.getSelectedId()) - 1];
                 view.viewX2 = te::TimePosition::fromSeconds (seconds);
-                repaint (ruler);
+                repaint();
             }
-        };
-
-        setupSlider (volume, "Volume", -60, 6, 0.1, " dB");
-        setupSlider (pan, "Pan", -1, 1, 0.01, {});
-        volume.onValueChange = [this]
-        {
-            if (auto* track = selectedTrack())
-                if (auto plugin = track->getVolumePlugin())
-                    plugin->setVolumeDb (static_cast<float> (volume.getValue()));
-        };
-        pan.onValueChange = [this]
-        {
-            if (auto* track = selectedTrack())
-                if (auto plugin = track->getVolumePlugin())
-                    plugin->setPan (static_cast<float> (pan.getValue()));
         };
 
         newProject.onClick = [this] { chooseProject (true); };
         openProject.onClick = [this] { chooseProject (false); };
         saveProject.onClick = [this] { save(); };
-        audioSettings.onClick = [this] { EngineHelpers::showAudioDeviceSettings (engine); };
+        saveAsProject.onClick = [this] { chooseSaveAs(); };
+        audioSettings.onClick = [this] { showAudioSettings(); };
         plugins.onClick = [this] { showPlugins(); };
         rewind.onClick = [this] { edit->getTransport().setPosition (0s); };
         play.onClick = [this]
@@ -203,23 +329,36 @@ public:
         };
         record.onClick = [this] { toggleRecordKeepingTake(); };
         addMidi.onClick = [this] { addTrack ("Instrument"); };
+        addAndMakeVisible (addMidiClip);
+        addMidiClip.onClick = [this] { createMidiClip(); };
         addAudio.onClick = [this] { addTrack ("Audio"); };
         importAudio.onClick = [this] { chooseAudio(); };
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
-        setSize (1100, 650);
+        setSize (1024, 640);
+        applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
         timerCallback();
-        startTimerHz (12);
+        startTimerHz (24);
     }
 
     ~StudioView() override
     {
         if (monitorWindow != nullptr)
+        {
             monitorWindow->clearContentComponent();
+            monitorWindow->setLookAndFeel (nullptr);
+        }
         monitor.setCaptureOpen (false);
+        piano.setClip (nullptr);
         timeline.setViewedComponent (nullptr);
         stopTimer();
+        pendingPlugin.reset();
+        channelInspector.setEdit (nullptr);
+        mixer.setEdit (nullptr);
+        workspaceViewport.setViewedComponent (nullptr);
+        railViewport.setViewedComponent (nullptr);
+        LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
     }
 
@@ -246,45 +385,85 @@ public:
 
     void paint (Graphics& graphics) override
     {
-        graphics.fillAll (Colour (0xff151c24));
-        graphics.setColour (Colour (0xff202a33));
+        using namespace studio::colours;
+        graphics.fillAll (canvas);
+        graphics.setColour (panel);
         graphics.fillRect (topBar);
-        graphics.fillRect (sidebar);
         graphics.fillRect (workspacePanel);
-        graphics.setColour (Colour (0xff293540));
+        graphics.fillRect (arrangementTools);
+        graphics.setColour (rail);
+        graphics.fillRect (railBounds);
+        graphics.setColour (studio::colours::timeline);
+        graphics.fillRect (timeline.getBounds());
+        graphics.setColour (control);
         graphics.fillRect (rulerRow);
-        graphics.setColour (Colour (0xffaebdc9));
-        graphics.drawText ("Track controls", rulerRow.withWidth (150).reduced (10, 0),
+        if (ariaReviewPending)
+        {
+            graphics.setColour (Colour (0xff332b20));
+            graphics.fillRect (ariaBanner);
+        }
+        graphics.setColour (divider);
+        graphics.drawHorizontalLine (topBar.getBottom() - 1, 0.0f, (float) getWidth());
+        graphics.drawVerticalLine (railBounds.getRight() - 1, (float) railBounds.getY(), (float) railBounds.getBottom());
+        graphics.setColour (secondary);
+        const auto& m = studio::appearance;
+        graphics.setFont (studio::uiFont (11.0f, Font::bold));
+        graphics.drawText ("Tracks", rulerTrackLabel.reduced (m.px (5), 0),
                            Justification::centredLeft);
         auto area = ruler;
-        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (10, 0),
+        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (m.px (8), 0),
                            Justification::centredLeft);
         if (editor == nullptr)
         {
-            graphics.setColour (Colour (0xffaebdc9));
+            graphics.setColour (secondary);
             graphics.drawText ("Create or open a project to start arranging.", timeline.getBounds(),
                                Justification::centred);
         }
         if (editor == nullptr || area.isEmpty())
             return;
 
-        auto span = editor->getEditViewState().viewX2.get().inSeconds();
-        const double ideal = span / jmax (1, area.getWidth() / 65);
-        const double magnitude = std::pow (10.0, std::floor (std::log10 (jmax (1.0, ideal))));
-        const double normalized = ideal / magnitude;
-        const double interval = magnitude * (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0
-                                                          : normalized <= 5.0 ? 5.0 : 10.0);
-        for (double second = 0; second < span; second += interval)
-        {
-            int x = area.getX() + roundToInt (area.getWidth() * second / span);
-            graphics.setColour (Colour (0xff869da8));
-            graphics.drawVerticalLine (x, static_cast<float> (area.getBottom() - 6),
-                                         static_cast<float> (area.getBottom()));
-            if (x + 4 >= area.getRight())
-                break;
-            graphics.drawText (String (second, 0) + " s", x + 4, area.getY(), jmin (60, area.getRight() - x - 4),
-                               area.getHeight(), Justification::centredLeft);
-        }
+        auto& view = editor->getEditViewState();
+        int lastLabelRight = area.getX() - m.span (50);
+        studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
+            [&] (const studio::MusicalTick& tick)
+            {
+                const int x = area.getX() + view.timeToX (tick.time, area.getWidth());
+                if (x < area.getX() || x >= area.getRight())
+                    return;
+                const bool bar = tick.beatIndex == 0;
+                graphics.setColour (bar ? text : secondary.withAlpha (0.5f));
+                graphics.drawVerticalLine (x, (float) (area.getBottom() - m.px (bar ? 13 : 7)),
+                                            (float) area.getBottom());
+                if (bar && x >= lastLabelRight)
+                {
+                    graphics.drawText (String (tick.barIndex + 1), x + m.px (4), area.getY(), m.span (44),
+                                       area.getHeight() - m.px (5), Justification::centredLeft);
+                    lastLabelRight = x + m.span (42);
+                }
+            });
+    }
+
+    void paintOverChildren (Graphics& g) override
+    {
+        if (edit == nullptr || editor == nullptr || ruler.isEmpty())
+            return;
+        const auto area = Rectangle<int> (ruler.getX(), timeline.getY(),
+                                          ruler.getWidth(), timeline.getHeight());
+        if (area.isEmpty())
+            return;
+        g.saveState();
+        g.reduceClipRegion (area);
+        auto& view = editor->getEditViewState();
+        studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
+            [&] (const studio::MusicalTick& tick)
+            {
+                const int x = area.getX() + view.timeToX (tick.time, area.getWidth());
+                if (x < area.getX() || x >= area.getRight())
+                    return;
+                g.setColour (studio::colours::secondary.withAlpha (tick.beatIndex == 0 ? 0.22f : 0.08f));
+                g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
+            });
+        g.restoreState();
     }
 
     void mouseDown (const MouseEvent& event) override
@@ -298,15 +477,28 @@ public:
 
     bool keyPressed (const KeyPress& key) override
     {
+        if (handleAppearanceKey (key)) return true;
         if (key == KeyPress::spaceKey && play.isEnabled())
         {
             play.onClick();
             return true;
         }
+        if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'Z' || key.getKeyCode() == 'z')
+            && canEditRegions())
+        {
+            if (key.getModifiers().isShiftDown())
+                edit->redo();
+            else
+                edit->undo();
+            return true;
+        }
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'S' || key.getKeyCode() == 's')
             && saveProject.isEnabled())
         {
-            save();
+            if (key.getModifiers().isShiftDown())
+                chooseSaveAs();
+            else
+                save();
             return true;
         }
         return false;
@@ -314,70 +506,202 @@ public:
 
     void resized() override
     {
+        const auto& m = studio::appearance;
         auto area = getLocalBounds();
-        topBar = area.removeFromTop (88);
-        auto files = topBar.reduced (12, 5).removeFromTop (34);
-        for (auto* button : { &plugins, &audioSettings, &saveProject, &openProject, &newProject })
-            button->setBounds (files.removeFromRight (button == &plugins ? 116 : 94).reduced (3, 2));
+        const auto projectRowHeight = m.control (34);
+        const auto transportWidth = area.getWidth() - m.px (20);
+        const bool showMonitor = transportWidth >= m.span (680);
+        const bool tightTransport = transportWidth < m.span (550);
+        const auto transport = { studio::ToolbarItem { &rewind, tightTransport ? 48 : 58 },
+            studio::ToolbarItem { &play, tightTransport ? 47 : 60 }, studio::ToolbarItem { &record, tightTransport ? 78 : 94 },
+            studio::ToolbarItem { &bars, tightTransport ? 66 : 82 }, studio::ToolbarItem { &position, tightTransport ? 80 : 95 },
+            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 } };
+        const int transportHeight = studio::toolbarHeight (transportWidth, transport);
+        topBar = area.removeFromTop (projectRowHeight + transportHeight + m.px (10));
+
+        auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
+        appearanceButton.setBounds (files.removeFromRight (m.span (110)).reduced (m.px (2), 0));
+        const bool fullFileRow = files.getWidth() >= m.span (735);
+        projectMenu.setVisible (! fullFileRow || ! showMonitor);
+        if (projectMenu.isVisible())
+            projectMenu.setBounds (files.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+        for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &openProject, &newProject })
+        {
+            button->setVisible (fullFileRow);
+            if (fullFileRow)
+                button->setBounds (files.removeFromRight (m.span (button == &plugins ? 110 : 88)).reduced (m.px (2), 0));
+        }
         title.setBounds (files);
 
-        auto controls = topBar.withTrimmedTop (44).reduced (12, 5);
-        rewind.setBounds (controls.removeFromLeft (92).reduced (3, 2));
-        play.setBounds (controls.removeFromLeft (70).reduced (3, 2));
-        record.setBounds (controls.removeFromLeft (126).reduced (3, 2));
-        position.setBounds (controls.removeFromLeft (110));
-        tempo.setBounds (controls.removeFromLeft (93));
-        monitorButton.setBounds (controls.removeFromRight (132).reduced (3, 2));
-        mixButton.setBounds (controls.removeFromRight (74).reduced (3, 2));
+        auto controls = topBar.withTrimmedTop (projectRowHeight + m.px (4)).reduced (m.px (10), 0);
+        monitorButton.setVisible (showMonitor);
+        if (showMonitor)
+            monitorButton.setBounds (controls.removeFromRight (m.span (125)).withHeight (m.control (30)).reduced (m.px (2)));
+        studio::layoutToolbar (controls, transport);
 
-        message.setBounds (area.removeFromBottom (26).reduced (10, 0));
-        workspaceLimit = jmax (146, area.getHeight() - 270);
-        workspacePanel = workspace == Workspace::closed ? Rectangle<int>()
-                       : area.removeFromBottom (jlimit (146, workspaceLimit, workspaceHeight));
-        auto panel = workspacePanel.reduced (10, 0);
-        auto panelHeader = panel.removeFromTop (30);
-        closeWorkspace.setBounds (panelHeader.removeFromRight (66).reduced (0, 3));
-        workspaceTitle.setBounds (panelHeader);
-        mixerLabel.setBounds (panel.removeFromTop (30));
-        auto volumeRow = panel.removeFromTop (34);
-        volumeLabel.setBounds (volumeRow.removeFromLeft (74));
-        volume.setBounds (volumeRow.removeFromLeft (jmin (430, volumeRow.getWidth())));
-        if (monitor.getParentComponent() == this && workspace == Workspace::midi)
-            monitor.setBounds (workspacePanel.withTrimmedTop (30));
-        auto panRow = panel.removeFromTop (34);
-        panLabel.setBounds (panRow.removeFromLeft (74));
-        pan.setBounds (panRow.removeFromLeft (jmin (430, panRow.getWidth())));
-        workspaceDivider.setBounds (workspace == Workspace::closed ? Rectangle<int>() : area.removeFromBottom (7));
+        message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
+        ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
+        ariaReviewNotice.setVisible (ariaReviewPending);
+        retryAriaButton.setVisible (ariaReviewPending);
+        confirmAriaButton.setVisible (ariaReviewPending);
+        auto bannerControls = ariaBanner.reduced (m.px (8), m.px (3));
+        confirmAriaButton.setBounds (bannerControls.removeFromRight (m.span (114)).reduced (m.px (2), 0));
+        retryAriaButton.setBounds (bannerControls.removeFromRight (m.span (90)).reduced (m.px (2), 0));
+        ariaReviewNotice.setBounds (bannerControls);
 
-        sidebar = area.removeFromLeft (sidebarWidth);
-        sidebarDivider.setBounds (area.removeFromLeft (7));
-        auto left = sidebar.reduced (10, 6);
-        trackHeading.setBounds (left.removeFromTop (27));
-        trackPicker.setBounds (left.removeFromTop (32).reduced (0, 3));
-        trackDetails.setBounds (left.removeFromTop (27));
-        left.removeFromTop (6);
-        for (auto* button : { &addMidi, &addAudio, &importAudio })
-            button->setBounds (left.removeFromTop (31).reduced (0, 3));
-        left.removeFromTop (7);
-        zoom.setBounds (left.removeFromTop (31).reduced (0, 3));
-        retryAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
-        confirmAriaButton.setBounds (left.removeFromTop (28).reduced (0, 2));
+        railBounds = area.removeFromLeft (m.span (getWidth() < m.px (1100) ? 76 : 80));
+        railViewport.setBounds (railBounds);
+        const int tileHeight = m.px (50) + m.line (11, 1) - m.px (14);
+        railContent.setSize (railViewport.getMaximumVisibleWidth(), tileHeight * 7 + m.px (8));
+        // Reserve the scrollbar only when the complete rail needs it.
+        if (railContent.getHeight() > railBounds.getHeight())
+            railContent.setSize (jmax (1, railBounds.getWidth() - railViewport.getScrollBarThickness()), railContent.getHeight());
+        auto destinations = railContent.getLocalBounds().reduced (m.px (3), m.px (4));
+        for (const auto& item : railItems())
+            item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
+        moreButton.setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
-        rulerRow = area.removeFromTop (26);
+        layoutDock (area);
+        arrangementTools = area.removeFromTop (m.control (32));
+        auto tools = arrangementTools.reduced (m.px (5), m.px (2));
+        const bool showAllTrackTools = tools.getWidth() >= m.span (828);
+        trackPicker.setBounds (tools.removeFromLeft (m.span (145)).reduced (m.px (2), 0));
+        zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
+        trackMenu.setVisible (! showAllTrackTools);
+        if (trackMenu.isVisible())
+            trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
+        for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions })
+        {
+            button->setVisible (showAllTrackTools);
+            if (showAllTrackTools)
+                button->setBounds (tools.removeFromLeft (m.span (button == &addAudio ? 69 : 94)).reduced (m.px (2), 0));
+        }
+        trackDetails.setBounds (tools);
+
+        rulerRow = area.removeFromTop (m.control (26));
         timeline.setBounds (area);
         sizeEditor();
-        ruler = rulerRow.withTrimmedLeft (150).withTrimmedRight (150 + timeline.getScrollBarThickness());
+        ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (m.trackFooter() + timeline.getScrollBarThickness());
+        auto zoomButtons = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
+        const int zoomWidth = m.span (35);
+        arrangementZoomIn.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
+        arrangementZoomOut.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
+        rulerTrackLabel = zoomButtons;
         repaint();
     }
 
-private:
-    enum class Workspace { closed, mix, midi };
+    void applyAppearance (int scale, int textSize, bool persist)
+    {
+        auto& m = studio::appearance;
+        const auto oldScale = m.interfacePercent();
+        m.set (scale, textSize);
+        workspaceHeight = workspaceHeight * m.interfacePercent() / oldScale;
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.interfaceScale", m.interfacePercent());
+            prefs.setValue ("studio.textScale", m.textPercent());
+            prefs.saveIfNeeded();
+        }
+        for (auto* view : { &timeline, &railViewport, &workspaceViewport })
+            view->setScrollBarThickness (m.scrollbar());
+        browser.appearanceChanged();
+        channelInspector.appearanceChanged();
+        mixer.appearanceChanged();
+        piano.appearanceChanged();
+        monitor.appearanceChanged();
+        fitFloatingMonitor();
+        if (editor != nullptr) editor->refreshStudioLayout();
+        resized();
+        repaint();
+    }
 
-    LookAndFeel_V4 style;
+    bool handleAppearanceKey (const KeyPress& key)
+    {
+        const auto mods = key.getModifiers();
+        if (! mods.isCommandDown() || ! mods.isAltDown() || mods.isShiftDown()) return false;
+        const auto& m = studio::appearance;
+        const auto code = key.getKeyCode();
+        const bool isIncrease = code == '=' || code == '+' || code == KeyPress::numberPadAdd;
+        const bool isDecrease = code == '-' || code == KeyPress::numberPadSubtract;
+        const bool isReset = code == '0' || code == KeyPress::numberPad0;
+        if (! (isIncrease || isDecrease || isReset)) return false;
+        // Resizing during a pointer gesture would move a clip or fader under
+        // the pointer. Finish the current gesture before adjusting appearance.
+        if (ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown()) return true;
+        if (isIncrease)
+            applyAppearance (m.adjacentInterfacePercent (1), m.textPercent(), true);
+        else if (isDecrease)
+            applyAppearance (m.adjacentInterfacePercent (-1), m.textPercent(), true);
+        else
+            applyAppearance (100, m.textPercent(), true);
+        return true;
+    }
+
+    void showAppearance()
+    {
+        PopupMenu scale, textSize;
+        const auto& metrics = studio::appearance;
+        auto safe = SafePointer<StudioView> (this);
+        for (auto percent : studio::AppearanceMetrics::interfaceOptions)
+            scale.addItem (String (percent) + "%", true, metrics.interfacePercent() == percent,
+                [safe, percent] { if (safe != nullptr) safe->applyAppearance (percent, studio::appearance.textPercent(), true); });
+        static constexpr const char* labels[] { "Standard", "Large", "Extra Large" };
+        for (size_t i = 0; i < studio::AppearanceMetrics::textOptions.size(); ++i)
+        {
+            const auto percent = studio::AppearanceMetrics::textOptions[i];
+            textSize.addItem (labels[i], true, metrics.textPercent() == percent,
+                [safe, percent] { if (safe != nullptr) safe->applyAppearance (studio::appearance.interfacePercent(), percent, true); });
+        }
+        PopupMenu menu;
+        menu.addSubMenu ("Interface Scale", scale);
+        menu.addSubMenu ("Text Size", textSize);
+        menu.addSeparator();
+        menu.addItem ("Increase Interface Scale", metrics.interfacePercent() < 175, false,
+            [safe] { if (safe != nullptr) safe->applyAppearance (studio::appearance.adjacentInterfacePercent (1),
+                                                                studio::appearance.textPercent(), true); });
+        menu.addItem ("Decrease Interface Scale", metrics.interfacePercent() > 100, false,
+            [safe] { if (safe != nullptr) safe->applyAppearance (studio::appearance.adjacentInterfacePercent (-1),
+                                                                studio::appearance.textPercent(), true); });
+        menu.addItem ("Reset Appearance", [safe] { if (safe != nullptr) safe->applyAppearance (100, 100, true); });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&appearanceButton));
+    }
+
+    void showCommandMenu (TextButton& anchor, std::initializer_list<TextButton*> commands)
+    {
+        PopupMenu menu;
+        for (auto* button : commands)
+        {
+            const SafePointer<TextButton> safe (button);
+            menu.addItem (button->getButtonText(), button->isEnabled(), false, [safe]
+            {
+                if (safe != nullptr && safe->isEnabled() && safe->onClick) safe->onClick();
+            });
+        }
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+
+private:
+    enum class Workspace
+    {
+        closed, instruments, channel, stage, articulations, piano, mix, midi,
+        rooms, microphones, synth, sampler, effects, templates, picture
+    };
+    using DockMode = studio::DockMode;
+
+    studio::StudioLookAndFeel style;
     Workspace workspace = Workspace::closed;
-    WorkspaceDivider sidebarDivider { true }, workspaceDivider { false };
-    int sidebarWidth = 184, workspaceHeight = 210, workspaceLimit = 210;
-    Rectangle<int> topBar, sidebar, workspacePanel, rulerRow;
+    DockMode dockMode = DockMode::split;
+    WorkspaceDivider workspaceDivider;
+    static constexpr int minimumSplitHeight = 170;
+    int workspaceHeight = 270, splitLimit = minimumSplitHeight;
+    Rectangle<int> topBar, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
+    Component railContent, workspaceBody;
+    TooltipWindow tooltips { this, 650 };
+    Viewport railViewport, workspaceViewport;
+    bool collapsedDockLinks = false;
+    TextButton appearanceButton { "Appearance…" }, projectMenu { "Project…" }, trackMenu { "Tracks…" }, dockMenu { "Layout…" };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -392,6 +716,7 @@ private:
     // states remain immutable and Save remains locked until manual verification.
     bool autoAriaRetryPending = false;
     uint32 autoAriaRetryScheduledAt = 0;
+    uint32 lastRecordingStopRequestedAt = 0;
     File restoreLogFile;
 
     // Immutable snapshots taken from the on-disk XML BEFORE Tracktion loads the Edit.
@@ -406,43 +731,300 @@ private:
     };
     std::vector<OriginalAriaState> originalAriaStates;
 
+    struct RegionClipboardItem
+    {
+        te::ClipCopy copy;
+        double relativeStartSeconds = 0.0;
+        int relativeTrack = 0;
+    };
+    std::vector<RegionClipboardItem> regionClipboard;
+    int clipboardBaseTrack = 0;
 
-    Label title, position, tempo, mixerLabel, message, trackHeading, trackDetails,
-          volumeLabel, panLabel, workspaceTitle;
+
+    Label title, message, trackDetails, workspaceTitle,
+          workspaceSummary, placeholder, ariaReviewNotice;
+    studio::TransportReadout bars { "Bars / Beats" }, position { "Time" }, tempo { "BPM" }, meter { "Meter" };
     ComboBox zoom, trackPicker;
     StringArray trackNames;
-    TextButton mixButton { "Mixer" }, closeWorkspace { "Hide" };
-    Slider volume, pan;
+    TextButton arrangementZoomOut { "-" }, arrangementZoomIn { "+" };
+    studio::RailButton instrumentsButton { "Instruments", studio::RailIcon::instruments },
+                       channelButton { "Channel", studio::RailIcon::channel },
+                       stageButton { "Stage", studio::RailIcon::stage },
+                       articulationsButton { "Articulations", studio::RailIcon::articulations },
+                       pianoButton { "Piano Roll", studio::RailIcon::piano },
+                       mixButton { "Mixer", studio::RailIcon::mixer },
+                       moreButton { "More", studio::RailIcon::more };
+    TextButton compactButton { "Compact" }, splitButton { "Split" },
+               expandedButton { "Expanded" }, closeWorkspace { "Hide" };
+    std::array<TextButton, 2> workspaceLinks;
+    studio::TrackActions trackActions;
+    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
+    studio::ChannelInspector channelInspector { trackActions };
+    studio::StudioMixer mixer { trackActions };
+
+    struct PendingPlugin
+    {
+        te::Plugin::Ptr plugin;
+        te::EditItemID destination;
+        bool addTrack = false, instrument = false;
+        uint32 startedAt = 0;
+    };
+
+    std::optional<PendingPlugin> pendingPlugin;
+    uint64 projectGeneration = 0;
+    unsigned workspaceTicks = 0;
     StudioMidiMonitor monitor;
+    StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
-    TextButton newProject { "New Project" }, openProject { "Open Project" }, saveProject { "Save" },
+    TextButton newProject { "New Project" }, openProject { "Open Project" },
+               saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
-               rewind { "To Start" }, play { "Play" }, record { "Record" },
-               addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" };
+               regionActions { "Edit Regions" },
+               rewind { "Start" }, play { "Play" }, record { "Record" },
+               addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
+               addMidiClip { "+ MIDI Clip" };
+
+    struct RailItem { Workspace destination; studio::RailButton* button; };
+    struct DockItem { DockMode mode; TextButton* button; };
+    struct WorkspaceEntry { Workspace destination; const char* name; };
+
+    std::array<RailItem, 6> railItems()
+    {
+        return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::channel, &channelButton },
+                  { Workspace::stage, &stageButton }, { Workspace::articulations, &articulationsButton },
+                  { Workspace::piano, &pianoButton }, { Workspace::mix, &mixButton } }};
+    }
+
+    std::array<DockItem, 3> dockItems()
+    {
+        return {{ { DockMode::compact, &compactButton }, { DockMode::split, &splitButton },
+                  { DockMode::expanded, &expandedButton } }};
+    }
+
+    static constexpr WorkspaceEntry extraWorkspaces[] {
+        { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
+        { Workspace::synth, "Studio Synth" }, { Workspace::sampler, "Studio Sampler" },
+        { Workspace::effects, "Effects" }, { Workspace::templates, "Template Manager" },
+        { Workspace::picture, "Picture" }
+    };
+
+    std::array<WorkspaceEntry, 2> contextLinks() const
+    {
+        switch (workspace)
+        {
+            case Workspace::stage:       return {{ { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Microphones" } }};
+            case Workspace::rooms:       return {{ { Workspace::stage, "Stage" }, { Workspace::microphones, "Microphones" } }};
+            case Workspace::microphones: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
+            case Workspace::channel:     return {{ { Workspace::synth, "Synth" }, { Workspace::sampler, "Sampler" } }};
+            case Workspace::synth:
+            case Workspace::sampler:     return {{ { Workspace::channel, "Channel" }, { Workspace::instruments, "Instruments" } }};
+            default:                    return {{ { Workspace::closed, "" }, { Workspace::closed, "" } }};
+        }
+    }
+
+    void layoutDock (Rectangle<int>& arrangement)
+    {
+        const auto& m = studio::appearance;
+        const int available = arrangement.getHeight();
+        const int headerHeight = m.control (34);
+        const int dividerHeight = m.px (9);
+        const auto room = m.dockRoom (available, workspaceHeight, dockMode);
+        splitLimit = room.splitLimit;
+        const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
+        workspacePanel = arrangement.removeFromBottom (panelHeight);
+        workspaceDivider.setBounds (panelHeight > 0 ? arrangement.removeFromBottom (dividerHeight) : Rectangle<int>());
+        auto body = workspacePanel;
+        auto header = body.removeFromTop (headerHeight).reduced (m.px (9), m.px (3));
+        const bool hasLinks = contextLinks()[0].destination != Workspace::closed;
+        const bool collapse = header.getWidth() < m.span (hasLinks ? 676 : 470);
+        collapsedDockLinks = hasLinks && collapse;
+        dockMenu.setVisible (panelHeight > 0 && collapse);
+        for (const auto& item : dockItems())
+            item.button->setVisible (panelHeight > 0 && ! collapse);
+        closeWorkspace.setVisible (panelHeight > 0 && ! collapse);
+        if (dockMenu.isVisible())
+            dockMenu.setBounds (header.removeFromRight (m.span (96)));
+        if (! collapse)
+        {
+            closeWorkspace.setBounds (header.removeFromRight (m.span (54)).reduced (m.px (2), 0));
+            expandedButton.setBounds (header.removeFromRight (m.span (85)).reduced (m.px (2), 0));
+            splitButton.setBounds (header.removeFromRight (m.span (48)).reduced (m.px (2), 0));
+            compactButton.setBounds (header.removeFromRight (m.span (76)).reduced (m.px (2), 0));
+        }
+        for (auto it = workspaceLinks.rbegin(); it != workspaceLinks.rend(); ++it)
+        {
+            it->setVisible (panelHeight > 0 && hasLinks && ! collapse);
+            if (it->isVisible())
+                it->setBounds (header.removeFromRight (m.span (94)).reduced (m.px (2), 0));
+        }
+        workspaceTitle.setBounds (header);
+        workspaceSummary.setBounds (body.reduced (m.px (9), m.px (1)));
+        placeholder.setBounds (body.reduced (m.px (12), 0));
+
+        const bool dockedMonitor = monitor.getParentComponent() == &workspaceBody && monitor.isVisible();
+        const auto minimumContentHeight = [this, dockedMonitor] (int width)
+        {
+            if (browser.isVisible()) return browser.minimumContentHeight (width);
+            if (channelInspector.isVisible()) return channelInspector.minimumContentHeight (width);
+            if (mixer.isVisible()) return mixer.minimumContentHeight();
+            if (piano.isVisible()) return piano.minimumContentHeight (width);
+            return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
+        };
+        auto width = body.getWidth();
+        auto height = minimumContentHeight (width);
+        workspaceViewport.setVisible (height > 0 && ! body.isEmpty());
+        workspaceViewport.setBounds (body);
+        if (height > body.getHeight())
+        {
+            width = jmax (1, width - workspaceViewport.getScrollBarThickness());
+            height = minimumContentHeight (width);
+        }
+        workspaceBody.setSize (width, jmax (height, body.getHeight()));
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano })
+            if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
+        if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
+    }
+
+    void toggleWorkspace (Workspace destination)
+    {
+        showWorkspace (workspace == destination ? Workspace::closed : destination);
+    }
+
+    void showMoreWorkspaces()
+    {
+        PopupMenu menu;
+        int id = 1;
+        for (const auto& entry : extraWorkspaces)
+            menu.addItem (id++, entry.name, true, workspace == entry.destination);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&moreButton),
+                            [safe = Component::SafePointer<StudioView> (this)] (int choice)
+                            {
+                                if (safe != nullptr && choice > 0)
+                                    safe->toggleWorkspace (extraWorkspaces[choice - 1].destination);
+                            });
+    }
+
+    void setDockMode (DockMode mode)
+    {
+        dockMode = mode;
+        syncWorkspace();
+    }
 
     void showWorkspace (Workspace next)
     {
+        if (next == Workspace::piano && dockMode == DockMode::compact)
+            dockMode = DockMode::split;
+        if (workspace != next) workspaceViewport.setViewPosition (0, 0);
         workspace = next;
-        const bool open = next != Workspace::closed;
-        const bool mixing = next == Workspace::mix;
-        for (Component* component : std::initializer_list<Component*> {
-                 &mixerLabel, &volumeLabel, &panLabel, &volume, &pan })
-            component->setVisible (mixing);
+        syncWorkspace();
+    }
+
+    void syncWorkspace()
+    {
+        const bool open = workspace != Workspace::closed;
+        const bool compact = dockMode == DockMode::compact;
+        const bool mixing = workspace == Workspace::mix;
+        const bool monitoring = workspace == Workspace::midi;
+        const bool editingMidi = workspace == Workspace::piano;
+        const bool browsing = workspace == Workspace::instruments;
+        const bool inspecting = workspace == Workspace::channel;
+        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting);
+        String name;
+        bool inPrimaryRail = false;
+        for (const auto& item : railItems())
+        {
+            const bool selected = workspace == item.destination;
+            item.button->setToggleState (selected, dontSendNotification);
+            if (selected)
+            {
+                name = item.button->getButtonText();
+                inPrimaryRail = true;
+            }
+        }
+        for (const auto& entry : extraWorkspaces)
+            if (workspace == entry.destination)
+                name = entry.name;
+        moreButton.setToggleState (planned && ! inPrimaryRail, dontSendNotification);
+        if (monitoring)
+            name = "MIDI Monitor";
+        if (workspace == Workspace::instruments)
+            name = "Instrument Browser";
+        if (workspace == Workspace::stage)
+            name = "Orchestral Stage";
+
+        browser.setVisible (browsing && ! compact);
+        channelInspector.setVisible (inspecting && ! compact);
+        mixer.setVisible (mixing && ! compact);
+        if (! mixer.isVisible()) mixer.pauseMeters();
+        workspaceTicks = 1; // Refresh the newly shown workspace on the next host tick.
+        for (const auto& item : dockItems())
+        {
+            item.button->setVisible (open);
+            item.button->setToggleState (dockMode == item.mode, dontSendNotification);
+        }
+        const auto links = contextLinks();
+        for (size_t index = 0; index < links.size(); ++index)
+        {
+            workspaceLinks[index].setVisible (links[index].destination != Workspace::closed);
+            workspaceLinks[index].setButtonText (links[index].name);
+        }
         closeWorkspace.setVisible (open);
         workspaceTitle.setVisible (open);
         workspaceDivider.setVisible (open);
-        workspaceTitle.setText (mixing ? "Selected Track Mixer" : "MIDI Monitor", dontSendNotification);
-        mixButton.setToggleState (mixing, dontSendNotification);
-        monitorButton.setToggleState (next == Workspace::midi, dontSendNotification);
-        if (monitor.getParentComponent() == this)
+        workspaceTitle.setText (name, dontSendNotification);
+        workspaceSummary.setVisible (open && compact);
+        workspaceSummary.setText (planned ? "Planned workspace" : "Choose Split or Expanded to show controls.",
+                                  dontSendNotification);
+        placeholder.setVisible (planned && ! compact);
+        placeholder.setText ("Planned workspace", dontSendNotification);
+        if (! editingMidi || compact)
+            piano.silencePreview();
+        piano.setVisible (editingMidi && ! compact);
+        monitorButton.setToggleState (monitoring, dontSendNotification);
+        if (monitor.getParentComponent() == &workspaceBody)
         {
-            monitor.setVisible (next == Workspace::midi);
-            monitor.setCaptureOpen (next == Workspace::midi);
+            monitor.setVisible (monitoring && ! compact);
+            monitor.setCaptureOpen (monitoring);
         }
         resized();
+    }
+
+    void createMidiClip()
+    {
+        if (edit == nullptr || busy || edit->getTransport().isRecording())
+            return;
+        auto* track = selectedTrack();
+        if (track == nullptr)
+            track = addTrack ("Instrument");
+        if (track == nullptr)
+            return;
+
+        const auto start = edit->getTransport().getPosition();
+        const auto startBeat = edit->tempoSequence.toBeats (start);
+        const auto end = edit->tempoSequence.toTime (startBeat + te::BeatDuration::fromBeats (16.0));
+        if (auto clip = track->insertMIDIClip ("MIDI Clip", { start, end }, &selection))
+        {
+            piano.setClip (clip);
+            workspaceHeight = studio::appearance.px (360);
+            showWorkspace (Workspace::piano);
+            message.setText ("Draw notes in the piano roll, then Save to keep your edits.", dontSendNotification);
+        }
+    }
+
+    void fitFloatingMonitor()
+    {
+        if (monitorWindow == nullptr || monitor.getParentComponent() != monitorWindow.get())
+            return;
+        const int height = monitor.minimumContentHeight (monitor.getWidth()) + studio::appearance.px (40);
+        monitorWindow->setResizeLimits (770, jmax (200, height), 2200, 1000);
+        auto bounds = monitorWindow->getBounds();
+        bounds.setHeight (jmax (bounds.getHeight(), height));
+        if (const auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (bounds))
+            bounds = bounds.constrainedWithin (displayClientArea (*monitorWindow, *display));
+        monitorWindow->setBounds (bounds);
     }
 
     void toggleMonitorDock()
@@ -451,8 +1033,10 @@ private:
         {
             monitorWindow->setVisible (false);
             monitorWindow->clearContentComponent();
-            addAndMakeVisible (monitor);
+            workspaceBody.addAndMakeVisible (monitor);
             monitor.setFloating (false);
+            if (dockMode == DockMode::compact)
+                dockMode = DockMode::split;
             showWorkspace (Workspace::midi);
         }
         else
@@ -460,27 +1044,19 @@ private:
             if (monitorWindow == nullptr)
             {
                 monitorWindow = std::make_unique<MidiMonitorWindow>();
+                monitorWindow->setLookAndFeel (&style);
+                monitorWindow->onAppearanceKey = [this] (const KeyPress& key) { return handleAppearanceKey (key); };
                 monitorWindow->onClose = [this] { toggleMonitorDock(); };
                 monitorWindow->centreWithSize (860, 350);
             }
             monitorWindow->setContentNonOwned (&monitor, false);
             monitor.setVisible (true);
             monitor.setFloating (true);
+            fitFloatingMonitor();
             monitorWindow->setVisible (true);
             monitorWindow->toFront (true);
             showWorkspace (Workspace::closed);
         }
-    }
-
-    void setupSlider (Slider& slider, const String& name, double min, double max, double interval, const String& suffix)
-    {
-        slider.setName (name);
-        slider.setTooltip (name);
-        slider.setRange (min, max, interval);
-        slider.setTextValueSuffix (suffix);
-        slider.setSliderStyle (Slider::LinearHorizontal);
-        slider.setTextBoxStyle (Slider::TextBoxRight, false, 78, 24);
-        addAndMakeVisible (slider);
     }
 
     te::AudioTrack* selectedTrack()
@@ -491,8 +1067,218 @@ private:
     void sizeEditor()
     {
         if (editor != nullptr)
-            editor->setSize (jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness()),
-                             jmax (timeline.getMaximumVisibleHeight(), 52 * te::getAudioTracks (*edit).size()));
+        {
+            const int width = jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness());
+            const int height = jmax (timeline.getMaximumVisibleHeight(),
+                                     (studio::appearance.trackHeight() + studio::appearance.trackGap()) * editor->getVisibleTrackCount());
+            if (editor->getWidth() != width || editor->getHeight() != height)
+                editor->setSize (width, height);
+        }
+    }
+
+    void zoomArrangement (double scale)
+    {
+        if (edit == nullptr || editor == nullptr)
+            return;
+
+        auto& view = editor->getEditViewState();
+        const double start = view.viewX1.get().inSeconds();
+        const double end = view.viewX2.get().inSeconds();
+        const double oldSpan = jmax (0.001, end - start);
+        const double newSpan = jlimit (1.0, 3600.0, oldSpan * scale);
+        double anchor = edit->getTransport().getPosition().inSeconds();
+        if (anchor < start || anchor > end)
+            anchor = (start + end) / 2.0;
+
+        const double anchorRatio = (anchor - start) / oldSpan;
+        const double nextStart = jmax (0.0, anchor - anchorRatio * newSpan);
+        view.viewX1 = te::TimePosition::fromSeconds (nextStart);
+        view.viewX2 = te::TimePosition::fromSeconds (nextStart + newSpan);
+        zoom.setSelectedId (6, dontSendNotification);
+        repaint();
+    }
+
+    void copySelectedRegions()
+    {
+        if (edit == nullptr)
+            return;
+        auto clips = selection.getItemsOfType<te::Clip>();
+        if (clips.isEmpty())
+        {
+            message.setText ("Select one or more regions in the arrangement first.", dontSendNotification);
+            return;
+        }
+        regionClipboard.clear();
+        const auto tracks = te::getAudioTracks (*edit);
+        double earliest = std::numeric_limits<double>::max();
+        int firstTrack = tracks.size();
+        for (auto* clip : clips)
+        {
+            earliest = jmin (earliest, clip->getPosition().getStart().inSeconds());
+            const int index = tracks.indexOf (dynamic_cast<te::AudioTrack*> (clip->getTrack()));
+            if (index >= 0)
+                firstTrack = jmin (firstTrack, index);
+        }
+        if (firstTrack < 0 || firstTrack >= tracks.size())
+            return;
+        std::vector<RegionClipboardItem> copied;
+        copied.reserve ((size_t) clips.size());
+        for (auto* clip : clips)
+        {
+            const int index = tracks.indexOf (dynamic_cast<te::AudioTrack*> (clip->getTrack()));
+            if (index < 0)
+                continue;
+            copied.push_back ({ te::ClipCopy::fromClip (*clip),
+                                clip->getPosition().getStart().inSeconds() - earliest,
+                                index - firstTrack });
+        }
+        regionClipboard = std::move (copied);
+        clipboardBaseTrack = firstTrack;
+        message.setText (String (regionClipboard.size()) + " region(s) copied. Select a destination track and seek, then Paste.",
+                         dontSendNotification);
+    }
+
+    void pasteRegions()
+    {
+        if (edit == nullptr || regionClipboard.empty())
+            return;
+        const auto tracks = te::getAudioTracks (*edit);
+        int baseTrack = clipboardBaseTrack;
+        if (auto* chosen = selectedTrack())
+            baseTrack = tracks.indexOf (chosen);
+        if (! isPositiveAndBelow (baseTrack, tracks.size()))
+            return;
+
+        const double start = edit->getTransport().getPosition().inSeconds();
+        edit->getUndoManager().beginNewTransaction ("Paste regions");
+        int pasted = 0;
+        te::Clip::Ptr last;
+        for (const auto& item : regionClipboard)
+        {
+            const int index = baseTrack + item.relativeTrack;
+            if (! isPositiveAndBelow (index, tracks.size()))
+                continue;
+            if (auto* inserted = te::insertClipCopy (*tracks[index], item.copy.withNewItemID (*edit)))
+            {
+                inserted->setStart (te::TimePosition::fromSeconds (start + item.relativeStartSeconds), false, true);
+                last = inserted;
+                ++pasted;
+            }
+        }
+        if (last != nullptr)
+            selection.selectOnly (last.get());
+        message.setText (String (pasted) + " region(s) pasted at the playhead.", dontSendNotification);
+    }
+
+    void performRegionAction (int action)
+    {
+        if (edit == nullptr || busy || edit->getTransport().isRecording())
+            return;
+        if (action == 3)
+        {
+            copySelectedRegions();
+            return;
+        }
+        if (action == 4)
+        {
+            pasteRegions();
+            return;
+        }
+        if (action == 5)
+        {
+            const int selectedCount = selection.getItemsOfType<te::Clip>().size();
+            copySelectedRegions();
+            if ((int) regionClipboard.size() != selectedCount)
+                return; // Never delete a region if its clipboard copy failed.
+        }
+        auto clips = selection.getItemsOfType<te::Clip>();
+        if (clips.isEmpty())
+            return;
+        // The owning track's split and ClipCopy insert APIs retain clip
+        // state, source offsets, channel data and AU/plugin parameters.
+        edit->getUndoManager().beginNewTransaction (action == 1 ? "Split regions"
+                                                   : action == 2 ? "Duplicate regions"
+                                                   : action == 5 ? "Cut regions" : "Delete regions");
+        int count = 0;
+        te::Clip::Ptr last;
+        for (auto* clip : clips)
+        {
+            if (auto* track = clip->getClipTrack())
+            {
+                if (action == 1)
+                {
+                    const auto pos = edit->getTransport().getPosition();
+                    if (pos <= clip->getPosition().getStart() || pos >= clip->getPosition().getEnd())
+                        continue;
+                    if (auto* right = track->splitClip (*clip, pos))
+                    {
+                        last = right;
+                        ++count;
+                    }
+                }
+                else if (action == 2)
+                {
+                    const auto nextStart = clip->getPosition().getEnd();
+                    if (auto* duplicated = te::insertClipCopy (*track,
+                            te::ClipCopy::fromClip (*clip).withNewItemID (*edit)))
+                    {
+                        duplicated->setStart (nextStart, false, true);
+                        last = duplicated;
+                        ++count;
+                    }
+                }
+                else if (action == 5 || action == 6)
+                {
+                    clip->removeFromParent();
+                    ++count;
+                }
+            }
+        }
+        if (action == 5 || action == 6)
+        {
+            piano.setClip (nullptr);
+            selection.deselectAll();
+        }
+        else if (last != nullptr)
+            selection.selectOnly (last.get());
+        message.setText (String (count) + (action == 1 ? " region(s) split."
+                                   : action == 2 ? " region(s) duplicated."
+                                   : action == 5 ? " region(s) cut." : " region(s) deleted."),
+                         dontSendNotification);
+    }
+
+    void showRegionActions()
+    {
+        PopupMenu menu;
+        const bool selected = selection.getItemsOfType<te::Clip>().size() > 0;
+        menu.addItem (1, "Split selected at playhead", selected);
+        menu.addItem (2, "Duplicate selected", selected);
+        menu.addSeparator();
+        menu.addItem (3, "Copy selected regions", selected);
+        menu.addItem (4, "Paste at playhead", ! regionClipboard.empty());
+        menu.addItem (5, "Cut selected regions", selected);
+        menu.addItem (6, "Delete selected regions", selected);
+        menu.addSeparator();
+        menu.addItem (7, "Undo", edit != nullptr && edit->getUndoManager().canUndo());
+        menu.addItem (8, "Redo", edit != nullptr && edit->getUndoManager().canRedo());
+        Component::SafePointer<StudioView> safe (this);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (regionActions.isVisible() ? &regionActions : &trackMenu),
+                            [safe] (int choice)
+                            {
+                                if (safe == nullptr || choice == 0 || ! safe->canEditRegions())
+                                    return;
+                                if (choice == 7)
+                                    safe->edit->undo();
+                                else if (choice == 8)
+                                    safe->edit->redo();
+                                else
+                                    safe->performRegionAction (choice);
+                            });
+    }
+
+    bool canEditRegions() const
+    {
+        return edit != nullptr && ! busy && ! edit->getTransport().isRecording();
     }
 
     void timerCallback() override
@@ -505,36 +1291,73 @@ private:
         // can restore ARIA. Defer one automatic attempt until instances are
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
+        completePendingPlugin();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
-        for (auto* button : { &saveProject, &rewind, &addMidi, &addAudio, &importAudio })
+        regionActions.setEnabled (ready && ! recording);
+        for (auto* button : { &saveProject, &saveAsProject, &rewind, &addMidi,
+                              &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
+        // ARIA review protects Save and the original AU state, not MIDI editing.
+        // A loaded project must remain editable while its ARIA slots are checked.
+        piano.setEditingEnabled (ready && ! recording);
         play.setEnabled (ready);
         record.setEnabled (ready);
         zoom.setEnabled (ready);
+        arrangementZoomOut.setEnabled (ready);
+        arrangementZoomIn.setEnabled (ready);
         retryAriaButton.setEnabled (ready && ! recording && ariaReviewPending);
-        confirmAriaButton.setEnabled (ready && ! recording && ariaReviewPending);
+        confirmAriaButton.setEnabled (ready && ! recording && ariaReviewPending && ! autoAriaRetryPending);
         if (edit != nullptr)
         {
             auto& transport = edit->getTransport();
             play.setButtonText (transport.isPlaying() ? "Stop" : "Play");
-            record.setButtonText (recording ? "Stop Recording" : "Record");
+            record.setButtonText (recording ? "Stop Rec" : "Record");
+            record.setTooltip (recording ? "Stop recording and keep the take" : "Start recording");
+            record.setToggleState (recording, dontSendNotification);
             const auto now = transport.getPosition();
+            piano.setTransportPosition (now);
             const auto centiseconds = static_cast<int64> (juce::jmax (0.0, now.inSeconds()) * 100.0);
-            position.setText (String (centiseconds / 6000).paddedLeft ('0', 2) + ":"
-                                  + String (centiseconds / 100 % 60).paddedLeft ('0', 2) + "."
-                                  + String (centiseconds % 100).paddedLeft ('0', 2), dontSendNotification);
-            tempo.setText (String (edit->tempoSequence.getBpmAt (now), 1) + " BPM", dontSendNotification);
+            position.setValue (String (centiseconds / 6000).paddedLeft ('0', 2) + ":"
+                               + String (centiseconds / 100 % 60).paddedLeft ('0', 2) + "."
+                               + String (centiseconds % 100).paddedLeft ('0', 2));
+            const auto& sequence = edit->tempoSequence;
+            const auto musical = sequence.toBarsAndBeats (now);
+            const auto& signature = sequence.getTimeSigAt (now);
+            bars.setValue (String (musical.bars + 1) + "." + String (musical.getWholeBeats() + 1));
+            tempo.setValue (String (sequence.getBpmAt (now), 1));
+            meter.setValue (String (signature.numerator.get()) + "/" + String (signature.denominator.get()));
             sizeEditor();
         }
+
+        const auto selectedMidiClips = selection.getItemsOfType<te::MidiClip>();
+        if (! selectedMidiClips.isEmpty())
+        {
+            // Use the earliest region as the active edit target so the
+            // other selected clips line up to its right in the piano roll.
+            auto* primary = selectedMidiClips.getFirst();
+            for (auto* candidate : selectedMidiClips)
+                if (candidate->getPosition().getStart() < primary->getPosition().getStart())
+                    primary = candidate;
+            if (piano.getClip() != primary)
+            {
+                piano.setClip (primary);
+                workspaceHeight = studio::appearance.px (360);
+                showWorkspace (Workspace::piano);
+            }
+            piano.setComparisonClips (selectedMidiClips);
+        }
+        else
+            piano.setComparisonClips ({});
 
         auto* track = selectedTrack();
         StringArray names;
         int selectedIndex = -1;
+        const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
         if (edit != nullptr)
-            for (auto* item : te::getAudioTracks (*edit))
+            for (auto* item : tracks)
             {
                 if (item == track)
                     selectedIndex = names.size();
@@ -552,17 +1375,8 @@ private:
             : EngineHelpers::isTrackArmed (*track) ? "Record armed"
             : EngineHelpers::trackHasInput (*track) ? "Input assigned" : "No input assigned", dontSendNotification);
 
-        auto plugin = track != nullptr ? track->getVolumePlugin() : nullptr;
-        volume.setEnabled (ready && plugin != nullptr);
-        pan.setEnabled (ready && plugin != nullptr);
-        mixerLabel.setText (track != nullptr ? track->getName() + " mix" : "Select a track to mix", dontSendNotification);
-        if (plugin != nullptr)
-        {
-            if (! volume.isMouseButtonDown())
-                volume.setValue (plugin->getVolumeDb(), dontSendNotification);
-            if (! pan.isMouseButtonDown())
-                pan.setValue (plugin->getPan(), dontSendNotification);
-        }
+        if ((++workspaceTicks & 1u) == 0)
+            refreshInstrumentWorkflow (tracks);
     }
 
     // Diagnostics intentionally contain metadata only, never AU state bytes or sample paths.
@@ -757,11 +1571,77 @@ private:
     {
         if (edit == nullptr)
             return;
+        // A held piano-roll audition must release before record is engaged,
+        // so no preview note or trailing note-off leaks into a new take.
+        piano.silencePreview();
         auto& transport = edit->getTransport();
         if (transport.isRecording())
+        {
+            lastRecordingStopRequestedAt = Time::getMillisecondCounter();
             transport.stop (false, false); // false: retain the take
+        }
         else
             transport.record (false);
+    }
+
+    bool canWriteProject()
+    {
+        if (! ariaReviewPending)
+            return true;
+
+        const String reason = "Saving is paused to protect the original ARIA instrument state.\n\n"
+                              "Open ARIA and check that the instrument plays, then click Confirm ARIA "
+                              "in the left sidebar. You can edit MIDI while checking, but Save and "
+                              "Save As remain protected until confirmation.";
+        message.setText ("Save blocked: verify ARIA playback, then click Confirm ARIA.",
+                         dontSendNotification);
+        writeRestoreLog ("Save / Save As blocked: ARIA restoration not yet confirmed.");
+        AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon,
+                                          "Confirm ARIA before saving", reason, "OK");
+        return false;
+    }
+
+    // Tracktion's transport may still be finalising the take after Stop is
+    // requested. Do not serialize the Edit until that work has finished.
+    void writeWhenRecordingFinished (te::Edit* expectedEdit, int attempts,
+                                     std::function<void()> write,
+                                     std::function<void()> failed)
+    {
+        if (edit.get() != expectedEdit)
+        {
+            busy = false;
+            failed();
+            return;
+        }
+
+        const auto& transport = edit->getTransport();
+        const bool recentlyStopped = lastRecordingStopRequestedAt != 0
+            && Time::getMillisecondCounter() - lastRecordingStopRequestedAt < 400;
+        if (! transport.isRecording() && ! transport.isStopping()
+            && ! transport.isRecordingStopping() && ! recentlyStopped)
+        {
+            write();
+            return;
+        }
+
+        if (attempts >= 100)
+        {
+            busy = false;
+            message.setText ("Could not finish the MIDI recording in time. Project was not overwritten.",
+                             dontSendNotification);
+            failed();
+            return;
+        }
+
+        message.setText ("Finishing the MIDI take before saving...", dontSendNotification);
+        Component::SafePointer<StudioView> safe (this);
+        Timer::callAfterDelay (100,
+            [safe, expectedEdit, attempts, write = std::move (write), failed = std::move (failed)]() mutable
+            {
+                if (safe != nullptr)
+                    safe->writeWhenRecordingFinished (expectedEdit, attempts + 1,
+                                                       std::move (write), std::move (failed));
+            });
     }
 
     void save (std::function<void (bool)> after = {})
@@ -772,24 +1652,79 @@ private:
             return;
         }
 
-        if (ariaReviewPending)
+        if (busy || ! canWriteProject())
         {
-            message.setText ("Save blocked: verify ARIA slots, then click Confirm ARIA. Original file is protected.",
-                             dontSendNotification);
-            writeRestoreLog ("Save blocked: ARIA restoration not yet confirmed.");
             if (after) after (false);
             return;
         }
         if (edit->getTransport().isRecording())
             toggleRecordKeepingTake();
         busy = true;
-        te::EditFileOperations (*edit).save (true, true, false,
-            [this, after = std::move (after)] (bool ok)
+        auto onFailure = [after] { if (after) after (false); };
+        writeWhenRecordingFinished (edit.get(), 0,
+            [this, after = std::move (after)] () mutable
+            {
+                te::EditFileOperations (*edit).save (true, true, false,
+                    [this, after = std::move (after)] (bool ok)
+                    {
+                        busy = false;
+                        message.setText (ok ? "Saved " + projectFile.getFileName()
+                                            : "Project save failed. Try Save As with a new filename.",
+                                         dontSendNotification);
+                        if (after)
+                            MessageManager::callAsync ([after, ok] { after (ok); });
+                    });
+            }, std::move (onFailure));
+    }
+
+    void chooseSaveAs()
+    {
+        if (edit == nullptr || busy || ! canWriteProject())
+            return;
+        auto target = projectFile.getSiblingFile (projectFile.getFileNameWithoutExtension()
+                                                  + " Copy.tracktionedit");
+        chooser = std::make_unique<FileChooser> ("Save a copy of this Studio project", target,
+                                                 "*.tracktionedit");
+        busy = true;
+        chooser->launchAsync (FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles,
+            [this] (const FileChooser& dialog)
             {
                 busy = false;
-                message.setText (ok ? "Saved " + projectFile.getFileName() : "Project save failed.", dontSendNotification);
-                if (after)
-                    MessageManager::callAsync ([after, ok] { after (ok); });
+                auto newFile = dialog.getResult();
+                if (newFile == File())
+                    return;
+                newFile = newFile.withFileExtension (".tracktionedit");
+                if (newFile == projectFile || newFile.exists())
+                {
+                    message.setText ("Save As needs a different, unused filename. Nothing was overwritten.",
+                                     dontSendNotification);
+                    return;
+                }
+                if (edit == nullptr || ! canWriteProject())
+                    return;
+
+                if (edit->getTransport().isRecording())
+                    toggleRecordKeepingTake();
+                busy = true;
+                writeWhenRecordingFinished (edit.get(), 0,
+                    [this, newFile]
+                    {
+                        te::EditFileOperations (*edit).saveAs (newFile, false,
+                            [this, newFile] (bool ok)
+                            {
+                                busy = false;
+                                if (ok)
+                                {
+                                    projectFile = newFile;
+                                    edit->editFileRetriever = [newFile] { return newFile; };
+                                    title.setText ("Studio 0.2  /  " + newFile.getFileNameWithoutExtension(),
+                                                   dontSendNotification);
+                                }
+                                message.setText (ok ? "Saved new copy: " + newFile.getFullPathName()
+                                                    : "Save As failed. Original project is unchanged.",
+                                                 dontSendNotification);
+                            });
+                    }, [this] {});
             });
     }
 
@@ -844,17 +1779,32 @@ private:
             }
         }
 
-        auto next = create ? te::createEmptyEdit (engine, file) : te::loadEditFromFile (engine, file);
+        pendingPlugin.reset();
+        auto next = [&]
+        {
+            const ScopedValueSetter<bool> loading (busy, true);
+            return create ? te::createEmptyEdit (engine, file) : te::loadEditFromFile (engine, file);
+        }();
         if (next == nullptr)
             return;
 
         if (edit != nullptr)
             edit->getTransport().stop (false, false);
+        piano.setClip (nullptr);
+        regionClipboard.clear();
+        showWorkspace (Workspace::closed);
         selection.deselectAll();
         timeline.setViewedComponent (nullptr);
         editor.reset();
+        browser.setStatus ({});
+        channelInspector.setEdit (nullptr);
+        mixer.setEdit (nullptr);
+        ++projectGeneration;
         edit = std::move (next);
+        channelInspector.setEdit (edit.get());
+        mixer.setEdit (edit.get());
         projectFile = file;
+        lastRecordingStopRequestedAt = 0;
         ariaReviewPending = false;
         autoAriaRetryPending = false;
         originalAriaStates = std::move (pendingOriginalStates);
@@ -902,6 +1852,7 @@ private:
             writeRestoreLog ("Automatic restore queued for " + String (originalAriaStates.size())
                              + " original AU state(s); Save remains locked until user confirmation.");
         }
+        resized();
     }
 
     te::AudioTrack* addTrack (const String& kind)
@@ -950,6 +1901,445 @@ private:
             });
     }
 
+    te::AudioTrack* trackById (te::EditItemID id) const
+    {
+        return edit != nullptr && id.isValid() ? te::findAudioTrackForID (*edit, id) : nullptr;
+    }
+
+    te::AudioTrack* workflowTrack()
+    {
+        te::AudioTrack* target = nullptr;
+        for (int i = 0; i < selection.getNumObjectsSelected(); ++i)
+        {
+            auto* item = selection.getSelectedObject (i);
+            auto* track = dynamic_cast<te::AudioTrack*> (item);
+            if (auto* clip = dynamic_cast<te::Clip*> (item))
+                track = dynamic_cast<te::AudioTrack*> (clip->getClipTrack());
+            else if (auto* plugin = dynamic_cast<te::Plugin*> (item))
+                track = dynamic_cast<te::AudioTrack*> (plugin->getOwnerTrack());
+            if (track == nullptr || (target != nullptr && target != track)) return nullptr;
+            target = track;
+        }
+        return target;
+    }
+
+    void configureInstrumentWorkflow()
+    {
+        browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
+        browser.loadInstrument = [this] (const PluginDescription& plugin, bool addNew)
+        {
+            auto* target = workflowTrack();
+            startExternalPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
+        };
+        trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
+        trackActions.selectTrack = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id))
+                selection.selectOnly (track);
+        };
+        trackActions.showMenu = [this] (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
+        {
+            showTrackMenu (id, kind, anchor);
+        };
+        trackActions.openInstrument = [this] (te::EditItemID id)
+        {
+            if (! busy)
+                if (auto* track = trackById (id))
+                    if (auto* instrument = studio::findInstrument (*track))
+                        instrument->showWindowExplicitly();
+        };
+        trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
+        {
+            if (! busy)
+                if (auto* track = trackById (id))
+                {
+                    if (solo) track->setSolo (! track->isSolo (false));
+                    else track->setMute (! track->isMuted (false));
+                }
+        };
+        trackActions.toggleArm = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id); track != nullptr && canEditRegions() && ! track->isFrozen (te::Track::anyFreeze))
+            {
+                auto inputs = edit->getAllInputDevices();
+                const auto assigned = [id] (te::InputDeviceInstance* i) { return i->getTargets().contains (id); };
+                const bool armed = std::any_of (inputs.begin(), inputs.end(), [&] (auto* i)
+                {
+                    return assigned (i) && i->isRecordingEnabled (id);
+                });
+                for (auto* input : inputs)
+                    if (assigned (input))
+                        input->setRecordingEnabled (id, ! armed);
+            }
+        };
+        trackActions.toggleMonitoring = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id); track != nullptr && canEditRegions() && ! track->isFrozen (te::Track::anyFreeze))
+            {
+                const auto inputs = edit->getAllInputDevices();
+                using Mode = te::InputDevice::MonitorMode;
+                const bool enabled = std::any_of (inputs.begin(), inputs.end(), [id] (auto* i)
+                {
+                    return i->getTargets().contains (id) && i->getInputDevice().getMonitorMode() == Mode::on;
+                });
+                for (auto* input : inputs)
+                    if (input->getTargets().contains (id))
+                        if (auto& device = input->getInputDevice(); device.getMonitorMode() != Mode::automatic)
+                            device.setMonitorMode (enabled ? Mode::off : Mode::on);
+            }
+        };
+    }
+
+    void refreshInstrumentWorkflow (const Array<te::AudioTrack*>& tracks)
+    {
+        if (dockMode == DockMode::compact || (workspace != Workspace::instruments
+             && workspace != Workspace::channel && workspace != Workspace::mix))
+            return;
+
+        auto* target = workflowTrack();
+        if (workspace == Workspace::instruments)
+        {
+            const auto restriction = edit == nullptr ? "Open or create a project to load an instrument."
+                : ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
+                : pendingPlugin ? "An Audio Unit is loading."
+                : canEditRegions() ? instrumentTrackRestriction (target) : "Finish the current task or stop recording.";
+            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(), restriction);
+        }
+        else if (workspace == Workspace::channel)
+        {
+            const auto recovery = ariaReviewPending
+                ? (autoAriaRetryPending ? "ARIA recovery · Automatic restore pending"
+                                        : "ARIA recovery · Verify sound, then Confirm ARIA below transport")
+                : "ARIA recovery · No verification pending";
+            channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery);
+        }
+        else
+            mixer.refresh (tracks, target, edit != nullptr && ! busy, canEditRegions());
+    }
+
+    bool canInsertPlugin() const
+    {
+        return canEditRegions() && ! ariaReviewPending && ! pendingPlugin.has_value();
+    }
+
+    String instrumentTrackRestriction (te::AudioTrack* track) const
+    {
+        if (track == nullptr) return "Select an instrument track or use Add as New Track.";
+        if (track->isFrozen (te::Track::anyFreeze)) return "The selected track is frozen.";
+        if (studio::findInstrument (*track) != nullptr) return "This track already hosts an instrument. Use Add as New Track.";
+        for (auto* clip : track->getClips())
+            if (dynamic_cast<te::AudioClipBase*> (clip) != nullptr)
+                return "The selected track contains audio. Use Add as New Track.";
+        for (auto* input : track->edit.getAllInputDevices())
+            if (input->getInputDevice().getDeviceType() == te::InputDevice::waveDevice
+                && input->getTargets().contains (track->itemID))
+                return "The selected track has an audio input. Use Add as New Track.";
+        return {};
+    }
+
+    void pluginStatus (const String& status)
+    {
+        browser.setStatus (status);
+        message.setText (status, dontSendNotification);
+    }
+
+    void startExternalPlugin (PluginDescription description, te::EditItemID target, bool addNew, bool instrument)
+    {
+        if (! canInsertPlugin())
+        {
+            pluginStatus (ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
+                                            : "Stop recording or wait for the current plug-in to finish.");
+            return;
+        }
+        if (! addNew)
+        {
+            auto* track = trackById (target);
+            const auto restriction = instrument ? instrumentTrackRestriction (track)
+                : (track == nullptr || track->isFrozen (te::Track::anyFreeze) ? "Choose an unfrozen track." : "");
+            if (restriction.isNotEmpty())
+            {
+                pluginStatus (restriction);
+                return;
+            }
+        }
+        if (description.pluginFormatName != "AudioUnit"
+            || engine.getPluginManager().knownPluginList.getTypeForIdentifierString (description.createIdentifierString()) == nullptr)
+        {
+            pluginStatus ("The Audio Unit is no longer in the host catalog. Scan for plug-ins again.");
+            return;
+        }
+
+        pluginStatus ("Loading " + description.name + "…");
+        {
+            const ScopedValueSetter<bool> loading (busy, true);
+            auto plugin = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, description);
+            if (plugin == nullptr)
+            {
+                pluginStatus ("Could not create " + description.name + ".");
+                return;
+            }
+            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter() };
+            plugin->initialiseFully();
+        }
+        completePendingPlugin();
+    }
+
+    void completePendingPlugin()
+    {
+        if (! pendingPlugin) return;
+        if (edit == nullptr || edit->getTransport().isRecording() || ariaReviewPending)
+        {
+            pendingPlugin.reset();
+            pluginStatus ("Plug-in load cancelled before changing the project.");
+            return;
+        }
+        if (busy) return;
+        auto& plugin = static_cast<te::ExternalPlugin&> (*pendingPlugin->plugin);
+        if (plugin.isInitialisingAsync())
+        {
+            if (Time::getMillisecondCounter() - pendingPlugin->startedAt < 15000u) return;
+            pendingPlugin.reset();
+            pluginStatus ("The Audio Unit did not finish loading. The project was not changed.");
+            return;
+        }
+        auto requested = std::move (*pendingPlugin);
+        pendingPlugin.reset();
+        if (plugin.getAudioPluginInstance() == nullptr)
+        {
+            pluginStatus (plugin.getName() + " could not be loaded. " + plugin.getLoadError());
+            return;
+        }
+        commitPlugin (requested.plugin, requested.destination, requested.addTrack, requested.instrument);
+    }
+
+    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew, bool instrument)
+    {
+        if (! canInsertPlugin() || plugin == nullptr) return;
+        auto* track = trackById (target);
+        if (! addNew && (track == nullptr || track->isFrozen (te::Track::anyFreeze)
+                        || (instrument && instrumentTrackRestriction (track).isNotEmpty())))
+        {
+            pluginStatus ("The original destination is no longer available for this plug-in.");
+            return;
+        }
+        auto& history = edit->getUndoManager();
+        history.beginNewTransaction (addNew ? "Add instrument track" : instrument ? "Load instrument" : "Add insert effect");
+        te::AudioTrack::Ptr newTrack;
+        if (addNew)
+        {
+            newTrack = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+            if (newTrack == nullptr)
+            {
+                pluginStatus ("Could not create a new instrument track.");
+                return;
+            }
+            track = newTrack.get();
+            track->setName (plugin->getName());
+        }
+
+        const auto* volume = track->getVolumePlugin();
+        // The instrument comes first. Effects go before the existing track fader.
+        const int index = instrument ? 0 : volume != nullptr ? track->pluginList.indexOf (volume) : -1;
+        track->pluginList.insertPlugin (plugin, index, nullptr);
+        if (track->pluginList.indexOf (plugin.get()) < 0)
+        {
+            if (newTrack != nullptr) edit->deleteTrack (newTrack.get());
+            pluginStatus ("Could not insert " + plugin->getName() + ".");
+            return;
+        }
+        if (newTrack != nullptr) selection.selectOnly (track);
+        auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
+        if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
+            status << " Choose the patch in Channel → Open Instrument.";
+        pluginStatus (status);
+    }
+
+    // Menu callbacks re-resolve the original track and project after the popup closes.
+    auto trackMenuAction (te::EditItemID id, std::function<void(StudioView&, te::AudioTrack&)> action)
+    {
+        return [safe = Component::SafePointer<StudioView> (this), id, generation = projectGeneration,
+                action = std::move (action)]
+        {
+            if (safe == nullptr || generation != safe->projectGeneration || ! safe->canEditRegions()) return;
+            if (auto* track = safe->trackById (id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
+                action (*safe, *track);
+        };
+    }
+
+    void showTrackMenu (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
+    {
+        auto* track = trackById (id);
+        if (track == nullptr || ! canEditRegions() || track->isFrozen (te::Track::anyFreeze)) return;
+        PopupMenu menu;
+        if (kind == studio::TrackMenu::inserts)
+            populateInsertMenu (menu, *track);
+        else if (kind == studio::TrackMenu::output)
+            populateOutputMenu (menu, *track);
+        else
+            populateInputMenu (menu, *track, kind == studio::TrackMenu::midiInput);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+    void populateInputMenu (PopupMenu& menu, te::AudioTrack& track, bool midi)
+    {
+        const auto type = midi ? te::InputDevice::physicalMidiDevice : te::InputDevice::waveDevice;
+        const auto id = track.itemID;
+        menu.addSectionHeader (midi ? "Physical MIDI inputs" : "Audio inputs");
+        bool found = false;
+        for (auto* instance : edit->getAllInputDevices())
+        {
+            auto& device = instance->getInputDevice();
+            if (device.getDeviceType() != type || ! device.isEnabled()) continue;
+            found = true;
+            const auto deviceId = device.getDeviceID();
+            const auto name = device.getName();
+            const auto targets = instance->getTargets();
+            const bool assigned = targets.contains (id);
+            const auto label = assigned ? "Disconnect " + name
+                : ! targets.isEmpty() ? "Move " + name + " to this track" : "Assign " + name;
+            menu.addItem (label, true, assigned, trackMenuAction (id,
+                [deviceId, type, assigned, midi] (StudioView& studio, te::AudioTrack& target)
+                {
+                    for (auto* in : target.edit.getAllInputDevices())
+                    {
+                        auto& current = in->getInputDevice();
+                        if (current.getDeviceType() != type || current.getDeviceID() != deviceId || ! current.isEnabled())
+                            continue;
+                        if (in->getTargets().contains (target.itemID) != assigned) return;
+                        auto& undo = target.edit.getUndoManager();
+                        undo.beginNewTransaction (assigned ? "Disconnect track input" : "Assign track input");
+                        if (assigned)
+                        {
+                            const auto result = in->removeTarget (target.itemID, &undo);
+                            if (result.failed()) studio.pluginStatus (result.getErrorMessage());
+                        }
+                        else if (auto result = in->setTarget (target.itemID, true, &undo, 0))
+                        {
+                            if (midi) in->setRecordingEnabled (target.itemID, true);
+                        }
+                        else
+                            studio.pluginStatus (result.error());
+                        return;
+                    }
+                }));
+            if (assigned && midi)
+                if (auto* midiDevice = dynamic_cast<te::MidiInputDevice*> (&device))
+                {
+                    PopupMenu channels;
+                    for (int channel = 1; channel <= 16; ++channel)
+                        channels.addItem ("Channel " + String (channel), true, midiDevice->isChannelAllowed (channel),
+                            trackMenuAction (id, [deviceId, channel] (StudioView&, te::AudioTrack& target)
+                            {
+                                for (auto* in : target.edit.getAllInputDevices())
+                                    if (in->getTargets().contains (target.itemID)
+                                        && in->getInputDevice().getDeviceID() == deviceId)
+                                        if (auto* device = dynamic_cast<te::MidiInputDevice*> (&in->getInputDevice()))
+                                        {
+                                            device->setChannelAllowed (channel, ! device->isChannelAllowed (channel));
+                                            return;
+                                        }
+                            }));
+                    menu.addSubMenu (name + " MIDI channels (device-wide)", channels);
+                }
+        }
+        if (! found) menu.addItem (1, "No enabled devices", false);
+    }
+
+    void populateOutputMenu (PopupMenu& menu, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        auto& output = track.getOutput();
+        menu.addSectionHeader ("Current output · " + studio::outputLabel (track));
+        menu.addItem ("Default Audio (Master)", true, output.usesDefaultAudioOut(),
+            trackMenuAction (id, [] (StudioView&, te::AudioTrack& target)
+            {
+                target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                target.getOutput().setOutputToDefaultDevice (false);
+            }));
+        auto& devices = engine.getDeviceManager();
+        if (auto* midi = devices.getDefaultMidiOutDevice(); midi != nullptr && midi->isEnabled())
+            menu.addItem ("Default MIDI", true, output.usesDefaultMIDIOut(),
+                trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& target)
+                {
+                    auto* device = studio.engine.getDeviceManager().getDefaultMidiOutDevice();
+                    if (device == nullptr || ! device->isEnabled()) return;
+                    target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                    target.getOutput().setOutputToDefaultDevice (true);
+                }));
+        for (int i = 0; i < devices.getNumOutputDevices(); ++i)
+            if (auto* device = devices.getOutputDeviceAt (i); device != nullptr && device->isEnabled())
+            {
+                const auto deviceId = device->getDeviceID();
+                menu.addItem (device->getName(), true, output.getOutputDeviceID() == deviceId,
+                    trackMenuAction (id, [deviceId] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        auto* current = studio.engine.getDeviceManager().findOutputDeviceForID (deviceId);
+                        if (current == nullptr || ! current->isEnabled()) return;
+                        target.edit.getUndoManager().beginNewTransaction ("Change track output");
+                        target.getOutput().setOutputToDeviceID (deviceId);
+                    }));
+            }
+    }
+
+    void populateInsertMenu (PopupMenu& menu, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        menu.addSectionHeader ("Insert chain · " + track.getName());
+        bool any = false;
+        for (auto* plugin : track.pluginList.getPlugins())
+        {
+            if (plugin == track.getVolumePlugin() || plugin == track.getLevelMeterPlugin()) continue;
+            any = true;
+            const auto pluginId = plugin->itemID;
+            menu.addItem ("Open " + plugin->getName(), trackMenuAction (id,
+                [pluginId] (StudioView&, te::AudioTrack& target)
+                {
+                    for (auto* current : target.pluginList.getPlugins())
+                        if (current->itemID == pluginId)
+                        {
+                            current->showWindowExplicitly();
+                            break;
+                        }
+                }));
+        }
+        if (! any) menu.addItem (10, "No instruments or effects", false);
+        PopupMenu effects;
+        const std::pair<const char*, const char*> builtIns[] {
+            { "Equaliser", te::EqualiserPlugin::xmlTypeName },
+            { "Compressor", te::CompressorPlugin::xmlTypeName },
+            { "Delay", te::DelayPlugin::xmlTypeName }
+        };
+        for (const auto& [label, type] : builtIns)
+            effects.addItem (label, trackMenuAction (id, [type] (StudioView& studio, te::AudioTrack& target)
+            {
+                if (! studio.canInsertPlugin()) return;
+                studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
+            }));
+        for (const auto& description : engine.getPluginManager().knownPluginList.getTypes())
+            if (description.pluginFormatName == "AudioUnit" && ! description.isInstrument
+                && ! description.name.containsIgnoreCase ("ARIA Player"))
+                effects.addItem (description.name, trackMenuAction (id,
+                    [description] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        studio.startExternalPlugin (description, target.itemID, false, false);
+                    }));
+        menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
+    }
+
+    void showAudioSettings()
+    {
+        DialogWindow::LaunchOptions options;
+        options.dialogTitle = "Audio Settings";
+        options.dialogBackgroundColour = studio::colours::canvas;
+        options.escapeKeyTriggersCloseButton = true;
+        options.useNativeTitleBar = true;
+        options.resizable = true;
+        options.content.setOwned (new AudioSettingsView (engine.getDeviceManager().deviceManager));
+        options.content->setSize (jmin (getWidth() - 32, studio::appearance.span (420)),
+                                  jmin (getHeight() - 60, studio::appearance.px (580)));
+        options.launchAsync();
+    }
+
     void showPlugins()
     {
         auto& manager = engine.getPluginManager();
@@ -959,10 +2349,15 @@ private:
         options.escapeKeyTriggersCloseButton = true;
         options.useNativeTitleBar = true;
         options.resizable = true;
-        options.content.setOwned (new PluginListComponent (manager.pluginFormatManager,
+        auto scanner = std::make_unique<PluginListComponent> (manager.pluginFormatManager,
             manager.knownPluginList, engine.getTemporaryFileManager().getTempFile ("PluginScanDeadMansPedal"),
-            std::addressof (engine.getPropertyStorage().getPropertiesFile()), true));
-        options.content->setSize (760, 480);
+            std::addressof (engine.getPropertyStorage().getPropertiesFile()), true);
+        scanner->getTableListBox().setRowHeight (studio::appearance.line (14, 7));
+        scanner->getTableListBox().setHeaderHeight (studio::appearance.control (24, 12));
+        scanner->getTableListBox().getViewport()->setScrollBarThickness (studio::appearance.scrollbar());
+        options.content.setOwned (scanner.release());
+        options.content->setSize (jmin (getWidth() - 32, studio::appearance.px (760)),
+                                  jmin (getHeight() - 60, studio::appearance.px (480)));
         options.launchAsync();
     }
 };
@@ -972,13 +2367,17 @@ class StudioApplication final : public JUCEApplication
     class Window final : public DocumentWindow
     {
     public:
-        Window() : DocumentWindow ("Studio", Colour (0xff172027), DocumentWindow::allButtons)
+        Window() : DocumentWindow ("Studio", studio::colours::canvas, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             setResizable (true, false);
-            setResizeLimits (920, 610, 2600, 1800);
+            setResizeLimits (920, 500, 2600, 1800);
             setContentOwned (new StudioView(), true);
-            centreWithSize (getWidth(), getHeight());
+            if (const auto* display = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            {
+                const auto area = displayClientArea (*this, *display);
+                setBounds (getBounds().withCentre (area.getCentre()).constrainedWithin (area));
+            }
             setVisible (true);
         }
 
