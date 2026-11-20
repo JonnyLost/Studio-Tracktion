@@ -2709,7 +2709,7 @@ int StudioView::runInterfaceReview (const File& output)
                     if (workspacePanel.getHeight() != beforeDrag + distance)
                         return fail ("Split divider pointer drag does not resize");
                     const int afterDrag = workspacePanel.getHeight();
-                    if (! workspaceDivider.keyPressed (KeyPress::downKey) || workspacePanel.getHeight() >= afterDrag)
+                    if (! workspaceDivider.keyPressed (KeyPress (KeyPress::downKey)) || workspacePanel.getHeight() >= afterDrag)
                         return fail ("Split divider keyboard resize does not resize");
                 }
                 setDockMode (DockMode::expanded);
