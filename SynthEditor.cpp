@@ -85,7 +85,7 @@ public:
     String viewState() const override;
     void restoreView (const String&) override;
 #if STUDIO_SPATIAL_TESTS
-    bool verifyBrowser();
+    bool verifyBrowser (const File& userPreset);
 #endif
     ComponentBoundsConstrainer* getBoundsConstrainer() override { return &limits; }
     void resized() override;
@@ -178,6 +178,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     routeDestination.setTitle ("Modulation destination on the selected layer");
     routeDestination.setTextWhenNothingSelected ("Choose a destination");
     family.addItem ("All Families", 8);
+    family.setSelectedId (8, dontSendNotification);
     category.setTitle ("Musical category");
     presetSource.setTitle ("Preset library");
     presetSource.addItemList ({ "Factory", "User" }, 1);
@@ -194,13 +195,15 @@ Editor::Editor (Plugin& p) : plugin (p)
     grainSource.setTitle ("Granular source");
     grainSource.addItemList ({ "Harmonic Cloud", "Evolving Strings", "Bell Fragments", "Air / Noise" }, 1);
     search.setTitle ("Search presets");
-    search.setTextToShowWhenEmpty ("Search presets or categories", colours::secondary);
+    search.setTextToShowWhenEmpty ("Search by preset name", colours::secondary);
     title.setText ("Studio Synth", dontSendNotification);
     title.setFont (FontOptions (21.0f, Font::bold));
     for (auto* label : { &preset, &status, &layerHeading, &midiHeading })
         label->setFont (FontOptions (13.0f));
     previous.setTitle ("Previous preset");
     next.setTitle ("Next preset");
+    previous.setTooltip ("Previous preset in the current results");
+    next.setTooltip ("Next preset in the current results");
     keyboard.setTitle ("Synth audition keyboard");
     keyboard.setOctaveForMiddleC (4);
     keyboard.setLowestVisibleKey (36);
@@ -446,8 +449,8 @@ void Editor::updateFactories()
     else results.deselectAllRows();
     results.repaint();
     selectedRowsChanged (active);
-    previous.setEnabled (getNumRows() > 0);
-    next.setEnabled (getNumRows() > 0);
+    previous.setEnabled (loadedRow > 0);
+    next.setEnabled (loadedRow + 1 < getNumRows());
 }
 
 int Editor::getNumRows()
@@ -491,16 +494,19 @@ void Editor::changePreset (std::function<void(Editor&)> action)
     }
     if (confirmingLoad) return;
     confirmingLoad = true;
-    AlertWindow::showAsync (MessageBoxOptions().withIconType (MessageBoxIconType::QuestionIcon)
-        .withTitle ("Keep Synth edits?")
-        .withMessage ("Load another sound and discard these Synth edits? Choose Keep Editing to save them as a preset first.")
-        .withButton ("Keep Editing", 0).withButton ("Load Sound", 1).withAssociatedComponent (this),
+    auto* prompt = new AlertWindow ("Keep Synth edits?",
+        "Load another sound and discard these Synth edits? Choose Keep Editing to save them as a preset first.",
+        MessageBoxIconType::QuestionIcon, this);
+    prompt->addButton ("Keep Editing", 0, KeyPress (KeyPress::escapeKey), KeyPress (KeyPress::returnKey));
+    prompt->addButton ("Load Sound", 1);
+    prompt->enterModalState (true, ModalCallbackFunction::create (
         [safe = SafePointer<Editor> (this), revision = plugin.changeCount(), action = std::move (action)] (int answer)
         {
             if (safe == nullptr) return;
             safe->confirmingLoad = false;
             if (answer == 1 && safe->plugin.changeCount() == revision) action (*safe);
-        });
+        }), true);
+    prompt->setVisible (true);
 }
 
 void Editor::selectPreset (int index)
@@ -605,11 +611,6 @@ void Editor::refresh()
     auto current = layers[selectedLayer];
     const auto engine = parseFamily (current["engine"].toString());
     const bool valid = engine != Family::hybrid;
-    if (family.getSelectedId() == 0)
-    {
-        family.setSelectedId (layers.size() > 1 ? 7 : valid ? static_cast<int> (engine) + 1 : 1, dontSendNotification);
-        refreshCategories();
-    }
     if (listedFactory != plugin.factoryID() || listedUserPreset != plugin.isUserPreset() || listedUserFile != presetFile)
         updateFactories();
     const auto kind = layers.size() > 1 ? familyName (Family::hybrid) : valid ? familyName (engine) : String();
@@ -843,7 +844,7 @@ void Editor::resized()
     const auto row = [=] (Rectangle<int>& area) { return area.removeFromTop (line + gap).withTrimmedBottom (gap); };
     const auto columns = [=] (Rectangle<int> r, std::initializer_list<Component*> items)
     {
-        const auto w = (r.getWidth() - gap * (static_cast<int> (items.size()) - 1)) / static_cast<int> (items.size());
+        const auto w = jmax (0, (r.getWidth() - gap * (static_cast<int> (items.size()) - 1)) / static_cast<int> (items.size()));
         for (auto* c : items) { c->setBounds (r.removeFromLeft (w)); r.removeFromLeft (gap); }
     };
     auto area = getLocalBounds().reduced (appearance.px (14), gap);
@@ -972,7 +973,7 @@ void Editor::openChooser (bool save, bool audio)
         });
 }
 #if STUDIO_SPATIAL_TESTS
-bool Editor::verifyBrowser()
+bool Editor::verifyBrowser (const File& userPreset)
 {
     setBrowser (true);
     family.setSelectedId (8, sendNotificationSync);
@@ -994,9 +995,34 @@ bool Editor::verifyBrowser()
     setPage (advanced);
     const auto before = plugin.changeCount();
     polyphony.slider.setValue (5, sendNotificationSync);
-    const bool edited = plugin.changeCount() != before && plugin.dirty()
-        && static_cast<int> (plugin.getPatch()["layers"][0]["voices"]) == 5;
-    return edited && plugin.selectFactory (*target).wasOk();
+    if (plugin.changeCount() == before || ! plugin.dirty()
+        || static_cast<int> (plugin.getPatch()["layers"][0]["voices"]) != 5) return false;
+    const auto answer = [this] (const char* button)
+    {
+        selectPreset (0);
+        auto* dialog = dynamic_cast<AlertWindow*> (Component::getCurrentlyModalComponent());
+        if (! confirmingLoad || dialog == nullptr || ! plugin.dirty()) return false;
+        dialog->triggerButtonClick (button);
+        for (int attempt = 0; attempt < 12 && confirmingLoad; ++attempt)
+            MessageManager::getInstance()->runDispatchLoopUntil (25);
+        return ! confirmingLoad;
+    };
+    if (! answer ("Keep Editing") || ! plugin.dirty() || ! answer ("Load Sound")
+        || plugin.dirty() || plugin.getPatch() != target->patch) return false;
+    polyphony.slider.setValue (5, sendNotificationSync);
+    if (plugin.savePreset (userPreset).failed() || plugin.selectFactory (*target).failed()) return false;
+    presetFile = userPreset;
+    search.setText (userPreset.getFileNameWithoutExtension(), false);
+    presetSource.setSelectedId (2, sendNotificationSync);
+    if (getNumRows() != 1) return false;
+    results.selectRow (0);
+    loadResult.onClick();
+    if (! plugin.isUserPreset() || static_cast<int> (plugin.getPatch()["layers"][0]["voices"]) != 5) return false;
+    presetFile = File();
+    search.setText ({}, false);
+    presetSource.setSelectedId (1, sendNotificationSync);
+    category.setSelectedId (1, sendNotificationSync);
+    return plugin.selectFactory (*target).wasOk();
 }
 #endif
 
@@ -1006,10 +1032,10 @@ void Editor::timerCallback()
 }
 }
 #if STUDIO_SPATIAL_TESTS
-bool verifyPresetBrowser (tracktion::Plugin::EditorComponent& component)
+bool verifyPresetBrowser (tracktion::Plugin::EditorComponent& component, const File& userPreset)
 {
     auto* editor = dynamic_cast<Editor*> (&component);
-    return editor != nullptr && editor->verifyBrowser();
+    return editor != nullptr && editor->verifyBrowser (userPreset);
 }
 #endif
 std::unique_ptr<tracktion::Plugin::EditorComponent> Plugin::createEditor() { return std::make_unique<Editor> (*this); }

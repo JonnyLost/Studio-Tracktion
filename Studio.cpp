@@ -2845,6 +2845,13 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     auto snapshot = [&] (Component& component, const String& name)
     {
         if (output == File()) return true;
+        if (&component == this)
+        {
+            edit->dispatchPendingUpdatesSynchronously();
+            for (int i = 0; editor != nullptr && i < 12 && editor->getVisibleTrackCount() < te::getAudioTracks (*edit).size(); ++i)
+                MessageManager::getInstance()->runDispatchLoopUntil (50);
+            timerCallback();
+        }
         if (output.createDirectory().failed()) return false;
         FileOutputStream file (output.getChildFile (name + ".png"));
         return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
@@ -2853,7 +2860,8 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     auto* synthEditor = instrumentWorkspace.getEditor();
     setDockMode (DockMode::expanded);
     if (! snapshot (*this, "synth-docked")) return fail ("capture Synth Sound");
-    if (! studio::synth::verifyPresetBrowser (*synthEditor)) return fail ("search, family, category, preset load and Advanced editing");
+    if (! studio::synth::verifyPresetBrowser (*synthEditor, folder.getChildFile ("Workspace User Test.studiosynth")))
+        return fail ("factory filters, preset selection, unsaved changes, user preset and Advanced editing");
     synthEditor->restoreView ("0,1");
     if (! snapshot (*this, "synth-preset-browser")) return fail ("capture preset browser");
     synthEditor->restoreView ("1,0");
@@ -2895,17 +2903,27 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (sampler == nullptr || instrumentWorkspace.isFloating()) return fail ("Sampler must open docked");
     const auto samplerTrack = sampler->getOwnerTrack()->itemID;
     const auto samplerID = sampler->itemID;
-    const auto sample = folder.getChildFile ("Piano C4.wav");
-    WavAudioFormat wav;
-    std::unique_ptr<OutputStream> stream = sample.createOutputStream();
-    auto wave = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000).withNumChannels (1).withBitsPerSample (16));
-    if (! wave) return fail ("create sampler fixture");
-    AudioBuffer<float> signal (1, 96000);
-    for (int t = 0; t < signal.getNumSamples(); ++t)
-        signal.setSample (0, t, .45f * std::sin (MathConstants<float>::twoPi * 261.626f * t / 48000));
-    if (! wave->writeFromAudioSampleBuffer (signal, 0, signal.getNumSamples())) return fail ("write sampler fixture");
-    wave.reset();
-    if (sampler->loadSample (sample).failed()) return fail ("load sampler fixture");
+    const auto makeSample = [&] (const char* name, float frequency)
+    {
+        const auto sample = folder.getChildFile (name);
+        WavAudioFormat wav;
+        std::unique_ptr<OutputStream> stream = sample.createOutputStream();
+        auto wave = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000).withNumChannels (1).withBitsPerSample (16));
+        if (! wave) return false;
+        AudioBuffer<float> signal (1, 96000);
+        for (int t = 0; t < signal.getNumSamples(); ++t)
+        {
+            const float second = t / 48000.0f;
+            const float phase = MathConstants<float>::twoPi * frequency * second;
+            const float envelope = jmin (1.0f, second * 380) * std::exp (-second * 1.85f);
+            signal.setSample (0, t, envelope * (.46f * std::sin (phase) + .20f * std::sin (phase * 2.0f)));
+        }
+        if (! wave->writeFromAudioSampleBuffer (signal, 0, signal.getNumSamples())) return false;
+        wave.reset();
+        return sampler->loadSample (sample).wasOk();
+    };
+    if (! makeSample ("Studio Keys C4.wav", 261.626f)) return fail ("load sampler fixture");
+    instrumentWorkspace.getEditor()->restoreView ("0");
     edit->dispatchPendingUpdatesSynchronously();
     edit->getTransport().ensureContextAllocated (true);
     sampler->preview (1, 1, 60, 100);
@@ -2916,6 +2934,17 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         return fail ("floating Sampler must keep sounding");
     instrumentWorkspace.setFloating (false);
     sampler->preview (1, 1, 60, 0);
+    if (! makeSample ("Studio Keys C5.wav", 523.252f)) return fail ("load second sampler zone");
+    auto lowZone = sampler->instrument().zones[0].mapping;
+    lowZone.high = 65;
+    lowZone.loop = true;
+    lowZone.loopStart = 15000;
+    lowZone.loopEnd = 62000;
+    sampler->editZone (0, lowZone);
+    auto highZone = sampler->instrument().zones[1].mapping;
+    highZone.root = 72;
+    highZone.low = 66;
+    sampler->editZone (1, highZone);
     instrumentWorkspace.getEditor()->restoreView ("1");
     if (! snapshot (*this, "sampler-mapping")) return fail ("capture mapping");
     instrumentWorkspace.getEditor()->restoreView ("2");
@@ -2946,12 +2975,20 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     applyAppearance (100, 100, false);
     setDockMode (DockMode::expanded);
     instrumentWorkspace.setFloating (true);
+    auto* floatingEditor = instrumentWorkspace.getEditor();
+    auto* floatingWindow = floatingEditor->getTopLevelComponent();
+    floatingWindow->setSize (440, 340);
+    applyAppearance (175, 130, false);
+    if (floatingEditor->getHeight() < floatingEditor->minimumDockHeight())
+        return fail ("floating editor must scroll in a compact window with enlarged text");
+    applyAppearance (100, 100, false);
     if (! te::EditFileOperations (*edit).writeToFile (session, false)) return fail ("save native instruments");
     const auto generation = projectGeneration;
     loadProject (session, false);
     auto* restored = dynamic_cast<studio::sampler::Plugin*> (instrumentWorkspace.getPlugin());
     if (projectGeneration != generation + 1 || restored == nullptr || restored->itemID != samplerID
-        || restored->instrument().zones.empty() || ! instrumentWorkspace.isFloating() || dockMode != DockMode::expanded
+        || restored->instrument().zones.size() != 2 || ! restored->instrument().zones[0].mapping.loop
+        || ! instrumentWorkspace.isFloating() || dockMode != DockMode::expanded
         || instrumentWorkspace.getEditor()->viewState() != "2" || te::findPluginForID (*edit, synthId) == nullptr)
         return fail ("reopen with the selected editor, layout, page and both instruments intact");
     restored->deleteFromParent();

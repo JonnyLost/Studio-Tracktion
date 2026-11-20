@@ -26,7 +26,27 @@ public:
         setUsingNativeTitleBar (true);
         setResizable (true, false);
         setResizeLimits (440, 340, 1600, 1000);
+        viewport.setScrollBarsShown (true, false);
+        viewport.setViewedComponent (&host.content, false);
+        setContentNonOwned (&viewport, false);
     }
+
+    ~Window() override
+    {
+        viewport.setViewedComponent (nullptr, false);
+        clearContentComponent();
+    }
+
+    void resized() override
+    {
+        DocumentWindow::resized();
+        viewport.setScrollBarThickness (appearance.scrollbar());
+        const auto minHeight = host.editorHeight();
+        const auto width = viewport.getWidth() - (minHeight > viewport.getHeight() ? viewport.getScrollBarThickness() : 0);
+        host.content.setSize (jmax (0, width), jmax (minHeight, viewport.getHeight()));
+    }
+
+    void paint (Graphics& g) override { g.fillAll (colours::panel); }
 
     void closeButtonPressed() override
     {
@@ -38,6 +58,7 @@ public:
 
 private:
     InstrumentWorkspace& host;
+    Viewport viewport;
 };
 
 InstrumentWorkspace::Content::Content (InstrumentWorkspace& workspace) : host (workspace)
@@ -121,7 +142,6 @@ void InstrumentWorkspace::clear()
     if (window)
     {
         preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
-        window->clearContentComponent();
         window.reset();
     }
     addAndMakeVisible (content);
@@ -170,7 +190,11 @@ bool InstrumentWorkspace::open (te::Plugin& candidate, te::AudioTrack& track)
         component.release();
         editor.reset (native);
         editor->restoreView (session.getProperty (viewKey (plugin->itemID)).toString());
-        editor->onSizePreferenceChanged = [this] { if (onLayout) onLayout(); };
+        editor->onSizePreferenceChanged = [this]
+        {
+            if (window) window->resized();
+            if (onLayout) onLayout();
+        };
         content.addAndMakeVisible (*editor);
     }
     populateChoices (&track);
@@ -190,7 +214,6 @@ void InstrumentWorkspace::updateSelection (te::AudioTrack* selected, const Array
         if (window)
         {
             preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
-            window->clearContentComponent();
             window.reset();
             addAndMakeVisible (content);
         }
@@ -243,6 +266,11 @@ bool InstrumentWorkspace::rememberedFloating() const { return static_cast<bool> 
 int InstrumentWorkspace::minimumContentHeight() const
 {
     if (! editor || window) return appearance.control (48, 13);
+    return editorHeight();
+}
+
+int InstrumentWorkspace::editorHeight() const
+{
     return appearance.control (30, 12) + appearance.px (6) + editor->minimumDockHeight();
 }
 
@@ -251,7 +279,7 @@ void InstrumentWorkspace::appearanceChanged()
     if (editor) editor->appearanceChanged();
     resized();
     content.resized();
-    if (window) window->repaint();
+    if (window) window->resized();
 }
 
 void InstrumentWorkspace::setFloating (bool makeWindow)
@@ -261,7 +289,6 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     {
         window = std::make_unique<Window> (*this);
         window->setName (plugin->getName());
-        window->setContentNonOwned (&content, false);
         window->centreWithSize (820, 620);
         window->restoreWindowStateFromString (preferences.getValue ("studio.instrumentEditorWindow"));
         window->setVisible (true);
@@ -270,7 +297,6 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     else
     {
         preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
-        window->clearContentComponent();
         window.reset();
         addAndMakeVisible (content);
         if (onDock) onDock();
@@ -291,6 +317,7 @@ void InstrumentWorkspace::resized()
         content.setVisible (editor != nullptr);
         content.setBounds (area);
     }
+    else window->resized();
     bringBack.setVisible (window != nullptr);
     empty.setVisible (editor == nullptr);
     bringBack.setBounds (area.withSizeKeepingCentre (jmin (area.getWidth(), appearance.span (165)), appearance.control (30)));

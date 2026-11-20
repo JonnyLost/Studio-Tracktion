@@ -65,5 +65,6 @@ private:
     void rememberView();
     void releaseEditor();
     void populateChoices (tracktion::AudioTrack*);
+    int editorHeight() const;
 };
 }

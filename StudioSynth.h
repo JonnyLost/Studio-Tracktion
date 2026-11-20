@@ -106,6 +106,6 @@ private:
 void registerPlugin (tracktion::Engine&);
 int runSynthIntegrationTest (const juce::File& screenshots);
 #if STUDIO_SPATIAL_TESTS
-bool verifyPresetBrowser (tracktion::Plugin::EditorComponent&);
+bool verifyPresetBrowser (tracktion::Plugin::EditorComponent&, const juce::File& userPreset);
 #endif
 }

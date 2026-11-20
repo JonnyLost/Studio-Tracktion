@@ -168,6 +168,7 @@ Editor::Editor (Plugin& p) : plugin (p)
                 if (noteName (i).equalsIgnoreCase (text.trim())) return static_cast<double> (i);
             return jlimit (0.0, 127.0, text.getDoubleValue());
         };
+        control->slider.updateText();
     }
     mode.onChange = [this, set = editZone ([] (Zone& z, double v) { z.oneShot = v != 0; })]
     {
@@ -434,8 +435,8 @@ void Editor::resized()
     viewport.setBounds (area);
 
     const int width = jmax (1, viewport.getMaximumVisibleWidth() - viewport.getScrollBarThickness());
-    const int waveform = m.px (page == Page::mapping ? 148 : 145);
-    const int dialHeight = m.px (88) + line;
+    const int waveform = m.px (page == Page::basic ? 125 : 148);
+    const int dialHeight = m.px (74) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
         : page == Page::loops ? 2 : (width < m.span (500) ? 2 : 3);
     const int cells = page == Page::mapping ? 8 : page == Page::loops || page == Page::basic ? 2 : 3;
