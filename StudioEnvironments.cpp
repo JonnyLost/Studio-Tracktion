@@ -341,14 +341,20 @@ void StudioEnvironmentWelcome::paint (Graphics& g)
                       Justification::centredLeft, 1);
     g.setColour (colours::secondary);
     g.setFont (uiFont (13.0f));
+    const auto subtitleHeight = m.line (14, 8);
+    const auto subtitleTop = jmin (top + m.line (70, 8),
+                                  newProject.getY() - subtitleHeight - m.px (4));
     g.drawFittedText (String (scenes[(std::size_t) scene].title) + "  |  " + scenes[(std::size_t) scene].subtitle,
-                      left, top + m.line (70, 8), jmin (getWidth() * 3 / 5, m.span (520)),
+                      left, subtitleTop, jmin (getWidth() * 3 / 5, m.span (520)),
                       m.line (14, 8), Justification::centredLeft, 1);
 
     g.setColour (colours::secondary.withAlpha (0.65f));
     g.setFont (uiFont (11.0f));
-    g.drawText ("YOUR ENVIRONMENTS", m.px (26), tiles[0]->getY() - m.line (13, 8),
-                m.span (230), m.line (13, 8), Justification::centredLeft);
+    auto galleryCaption = Rectangle<int> (m.px (26), tiles[0]->getY() - m.line (13, 8),
+                                          m.span (230), m.line (13, 8));
+    if (galleryCaption.intersects (continueButton.getBounds()))
+        galleryCaption.setX (continueButton.getRight() + m.px (12));
+    g.drawText ("YOUR ENVIRONMENTS", galleryCaption, Justification::centredLeft);
 }
 
 void StudioEnvironmentWelcome::resized()

@@ -769,6 +769,10 @@ public:
         fitFloatingMonitor();
         if (editor != nullptr) editor->refreshStudioLayout();
         resized();
+        // The welcome overlay may already cover the same bounds. Reflow its
+        // controls when global font/UI scale changes even without a resize.
+        environmentWelcome.resized();
+        environmentWelcome.repaint();
         repaint();
     }
 
