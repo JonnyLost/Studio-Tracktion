@@ -288,10 +288,20 @@ juce_add_gui_app(Studio
     NEEDS_CURL FALSE
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
+juce_add_binary_data(StudioEnvironmentsAssets
+    NAMESPACE StudioEnvironmentData
+    HEADER_NAME StudioEnvironmentData.h
+    SOURCES
+    assets/environments/BlueHourStudy.jpg
+    assets/environments/MidnightScoring.jpg
+    assets/environments/OrchestralStage.jpg
+    assets/environments/ComposerDesk.jpg
+    assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
-    SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h)
+    SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
+    StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -299,6 +309,7 @@ target_compile_definitions(Studio PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
 target_link_libraries(Studio PRIVATE
+    StudioEnvironmentsAssets
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
@@ -309,6 +320,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(StudioEnvironmentTests tests/EnvironmentSelectionTests.cpp)
+    target_compile_features(StudioEnvironmentTests PRIVATE cxx_std_20)
+    add_test(NAME StudioEnvironmentSelection COMMAND StudioEnvironmentTests)
+
     add_executable(StudioMilestoneTests tests/MilestoneMidiTests.cpp)
     target_compile_features(StudioMilestoneTests PRIVATE cxx_std_20)
     target_compile_definitions(StudioMilestoneTests PRIVATE JUCE_USE_CURL=0)
