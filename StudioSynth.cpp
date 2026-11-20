@@ -459,7 +459,15 @@ Result Plugin::savePreset (const File& file)
 {
     auto next = document.clone();
     if (! validEnvelope (next)) return Result::fail ("No valid Synth patch to save.");
-    set (next["preset"], "name", file.getFileNameWithoutExtension().substring (0, 80));
+    const auto name = file.getFileNameWithoutExtension().trim().substring (0, 80);
+    if (name.isEmpty()) return Result::fail ("Enter a name for the Synth preset.");
+    const auto identity = next["preset"];
+    if (! file.existsAsFile())
+    {
+        set (identity, "id", Uuid().toDashedString());
+        set (identity, "createdAt", static_cast<double> (Time::currentTimeMillis()) / 1000 - 978307200.0);
+    }
+    set (identity, "name", name);
     set (next, "dirty", false);
     TemporaryFile temp (file);
     if (! temp.getFile().replaceWithText (JSON::toString (next)) || ! temp.overwriteTargetFileWithTemporary())

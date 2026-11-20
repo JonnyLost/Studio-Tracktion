@@ -1,4 +1,4 @@
-# Studio 0.2 — Native Sampler
+# Studio 0.2 — Native Synth and Sampler
 
 Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified Studio 0.2 arrangement and automatic ARIA restoration milestone.
 
@@ -45,11 +45,15 @@ The Swift [room-design prototype](https://github.com/JonnyLost/Garritan-studio/b
 
 ## Instruments, Channel, and Mixer
 
-- **Instruments** shows family, type, searchable results, and details with lightweight line artwork. On a compact window Type moves into the search toolbar. **Plug-ins…** opens the existing Tracktion/JUCE scanner. Results include native instruments and the scanned Audio Unit catalog. ARIA is shown as a hosted player. Open its actual editor from **Channel → Open Instrument** to select a Garritan library and patch. Studio Sampler is available alongside hosted instruments. Studio Synth is planned.
+- **Instruments** shows family, type, searchable results, and details with lightweight line artwork. On a compact window Type moves into the search toolbar. **Plug-ins…** opens the existing Tracktion/JUCE scanner. Results include native instruments and the scanned Audio Unit catalog. ARIA is shown as a hosted player. Open its actual editor from **Channel → Open Instrument** to select a Garritan library and patch. Studio Sampler is available alongside hosted instruments. Studio Synth exposes seven synthesis families alongside Studio Sampler.
 - **Load on Selected Track** accepts one compatible unfrozen destination with no instrument, audio clips, or audio input. **Add as New Track** creates a new instrument track. The host confirms that the AU has an instance before either action changes the edit. A failed or timed-out load leaves the destination and its inserts intact. Existing instrument tracks remain available and can be used alongside the new track.
 - **Channel** follows the selected track, including a clip or plug-in owned by that track. Assign or disconnect an enabled audio or physical MIDI device from the Input menus. Assigning MIDI uses the same auto-arm behavior as the arrangement input control. The physical MIDI device's channel filter and fixed Monitor settings apply device-wide. Automatic monitor mode follows Tracktion, and original MIDI events keep their channels. **Inserts** opens the exact instance or adds an effect before the track fader. **Sends** lists existing aux sends. **Output** selects the default or an enabled device and displays existing track-to-track destinations.
 - **Mixer** scrolls track strips horizontally with Master pinned. A strip's name selects the arrangement track. Volume and pan share the Channel controls, and mute, solo, insert access and output selection use the same Tracktion track state. Meters read the existing Tracktion level meter inserts and default-output master measurer. An unavailable meter displays a dash, including on tracks without a meter insert. The mixer does not add meter inserts or change the routing graph when opened.
 - The ARIA verification banner and save protection remain active. Browser and new effect insert actions wait until verification completes. Channel can open the restored instrument so you can check the patch and sound before confirming.
+
+## Studio Synth
+
+Choose **Add Synth** from the instrument track menu, or choose a family in **Instruments → Synth**. Studio includes the 201 original factory sounds. The editor exposes the current layer’s controls in Sound and Shape, with modulation and additional parameters on separate pages. Save sounds as `.studiosynth` presets or with the Studio project. [Workflow, recovery notes, and MacBook verification](docs/native-synth.md)
 
 ## Studio Sampler
 

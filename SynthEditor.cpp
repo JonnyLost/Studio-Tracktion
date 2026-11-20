@@ -372,7 +372,9 @@ void Editor::refresh()
     if (family.getSelectedId() == 0)
         family.setSelectedId (layers.size() > 1 ? 7 : valid ? static_cast<int> (engine) + 1 : 1, dontSendNotification);
     updateFactories();
-    preset.setText (plugin.presetName() + (plugin.dirty() ? "  |  Edited" : ""), dontSendNotification);
+    const auto kind = layers.size() > 1 ? familyName (Family::hybrid) : valid ? familyName (engine) : String();
+    preset.setText (plugin.presetName() + (kind.isNotEmpty() ? "  |  " + kind : String())
+                    + (plugin.dirty() ? "  |  Edited" : ""), dontSendNotification);
     status.setText (plugin.warning(), dontSendNotification);
     const bool layerControls = layers.size() > 1 || page == advanced;
     for (Component* c : std::initializer_list<Component*> { &layerHeading, &layer, &layerFamily, &enabled, &addLayer, &removeLayer })
