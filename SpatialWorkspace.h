@@ -114,7 +114,7 @@ private:
     SpatialField widthField { "Width", 3, 80, 0.1, " m" }, lengthField { "Length", 3, 80, 0.1, " m" },
                  heightField { "Ceiling height", 2.2, 35, 0.1, " m" }, treatment { "Treatment", 0, 100, 1, "%" },
                  early { "Early reflections", 0, 100, 1, "%" }, late { "Late reverb", 0, 100, 1, "%" },
-                 roomGain { "Room return", -60, 0, 1, " dB" };
+                 roomGain { "Room return", -60, 0, 1, " dB" }, preDelay { "Pre-delay", 0, 100, 1, " ms" };
     std::array<SpatialField, 6> decay;
     Room draft;
     juce::ValueTree currentRoomSnapshot;

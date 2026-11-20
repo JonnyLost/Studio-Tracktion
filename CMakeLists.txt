@@ -251,6 +251,12 @@ if(BUILD_TESTING)
     target_link_libraries(StudioSpatialTests PRIVATE juce::juce_data_structures)
     add_test(NAME StudioSpatialModel COMMAND StudioSpatialTests)
 
+    add_executable(StudioAcousticComparison tools/AcousticComparison.cpp SpatialReverb.cpp)
+    target_include_directories(StudioAcousticComparison PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(StudioAcousticComparison PRIVATE cxx_std_20)
+    add_test(NAME StudioAcousticQuality COMMAND StudioAcousticComparison --verify)
+    set_tests_properties(StudioAcousticQuality PROPERTIES TIMEOUT 90)
+
     target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
     add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)

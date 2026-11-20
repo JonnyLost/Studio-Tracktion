@@ -171,20 +171,32 @@ void writeWave (const std::string& path, const Stereo& wet, const Stereo* dry, i
     if (! file) throw std::runtime_error ("Writing " + path);
 }
 
-void analyse (int rate, size_t index, const std::string& prefix)
+struct Metrics
 {
-    const auto room = factoryRooms[index].room;
-    auto ir = render (source (rate, 0), room, rate);
+    double density80, density150, density300, repeat, prominence, stereo;
+    double t125, t500, t2000, t4000, wetEnergy;
+};
+
+Metrics measure (const Stereo& ir, int rate)
+{
     double repeat = 0;
     for (int lag = rate * 21 / 1000; lag < rate * 85 / 1000; lag += 2)
         repeat = std::max (repeat, std::abs (correlation (ir.left, ir.left, rate / 8, rate / 2, lag)));
     const double leftPower = std::inner_product (ir.left.begin(), ir.left.end(), ir.left.begin(), 0.0);
-    std::cout << rate << ',' << factoryRooms[index].name << ',' << density (ir.left, rate, .08) << ','
-        << density (ir.left, rate, .15) << ',' << density (ir.left, rate, .30) << ',' << repeat << ','
-        << spectralPeak (ir.left, rate) << ',' << correlation (ir.left, ir.right, rate / 10, rate) << ','
-        << octaveT20 (ir.left, rate, 125) << ',' << octaveT20 (ir.left, rate, 500) << ','
-        << octaveT20 (ir.left, rate, 2000) << ',' << octaveT20 (ir.left, rate, 4000) << ','
-        << 10.0 * std::log10 (leftPower / .09) << '\n';
+    return { density (ir.left, rate, .08), density (ir.left, rate, .15), density (ir.left, rate, .30), repeat,
+             spectralPeak (ir.left, rate), correlation (ir.left, ir.right, rate / 10, rate),
+             octaveT20 (ir.left, rate, 125), octaveT20 (ir.left, rate, 500), octaveT20 (ir.left, rate, 2000),
+             octaveT20 (ir.left, rate, 4000), 10.0 * std::log10 (leftPower / .09) };
+}
+
+void analyse (int rate, size_t index, const std::string& prefix)
+{
+    const auto room = factoryRooms[index].room;
+    auto ir = render (source (rate, 0), room, rate);
+    const auto m = measure (ir, rate);
+    std::cout << rate << ',' << factoryRooms[index].name << ',' << m.density80 << ','
+        << m.density150 << ',' << m.density300 << ',' << m.repeat << ',' << m.prominence << ','
+        << m.stereo << ',' << m.t125 << ',' << m.t500 << ',' << m.t2000 << ',' << m.t4000 << ',' << m.wetEnergy << '\n';
     if (prefix.empty() || rate != 48000) return;
     const auto base = prefix + (index == 0 ? "-hall" : index == 1 ? "-chamber" : index == 3 ? "-scoring" : "-nave");
     writeWave (base + "-impulse-wet.wav", ir, nullptr, rate);
@@ -207,32 +219,69 @@ void benchmark (int rate)
     for (int i = 0; i < frames; ++i) input[(size_t) i] = 0.1f * std::sin (i * 0.07f);
     RoomReverb room;
     room.prepare (rate, {});
-    std::array<double, 5> times {};
     double checksum = 0;
-    for (auto& time : times)
+    const auto budget = [&] (bool driven)
     {
-        const auto start = Clock::now();
-        for (int i = 0; i < blocks; ++i)
+        std::array<double, 5> times {};
+        for (auto& time : times)
         {
-            l = r = input;
-            room.process (l.data(), r.data(), frames);
-            checksum += l[(size_t) i % frames] + r[(size_t) ((i * 3) % frames)];
+            const auto start = Clock::now();
+            for (int i = 0; i < blocks; ++i)
+            {
+                if (driven) l = r = input;
+                else { l.fill (0); r.fill (0); }
+                room.process (l.data(), r.data(), frames);
+                checksum += l[(size_t) i % frames] + r[(size_t) ((i * 3) % frames)];
+            }
+            time = std::chrono::duration<double> (Clock::now() - start).count();
         }
-        time = std::chrono::duration<double> (Clock::now() - start).count();
+        std::sort (times.begin(), times.end());
+        return 100 * times[2] * rate / (frames * blocks);
+    };
+    const auto active = budget (true);
+    room.reset();
+    const auto idle = budget (false);
+    std::cout << "CPU," << rate << ',' << active << ',' << idle << ',' << room.allocatedBytes() << ',' << checksum << '\n';
+}
+
+bool verify()
+{
+    bool passed = true;
+    for (int rate : { 44100, 48000, 96000 })
+    {
+        std::array<double, 4> decay {};
+        int i = 0;
+        for (size_t room : { 0, 1, 3, 5 })
+        {
+            auto ir = render (source (rate, 0), factoryRooms[room].room, rate);
+            const auto m = measure (ir, rate);
+            decay[(size_t) i++] = m.t500;
+            if (! (m.density150 > .72 && m.density300 > .86 && m.repeat < .29 && m.prominence < 8.0
+                   && std::abs (m.stereo) < .20 && m.wetEnergy > -12 && m.wetEnergy < 1
+                   && m.t125 > m.t500 && m.t500 > m.t2000 && m.t2000 > m.t4000))
+            {
+                std::cerr << "Acoustic bounds failed at " << rate << " Hz for " << factoryRooms[room].name << '\n';
+                passed = false;
+            }
+        }
+        if (! (decay[2] < .75 * decay[0] && decay[0] < .75 * decay[3]))
+        {
+            std::cerr << "Scoring, Hall and Nave decay separation failed at " << rate << " Hz\n";
+            passed = false;
+        }
     }
-    std::sort (times.begin(), times.end());
-    std::cout << "CPU," << rate << ',' << 100 * times[2] * rate / (frames * blocks)
-        << ',' << room.allocatedBytes() << ',' << checksum << '\n';
+    return passed;
 }
 }
 
 int main (int argc, char** argv)
 {
+    if (argc == 2 && std::string_view (argv[1]) == "--verify") return verify() ? 0 : 1;
     const std::string output = argc == 2 ? argv[1] : "";
     std::cout << std::fixed << std::setprecision (3)
               << "Hz,preset,NED_80ms,NED_150ms,NED_300ms,repeat_21_to_85ms,spectral_P99_dB,late_LR,T20_125Hz,T20_500Hz,T20_2kHz,T20_4kHz,IR_energy_dB\n";
     for (int rate : { 44100, 48000, 96000 })
         for (size_t room : { 0, 1, 3, 5 }) analyse (rate, room, output);
-    std::cout << "CPU,Hz,single_core_budget_percent,delay_bytes,checksum\n";
+    std::cout << "CPU,Hz,single_core_active_percent,single_core_idle_percent,delay_bytes,checksum\n";
     for (int rate : { 44100, 48000, 96000 }) benchmark (rate);
 }

@@ -19,7 +19,8 @@ inline juce::ValueTree writeRoom (Room r, const juce::String& name)
      .setProperty ("height", r.height, nullptr).setProperty ("treatment", r.treatment, nullptr)
      .setProperty ("wall", (int) r.wall, nullptr).setProperty ("floor", (int) r.floor, nullptr)
      .setProperty ("ceiling", (int) r.ceiling, nullptr).setProperty ("early", r.early, nullptr)
-     .setProperty ("late", r.late, nullptr).setProperty ("gain", r.gain, nullptr).setProperty ("bypass", r.bypass, nullptr);
+     .setProperty ("late", r.late, nullptr).setProperty ("gain", r.gain, nullptr).setProperty ("bypass", r.bypass, nullptr)
+     .setProperty ("preDelayMs", r.preDelayMs, nullptr);
     for (int i = 0; i < 6; ++i) v.setProperty ("band" + juce::String (i), r.decayTrim[(size_t) i], nullptr);
     return v;
 }
@@ -34,6 +35,7 @@ inline Room readRoom (const juce::ValueTree& v)
     r.floor = (Surface) (int) v.getProperty ("floor", (int) r.floor);
     r.ceiling = (Surface) (int) v.getProperty ("ceiling", (int) r.ceiling);
     r.early = (float) v.getProperty ("early", r.early); r.late = (float) v.getProperty ("late", r.late);
+    r.preDelayMs = (float) v.getProperty ("preDelayMs", r.preDelayMs);
     r.gain = (float) v.getProperty ("gain", r.gain); r.bypass = (bool) v.getProperty ("bypass", r.bypass);
     for (int i = 0; i < 6; ++i) r.decayTrim[(size_t) i] = (float) v.getProperty ("band" + juce::String (i), 1.0f);
     return validate (r);
