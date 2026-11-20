@@ -129,7 +129,8 @@ static void audio()
         bypass.bypass = false;
         bypass.decayTrim = { 2, 0.25f, 2, 0.25f, 2, 0.25f };
         render.setRoom (bypass);
-        left[0] = 1;
+        for (int i = 0; i < (int) (sampleRate * .13); ++i)
+            left[(size_t) i] = .2f * (float) std::sin (2 * std::acos (-1.0) * 330.0 * i / sampleRate);
         render.process (left.data(), right.data(), frames);
         assert (std::all_of (left.begin(), left.end(), [] (float x) { return std::isfinite (x); }));
         assert (std::inner_product (left.begin(), left.end(), left.begin(), 0.0) > 1.0e-5);

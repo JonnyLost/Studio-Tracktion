@@ -174,6 +174,7 @@ void RoomReverb::reset()
     late = target.late;
     updateOutputTarget();
     gain = targetGain;
+    inputGain = target.bypass == 0.0f ? 1.0f : 0.0f;
     sleeping = true;
     settling = false;
     controlFrame = quietFrames = 0;
@@ -189,7 +190,9 @@ void RoomReverb::setPlan (const RoomPlan& next) noexcept
         feedback = next.feedback;
         reflectionGain = next.reflectionGain;
         from = to = next.geometry;
+        geometryStep = geometryFrames;
         gain = targetGain;
+        if (next.bypass != 0.0f) inputGain = 0.0f;
         early = next.early;
         late = next.late;
         settling = false;
@@ -276,6 +279,7 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
 
     const auto sampleRate = (float) rate;
     const float transitionScale = 1.0f / (float) geometryFrames;
+    const float targetInputGain = target.bypass == 0.0f ? 1.0f : 0.0f;
     float internalPeak = 0;
     for (int frame = 0; frame < count; ++frame)
     {
@@ -301,10 +305,16 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
         late += smooth * (target.late - late);
         gain += smooth * (targetGain - gain);
         if (targetGain == 0.0f && gain < 1.0e-6f) gain = 0.0f;
-        const float inputL = gain > 0.0f ? dryL : 0.0f, inputR = gain > 0.0f ? dryR : 0.0f;
+        // A bypassed return may wake up in the middle of a steady source.
+        // Fade the injection so its onset cannot become a delayed click.
+        if (inputGain != targetInputGain)
+        {
+            inputGain += smooth * (targetInputGain - inputGain);
+            if (std::abs (targetInputGain - inputGain) < 1.0e-4f) inputGain = targetInputGain;
+        }
         // The newest sample is one frame behind the cursor after pushing.
-        inputHistory[0].push (inputL);
-        inputHistory[1].push (inputR);
+        inputHistory[0].push (dryL * inputGain);
+        inputHistory[1].push (dryR * inputGain);
         float reflectionsL = 0, reflectionsR = 0;
         for (size_t tap = 0; tap < roomEarlyTaps / 2; ++tap)
         {

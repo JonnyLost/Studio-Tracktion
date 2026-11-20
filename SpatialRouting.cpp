@@ -48,8 +48,15 @@ public:
 
     void initialise (const te::PluginInitialisationInfo& info) override
     {
+        acceptedRevision = 1; // Odd revisions are never accepted by the reader.
+        const auto revision = revisionNumber.load();
+        auto initial = readPublishedPlan();
+        if ((revision & 1u) == 0 && revision == revisionNumber.load())
+            acceptedRevision = revision;
+        else
+            initial = makeRoomPlan (Room());
         reverb.setCheckEnabled (checkEnabled.load());
-        reverb.preparePlan (info.sampleRate, readPublishedPlan());
+        reverb.preparePlan (info.sampleRate, initial);
         // Compute the meter fall per sample during preparation. The render
         // callback uses the actual block length, including automation splits.
         meterTime = (float) (0.30 * jmax (8000.0, info.sampleRate));

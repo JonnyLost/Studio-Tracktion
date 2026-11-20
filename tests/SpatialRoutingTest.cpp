@@ -118,7 +118,7 @@ public:
         juce::MidiBuffer midi;
         for (int i = 0; i < captureBlocks; ++i)
         {
-            if (i == seekBlock) transport.setPosition (te::TimePosition());
+            if (i == seekBlock) transport.setPosition (te::TimePosition(), te::TimePosition());
             block.clear();
             audio.processBlock (block, midi);
             for (int ch = 0; ch < 2; ++ch) result.output.copyFrom (ch, i * blockSize, block, ch, 0, blockSize);

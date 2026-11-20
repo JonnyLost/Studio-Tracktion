@@ -73,7 +73,7 @@ private:
     std::array<Ring, 2> inputHistory;
     std::array<std::array<Ring, 3>, 2> diffusers;
     std::array<std::array<float, 3>, 2> diffuserDelays {};
-    float early = 0, late = 0, gain = 0, targetGain = 0;
+    float early = 0, late = 0, gain = 0, targetGain = 0, inputGain = 1;
 
     void updateOutputTarget() noexcept;
     void startGeometryChange() noexcept;
