@@ -10,6 +10,7 @@ using namespace tracktion::literals;
 #include "PluginWindow.h"
 #include "MidiMonitor.h"
 #include "PianoRoll.h"
+#include "MusicalRuler.h"
 
 class MidiMonitorWindow final : public DocumentWindow
 {
@@ -83,10 +84,14 @@ public:
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
         addChildComponent (ariaReviewNotice);
-        ariaReviewNotice.setText ("ARIA CHECK: Play the instrument,\nthen Confirm ARIA to unlock Save.",
+        // Keep this notice to two short lines: the sidebar is narrow on a MacBook.
+        ariaReviewNotice.setText ("ARIA CHECK\nPlay, then confirm to save.",
                                  dontSendNotification);
+        ariaReviewNotice.setFont (FontOptions (12.0f, Font::bold));
         ariaReviewNotice.setColour (Label::textColourId, Colour (0xffffcb70));
         ariaReviewNotice.setJustificationType (Justification::centredLeft);
+        ariaReviewNotice.setTooltip ("When reopening an ARIA project, play the instrument to check its samples, "
+                                     "then click Confirm ARIA to unlock saving. Retry ARIA reloads the original AU state.");
         retryAriaButton.onClick = [this] { retryAriaRestoration(); };
         confirmAriaButton.onClick = [this]
         {
@@ -188,7 +193,7 @@ public:
                     ? jmax (10.0, edit->getLength().inSeconds() * 1.05)
                     : spans[jlimit (1, 4, zoom.getSelectedId()) - 1];
                 view.viewX2 = te::TimePosition::fromSeconds (seconds);
-                repaint (ruler);
+                repaint();
             }
         };
 
@@ -232,7 +237,7 @@ public:
         setSize (1100, 650);
         showWorkspace (Workspace::closed);
         timerCallback();
-        startTimerHz (12);
+        startTimerHz (24);
     }
 
     ~StudioView() override
@@ -291,23 +296,48 @@ public:
         if (editor == nullptr || area.isEmpty())
             return;
 
-        auto span = editor->getEditViewState().viewX2.get().inSeconds();
-        const double ideal = span / jmax (1, area.getWidth() / 65);
-        const double magnitude = std::pow (10.0, std::floor (std::log10 (jmax (1.0, ideal))));
-        const double normalized = ideal / magnitude;
-        const double interval = magnitude * (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0
-                                                          : normalized <= 5.0 ? 5.0 : 10.0);
-        for (double second = 0; second < span; second += interval)
-        {
-            int x = area.getX() + roundToInt (area.getWidth() * second / span);
-            graphics.setColour (Colour (0xff869da8));
-            graphics.drawVerticalLine (x, static_cast<float> (area.getBottom() - 6),
-                                         static_cast<float> (area.getBottom()));
-            if (x + 4 >= area.getRight())
-                break;
-            graphics.drawText (String (second, 0) + " s", x + 4, area.getY(), jmin (60, area.getRight() - x - 4),
-                               area.getHeight(), Justification::centredLeft);
-        }
+        auto& view = editor->getEditViewState();
+        int lastLabelRight = area.getX() - 50;
+        studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
+            [&] (const studio::MusicalTick& tick)
+            {
+                const int x = area.getX() + view.timeToX (tick.time, area.getWidth());
+                if (x < area.getX() || x >= area.getRight())
+                    return;
+                const bool bar = tick.beatIndex == 0;
+                graphics.setColour (bar ? Colour (0xffd3ba87) : Colour (0xff768c9a));
+                graphics.drawVerticalLine (x, (float) (area.getBottom() - (bar ? 13 : 7)),
+                                            (float) area.getBottom());
+                if (bar && x >= lastLabelRight)
+                {
+                    graphics.drawText (String (tick.barIndex + 1), x + 4, area.getY(), 44,
+                                       area.getHeight() - 5, Justification::centredLeft);
+                    lastLabelRight = x + 42;
+                }
+            });
+    }
+
+    void paintOverChildren (Graphics& g) override
+    {
+        if (edit == nullptr || editor == nullptr || ruler.isEmpty())
+            return;
+        const auto area = Rectangle<int> (ruler.getX(), timeline.getY(),
+                                          ruler.getWidth(), timeline.getHeight());
+        if (area.isEmpty())
+            return;
+        g.saveState();
+        g.reduceClipRegion (area);
+        auto& view = editor->getEditViewState();
+        studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
+            [&] (const studio::MusicalTick& tick)
+            {
+                const int x = area.getX() + view.timeToX (tick.time, area.getWidth());
+                if (x < area.getX() || x >= area.getRight())
+                    return;
+                g.setColour (tick.beatIndex == 0 ? Colour (0x557d95a4) : Colour (0x223b5664));
+                g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
+            });
+        g.restoreState();
     }
 
     void mouseDown (const MouseEvent& event) override
@@ -565,8 +595,13 @@ private:
     void sizeEditor()
     {
         if (editor != nullptr)
-            editor->setSize (jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness()),
-                             jmax (timeline.getMaximumVisibleHeight(), 52 * te::getAudioTracks (*edit).size()));
+        {
+            const int width = jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness());
+            const int height = jmax (timeline.getMaximumVisibleHeight(),
+                                     52 * (int) te::getAudioTracks (*edit).size());
+            if (editor->getWidth() != width || editor->getHeight() != height)
+                editor->setSize (width, height);
+        }
     }
 
     void timerCallback() override
@@ -601,6 +636,7 @@ private:
             play.setButtonText (transport.isPlaying() ? "Stop" : "Play");
             record.setButtonText (recording ? "Stop Recording" : "Record");
             const auto now = transport.getPosition();
+            piano.setTransportPosition (now);
             const auto centiseconds = static_cast<int64> (juce::jmax (0.0, now.inSeconds()) * 100.0);
             position.setText (String (centiseconds / 6000).paddedLeft ('0', 2) + ":"
                                   + String (centiseconds / 100 % 60).paddedLeft ('0', 2) + "."

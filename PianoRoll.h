@@ -20,6 +20,7 @@ public:
     te::MidiClip* getClip() const noexcept { return clip.get(); }
     void refresh();
     void setEditingEnabled (bool);
+    void setTransportPosition (tracktion::TimePosition);
     void silencePreview();
     std::function<void()> onMidiChanged;
 
@@ -45,7 +46,7 @@ private:
     juce::Label caption;
     juce::ScrollBar horizontal { false }, vertical { true };
 
-    juce::Rectangle<int> keyboard, notesArea, velocityArea;
+    juce::Rectangle<int> keyboard, notesArea, velocityArea, rulerArea;
     Gesture gesture = Gesture::none;
     juce::ValueTree draggedNote;
     double originalBeat = 0.0, originalLength = 1.0;
@@ -62,6 +63,8 @@ private:
     int keyboardPreviewPitch = -1;
     int auditionPitch = -1, auditionChannel = 1;
     std::shared_ptr<te::MidiInputDevice> auditionDevice;
+    double transportSourceBeat = 0.0;
+    bool transportWithinClip = false;
 
     void scrollBarMoved (juce::ScrollBar*, double) override;
     void updateScrollBars();
@@ -75,6 +78,8 @@ private:
     double beatAt (int x) const;
     int pitchAt (int y) const;
     int xAt (double beat) const;
+    double toSourceBeat (double editBeat) const;
+    double toEditBeat (double sourceBeat) const;
     int yAt (int pitch) const;
     int velocityAt (int y) const;
     juce::Rectangle<int> noteBounds (const te::MidiNote&) const;
@@ -83,6 +88,8 @@ private:
     void quantizeNotes();
     void deleteSelected();
     void paintGrid (juce::Graphics&);
+    void paintRuler (juce::Graphics&);
+    void paintPlayhead (juce::Graphics&);
     void paintNotes (juce::Graphics&);
     void paintVelocity (juce::Graphics&);
 };

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "PianoRoll.h"
+#include "MusicalRuler.h"
 #include <cmath>
 
 using namespace juce;
@@ -25,6 +26,7 @@ StudioPianoRoll::StudioPianoRoll()
     grid.addItem ("1/8 T", 6);
     grid.addItem ("1/16 T", 7);
     grid.addItem ("1/32 T", 8);
+    grid.addItem ("1/4 T", 9);
     grid.setSelectedId (4, dontSendNotification);
     grid.setTooltip ("Snap grid, in musical note values");
     caption.setColour (Label::textColourId, Colour (0xffdce5ed));
@@ -64,6 +66,7 @@ void StudioPianoRoll::setClip (te::MidiClip::Ptr next)
     selectedNote = {};
     draggedNote = {};
     clip = std::move (next);
+    transportWithinClip = false;
     horizontal.setCurrentRangeStart (0, dontSendNotification);
     refresh();
 }
@@ -118,6 +121,8 @@ void StudioPianoRoll::resized()
     verticalZoomIn.setBounds (controls.removeFromRight (30).reduced (1));
     caption.setBounds (controls);
 
+    auto rulerRow = area.removeFromTop (24);
+    rulerArea = rulerRow.withTrimmedLeft (keyWidth).withTrimmedRight (14);
     area.removeFromBottom (14);
     vertical.setBounds (area.removeFromRight (14));
     auto velocityRow = area.removeFromBottom (velocityHeight);
@@ -142,6 +147,7 @@ double StudioPianoRoll::gridBeats() const
         case 6: return 1.0 / 3.0;
         case 7: return 1.0 / 6.0;
         case 8: return 1.0 / 12.0;
+        case 9: return 2.0 / 3.0;
         default: return 0.0;
     }
 }
@@ -166,6 +172,52 @@ int StudioPianoRoll::pitchAt (int y) const
 int StudioPianoRoll::xAt (double beat) const
 {
     return notesArea.getX() + roundToInt ((beat - horizontal.getCurrentRangeStart()) * pixelsPerBeat);
+}
+
+double StudioPianoRoll::toSourceBeat (double editBeat) const
+{
+    if (clip == nullptr)
+        return editBeat;
+    // Clip owns the source offset and sync mode; use its canonical mapping.
+    const auto time = clip->edit.tempoSequence.toTime (te::BeatPosition::fromBeats (editBeat));
+    return clip->getContentBeatAtTime (time).inBeats();
+}
+
+double StudioPianoRoll::toEditBeat (double sourceBeat) const
+{
+    if (clip == nullptr)
+        return sourceBeat;
+    const auto time = clip->getTimeOfContentBeat (te::BeatPosition::fromBeats (sourceBeat));
+    return clip->edit.tempoSequence.toBeats (time).inBeats();
+}
+
+void StudioPianoRoll::setTransportPosition (te::TimePosition time)
+{
+    const auto oldBeat = transportSourceBeat;
+    const bool oldVisible = transportWithinClip;
+    transportWithinClip = clip != nullptr && time >= clip->getPosition().getStart()
+                                             && time < clip->getPosition().getEnd();
+    if (transportWithinClip)
+    {
+        transportSourceBeat = clip->getContentBeatAtTime (time).inBeats();
+        if (clip->isLooping())
+        {
+            const auto length = clip->getLoopLengthBeats().inBeats();
+            const auto start = clip->getLoopStartBeats().inBeats();
+            if (length > 0.0 && transportSourceBeat >= start)
+                transportSourceBeat = start + std::fmod (transportSourceBeat - start, length);
+        }
+    }
+    // The arrangement and piano roll read the same transport clock. Avoid
+    // repainting if neither the visible state nor screen position changed.
+    if (oldVisible == transportWithinClip
+        && (! transportWithinClip || xAt (oldBeat) == xAt (transportSourceBeat)))
+        return;
+    if (oldVisible)
+        repaint (xAt (oldBeat) - 3, rulerArea.getY(), 7, velocityArea.getBottom() - rulerArea.getY());
+    if (transportWithinClip)
+        repaint (xAt (transportSourceBeat) - 3, rulerArea.getY(), 7,
+                 velocityArea.getBottom() - rulerArea.getY());
 }
 
 int StudioPianoRoll::yAt (int pitch) const
@@ -322,6 +374,8 @@ void StudioPianoRoll::paint (Graphics& g)
     paintGrid (g);
     paintNotes (g);
     paintVelocity (g);
+    paintRuler (g);
+    paintPlayhead (g);
 }
 
 void StudioPianoRoll::paintGrid (Graphics& g)
@@ -361,18 +415,83 @@ void StudioPianoRoll::paintGrid (Graphics& g)
 
     g.saveState();
     g.reduceClipRegion (notesArea);
-    const auto step = gridBeats() > 0.0 ? gridBeats() : 0.25;
+    const auto fineStep = gridBeats() > 0.0 ? gridBeats() : 0.25;
+    // Sub-pixel grid lines serve no purpose and waste cycles at wide zoom.
+    const auto step = fineStep * pixelsPerBeat >= 5.0 ? fineStep : std::max (1.0, fineStep);
     const auto first = std::floor (horizontal.getCurrentRangeStart() / step) * step;
     const auto last = horizontal.getCurrentRangeStart() + notesArea.getWidth() / pixelsPerBeat;
     for (double beat = first; beat <= last; beat += step)
     {
         const int x = xAt (beat);
-        const bool bar = std::abs (std::remainder (beat, 4.0)) < 0.0001;
-        const bool quarter = std::abs (std::remainder (beat, 1.0)) < 0.0001;
-        g.setColour (bar ? Colour (0xff7e8c9a) : quarter ? Colour (0xff50616f) : Colour (0xff394954));
+        g.setColour (Colour (0xff394954));
         g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
     }
+    if (clip != nullptr)
+    {
+        const auto& sequence = clip->edit.tempoSequence;
+        const auto from = sequence.toTime (te::BeatPosition::fromBeats (
+            jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()))));
+        const auto to = sequence.toTime (te::BeatPosition::fromBeats (
+            jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
+                                   + notesArea.getWidth() / pixelsPerBeat))));
+        studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
+        {
+            const int x = xAt (toSourceBeat (sequence.toBeats (tick.time).inBeats()));
+            if (x < notesArea.getX() || x >= notesArea.getRight())
+                return;
+            g.setColour (tick.beatIndex == 0 ? Colour (0xff7e8c9a) : Colour (0xff50616f));
+            g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+        });
+    }
     g.restoreState();
+}
+
+void StudioPianoRoll::paintRuler (Graphics& g)
+{
+    g.setColour (Colour (0xff263440));
+    g.fillRect (rulerArea);
+    if (clip == nullptr || rulerArea.isEmpty())
+        return;
+
+    const auto& sequence = clip->edit.tempoSequence;
+    const auto from = sequence.toTime (te::BeatPosition::fromBeats (
+        jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()))));
+    const auto to = sequence.toTime (te::BeatPosition::fromBeats (
+        jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
+                               + rulerArea.getWidth() / pixelsPerBeat))));
+    int lastLabelRight = rulerArea.getX() - 50;
+    g.saveState();
+    g.reduceClipRegion (rulerArea);
+    studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
+    {
+        const int x = xAt (toSourceBeat (sequence.toBeats (tick.time).inBeats()));
+        if (x < rulerArea.getX() || x >= rulerArea.getRight())
+            return;
+        const bool bar = tick.beatIndex == 0;
+        g.setColour (bar ? Colour (0xffd3ba87) : Colour (0xff768c9a));
+        g.drawVerticalLine (x, (float) (rulerArea.getBottom() - (bar ? 13 : 7)),
+                            (float) rulerArea.getBottom());
+        if (bar && x >= lastLabelRight)
+        {
+            g.setFont (FontOptions (11.0f));
+            g.drawText (String (tick.barIndex + 1), x + 3, rulerArea.getY(), 43,
+                        rulerArea.getHeight() - 5, Justification::centredLeft);
+            lastLabelRight = x + 42;
+        }
+    });
+    g.restoreState();
+}
+
+void StudioPianoRoll::paintPlayhead (Graphics& g)
+{
+    if (! transportWithinClip || clip == nullptr)
+        return;
+    const int x = xAt (transportSourceBeat);
+    if (x < notesArea.getX() || x >= notesArea.getRight())
+        return;
+    g.setColour (Colour (0xfff0c978));
+    g.drawVerticalLine (x, (float) rulerArea.getY(), (float) velocityArea.getBottom());
+    g.fillEllipse ((float) x - 3.0f, (float) rulerArea.getY() + 1.0f, 6.0f, 6.0f);
 }
 
 void StudioPianoRoll::paintNotes (Graphics& g)
@@ -386,7 +505,9 @@ void StudioPianoRoll::paintNotes (Graphics& g)
         auto bounds = noteBounds (*note);
         if (! bounds.intersects (notesArea))
             continue;
-        if (gesture != Gesture::none && draggedNote == note->state)
+        if ((gesture == Gesture::draw || gesture == Gesture::move
+             || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
+            && draggedNote == note->state)
             bounds = { xAt (previewBeat), yAt (previewPitch) + 1,
                        jmax (3, roundToInt (previewLength * pixelsPerBeat)), rowHeight - 2 };
         const bool active = note->state == selectedNote;
