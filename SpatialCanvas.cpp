@@ -273,7 +273,7 @@ void SpatialMap::mouseDown (const MouseEvent& event)
 void SpatialMap::mouseDrag (const MouseEvent& event)
 {
     if (dragged.isEmpty() || ! event.mouseWasDraggedSinceMouseDown()) return;
-    preview = location (screen (dragOrigin) + event.getOffsetFromDragStart().toFloat());
+    preview = location (screen (dragOrigin) + (event.position - event.mouseDownPosition));
     moving = true;
     repaint();
 }

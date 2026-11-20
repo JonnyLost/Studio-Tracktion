@@ -640,6 +640,10 @@ bool SpatialWorkspace::verifyMoveForInterfaceReview (te::AudioTrack& track)
         && std::abs (after.position.depth - target.depth) < 0.0001f && before != after;
     const bool undone = edit->getUndoManager().undo() && read() == before;
     const bool redone = edit->getUndoManager().redo() && read() == after;
+    if (! (moved && undone && redone))
+        std::fprintf (stderr, "Stage drag expected %.4f, %.4f and reached %.4f, %.4f (undo %d, redo %d).\n",
+                      (double) target.x, (double) target.depth, (double) after.position.x, (double) after.position.depth,
+                      (int) undone, (int) redone);
     return moved && undone && redone;
 }
 #endif
@@ -712,10 +716,10 @@ void SpatialWorkspace::syncRooms()
     const auto current = active.isValid() ? nameOf (active) : String ("Chamber Hall");
     roomStatus.setText (edit == nullptr ? "Open or create a project to apply a room." : ! supported()
         ? "This project uses a newer spatial state version."
-        : "Active room · " + current, dontSendNotification);
+        : "Active room  |  " + current, dontSendNotification);
     roomStatus.setTooltip (roomStatus.getText());
     roomDraftStatus.setText (statusMessage.isNotEmpty() ? statusMessage
-        : roomDraftDirty ? "Draft room · Apply Room to hear these changes" : String(), dontSendNotification);
+        : roomDraftDirty ? "Draft room  |  Apply Room to hear these changes" : String(), dontSendNotification);
     roomDraftStatus.setColour (Label::textColourId, colours::warning);
     roomDraftStatus.setTooltip (roomDraftStatus.getText());
     applyRoom.setToggleState (roomDraftDirty, dontSendNotification);
@@ -879,7 +883,7 @@ void SpatialWorkspace::syncMicrophones()
     saveSetup.setEnabled (editable && current.getNumChildren() > 0);
     if (view == View::microphones && mixer) syncRoomAudioControls();
     micStatus.setText (! supported() ? "This project uses a newer spatial state version."
-        : "Visual setup only · Microphone capture is unavailable."
+        : "Visual setup only  |  Microphone capture is unavailable."
             + (statusMessage.isNotEmpty() ? " " + statusMessage : String()), dontSendNotification);
     micStatus.setTooltip (micStatus.getText());
 }

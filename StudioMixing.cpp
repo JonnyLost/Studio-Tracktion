@@ -306,8 +306,8 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     sends.setTooltip (sendNames.joinIntoString ("\n"));
     String transmit = "Select a MIDI clip to see its output channel";
     if (selectedClip != nullptr)
-        transmit = selectedClip->getMPEMode() ? "MIDI clip · MPE"
-            : "MIDI clip · Channel " + String (selectedClip->getMidiChannel().getChannelNumber());
+        transmit = selectedClip->getMPEMode() ? "MIDI clip  |  MPE"
+            : "MIDI clip  |  Channel " + String (selectedClip->getMidiChannel().getChannelNumber());
     if (plugin != nullptr)
         transmit << "  |  Instrument receive: set in plug-in";
     midiStatus.setText (selected != nullptr ? transmit : String(), dontSendNotification);
@@ -477,7 +477,7 @@ public:
             const bool wetReturn = spatial::isRoomReturn (*track);
             const auto nextAccent = wetReturn ? colours::roomReturn : track->getColour().interpolatedWith (colours::action, 0.38f);
             if (accent != nextAccent) { accent = nextAccent; repaint(); }
-            identity.setText (wetReturn ? "Auxiliary · Wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
+            identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
             String firstInput;
@@ -495,7 +495,7 @@ public:
                     }
                     armed |= instance->isRecordingEnabled (id);
                 }
-            source.setButtonText (wetReturn ? "Stage sends" : firstInput.isEmpty() ? "Input…" : firstInput);
+            source.setButtonText (wetReturn ? "Stage sends" : firstInput.isEmpty() ? "Input..." : firstInput);
             source.setTooltip (wetReturn ? "Receives the shared Stage sends"
                 : inputCount == 0 ? "Choose an input. Both input menus are available in Channel."
                 : firstInput + (inputCount > 1 ? " (+" + String (inputCount - 1) + " more)" : String()));
