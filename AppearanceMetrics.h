@@ -57,6 +57,7 @@ public:
     int trackHeight() const { return std::max (px (50), line (15) + control (20)); }
     int trackGap() const { return px (2); }
     int transportKey() const { return px (39); }
+    int transportRowHeight() const { return line (9, 1) + line (15, 1) + 4 * px (1); }
     int transportPrimaryWidth() const { return 4 * transportKey() + span (92) + span (73) + span (60); }
     bool elapsedFits (int width) const { return width >= transportPrimaryWidth() + span (102); }
     int mixerStripWidth (int width) const { return span (width < span (950) ? 120 : 134); }

@@ -76,7 +76,7 @@ int main()
                 assert (2 * metrics.mixerStripWidth (dockWidth) + metrics.scrollbar() < dockWidth);
                 for (const int windowHeight : { 640, 800, 960 })
                 {
-                    const int chrome = 2 * metrics.control (34) + metrics.control (30)
+                    const int chrome = 2 * metrics.control (34) + metrics.transportRowHeight()
                         + metrics.px (10) + metrics.line (13, 5);
                     const auto split = metrics.dockRoom (windowHeight - chrome, metrics.px (270), studio::DockMode::split);
                     assert (split.panelHeight >= metrics.control (34) + metrics.control (26));

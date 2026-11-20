@@ -642,7 +642,8 @@ public:
             studio::ToolbarItem { &resources.ram, m.resourceRAMWidth },
             studio::ToolbarItem { &resources.dropouts, m.resourceXRWidth } };
         const bool showResources = m.resourcesFitHeader (transportWidth);
-        topBar = area.removeFromTop (projectRowHeight + studio::toolbarHeight (transportArea, transport) + m.px (10));
+        const int transportRow = m.transportRowHeight();
+        topBar = area.removeFromTop (projectRowHeight + studio::toolbarHeight (transportArea, transport, transportRow) + m.px (10));
 
         auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
         viewButton.setBounds (files.removeFromRight (m.span (m.viewWidth)).reduced (m.px (2), 0));
@@ -667,8 +668,8 @@ public:
         auto controls = topBar.withTrimmedTop (projectRowHeight + m.px (4)).reduced (m.px (10), 0);
         monitorButton.setVisible (showMonitor);
         if (showMonitor)
-            monitorButton.setBounds (controls.removeFromRight (m.span (125)).withHeight (m.control (30)).reduced (m.px (2)));
-        studio::layoutToolbar (controls, transport);
+            monitorButton.setBounds (controls.removeFromRight (m.span (125)).withHeight (transportRow).reduced (m.px (2)));
+        studio::layoutToolbar (controls, transport, transportRow);
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
         ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();

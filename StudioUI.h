@@ -20,7 +20,7 @@ struct ToolbarItem
     int width() const { return fixedWidth > 0 ? fixedWidth : appearance.span (baseWidth); }
 };
 
-inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& items)
+inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& items, int rowHeight = 0)
 {
     int rows = 1, used = 0;
     for (const auto& item : items)
@@ -33,12 +33,12 @@ inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& i
         }
         used += next;
     }
-    return rows * appearance.control (30);
+    return rows * (rowHeight > 0 ? rowHeight : appearance.control (30));
 }
 
-inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_list<ToolbarItem>& items)
+inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_list<ToolbarItem>& items, int height = 0)
 {
-    const auto rowHeight = appearance.control (30);
+    const auto rowHeight = height > 0 ? height : appearance.control (30);
     const int width = area.getWidth();
     auto row = area.removeFromTop (rowHeight);
     for (const auto& item : items)
