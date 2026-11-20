@@ -323,6 +323,7 @@ const var& Plugin::getPatch() const { return document.getDynamicObject()->getPro
 String Plugin::presetName() const { return document["preset"]["name"].toString(); }
 String Plugin::factoryID() const { return document["factoryID"].toString(); }
 bool Plugin::dirty() const { return static_cast<bool> (document["dirty"]); }
+bool Plugin::isUserPreset() const { return static_cast<bool> (document["userPreset"]); }
 Plugin::BusLayout Plugin::getBusses() const
 {
     BusLayout result;
@@ -453,6 +454,7 @@ Result Plugin::loadPreset (const File& file)
                 set (granular, "importedAudioPath", file.getSiblingFile (path).getFullPathName());
         }
     set (root, "dirty", false);
+    set (root, "userPreset", true);
     return commit (std::move (root), true, projectDirectory());
 }
 Result Plugin::savePreset (const File& file)
@@ -469,6 +471,7 @@ Result Plugin::savePreset (const File& file)
     }
     set (identity, "name", name);
     set (next, "dirty", false);
+    set (next, "userPreset", true);
     TemporaryFile temp (file);
     if (! temp.getFile().replaceWithText (JSON::toString (next)) || ! temp.overwriteTargetFileWithTemporary())
         return Result::fail ("Could not save the Synth preset.");

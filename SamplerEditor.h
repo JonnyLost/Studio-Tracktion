@@ -2,7 +2,7 @@
 #pragma once
 
 #include "StudioSampler.h"
-#include "StudioUI.h"
+#include "InstrumentWorkspace.h"
 
 namespace studio::sampler
 {
@@ -10,7 +10,7 @@ namespace studio::sampler
 int runSamplerIntegrationTest (const juce::File& screenshots);
 #endif
 
-class Editor final : public tracktion::Plugin::EditorComponent,
+class Editor final : public NativeInstrumentEditor,
                      private juce::Timer,
                      private juce::MidiKeyboardState::Listener
 {
@@ -18,11 +18,13 @@ public:
     explicit Editor (Plugin&);
     ~Editor() override;
     bool allowWindowResizing() override { return true; }
-    bool isEditorResizable() override { return true; }
     juce::ComponentBoundsConstrainer* getBoundsConstrainer() override { return &limits; }
     void resized() override;
     void paint (juce::Graphics&) override;
-    void appearanceChanged();
+    void appearanceChanged() override;
+    int minimumDockHeight() const override;
+    juce::String viewState() const override;
+    void restoreView (const juce::String&) override;
 
 #if STUDIO_SPATIAL_TESTS
     bool runReview (const juce::File& first, const juce::File& second,

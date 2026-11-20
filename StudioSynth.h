@@ -64,6 +64,7 @@ public:
     juce::String warning() const { return problem; }
     unsigned changeCount() const { return revision; }
     bool dirty() const;
+    bool isUserPreset() const;
     void preview (int key, int velocity);
     bool noteActive (int note) const noexcept;
 
@@ -104,4 +105,7 @@ private:
 
 void registerPlugin (tracktion::Engine&);
 int runSynthIntegrationTest (const juce::File& screenshots);
+#if STUDIO_SPATIAL_TESTS
+bool verifyPresetBrowser (tracktion::Plugin::EditorComponent&, const juce::File& userPreset);
+#endif
 }

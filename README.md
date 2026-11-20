@@ -52,9 +52,13 @@ The Swift [room-design prototype](https://github.com/JonnyLost/Garritan-studio/b
 - **Mixer** scrolls track strips horizontally with Master pinned. A strip's name selects the arrangement track. Volume and pan share the Channel controls, and mute, solo, insert access and output selection use the same Tracktion track state. Meters read the existing Tracktion level meter inserts and default-output master measurer. An unavailable meter displays a dash, including on tracks without a meter insert. The mixer does not add meter inserts or change the routing graph when opened.
 - The ARIA verification banner and save protection remain active. Browser and new effect insert actions wait until verification completes. Channel can open the restored instrument so you can check the patch and sound before confirming.
 
+## Native instrument workspace
+
+Studio Synth and Studio Sampler open in the lower workspace. Open an instrument from the Browser or Channel, then use the dotted divider to adjust its height. **Expand** gives the editor more room. **Float** moves it to a resizable window, and **Dock** brings it back. Selecting another native instrument track brings its editor forward while the project keeps playing. [Workspace controls, persistence, and physical MacBook checks](docs/unified-instrument-workspace.md)
+
 ## Studio Synth
 
-Choose **Add Synth** from the instrument track menu, or choose a family in **Instruments → Synth**. Studio includes the 201 original factory sounds. The editor exposes the current layer’s controls in Sound and Shape, with modulation and additional parameters on separate pages. Save sounds as `.studiosynth` presets or with the Studio project. [Workflow, recovery notes, and MacBook verification](docs/native-synth.md)
+Choose **Add Synth** from the instrument track menu, or choose a family in **Instruments → Synth**. **Browse Presets** opens all 201 original factory sounds, with name search, family and category filters, and a User library for saved sounds. **Sound** holds the main controls and playable keyboard. **Shape**, **Modulation**, and **Advanced** provide detailed editing. Save sounds as `.studiosynth` presets or with the Studio project. [Synth workflow and recovery notes](docs/native-synth.md)
 
 ## Studio Sampler
 
@@ -91,8 +95,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-native-synth-m6 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone6 &&
-cd Studio-Tracktion-Milestone6 &&
+git clone --branch feature/studio-unified-instruments-m65 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone65 &&
+cd Studio-Tracktion-Milestone65 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
