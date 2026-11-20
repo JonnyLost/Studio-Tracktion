@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "MidiMonitor.h"
+#include "StudioUI.h"
 using namespace juce;
 
 StudioMidiMonitor::StudioMidiMonitor()
@@ -50,14 +51,15 @@ StudioMidiMonitor::StudioMidiMonitor()
     addAndMakeVisible (status);
     addAndMakeVisible (table);
     table.setModel (this);
-    table.setRowHeight (22);
     auto& header = table.getHeader();
     header.addColumn ("Time (s)", 1, 87);
     header.addColumn ("Device", 2, 160);
     header.addColumn ("Event", 3, 150);
     header.addColumn ("Ch", 4, 46);
     header.addColumn ("Data", 5, 225);
-    header.setStretchToFitActive (true);
+    header.setStretchToFitActive (false);
+    status.setFont (FontOptions (13.0f));
+    appearanceChanged();
     startTime = Time::getMillisecondCounterHiRes();
 }
 
@@ -257,17 +259,36 @@ void StudioMidiMonitor::timerCallback()
     status.setText (description, dontSendNotification);
 }
 
+void StudioMidiMonitor::appearanceChanged()
+{
+    const auto& m = studio::appearance;
+    table.setRowHeight (m.line (13, 6));
+    table.setHeaderHeight (m.control (23, 12));
+    table.getViewport()->setScrollBarThickness (m.scrollbar());
+    table.getViewport()->setScrollBarsShown (true, true);
+    constexpr int widths[] { 87, 160, 150, 46, 225 };
+    for (int i = 0; i < 5; ++i)
+        table.getHeader().setColumnWidth (i + 1, m.span (widths[i]));
+    resized();
+    table.repaint();
+}
+
+int StudioMidiMonitor::minimumContentHeight (int width)
+{
+    const auto& m = studio::appearance;
+    return m.px (12) + studio::toolbarHeight (jmax (1, width - m.px (12)),
+         { { &tap, 116 }, { &device, 148 }, { &channel, 102 }, { &type, 128 },
+           { &pause, 68 }, { &clear, 57 }, { &dock, 62 } })
+         + m.line (13, 5) + table.getHeaderHeight() + 2 * table.getRowHeight() + m.scrollbar();
+}
+
 void StudioMidiMonitor::resized()
 {
-    auto bounds = getLocalBounds().reduced (6);
-    auto controls = bounds.removeFromTop (30);
-    for (auto* button : { &dock, &clear, &pause })
-        button->setBounds (controls.removeFromRight (62).reduced (2));
-    tap.setBounds (controls.removeFromLeft (125).reduced (2));
-    device.setBounds (controls.removeFromLeft (175).reduced (2));
-    channel.setBounds (controls.removeFromLeft (104).reduced (2));
-    type.setBounds (controls.removeFromLeft (145).reduced (2));
-    status.setBounds (bounds.removeFromBottom (23));
+    const auto& m = studio::appearance;
+    auto bounds = getLocalBounds().reduced (m.px (6));
+    studio::layoutToolbar (bounds, { { &tap, 116 }, { &device, 148 }, { &channel, 102 }, { &type, 128 },
+                                    { &pause, 68 }, { &clear, 57 }, { &dock, 62 } });
+    status.setBounds (bounds.removeFromBottom (m.line (13, 5)));
     table.setBounds (bounds);
 }
 
@@ -275,7 +296,7 @@ void StudioMidiMonitor::paintRowBackground (Graphics& g, int row, int width, int
 {
     if (selected || row % 2 == 0)
     {
-        g.setColour (Colour (selected ? 0xff37535d : 0xff26343b));
+        g.setColour (selected ? studio::colours::selected : studio::colours::panel);
         g.fillRect (0, 0, width, height);
     }
 }
@@ -292,13 +313,14 @@ void StudioMidiMonitor::paintCell (Graphics& g, int row, int column, int width, 
         case 1: value = String ((event.milliseconds - startTime) / 1000.0, 3); break;
         case 2: value = devices[event.source].name; break;
         case 3: value = eventName (event.type); break;
-        case 4: value = event.channel > 0 ? String (event.channel) : String ("—"); break;
+        case 4: value = event.channel > 0 ? String (event.channel) : String ("-"); break;
         case 5: value = eventData (event); break;
         default: break;
     }
     g.setColour (Colours::white);
-    g.setFont (FontOptions (13.0f));
-    g.drawFittedText (value, 5, 0, jmax (0, width - 10), height, Justification::centredLeft, 1);
+    g.setFont (studio::uiFont (13.0f));
+    g.drawFittedText (value, Rectangle<int> (width, height).reduced (studio::appearance.px (5), 0),
+                      Justification::centredLeft, 1, 1.0f);
 }
 
 String StudioMidiMonitor::eventName (EventType event)
@@ -324,18 +346,18 @@ String StudioMidiMonitor::eventData (const Event& event)
     switch (event.type)
     {
         case noteOn:
-        case noteOff: return note() + "  ·  Velocity " + String (event.second);
+        case noteOff: return note() + "  |  Velocity " + String (event.second);
         case control:
         {
             String label = "CC " + String (event.first);
             if (event.first == 1) label += " Modulation";
             if (event.first == 11) label += " Expression";
             if (event.first == 64) label += event.second >= 64 ? " Sustain On" : " Sustain Off";
-            return label + "  ·  " + String (event.second);
+            return label + "  |  " + String (event.second);
         }
         case bend: return String ((event.first | (event.second << 7)) - 8192);
         case channelPressure: return "Pressure " + String (event.first);
-        case polyPressure: return note() + "  ·  Pressure " + String (event.second);
+        case polyPressure: return note() + "  |  Pressure " + String (event.second);
         case program: return "Program " + String (event.first + 1);
         case timing:
             if (event.first == 0xf8) return "Clock";
@@ -343,7 +365,7 @@ String StudioMidiMonitor::eventData (const Event& event)
             if (event.first == 0xfb) return "Continue";
             return "Stop";
         case other: return "0x" + String::toHexString (event.first)
-                               + "  ·  " + String (event.second) + " bytes";
+                               + "  |  " + String (event.second) + " bytes";
     }
     return {};
 }

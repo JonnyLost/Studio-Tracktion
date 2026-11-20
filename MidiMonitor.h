@@ -16,6 +16,8 @@ public:
     ~StudioMidiMonitor() override;
 
     void setCaptureOpen (bool);
+    void appearanceChanged();
+    int minimumContentHeight (int width);
     void resized() override;
     bool isActive() const noexcept { return recentTicks > 0; }
     void setFloating (bool floating) { dock.setButtonText (floating ? "Dock" : "Float"); }
