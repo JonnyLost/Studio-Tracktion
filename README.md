@@ -9,6 +9,14 @@ Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified 
 - **Lower workspace** opens from the left rail and the transport's **MIDI Monitor**. **Compact** shows a workspace summary, **Split** restores the resizable editor, **Expanded** leaves a shallow arrangement above the editor, and **Hide** closes the dock. Drag the dotted divider or focus it and press Up or Down to resize in Split. A newly selected MIDI clip opens the Piano Roll from Compact. MIDI Monitor continues collecting while its own workspace is in Compact, and its **Float** and **Dock** actions remain available in the full monitor.
 - **Planned workspaces** are labeled in the dock. **More** lists additional destinations. Stage, Rooms, and Microphones link to one another, and Channel links to the planned Synth and Sampler. The existing arrangement Inserts and Plugin Manager are also available.
 
+## Appearance and readability
+
+Open **Appearance…** in the top row. **Interface Scale** offers 100%, 110%, 125%, 150%, and 175%. **Text Size** offers Standard, Large (115%), and Extra Large (130%). Both apply immediately and are stored in Studio's application preferences. **Reset Appearance** restores both defaults. **Command–Option–=** and **Command–Option–−** step through interface sizes. **Command–Option–0** resets interface scale and keeps the text setting.
+
+When space is tight, project controls move into **Project…**, arrangement commands into **Tracks…**, and dock controls into **Layout…**. MIDI Monitor is available from Project if it leaves the transport row. The rail and dock scroll as needed. At larger sizes the Browser puts filters in dropdowns and can stack details below results. Channel reflows its signal-flow cards, and Mixer scrolls the track bank horizontally while keeping Master pinned. Long names remain available through tooltips.
+
+Appearance uses macOS logical points and native JUCE text layout. Retina backing scale, the musical timeline, Piano Roll time and pitch zoom, and waveform zoom are independent. Third-party plug-in editors and operating-system dialogs use their own scaling.
+
 ## Instruments, Channel, and Mixer
 
 - **Instruments** shows family, type, searchable results, and details with lightweight line artwork. On a compact window Type moves into the search toolbar. **Plug-ins…** opens the existing Tracktion/JUCE scanner. Results represent the scanned Audio Unit catalog. ARIA is shown as a hosted player. Open its actual editor from **Channel → Open Instrument** to select a Garritan library and patch. The Studio Synth and Sampler entries show their planned status.
@@ -48,8 +56,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-instrument-channel-mixer-m2 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Mixing &&
-cd Studio-Tracktion-Mixing &&
+git clone --branch feature/studio-global-ui-scaling https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Appearance &&
+cd Studio-Tracktion-Appearance &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
@@ -65,6 +73,15 @@ open "$PWD/build/Studio_artefacts/Debug/Studio.app"
 Use `cmake` in place of the CMake.app path if CMake is installed on your PATH.
 
 ## Mac verification
+
+**Appearance acceptance.** At 1024 × 640 and 1280 × 800, cycle all five interface sizes with all three text sizes. Check the top-row menus and keyboard shortcuts, including reset from a focused editor and the floated MIDI Monitor. At 175% with Extra Large text, scroll the rail, Browser details, Channel controls and Mixer, and use the Project, Tracks and Layout overflow menus. Confirm that Retry and Confirm ARIA remain reachable, labels and fader values are legible, and controls line up with their hit targets. Reopen Studio to verify preferences and move the window between Retina and standard-density displays. Check that changing appearance leaves the musical zoom values unchanged and leaves the recording, saving and editing checks below usable.
+
+The standalone metrics test can also be run with:
+
+```bash
+c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o /tmp/studio-appearance-tests &&
+/tmp/studio-appearance-tests
+```
 
 **Instrument and mixing acceptance.** At 1280 × 800 and 1024 × 640, open Instruments, Channel and Mixer in Split and Expanded and check keyboard focus and fitting. Scan ARIA and another instrument AU. Load one onto a compatible track, add one as a new track, undo and redo, open each instance, and verify the selected patch or plug-in state survives Save As and reopen. Try an occupied, frozen, or audio track, a stale scan entry, and a selection spanning two tracks. Check that a rejected load retains the track and plug-in state.
 
