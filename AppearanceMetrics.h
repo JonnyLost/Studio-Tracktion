@@ -50,14 +50,26 @@ public:
     bool browserFilterRow (int width) const { return width < span (660); }
     bool stackedBrowserDetails (int width) const { return width < span (445); }
 
+    static constexpr int resourceCPUWidth = 68, resourceRAMWidth = 105, resourceXRWidth = 55;
+    static constexpr int viewWidth = 62, projectMenuWidth = 74;
+
+    bool resourcesFitHeader (int width) const
+    {
+        return width >= span (resourceCPUWidth) + span (resourceRAMWidth) + span (resourceXRWidth)
+            + span (viewWidth) + span (projectMenuWidth) + span (63);
+    }
+
     DockRoom dockRoom (int available, int preferred, DockMode mode) const
     {
         const int upperTools = control (32) + control (26) + px (9);
-        const int limit = std::max (0, available - upperTools - px (65));
+        const int room = std::max (0, available - upperTools);
+        const int desiredDock = control (34) + control (26);
+        const int expandedArrangement = px (28);
+        const int splitArrangement = std::clamp (room - desiredDock, expandedArrangement, px (65));
+        const int limit = std::max (0, room - splitArrangement);
         if (mode == DockMode::split)
             return { std::clamp (preferred, std::min (px (170), limit), limit), limit };
-        const int room = std::max (0, available - upperTools);
-        return { mode == DockMode::expanded ? std::max (0, room - px (28))
+        return { mode == DockMode::expanded ? std::max (0, room - expandedArrangement)
                      : std::min (room, control (34) + line (13, 8)), limit };
     }
 

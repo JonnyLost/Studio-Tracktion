@@ -92,7 +92,7 @@ ArticulationPalette::ArticulationPalette (PropertiesFile& preferences) : prefs (
     shortcut.setTitle ("Optional audition shortcut");
     for (int ch = 1; ch <= 16; ++ch) channel.addItem ("Channel " + String (ch), ch);
     shortcut.addItem ("No shortcut", 1);
-    for (int key = 1; key <= 9; ++key) shortcut.addItem ("Ctrl+Shift+" + String (key), key + 1);
+    for (int key = 1; key <= 9; ++key) shortcut.addItem ("Ctrl+Cmd+" + String (key), key + 1);
     name.setTitle ("Articulation name");
     number.setTitle ("MIDI note or controller number");
     value.setTitle ("MIDI velocity or controller value");
@@ -172,6 +172,7 @@ void ArticulationPalette::syncTrack()
         loadedTrack = trackId;
         loadedInstrument = instrumentId;
         serialized = data;
+        lastSentId.clear();
         actionStatus.clear();
         mappings.clear();
         auto root = documentFrom (data);
@@ -198,7 +199,7 @@ void ArticulationPalette::rebuildPads()
         pad->setTooltip (mapping.name + " | Ch " + String (mapping.channel)
             + (mapping.message == ArticulationMessage::keyswitch ? " | Note " : " | CC ")
             + String (mapping.number) + " / " + String (mapping.value)
-            + (mapping.shortcut ? " | Ctrl+Shift+" + String (mapping.shortcut) : String()));
+            + (mapping.shortcut ? " | Ctrl+Cmd+" + String (mapping.shortcut) : String()));
         pad->onClick = [this, i] { activate (i); };
         padBank.addAndMakeVisible (*pad);
         pads.push_back (std::move (pad));
@@ -418,7 +419,7 @@ void ArticulationPalette::insertMapping()
 bool ArticulationPalette::keyPressed (const KeyPress& key)
 {
     const auto mods = key.getModifiers();
-    if (! isShowing() || ! ready || ! mods.isCtrlDown() || ! mods.isShiftDown() || mods.isCommandDown() || mods.isAltDown())
+    if (! isShowing() || ! ready || ! mods.isCtrlDown() || ! mods.isCommandDown() || mods.isShiftDown() || mods.isAltDown())
         return false;
     const int numberKey = key.getKeyCode() - '0';
     if (numberKey < 1 || numberKey > 9) return false;

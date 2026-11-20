@@ -191,11 +191,11 @@ public:
         workspaceViewport.setViewedComponent (&workspaceBody, false);
         workspaceViewport.setScrollBarsShown (true, false);
         addChildComponent (workspaceViewport);
-        addAndMakeVisible (appearanceButton);
+        addAndMakeVisible (viewButton);
         addChildComponent (projectMenu);
         addChildComponent (trackMenu);
         addChildComponent (dockMenu);
-        appearanceButton.onClick = [this] { showAppearance(); };
+        viewButton.onClick = [this] { showViewOptions(); };
         projectMenu.onClick = [this]
         {
             showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
@@ -608,23 +608,24 @@ public:
             studio::ToolbarItem { &play, tightTransport ? 47 : 60 }, studio::ToolbarItem { &record, tightTransport ? 78 : 94 },
             studio::ToolbarItem { &bars, tightTransport ? 66 : 82 }, studio::ToolbarItem { &position, tightTransport ? 80 : 95 },
             studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 } };
-        const auto indicators = { studio::ToolbarItem { &resources.audio, 68 },
-            studio::ToolbarItem { &resources.ram, 105 }, studio::ToolbarItem { &resources.dropouts, 55 } };
-        const bool inlineResources = transportWidth >= m.span (427);
+        const auto indicators = { studio::ToolbarItem { &resources.audio, m.resourceCPUWidth },
+            studio::ToolbarItem { &resources.ram, m.resourceRAMWidth },
+            studio::ToolbarItem { &resources.dropouts, m.resourceXRWidth } };
+        const bool inlineResources = m.resourcesFitHeader (transportWidth);
         const int transportHeight = studio::toolbarHeight (transportWidth
             - (showMonitor ? m.span (125) : 0), transport)
             + (inlineResources ? 0 : studio::toolbarHeight (transportWidth, indicators));
         topBar = area.removeFromTop (projectRowHeight + transportHeight + m.px (10));
 
         auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
-        appearanceButton.setBounds (files.removeFromRight (m.span (62)).reduced (m.px (2), 0));
+        viewButton.setBounds (files.removeFromRight (m.span (m.viewWidth)).reduced (m.px (2), 0));
         if (inlineResources)
             for (auto item : indicators)
                 item.component->setBounds (files.removeFromRight (m.span (item.baseWidth)).reduced (m.px (1), 0));
         const bool fullFileRow = files.getWidth() >= m.span (735);
         projectMenu.setVisible (! fullFileRow || ! showMonitor);
         if (projectMenu.isVisible())
-            projectMenu.setBounds (files.removeFromRight (m.span (74)).reduced (m.px (2), 0));
+            projectMenu.setBounds (files.removeFromRight (m.span (m.projectMenuWidth)).reduced (m.px (2), 0));
         for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &openProject, &newProject })
         {
             button->setVisible (fullFileRow);
@@ -744,7 +745,7 @@ public:
         return true;
     }
 
-    void showAppearance()
+    void showViewOptions()
     {
         PopupMenu scale, textSize;
         const auto& metrics = studio::appearance;
@@ -773,7 +774,7 @@ public:
             [safe] { if (safe != nullptr) safe->applyAppearance (studio::appearance.adjacentInterfacePercent (-1),
                                                                 studio::appearance.textPercent(), true); });
         menu.addItem ("Reset Appearance", [safe] { if (safe != nullptr) safe->applyAppearance (100, 100, true); });
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&appearanceButton));
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&viewButton));
     }
 
     void showCommandMenu (TextButton& anchor, std::initializer_list<TextButton*> commands)
@@ -810,7 +811,7 @@ private:
     TooltipWindow tooltips { this, 650 };
     Viewport railViewport, workspaceViewport;
     bool collapsedDockLinks = false;
-    TextButton appearanceButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
+    TextButton viewButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;

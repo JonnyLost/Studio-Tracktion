@@ -21,6 +21,7 @@ void MidiControllerLanes::setClip (te::MidiClip* next)
     clip = next;
     selection.clear();
     cursorBeat.reset();
+    feedback.clear();
     clearGesture();
     repaint();
 }
@@ -221,6 +222,16 @@ void MidiControllerLanes::paint (Graphics& g)
             g.setColour (colours::playhead);
             g.drawVerticalLine (*playheadX, (float) row.getY(), (float) row.getBottom());
         }
+        if (i == active && feedback.isNotEmpty())
+        {
+            auto banner = plot.reduced (m.px (4), 0).withHeight (m.line (11, 2));
+            banner = banner.removeFromRight (jmin (banner.getWidth(), m.span (265)));
+            g.setColour (colours::panel);
+            g.fillRect (banner);
+            g.setFont (uiFont (11.0f));
+            g.setColour (colours::text);
+            g.drawFittedText (feedback, banner.reduced (m.px (4), 0), Justification::centredRight, 1, 1.0f);
+        }
     }
 }
 
@@ -244,6 +255,7 @@ void MidiControllerLanes::mouseDown (const MouseEvent& event)
     const int lane = laneAt (event.y);
     if (lane < 0) return;
     grabKeyboardFocus();
+    feedback.clear();
     clearGesture();
     selectLane (lane);
     if (event.x < gutter || ! canEdit()) { repaint(); return; }
@@ -388,14 +400,24 @@ void MidiControllerLanes::editSelection (bool remove)
             clipboard.push_back ({ state.createCopy(), beat });
         }
     for (auto& point : clipboard) point.relativeBeat -= firstBeat;
+    if (! clipboard.empty()) feedback = "Copied " + String ((int) clipboard.size()) + " on channel " + String (clipboardChannel);
 }
 
 void MidiControllerLanes::paste()
 {
-    if (! canEdit() || ! matchingClipChannel (clipboardChannel, midiChannel()) || clipboard.empty()) return;
+    if (! canEdit() || clipboard.empty()) return;
+    if (! matchingClipChannel (clipboardChannel, midiChannel()))
+    {
+        feedback = "Paste requires MIDI channel " + String (clipboardChannel);
+        return;
+    }
     const auto anchor = cursorBeat.value_or (snapBeat (clip->getContentBeatAtTime (clip->edit.getTransport().getPosition()).inBeats()));
     if (std::any_of (clipboard.begin(), clipboard.end(),
-                     [&] (const ClipboardEvent& point) { return ! beatInClip (anchor + point.relativeBeat); })) return;
+                     [&] (const ClipboardEvent& point) { return ! beatInClip (anchor + point.relativeBeat); }))
+    {
+        feedback = "Pasted points must fit inside the clip";
+        return;
+    }
     auto* um = clip->getUndoManager();
     if (um) um->beginNewTransaction ("Paste MIDI controllers");
     selection.clear();
@@ -418,6 +440,7 @@ void MidiControllerLanes::paste()
         }
     }
     if (um) um->beginNewTransaction();
+    feedback = "Pasted " + String ((int) clipboard.size()) + " on channel " + String (clipboardChannel);
     if (onChange) onChange();
 }
 
@@ -425,7 +448,7 @@ bool MidiControllerLanes::keyPressed (const KeyPress& key)
 {
     if (key.getModifiers().isAltDown()) return false;
     const auto code = key.getKeyCode();
-    if (code == KeyPress::escapeKey) { clearGesture(); selection.clear(); }
+    if (code == KeyPress::escapeKey) { clearGesture(); selection.clear(); feedback.clear(); }
     else if (code == KeyPress::deleteKey || code == KeyPress::backspaceKey) editSelection (true);
     else if (key.getModifiers().isCommandDown() && (code == 'C' || code == 'c')) editSelection (false);
     else if (key.getModifiers().isCommandDown() && (code == 'V' || code == 'v')) paste();

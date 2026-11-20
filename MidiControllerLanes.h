@@ -50,6 +50,7 @@ private:
     std::optional<double> cursorBeat;
     juce::Array<juce::ValueTree> selection;
     juce::ValueTree dragged;
+    juce::String feedback;
     std::vector<DraftPoint> stroke;
     juce::Point<int> origin, lastSample;
     DraftPoint preview {};

@@ -49,6 +49,14 @@ int main()
                 const auto dockWidth = windowWidth - metrics.span (76);
                 const auto musicalWidth = dockWidth - metrics.trackHeader() - metrics.trackFooter() - metrics.scrollbar();
                 assert (musicalWidth >= 200);
+                assert (metrics.resourcesFitHeader (windowWidth - metrics.px (20)));
+                for (const int windowHeight : { 640, 800 })
+                {
+                    const int chrome = 2 * metrics.control (34) + metrics.control (30)
+                        + metrics.px (10) + metrics.line (13, 5);
+                    const auto split = metrics.dockRoom (windowHeight - chrome, metrics.px (270), studio::DockMode::split);
+                    assert (split.panelHeight >= metrics.control (34) + metrics.control (26));
+                }
             }
         }
     }
