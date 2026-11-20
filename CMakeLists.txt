@@ -290,6 +290,7 @@ juce_add_gui_app(Studio
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+    SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
@@ -327,7 +328,13 @@ if(BUILD_TESTING)
     add_test(NAME StudioAcousticQuality COMMAND StudioAcousticComparison --verify)
     set_tests_properties(StudioAcousticQuality PROPERTIES TIMEOUT 90)
 
-    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp)
+    add_executable(StudioSamplerEngineTests tests/SamplerEngineTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
+    add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
+
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp)
+    add_test(NAME StudioSamplerIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-sampler)
+    set_tests_properties(StudioSamplerIntegration PROPERTIES TIMEOUT 90)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
     add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)
     set_tests_properties(StudioSpatialRouting PROPERTIES TIMEOUT 45)

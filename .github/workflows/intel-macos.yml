@@ -7,6 +7,7 @@ on:
       - development
       - feature/studio-orchestral-stage-m4
       - feature/studio-acoustic-engine-m4r
+      - feature/studio-professional-interface-m45
 
 permissions:
   contents: read
@@ -36,16 +37,22 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioMilestoneTests StudioSpatialTests StudioAcousticComparison --parallel 4
+          cmake --build build --config Debug --target Studio StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
+          STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
         run: ctest --test-dir build -C Debug --verbose --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: Studio-M45-interface-review
           path: ${{ runner.temp }}/studio-interface-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M5-sampler-review
+          path: ${{ runner.temp }}/studio-sampler-review/
           if-no-files-found: error
       - name: Compare acoustic engines
         run: tools/compare-acoustics.sh "$RUNNER_TEMP/studio-acoustic-comparison"
