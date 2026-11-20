@@ -311,7 +311,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
-    StudioSynth.cpp SynthEditor.cpp
+    StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h)
@@ -378,6 +378,8 @@ if(BUILD_TESTING)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
     add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)
     set_tests_properties(StudioSpatialRouting PROPERTIES TIMEOUT 45)
+    add_test(NAME StudioInstrumentWorkspace COMMAND $<TARGET_FILE:Studio> --studio-instrument-workspace-review)
+    set_tests_properties(StudioInstrumentWorkspace PROPERTIES TIMEOUT 120)
     add_test(NAME StudioInterfaceReview COMMAND $<TARGET_FILE:Studio> --studio-interface-review)
     set_tests_properties(StudioInterfaceReview PROPERTIES TIMEOUT 120)
 endif()

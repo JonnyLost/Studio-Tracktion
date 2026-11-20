@@ -10,6 +10,7 @@ on:
       - feature/studio-professional-interface-m45
       - feature/studio-native-sampler-m5
       - feature/studio-native-synth-m6
+      - feature/studio-unified-integration-m6
 
 permissions:
   contents: read
@@ -43,6 +44,7 @@ jobs:
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
+          STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
@@ -61,6 +63,11 @@ jobs:
         with:
           name: Studio-M6-synth-review
           path: ${{ runner.temp }}/studio-synth-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M65-instrument-workspace
+          path: ${{ runner.temp }}/studio-instrument-workspace/
           if-no-files-found: error
       - name: Measure native synth block times
         run: build/Debug/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"

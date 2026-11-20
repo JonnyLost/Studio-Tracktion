@@ -153,6 +153,10 @@ Editor::Editor (Plugin& p) : plugin (p)
     setup (zoneGain, "Zone gain", -60, 12, 0.1, " dB", editZone ([] (Zone& z, double n) { z.gainDb = static_cast<float> (n); }));
     setup (cents, "Fine tune", -100, 100, 1, " ct", editZone ([] (Zone& z, double n) { z.cents = static_cast<float> (n); }));
     setup (group, "Round-robin group", 0, maxGroups, 1, {}, editZone ([] (Zone& z, double n) { z.group = roundToInt (n); }));
+    group.slider.setTooltip ("Zones in a nonzero group take turns when their key and velocity ranges overlap.");
+    root.slider.setTooltip ("The key that plays this sample at its original pitch.");
+    soft.slider.setTooltip ("Quietest MIDI velocity that triggers this sample zone.");
+    hard.slider.setTooltip ("Loudest MIDI velocity that triggers this sample zone.");
     setup (loopStart, "Loop start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopStart = jlimit (0, jmax (0, z.loopEnd - 2), roundToInt (n)); }));
     setup (loopEnd, "Loop end (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopEnd = jmax (z.loopStart + 2, roundToInt (n)); }));
     for (auto* control : { &root, &low, &high })
@@ -358,9 +362,9 @@ void Editor::refresh()
     for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
                      &zoneGain, &cents, &loopStart, &loopEnd, &voices, &bend, &group })
     {
-        const bool show = main ? c == &attack || c == &decay || c == &sustain || c == &release || c == &gain || c == &tune || c == &root
-            : map ? c == &root || c == &low || c == &high || c == &soft || c == &hard || c == &zoneGain || c == &cents
-            : loop ? c == &loopStart || c == &loopEnd : c == &voices || c == &bend || c == &group;
+        const bool show = main ? c == &attack || c == &decay || c == &sustain || c == &release || c == &gain || c == &root
+            : map ? c == &root || c == &low || c == &high || c == &soft || c == &hard || c == &zoneGain || c == &cents || c == &group
+            : loop ? c == &loopStart || c == &loopEnd : c == &voices || c == &bend || c == &tune;
         c->label.setVisible (show);
         c->slider.setVisible (show);
     }
@@ -385,6 +389,18 @@ void Editor::appearanceChanged()
     viewport.setScrollBarThickness (appearance.scrollbar());
     keyboard.setKeyWidth (static_cast<float> (appearance.px (16)));
     resized();
+}
+
+int Editor::minimumDockHeight() const
+{
+    return appearance.line (20, 1) + appearance.line (12, 5) + appearance.control (28, 12) + appearance.px (156);
+}
+
+String Editor::viewState() const { return String (static_cast<int> (page)); }
+
+void Editor::restoreView (const String& stored)
+{
+    setPage (static_cast<Page> (jlimit (0, 3, stored.getIntValue())));
 }
 
 void Editor::resized()
@@ -422,7 +438,7 @@ void Editor::resized()
     const int dialHeight = m.px (88) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
         : page == Page::loops ? 2 : (width < m.span (500) ? 2 : 3);
-    const int cells = page == Page::mapping ? 7 : page == Page::loops ? 2 : 3;
+    const int cells = page == Page::mapping ? 8 : page == Page::loops || page == Page::basic ? 2 : 3;
     const int rows = (cells + gridColumns - 1) / gridColumns;
     const int actionMinimum = m.span (132);
     const int actionColumns = jlimit (1, 4, (width + gap) / (actionMinimum + gap));
@@ -501,10 +517,10 @@ void Editor::resized()
         envelope.setBounds (shape.reduced (gap));
         owned[0]->setBounds (envelope.getLocalBounds());
         content.removeFromTop (gap);
-        placeGrid ({ &root, &gain, &tune }, gridColumns);
+        placeGrid ({ &root, &gain }, 2);
     }
     else if (page == Page::mapping)
-        placeGrid ({ &root, &low, &high, &soft, &hard, &zoneGain, &cents }, gridColumns);
+        placeGrid ({ &root, &low, &high, &soft, &hard, &zoneGain, &cents, &group }, gridColumns);
     else if (page == Page::loops)
     {
         auto options = content.removeFromTop (button);
@@ -515,7 +531,7 @@ void Editor::resized()
     }
     else
     {
-        placeGrid ({ &voices, &bend, &group }, gridColumns);
+        placeGrid ({ &voices, &bend, &tune }, gridColumns);
         meter.setBounds (content.removeFromTop (line * 3));
     }
 }

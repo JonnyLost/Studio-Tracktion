@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "InstrumentWorkspace.h"
+#include "StudioSampler.h"
+#include "StudioSynth.h"
+
+namespace studio
+{
+using namespace juce;
+namespace te = tracktion;
+namespace
+{
+Identifier viewKey (te::EditItemID id) { return Identifier ("view" + String (static_cast<int64> (id.getRawID()))); }
+}
+
+bool isNativeInstrument (te::Plugin& plugin)
+{
+    return dynamic_cast<sampler::Plugin*> (&plugin) != nullptr || dynamic_cast<synth::Plugin*> (&plugin) != nullptr;
+}
+
+class InstrumentWorkspace::Window final : public DocumentWindow
+{
+public:
+    explicit Window (InstrumentWorkspace& owner)
+        : DocumentWindow ("Studio Instrument", colours::panel, closeButton), host (owner)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (true, false);
+        setResizeLimits (440, 340, 1600, 1000);
+    }
+
+    void closeButtonPressed() override
+    {
+        MessageManager::callAsync ([safe = SafePointer<Window> (this)]
+        {
+            if (safe != nullptr) safe->host.setFloating (false);
+        });
+    }
+
+private:
+    InstrumentWorkspace& host;
+};
+
+InstrumentWorkspace::Content::Content (InstrumentWorkspace& workspace) : host (workspace)
+{
+    choice.setTitle ("Instrument instance");
+    choice.setTextWhenNothingSelected ("No native instrument selected");
+    floating.setTooltip ("Move the instrument between Studio and a floating window");
+    expand.setTooltip ("Give the instrument more room in Studio");
+    addAndMakeVisible (choice);
+    addAndMakeVisible (floating);
+    addAndMakeVisible (expand);
+    choice.onChange = [this]
+    {
+        const auto index = choice.getSelectedItemIndex();
+        if (host.plugin == nullptr || ! isPositiveAndBelow (index, host.choices.size())) return;
+        if (auto* track = te::findAudioTrackForID (host.plugin->edit, host.choiceTrack))
+            for (auto* candidate : track->pluginList)
+                if (candidate->itemID == host.choices[index])
+                {
+                    host.open (*candidate, *track);
+                    break;
+                }
+    };
+    floating.onClick = [this] { host.setFloating (! host.isFloating()); };
+    expand.onClick = [this] { if (host.onExpand) host.onExpand(); };
+}
+
+void InstrumentWorkspace::Content::resized()
+{
+    auto area = getLocalBounds();
+    const auto rowHeight = appearance.control (30, 12);
+    auto toolbar = area.removeFromTop (rowHeight + appearance.px (6)).reduced (appearance.px (12), appearance.px (3));
+    const auto actionWidth = jmin (appearance.span (88), toolbar.getWidth() / 4);
+    if (expand.isVisible())
+        expand.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
+    floating.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
+    choice.setBounds (toolbar.withWidth (jmin (toolbar.getWidth(), appearance.span (390))));
+    if (host.editor) host.editor->setBounds (area);
+}
+
+InstrumentWorkspace::InstrumentWorkspace (PropertiesFile& settings) : preferences (settings)
+{
+    addAndMakeVisible (content);
+    addChildComponent (empty);
+    addChildComponent (bringBack);
+    empty.setText ("Select a Studio Synth or Studio Sampler track.", dontSendNotification);
+    empty.setFont (FontOptions (14.0f));
+    bringBack.onClick = [this] { setFloating (false); };
+}
+
+InstrumentWorkspace::~InstrumentWorkspace() { clear(); }
+
+void InstrumentWorkspace::setProject (const File& file)
+{
+    clear();
+    relocateProject (file);
+    session = ValueTree ("InstrumentWorkspace");
+    if (const auto xml = XmlDocument::parse (preferences.getValue (projectKey)); xml != nullptr && xml->hasTagName ("InstrumentWorkspace"))
+        session = ValueTree::fromXml (*xml);
+}
+
+void InstrumentWorkspace::relocateProject (const File& file)
+{
+    projectKey = file == File() ? String() : "studio.instrumentWorkspace." + String::toHexString (file.getFullPathName().hashCode64());
+}
+
+void InstrumentWorkspace::rememberView()
+{
+    if (editor && plugin != nullptr) session.setProperty (viewKey (plugin->itemID), editor->viewState(), nullptr);
+}
+
+void InstrumentWorkspace::releaseEditor()
+{
+    rememberView();
+    editor.reset();
+    plugin = nullptr;
+}
+
+void InstrumentWorkspace::clear()
+{
+    if (window)
+    {
+        preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+        window->clearContentComponent();
+        window.reset();
+    }
+    addAndMakeVisible (content);
+    releaseEditor();
+    choiceTrack = {};
+    choices.clear();
+    content.choice.clear (dontSendNotification);
+    resized();
+}
+
+void InstrumentWorkspace::populateChoices (te::AudioTrack* track)
+{
+    Array<te::EditItemID> ids;
+    StringArray labels;
+    if (track != nullptr)
+        for (auto* item : track->pluginList)
+            if (isNativeInstrument (*item))
+            {
+                ids.add (item->itemID);
+                labels.add (track->getName() + "  |  " + item->getName()
+                            + (ids.size() > 1 ? " " + String (ids.size()) : String()));
+            }
+    choiceTrack = track != nullptr ? track->itemID : te::EditItemID();
+    bool changed = choices != ids || content.choice.getNumItems() != labels.size();
+    for (int i = 0; ! changed && i < labels.size(); ++i)
+        changed = content.choice.getItemText (i) != labels[i];
+    if (changed)
+    {
+        choices = std::move (ids);
+        content.choice.clear (dontSendNotification);
+        content.choice.addItemList (labels, 1);
+    }
+    content.choice.setSelectedItemIndex (plugin != nullptr ? choices.indexOf (plugin->itemID) : -1, dontSendNotification);
+}
+
+bool InstrumentWorkspace::open (te::Plugin& candidate, te::AudioTrack& track)
+{
+    if (! isNativeInstrument (candidate) || track.pluginList.indexOf (&candidate) < 0) return false;
+    if (plugin.get() != &candidate)
+    {
+        auto component = candidate.createEditor();
+        auto* native = dynamic_cast<NativeInstrumentEditor*> (component.get());
+        if (native == nullptr) return false;
+        releaseEditor();
+        plugin = &candidate;
+        component.release();
+        editor.reset (native);
+        editor->restoreView (session.getProperty (viewKey (plugin->itemID)).toString());
+        editor->onSizePreferenceChanged = [this] { if (onLayout) onLayout(); };
+        content.addAndMakeVisible (*editor);
+    }
+    populateChoices (&track);
+    if (window) window->setName (track.getName() + " - " + plugin->getName());
+    resized();
+    content.resized();
+    return true;
+}
+
+void InstrumentWorkspace::updateSelection (te::AudioTrack* selected, const Array<te::AudioTrack*>& tracks, bool follow)
+{
+    bool changed = false;
+    const auto foundTrack = std::find_if (tracks.begin(), tracks.end(), [this] (const auto* track) { return track->itemID == choiceTrack; });
+    auto* currentTrack = foundTrack != tracks.end() ? *foundTrack : nullptr;
+    if (plugin != nullptr && (currentTrack == nullptr || currentTrack->pluginList.indexOf (plugin.get()) < 0))
+    {
+        if (window)
+        {
+            preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+            window->clearContentComponent();
+            window.reset();
+            addAndMakeVisible (content);
+        }
+        releaseEditor();
+        changed = true;
+    }
+    if (follow && selected != nullptr)
+    {
+        if (selected == currentTrack && plugin != nullptr) populateChoices (selected);
+        else
+        {
+            const auto preferred = te::EditItemID::fromRawID (static_cast<uint64_t> (static_cast<int64> (session.getProperty ("instrument", var (0)))));
+            te::Plugin* first = nullptr;
+            for (auto* item : selected->pluginList)
+                if (isNativeInstrument (*item) && (first == nullptr || item->itemID == preferred)) first = item;
+            if (first != nullptr) changed |= open (*first, *selected);
+            else if (! window && plugin != nullptr) { releaseEditor(); changed = true; }
+        }
+    }
+    if (changed)
+    {
+        if (plugin == nullptr) populateChoices (selected);
+        resized();
+        if (onLayout) onLayout();
+    }
+}
+
+void InstrumentWorkspace::saveSession (bool open, DockMode mode)
+{
+    if (projectKey.isEmpty()) return;
+    rememberView();
+    session.setProperty ("instrument", open && plugin != nullptr ? static_cast<int64> (plugin->itemID.getRawID()) : 0, nullptr);
+    session.setProperty ("floating", window != nullptr, nullptr);
+    session.setProperty ("layout", static_cast<int> (mode), nullptr);
+    if (window) preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+    if (const auto xml = session.createXml())
+        preferences.setValue (projectKey, xml->toString (XmlElement::TextFormat().singleLine()));
+}
+
+te::EditItemID InstrumentWorkspace::rememberedInstrument() const
+{
+    return te::EditItemID::fromRawID (static_cast<uint64_t> (static_cast<int64> (session.getProperty ("instrument", var (0)))));
+}
+DockMode InstrumentWorkspace::rememberedLayout() const
+{
+    return static_cast<DockMode> (jlimit (0, 2, static_cast<int> (session.getProperty ("layout", 1))));
+}
+bool InstrumentWorkspace::rememberedFloating() const { return static_cast<bool> (session.getProperty ("floating", false)); }
+
+int InstrumentWorkspace::minimumContentHeight() const
+{
+    if (! editor || window) return appearance.control (48, 13);
+    return appearance.control (30, 12) + appearance.px (6) + editor->minimumDockHeight();
+}
+
+void InstrumentWorkspace::appearanceChanged()
+{
+    if (editor) editor->appearanceChanged();
+    resized();
+    content.resized();
+    if (window) window->repaint();
+}
+
+void InstrumentWorkspace::setFloating (bool makeWindow)
+{
+    if (makeWindow == isFloating() || ! editor) return;
+    if (makeWindow)
+    {
+        window = std::make_unique<Window> (*this);
+        window->setName (plugin->getName());
+        window->setContentNonOwned (&content, false);
+        window->centreWithSize (820, 620);
+        window->restoreWindowStateFromString (preferences.getValue ("studio.instrumentEditorWindow"));
+        window->setVisible (true);
+        window->toFront (true);
+    }
+    else
+    {
+        preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+        window->clearContentComponent();
+        window.reset();
+        addAndMakeVisible (content);
+        if (onDock) onDock();
+    }
+    resized();
+    content.resized();
+    if (onLayout) onLayout();
+    if (onPreferenceChange) onPreferenceChange();
+}
+
+void InstrumentWorkspace::resized()
+{
+    content.floating.setButtonText (window ? "Dock" : "Float");
+    content.expand.setVisible (! window);
+    auto area = getLocalBounds();
+    if (! window)
+    {
+        content.setVisible (editor != nullptr);
+        content.setBounds (area);
+    }
+    bringBack.setVisible (window != nullptr);
+    empty.setVisible (editor == nullptr);
+    bringBack.setBounds (area.withSizeKeepingCentre (jmin (area.getWidth(), appearance.span (165)), appearance.control (30)));
+    empty.setBounds (area.reduced (appearance.px (12), 0));
+}
+}
