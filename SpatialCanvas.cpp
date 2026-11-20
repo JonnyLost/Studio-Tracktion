@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SpatialWorkspace.h"
 #include "StudioUI.h"
+#include "StagePresentation.h"
 #include <numbers>
 
 using namespace juce;
@@ -33,34 +34,119 @@ void SpatialField::resized()
     number.setBounds (area);
 }
 
+namespace
+{
+const std::array stageColours { colours::strings, colours::winds, colours::brass,
+                               colours::percussion, colours::keys, colours::other };
+constexpr std::array familyMarks { "S", "W", "B", "P", "K", "O" };
+}
+
+int SpatialMap::legendHeight() const
+{
+    const int columns = getWidth() >= appearance.span (590) ? 6 : 3;
+    return micMode ? 0 : (6 / columns) * appearance.line (11, 5) + appearance.px (5);
+}
+
 Rectangle<float> SpatialMap::plot() const
 {
     const auto& m = appearance;
-    return getLocalBounds().toFloat().reduced ((float) m.px (30), (float) m.px (24));
+    return getLocalBounds().toFloat().reduced ((float) m.px (30), (float) m.px (10))
+        .withTrimmedBottom ((float) (m.line (11, 12) + legendHeight()));
 }
 
 Point<float> SpatialMap::screen (Position p) const
 {
     const auto area = plot();
-    return { area.getX() + 0.5f * (p.x + 1.0f) * area.getWidth(), area.getBottom() - p.depth * area.getHeight() };
+    const auto projected = stagePresentations[(size_t) seating].project (p);
+    return { area.getX() + projected[0] * area.getWidth(), area.getY() + projected[1] * area.getHeight() };
 }
 
 Position SpatialMap::location (Point<float> p) const
 {
     const auto area = plot();
     if (area.isEmpty()) return {};
-    return validPosition ({ 2.0f * (p.x - area.getX()) / area.getWidth() - 1.0f,
-                            (area.getBottom() - p.y) / area.getHeight() });
+    return stagePresentations[(size_t) seating].unproject ((p.x - area.getX()) / area.getWidth(),
+                                                          (p.y - area.getY()) / area.getHeight());
 }
 
-void SpatialMap::display (std::vector<Marker> next, String key, bool microphones)
+void SpatialMap::display (std::vector<Marker> next, String key, bool microphones, Seating layout)
 {
-    if (markers != next || selected != key || micMode != microphones)
+    if (markers != next || selected != key || micMode != microphones || seating != layout)
     {
         markers = std::move (next);
         selected = std::move (key);
         micMode = microphones;
+        seating = layout;
         repaint();
+    }
+}
+
+void SpatialMap::paintSeating (Graphics& g, Rectangle<float> area) const
+{
+    const auto& m = appearance;
+    const auto& style = stagePresentations[(size_t) seating];
+    const auto arc = [&] (Path& path, float depth, float width, bool start, bool reverse)
+    {
+        for (int i = 0; i <= 20; ++i)
+        {
+            const float x = width * (1.0f - (float) i * 0.1f) * (reverse ? 1.0f : -1.0f);
+            const auto p = screen ({ x, depth });
+            if (i == 0 && start) path.startNewSubPath (p);
+            else path.lineTo (p);
+        }
+    };
+
+    Path shell;
+    arc (shell, 1.0f, 1.0f, true, false);
+    arc (shell, 0.0f, 1.0f, false, true);
+    shell.closeSubPath();
+    g.setGradientFill (ColourGradient (colours::control, area.getCentreX(), area.getBottom(),
+                                       colours::well, area.getCentreX(), area.getY(), false));
+    g.fillPath (shell);
+    g.setColour (colours::divider.brighter (0.32f));
+    g.strokePath (shell, PathStrokeType (1.25f));
+
+    for (int i = 0; i < style.rowCount; ++i)
+    {
+        const float depth = style.rows[(size_t) i];
+        const float width = seating == Seating::scoring ? 0.87f : 0.91f;
+        Path band;
+        arc (band, depth + 0.047f, width, true, false);
+        arc (band, depth - 0.047f, width, false, true);
+        band.closeSubPath();
+        g.setColour (stageColours[(size_t) i].withAlpha (0.085f));
+        g.fillPath (band);
+        Path row;
+        arc (row, depth, width, true, false);
+        g.setColour (stageColours[(size_t) i].withAlpha (0.28f));
+        g.strokePath (row, PathStrokeType (1.0f));
+    }
+
+    const auto centre = screen ({ 0.0f, 0.0f });
+    const float podium = (float) m.px (7);
+    g.setColour (colours::action);
+    g.fillRoundedRectangle ({ centre.x - podium, centre.y - podium * 0.55f, 2 * podium, podium }, 2.0f);
+    g.setFont (uiFont (11.0f, Font::bold));
+    g.drawText ("Conductor", 0, roundToInt (centre.y + podium * 0.5f), getWidth(), m.line (11, 5),
+                Justification::centred);
+
+    if (! micMode)
+    {
+        auto legend = getLocalBounds().removeFromBottom (legendHeight()).reduced (m.px (8), 0);
+        const int columns = getWidth() >= m.span (590) ? 6 : 3;
+        const int itemWidth = legend.getWidth() / columns;
+        const int height = m.line (11, 5);
+        for (int i = 0; i < (int) stageColours.size(); ++i)
+        {
+            auto item = Rectangle<int> (legend.getX() + (i % columns) * itemWidth,
+                legend.getY() + (i / columns) * height, itemWidth, height).reduced (m.px (3), 0);
+            const auto swatch = item.removeFromLeft (m.px (15)).withSizeKeepingCentre (m.px (7), m.px (7));
+            g.setColour (stageColours[(size_t) i]);
+            g.fillRoundedRectangle (swatch.toFloat(), 2.0f);
+            g.setColour (colours::secondary);
+            g.setFont (uiFont (11.0f));
+            g.drawFittedText (sectionNames[(size_t) i], item, Justification::centredLeft, 1, 1.0f);
+        }
     }
 }
 
@@ -68,28 +154,15 @@ void SpatialMap::paint (Graphics& g)
 {
     const auto& m = appearance;
     const auto area = plot();
-    if (area.isEmpty()) return;
     g.setColour (colours::timeline);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), (float) m.px (6));
-    constexpr std::array bands { 0x18233b58, 0x222c4059, 0x2a394956, 0x35445258, 0x4154646c };
-    for (int i = 0; i < 5; ++i)
+    if (area.isEmpty()) return;
+    paintSeating (g, area);
+    if (hasKeyboardFocus (false))
     {
-        const float y = area.getY() + (float) i * area.getHeight() / 5.0f;
-        g.setColour (Colour (bands[(size_t) i]));
-        g.fillRect (Rectangle<float> (area.getX(), y, area.getWidth(), area.getHeight() / 5.0f));
-        g.setColour (colours::divider);
-        g.drawLine (area.getX(), y, area.getRight(), y);
+        g.setColour (colours::focus);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.75f), (float) m.px (6), 1.25f);
     }
-    g.setColour (colours::divider);
-    g.drawVerticalLine (roundToInt (area.getCentreX()), area.getY(), area.getBottom());
-    g.setFont (uiFont (11.0f));
-    g.setColour (colours::secondary);
-    g.drawText ("Rear", 0, 0, getWidth(), m.px (24), Justification::centred);
-    g.drawText ("Conductor / Front", 0, getHeight() - m.px (23), getWidth(), m.px (22), Justification::centred);
-    g.drawText ("L", m.px (5), roundToInt (area.getCentreY()) - m.line (11) / 2, m.span (23), m.line (11), Justification::centred);
-    g.drawText ("R", getWidth() - m.span (23), roundToInt (area.getCentreY()) - m.line (11) / 2, m.span (18), m.line (11), Justification::centred);
-
-    constexpr std::array hues { 0xff95b4d7, 0xff7cc8c3, 0xffdab582, 0xffc594ad, 0xffb7a5d4, 0xffa8b5c2 };
     const auto drawMarker = [&] (const Marker& marker)
     {
         const bool active = marker.microphone == micMode && marker.key == selected;
@@ -122,16 +195,19 @@ void SpatialMap::paint (Graphics& g)
         }
         else
         {
-            const auto r = (float) m.px (10);
-            g.setColour (Colour (hues[(size_t) marker.section]).withAlpha (micMode ? 0.32f : 0.88f));
-            g.fillEllipse (point.x - r, point.y - r, 2 * r, 2 * r);
-            if (active)
-            {
-                g.setColour (colours::focus);
-                g.drawEllipse (point.x - r - 2.0f, point.y - r - 2.0f, 2 * r + 4.0f, 2 * r + 4.0f, 2.0f);
-            }
+            const auto family = (size_t) jlimit (0, 5, marker.section);
+            const float radius = (float) m.px (11);
+            const auto tile = Rectangle<float> (2 * radius, 2 * radius).withCentre (point);
+            const auto accent = stageColours[family];
+            g.setColour (accent.interpolatedWith (colours::well, micMode ? 0.83f : 0.68f));
+            g.fillRoundedRectangle (tile, (float) m.px (5));
+            g.setColour (active ? colours::focus : accent.withAlpha (micMode ? 0.35f : 0.82f));
+            g.drawRoundedRectangle (tile, (float) m.px (5), active ? 2.0f : 1.0f);
+            g.setFont (uiFont (10.0f, Font::bold));
+            g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
+            g.drawText (familyMarks[family], tile.toNearestInt(), Justification::centred);
         }
-        if (! micMode || marker.microphone)
+        if (active)
         {
             const int labelWidth = m.span (125);
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
@@ -141,8 +217,11 @@ void SpatialMap::paint (Graphics& g)
             int labelY = roundToInt (point.y) + m.px (13);
             if (labelY + labelHeight > roundToInt (area.getBottom()))
                 labelY = roundToInt (point.y) - m.px (15) - labelHeight;
-            g.drawFittedText (marker.name, { left, labelY, labelWidth, labelHeight },
-                              Justification::centred, 1, 1.0f);
+            const auto label = Rectangle<int> (left, labelY, labelWidth, labelHeight);
+            g.setColour (colours::well);
+            g.fillRoundedRectangle (label.toFloat(), (float) m.px (3));
+            g.setColour (colours::text);
+            g.drawFittedText (marker.name, label.reduced (m.px (4), 0), Justification::centred, 1, 1.0f);
         }
     };
     for (const auto& marker : markers)
@@ -153,8 +232,23 @@ void SpatialMap::paint (Graphics& g)
 
 void SpatialMap::mouseDown (const MouseEvent& event)
 {
+    const auto radius = (float) appearance.px (17);
+    if (event.mods.isPopupMenu())
+    {
+        PopupMenu menu;
+        const SafePointer<SpatialMap> safe (this);
+        for (const auto& marker : markers)
+            if (marker.microphone == micMode && screen (marker.point).getDistanceFrom (event.position) <= radius)
+                menu.addItem (marker.name, true, marker.key == selected, [safe, key = marker.key]
+                {
+                    if (safe != nullptr && safe->onSelect) safe->onSelect (key);
+                });
+        if (menu.getNumItems() > 0) menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (
+            Rectangle<int> (event.getScreenPosition().x, event.getScreenPosition().y, 1, 1)));
+        return;
+    }
     if (! event.mods.isLeftButtonDown()) return;
-    auto distance = (float) appearance.px (22);
+    auto distance = radius;
     const Marker* best = nullptr;
     for (const auto& marker : markers)
         if (marker.microphone == micMode)
@@ -172,14 +266,14 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     dragOrigin = preview = best->point;
     dragged = key;
     moving = false;
-    grabKeyboardFocus();
+    if (isShowing()) grabKeyboardFocus();
     if (onSelect) onSelect (key);
 }
 
 void SpatialMap::mouseDrag (const MouseEvent& event)
 {
     if (dragged.isEmpty() || ! event.mouseWasDraggedSinceMouseDown()) return;
-    preview = location (screen (dragOrigin) + event.getOffsetFromDragStart().toFloat());
+    preview = location (screen (dragOrigin) + (event.position - event.mouseDownPosition));
     moving = true;
     repaint();
 }

@@ -12,14 +12,20 @@ inline juce::FontOptions uiFont (float points, int style = juce::Font::plain)
     return juce::FontOptions (appearance.fontSize (points), style);
 }
 
-struct ToolbarItem { juce::Component* component; int baseWidth; };
+struct ToolbarItem
+{
+    juce::Component* component;
+    int baseWidth;
+    int fixedWidth = 0;
+    int width() const { return fixedWidth > 0 ? fixedWidth : appearance.span (baseWidth); }
+};
 
-inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& items)
+inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& items, int rowHeight = 0)
 {
     int rows = 1, used = 0;
     for (const auto& item : items)
     {
-        const int next = juce::jmin (width, appearance.span (item.baseWidth));
+        const int next = juce::jmin (width, item.width());
         if (used > 0 && used + next > width)
         {
             ++rows;
@@ -27,17 +33,17 @@ inline int toolbarHeight (int width, const std::initializer_list<ToolbarItem>& i
         }
         used += next;
     }
-    return rows * appearance.control (30);
+    return rows * (rowHeight > 0 ? rowHeight : appearance.control (30));
 }
 
-inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_list<ToolbarItem>& items)
+inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_list<ToolbarItem>& items, int height = 0)
 {
-    const auto rowHeight = appearance.control (30);
+    const auto rowHeight = height > 0 ? height : appearance.control (30);
     const int width = area.getWidth();
     auto row = area.removeFromTop (rowHeight);
     for (const auto& item : items)
     {
-        const int next = juce::jmin (width, appearance.span (item.baseWidth));
+        const int next = juce::jmin (width, item.width());
         if (row.getWidth() < next)
             row = area.removeFromTop (rowHeight);
         item.component->setBounds (row.removeFromLeft (next).reduced (appearance.px (1)));
@@ -46,21 +52,33 @@ inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_li
 
 namespace colours
 {
-inline const juce::Colour rail      { 0xff111317 };
-inline const juce::Colour canvas    { 0xff14161a };
-inline const juce::Colour timeline  { 0xff161b25 };
-inline const juce::Colour panel     { 0xff202329 };
-inline const juce::Colour control   { 0xff282c33 };
-inline const juce::Colour raised    { 0xff333841 };
-inline const juce::Colour divider   { 0xff393e47 };
-inline const juce::Colour selected  { 0xff384a5e };
+inline const juce::Colour rail      { 0xff10141c };
+inline const juce::Colour canvas    { 0xff151a23 };
+inline const juce::Colour timeline  { 0xff19212d };
+inline const juce::Colour panel     { 0xff202834 };
+inline const juce::Colour control   { 0xff293443 };
+inline const juce::Colour raised    { 0xff353f4e };
+inline const juce::Colour divider   { 0xff414d5e };
+inline const juce::Colour selected  { 0xff394e66 };
+inline const juce::Colour well      { 0xff131923 };
+inline const juce::Colour grid      { 0xff3b4b61 };
 inline const juce::Colour text      { 0xfff3f5f7 };
-inline const juce::Colour secondary { 0xffa7adb6 };
+inline const juce::Colour secondary { 0xffb9c0ca };
 inline const juce::Colour action    { 0xffbbcdde };
 inline const juce::Colour focus     { 0xff91c8ff };
 inline const juce::Colour playhead  { 0xff2b91ff };
 inline const juce::Colour warning   { 0xffffcb70 };
 inline const juce::Colour record    { 0xffef6674 };
+inline const juce::Colour signal    { 0xff91d1b8 };
+inline const juce::Colour strings   { 0xff9abfe8 };
+inline const juce::Colour winds     { 0xff8ed0c3 };
+inline const juce::Colour brass     { 0xffe0bf85 };
+inline const juce::Colour percussion{ 0xffd7a4ba };
+inline const juce::Colour keys      { 0xffb9a8e0 };
+inline const juce::Colour other     { 0xffb2becb };
+inline const juce::Colour midiClip  { 0xff365a77 };
+inline const juce::Colour audioClip { 0xff305b5f };
+inline const juce::Colour roomReturn{ 0xffa992d3 };
 }
 
 class StudioLookAndFeel final : public juce::LookAndFeel_V4
@@ -87,6 +105,11 @@ public:
         setColour (ResizableWindow::backgroundColourId, colours::canvas);
         setColour (PopupMenu::backgroundColourId, colours::panel);
         setColour (PopupMenu::highlightedBackgroundColourId, colours::selected);
+        setColour (PopupMenu::textColourId, colours::text);
+        setColour (PopupMenu::highlightedTextColourId, colours::text);
+        setColour (TextEditor::backgroundColourId, colours::well);
+        setColour (TextEditor::outlineColourId, colours::divider);
+        setColour (TextEditor::focusedOutlineColourId, colours::focus);
     }
 
     juce::Font getTextButtonFont (juce::TextButton&, int height) override
@@ -109,6 +132,34 @@ public:
     int getSliderThumbRadius (juce::Slider& slider) override
     {
         return juce::jmin (appearance.px (12), (slider.isHorizontal() ? slider.getHeight() : slider.getWidth()) / 2);
+    }
+
+    void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float position,
+                           float minimum, float maximum, juce::Slider::SliderStyle style, juce::Slider& slider) override
+    {
+        if (style != juce::Slider::LinearVertical || ! slider.getProperties().contains ("studioFader"))
+        {
+            LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, position, minimum, maximum, style, slider);
+            return;
+        }
+        const auto centre = (float) x + (float) width * 0.5f;
+        const auto groove = juce::Rectangle<float> (centre - (float) appearance.px (2), (float) y,
+                                                     (float) appearance.px (4), (float) height);
+        const auto tint = slider.isEnabled() ? colours::action : colours::secondary.withAlpha (0.5f);
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (groove, 2.0f);
+        g.setColour (colours::divider);
+        const auto unitPosition = slider.getPositionOfValue (0.0);
+        if (unitPosition >= (float) y && unitPosition <= (float) (y + height))
+            g.drawHorizontalLine (juce::roundToInt (unitPosition), centre - (float) appearance.px (12),
+                                  centre + (float) appearance.px (12));
+        const auto thumb = juce::Rectangle<float> ((float) appearance.px (25), (float) appearance.px (12))
+                               .withCentre ({ centre, position });
+        g.setColour (tint);
+        g.fillRoundedRectangle (thumb, 2.0f);
+        g.setColour (slider.hasKeyboardFocus (true) ? colours::focus : colours::well);
+        g.drawRoundedRectangle (thumb, 2.0f, 1.0f);
+        g.drawHorizontalLine (juce::roundToInt (position), thumb.getX() + 3.0f, thumb.getRight() - 3.0f);
     }
 
     void drawButtonText (juce::Graphics& g, juce::TextButton& button, bool, bool) override
@@ -167,6 +218,8 @@ public:
         const auto fill = down ? colour.brighter (0.2f) : hover ? colour.brighter (0.1f) : colour;
         g.setColour (fill.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
         g.fillRoundedRectangle (bounds, (float) appearance.px (4));
+        g.setColour (colours::divider.withAlpha (button.isEnabled() ? 0.48f : 0.23f));
+        g.drawRoundedRectangle (bounds, (float) appearance.px (4), 0.75f);
         if (button.hasKeyboardFocus (false))
         {
             g.setColour (colours::focus);
@@ -183,6 +236,55 @@ private:
         layout.createLayout (content, (float) width);
         return layout;
     }
+};
+
+enum class TransportIcon { start, play, stop, record };
+
+class TransportButton final : public juce::TextButton
+{
+public:
+    TransportButton (const char* label, TransportIcon symbol) : juce::TextButton (label), icon (symbol)
+    {
+        setTitle (label);
+        setTooltip (label);
+    }
+
+    void paintButton (juce::Graphics& g, bool hovered, bool down) override
+    {
+        const bool recording = icon == TransportIcon::record;
+        const auto tint = recording ? colours::record : icon == TransportIcon::play && getToggleState()
+            ? colours::signal : colours::action;
+        const auto colour = getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
+        getLookAndFeel().drawButtonBackground (g, *this, colour, hovered, down);
+        const auto side = (float) appearance.px (17);
+        const auto area = getLocalBounds().toFloat().withSizeKeepingCentre (side, side);
+        g.setColour (tint.withAlpha (isEnabled() ? 1.0f : 0.38f));
+        juce::Graphics::ScopedSaveState state (g);
+        g.addTransform (juce::AffineTransform::scale (side / 16.0f).translated (area.getX(), area.getY()));
+        juce::Path path;
+        switch (icon)
+        {
+            case TransportIcon::start:
+                g.fillRoundedRectangle (2.0f, 3.0f, 2.0f, 10.0f, 0.7f);
+                path.addTriangle (13.0f, 2.6f, 5.0f, 8.0f, 13.0f, 13.4f);
+                g.fillPath (path);
+                break;
+            case TransportIcon::play:
+                path.addTriangle (4.0f, 2.0f, 13.0f, 8.0f, 4.0f, 14.0f);
+                g.fillPath (path);
+                break;
+            case TransportIcon::stop:
+                g.fillRoundedRectangle (3.1f, 3.1f, 9.8f, 9.8f, 1.2f);
+                break;
+            case TransportIcon::record:
+                g.drawEllipse (1.8f, 1.8f, 12.4f, 12.4f, 1.25f);
+                g.fillEllipse (4.5f, 4.5f, 7.0f, 7.0f);
+                break;
+        }
+    }
+
+private:
+    TransportIcon icon;
 };
 
 class TransportReadout final : public juce::Component
@@ -205,8 +307,11 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (colours::raised);
-        g.fillRoundedRectangle (getLocalBounds().toFloat(), (float) appearance.px (4));
+        const auto bounds = getLocalBounds().toFloat().reduced (0.75f);
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (bounds, (float) appearance.px (4));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (bounds, (float) appearance.px (4), 0.75f);
     }
 
     void resized() override

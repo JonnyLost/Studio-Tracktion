@@ -30,7 +30,7 @@ StudioPianoRoll::StudioPianoRoll()
     grid.addItem ("1/32 T", 8);
     grid.setSelectedId (4, dontSendNotification);
     grid.setTooltip ("Snap grid, in musical note values");
-    caption.setColour (Label::textColourId, Colour (0xffdce5ed));
+    caption.setColour (Label::textColourId, studio::colours::text);
     caption.setFont (FontOptions (13.0f));
     horizontal.addListener (this);
     vertical.addListener (this);
@@ -482,9 +482,9 @@ void StudioPianoRoll::paint (Graphics& g)
     {
         g.saveState();
         g.reduceClipRegion (notesArea);
-        g.setColour (Colour (0x385eacdd));
+        g.setColour (studio::colours::focus.withAlpha (0.20f));
         g.fillRect (lassoBounds);
-        g.setColour (Colour (0xff92caed));
+        g.setColour (studio::colours::focus);
         g.drawRect (lassoBounds, 1);
         g.restoreState();
     }
@@ -495,7 +495,7 @@ void StudioPianoRoll::paint (Graphics& g)
 
 void StudioPianoRoll::paintGrid (Graphics& g)
 {
-    g.setColour (Colour (0xff27343e));
+    g.setColour (studio::colours::panel);
     g.fillRect (keyboard);
     g.fillRect (notesArea);
 
@@ -509,20 +509,20 @@ void StudioPianoRoll::paintGrid (Graphics& g)
             continue;
         const int semitone = pitch % 12;
         const bool black = semitone == 1 || semitone == 3 || semitone == 6 || semitone == 8 || semitone == 10;
-        g.setColour (black ? Colour (0xff202b36) : Colour (0xff2a3742));
+        g.setColour (black ? studio::colours::canvas : studio::colours::timeline);
         g.fillRect (notesArea.getX(), y, notesArea.getWidth(), rowHeight - 1);
-        g.setColour (black ? Colour (0xff111923) : Colour (0xffd5dde4));
+        g.setColour (black ? studio::colours::well : studio::colours::action);
         g.fillRect (keyboard.getX(), y, keyboard.getWidth() - 1, rowHeight - 1);
         if (pitch == auditionPitch)
         {
-            g.setColour (Colour (0xffc5a56b).withAlpha (0.85f));
+            g.setColour (studio::colours::brass.withAlpha (0.85f));
             g.fillRect (keyboard.getX(), y, keyboard.getWidth() - 1, rowHeight - 1);
         }
         if (pitch % 12 == 0)
         {
-            g.setColour (Colour (0xff384957));
+            g.setColour (studio::colours::grid);
             g.drawHorizontalLine (y, (float) notesArea.getX(), (float) notesArea.getRight());
-            g.setColour (black ? Colour (0xfff5f8fb) : Colour (0xff26333c));
+            g.setColour (black ? studio::colours::text : studio::colours::well);
             g.setFont (FontOptions (jmin (metrics.fontSize (10.0f), (float) rowHeight - 1.0f)));
             g.drawText ("C" + String (pitch / 12 - 1), keyboard.getX() + metrics.px (4), y, keyWidth - metrics.px (7),
                         rowHeight, Justification::centredLeft);
@@ -544,7 +544,7 @@ void StudioPianoRoll::paintGrid (Graphics& g)
         // only their ink is suppressed; the snap precision stays unchanged.
         if (subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
         {
-            g.setColour (Colour (0xff34424e));
+            g.setColour (studio::colours::grid.withAlpha (0.65f));
             studio::forEachMusicalSubdivision (sequence, from, to, subdivision,
                 [&] (double editBeat)
                 {
@@ -561,13 +561,13 @@ void StudioPianoRoll::paintGrid (Graphics& g)
                 return;
             if (tick.beatIndex == 0)
             {
-                g.setColour (Colour (0xff8497a6));
+                g.setColour (studio::colours::action);
                 g.fillRect (x, notesArea.getY(), 2, notesArea.getHeight());
                 lastBeatLineX = x;
             }
             else if (x - lastBeatLineX >= 14)
             {
-                g.setColour (Colour (0xff536a7b));
+                g.setColour (studio::colours::divider);
                 g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
                 lastBeatLineX = x;
             }
@@ -578,7 +578,7 @@ void StudioPianoRoll::paintGrid (Graphics& g)
 
 void StudioPianoRoll::paintRuler (Graphics& g)
 {
-    g.setColour (Colour (0xff263440));
+    g.setColour (studio::colours::control);
     g.fillRect (rulerArea);
     if (clip == nullptr || rulerArea.isEmpty())
         return;
@@ -596,7 +596,7 @@ void StudioPianoRoll::paintRuler (Graphics& g)
     g.reduceClipRegion (rulerArea);
     if (const auto subdivision = gridBeats(); subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
     {
-        g.setColour (Colour (0xff4d5e6d));
+        g.setColour (studio::colours::grid);
         studio::forEachMusicalSubdivision (sequence, from, to, subdivision,
             [&] (double editBeat)
             {
@@ -614,7 +614,7 @@ void StudioPianoRoll::paintRuler (Graphics& g)
         const bool bar = tick.beatIndex == 0;
         if (! bar && x - lastBeatTickX < 14)
             return;
-        g.setColour (bar ? Colour (0xffd3ba87) : Colour (0xff768c9a));
+        g.setColour (bar ? studio::colours::action : studio::colours::secondary);
         g.drawVerticalLine (x, (float) (rulerArea.getBottom() - (bar ? 13 : 7)),
                             (float) rulerArea.getBottom());
         lastBeatTickX = x;
@@ -661,9 +661,9 @@ void StudioPianoRoll::paintNotes (Graphics& g)
                     jmax (3, xAt (end) - xAt (start)), rowHeight - 4 };
                 if (box.intersects (notesArea))
                 {
-                    g.setColour (Colour (0xff79a9c6).withAlpha (0.36f));
+                    g.setColour (studio::colours::strings.withAlpha (0.36f));
                     g.fillRoundedRectangle (box.toFloat(), 2.0f);
-                    g.setColour (Colour (0xffa5c9dc).withAlpha (0.7f));
+                    g.setColour (studio::colours::action.withAlpha (0.7f));
                     g.drawRoundedRectangle (box.toFloat(), 2.0f, 1.0f);
                 }
             }
@@ -685,11 +685,11 @@ void StudioPianoRoll::paintNotes (Graphics& g)
                             ? jlimit (1, 127, note->getVelocity() + previewVelocity - originalVelocity)
                             : note->getVelocity();
         const auto fraction = jlimit (0.0f, 1.0f, velocity / 127.0f);
-        // Walk the visible colour wheel: soft blue -> cyan -> green -> yellow -> hard red.
-        const auto noteColour = Colour::fromHSV (0.64f * (1.0f - fraction), 0.86f, 0.9f, 1.0f);
+        const auto noteColour = studio::colours::midiClip.interpolatedWith (studio::colours::strings,
+                                                                          0.34f + 0.66f * fraction);
         g.setColour (noteColour);
         g.fillRoundedRectangle (bounds.toFloat(), 2.0f);
-        g.setColour (active ? Colours::white : noteColour.brighter (0.2f));
+        g.setColour (active ? studio::colours::focus : noteColour.brighter (0.16f));
         g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 2.0f, active ? 1.5f : 1.0f);
         if (active && bounds.getWidth() >= 18)
         {
@@ -701,7 +701,7 @@ void StudioPianoRoll::paintNotes (Graphics& g)
         if (bounds.getWidth() >= studio::appearance.span (28)
             && bounds.getHeight() >= studio::appearance.fontSize (10.0f))
         {
-            g.setColour (fraction < 0.3f ? Colours::white : Colour (0xff142330));
+            g.setColour (fraction < 0.48f ? studio::colours::text : studio::colours::well);
             g.setFont (studio::uiFont (10.0f));
             g.drawText (MidiMessage::getMidiNoteName (note->getNoteNumber(), true, true, 4),
                         bounds.reduced (3, 0), Justification::centredLeft);
@@ -712,9 +712,9 @@ void StudioPianoRoll::paintNotes (Graphics& g)
 
 void StudioPianoRoll::paintVelocity (Graphics& g)
 {
-    g.setColour (Colour (0xff19222b));
+    g.setColour (studio::colours::well);
     g.fillRect (velocityArea);
-    g.setColour (Colour (0xff9bacba));
+    g.setColour (studio::colours::secondary);
     g.setFont (studio::uiFont (11.0f));
     g.drawText ("Velocity", velocityArea.withX (0).withWidth (keyWidth), Justification::centred);
     if (clip == nullptr)
@@ -730,7 +730,8 @@ void StudioPianoRoll::paintVelocity (Graphics& g)
                       ? jlimit (1, 127, note->getVelocity() + previewVelocity - originalVelocity)
                       : note->getVelocity();
         const int h = roundToInt ((velocityArea.getHeight() - 8) * vel / 127.0);
-        g.setColour (Colour::fromHSV (0.64f * (1.0f - vel / 127.0f), 0.86f, 0.9f, 1.0f));
+        g.setColour (selectedNotes.contains (note->state) ? studio::colours::focus
+                    : studio::colours::midiClip.interpolatedWith (studio::colours::strings, (float) vel / 127.0f));
         g.fillRect (x, velocityArea.getBottom() - h, 5, h);
     }
     g.restoreState();

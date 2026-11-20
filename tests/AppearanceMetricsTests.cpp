@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../AppearanceMetrics.h"
+#include "../StagePresentation.h"
 
 #include <cassert>
 #include <cmath>
@@ -7,6 +8,27 @@
 
 int main()
 {
+    using namespace studio::spatial;
+    for (const auto& layout : stagePresentations)
+        for (float x : { -1.0f, -0.7f, 0.0f, 0.7f, 1.0f })
+            for (float depth : { 0.0f, 0.12f, 0.5f, 0.9f, 1.0f })
+            {
+                const auto projected = layout.project ({ x, depth });
+                for (float coordinate : projected) assert (coordinate >= 0.0f && coordinate <= 1.0f);
+                const auto restored = layout.unproject (projected[0], projected[1]);
+                assert (std::abs (restored.x - x) < 0.0001f && std::abs (restored.depth - depth) < 0.0001f);
+            }
+    assert (stagePresentations[0].curvature > stagePresentations[1].curvature);
+    assert (stagePresentations[1].rearWidth < stagePresentations[0].rearWidth);
+    assert (stagePresentations[2].frontWidth > stagePresentations[0].frontWidth);
+    assert (seat (Seating::scoring, Section::keys, 0, 1) != seat (Seating::concert, Section::keys, 0, 1));
+
+    studio::WorkspaceScroll scroll;
+    assert (scroll.position (studio::Workspace::stage) == 0);
+    scroll.store (studio::Workspace::stage, 180);
+    scroll.store (studio::Workspace::mix, 32);
+    assert (scroll.position (studio::Workspace::stage) == 180 && scroll.position (studio::Workspace::mix) == 32);
+
     studio::AppearanceMetrics metrics;
     metrics.set (999, -1);
     assert (metrics.interfacePercent() == 100 && metrics.textPercent() == 100);
@@ -44,15 +66,17 @@ int main()
                 assert (expanded.panelHeight >= split.panelHeight);
             }
 
-            for (const int windowWidth : { 1024, 1280 })
+            for (const int windowWidth : { 1024, 1280, 1600 })
             {
                 const auto dockWidth = windowWidth - metrics.span (76);
                 const auto musicalWidth = dockWidth - metrics.trackHeader() - metrics.trackFooter() - metrics.scrollbar();
                 assert (musicalWidth >= 200);
                 assert (metrics.resourcesFitHeader (windowWidth - metrics.px (20)));
-                for (const int windowHeight : { 640, 800 })
+                assert (metrics.transportPrimaryWidth() <= windowWidth - metrics.px (20));
+                assert (2 * metrics.mixerStripWidth (dockWidth) + metrics.scrollbar() < dockWidth);
+                for (const int windowHeight : { 640, 800, 960 })
                 {
-                    const int chrome = 2 * metrics.control (34) + metrics.control (30)
+                    const int chrome = 2 * metrics.control (34) + metrics.transportRowHeight()
                         + metrics.px (10) + metrics.line (13, 5);
                     const auto split = metrics.dockRoom (windowHeight - chrome, metrics.px (270), studio::DockMode::split);
                     assert (split.panelHeight >= metrics.control (34) + metrics.control (26));
@@ -69,5 +93,8 @@ int main()
     assert (metrics.browserFilterRow (840));
     assert (metrics.stackedBrowserDetails (840));
     assert (! metrics.stackedBrowserDetails (1100));
+    assert (metrics.resourcesFitHeader (1024 - metrics.px (20)));
+    assert (! metrics.dropoutsFitHeader (1024 - metrics.px (20)));
+    assert (metrics.dropoutsFitHeader (1280 - metrics.px (20)));
     std::cout << "Appearance metrics passed at all 15 combinations.\n";
 }

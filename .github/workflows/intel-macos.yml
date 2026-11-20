@@ -6,6 +6,7 @@ on:
     branches:
       - development
       - feature/studio-orchestral-stage-m4
+      - feature/studio-acoustic-engine-m4r
 
 permissions:
   contents: read
@@ -36,8 +37,16 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
           cmake --build build --config Debug --target Studio StudioMilestoneTests StudioSpatialTests StudioAcousticComparison --parallel 4
-          ctest --test-dir build -C Debug --verbose --output-on-failure
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
+      - name: Test Studio and render interface review
+        env:
+          STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
+        run: ctest --test-dir build -C Debug --verbose --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M45-interface-review
+          path: ${{ runner.temp }}/studio-interface-review/
+          if-no-files-found: error
       - name: Compare acoustic engines
         run: tools/compare-acoustics.sh "$RUNNER_TEMP/studio-acoustic-comparison"
       - uses: actions/upload-artifact@v4

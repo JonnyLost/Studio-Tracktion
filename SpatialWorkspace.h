@@ -35,18 +35,24 @@ public:
     };
     std::function<void(const juce::String&)> onSelect;
     std::function<void(const juce::String&, Position, bool wholeSection)> onMove;
-    void display (std::vector<Marker>, juce::String selected, bool microphones);
+    void display (std::vector<Marker>, juce::String selected, bool microphones, Seating);
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
+    void focusGained (FocusChangeType) override { repaint(); }
+    void focusLost (FocusChangeType) override { repaint(); }
 private:
+    friend class SpatialWorkspace;
     std::vector<Marker> markers;
     juce::String selected, dragged;
     Position preview, dragOrigin;
     bool micMode = false, moving = false;
+    Seating seating = Seating::concert;
     juce::Rectangle<float> plot() const;
+    int legendHeight() const;
+    void paintSeating (juce::Graphics&, juce::Rectangle<float>) const;
     juce::Point<float> screen (Position) const;
     Position location (juce::Point<float>) const;
 };
@@ -77,6 +83,10 @@ public:
     void appearanceChanged();
     int minimumContentHeight (int width);
     void resized() override;
+   #if STUDIO_SPATIAL_TESTS
+    void arrangeForInterfaceReview (Seating);
+    bool verifyMoveForInterfaceReview (tracktion::AudioTrack&);
+   #endif
 
 private:
     tracktion::Edit* edit = nullptr;
@@ -96,7 +106,7 @@ private:
     std::vector<TrackRow> tracks;
     juce::String selectedMic, statusMessage, lastRoomStamp, lastMicStamp;
     juce::Component stagePage, roomPage, micPage;
-    juce::Label stageStatus, roomStatus, micStatus, stageSignal, roomSignalLabel;
+    juce::Label stageStatus, roomStatus, roomDraftStatus, micStatus, stageSignal, roomSignalLabel;
     SpatialMap stageMap, micMap;
     RoomGraphic roomGraphic;
 
@@ -124,7 +134,7 @@ private:
     juce::TextEditor micName, setupName;
     juce::TextButton placement { "Placement" }, micMixer { "Mic Mixer" }, addMic { "Add mic" }, removeMic { "Remove mic" },
                      addStereo { "Place stereo pair" }, renameMic { "Rename" }, saveSetup { "Save setup" },
-                     recallSetup { "Recall setup" }, removeSetup { "Delete setup" }, audition { "Mic Audition unavailable" },
+                     recallSetup { "Recall setup" }, removeSetup { "Delete setup" },
                      micRoomBypass { "Bypass shared room" };
     SpatialField micX { "Left / right", -1, 1, 0.01 }, micDepth { "Front / rear", 0, 1, 0.01 },
                  micHeight { "Capsule height", 0.25, 20, 0.05, " m" }, azimuth { "Azimuth", -180, 180, 1, " deg" },
