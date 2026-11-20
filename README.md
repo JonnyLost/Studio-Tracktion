@@ -82,8 +82,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-acoustic-engine-m4r https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone4R &&
-cd Studio-Tracktion-Milestone4R &&
+git clone --branch feature/studio-professional-interface-m45 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone45 &&
+cd Studio-Tracktion-Milestone45 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
@@ -99,6 +99,8 @@ open "$PWD/build/Studio_artefacts/Debug/Studio.app"
 Use `cmake` in place of the CMake.app path if CMake is installed on your PATH.
 
 ## Mac verification
+
+The [interface refinement guide](docs/interface-refinement.md) covers Stage, Mixer, transport, and the Milestone 4.5 visual acceptance pass.
 
 **Appearance acceptance.** At 1024 × 640 and 1280 × 800, cycle all five interface sizes with all three text sizes. With the macOS menu bar and Dock visible, check that the main window opens fully onscreen. Check the top-row menus and keyboard shortcuts, including reset from a focused editor and the floated MIDI Monitor. At 175% with Extra Large text, scroll the rail, Browser details, Channel controls and Mixer, and use the Project, Tracks and Layout overflow menus. Confirm that Retry and Confirm ARIA remain reachable, labels and fader values are legible, and controls line up with their hit targets. Reopen Studio to verify preferences and move the window between Retina and standard-density displays. Check that changing appearance leaves the musical zoom values unchanged and leaves the recording, saving and editing checks below usable.
 
