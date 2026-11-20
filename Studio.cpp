@@ -348,8 +348,19 @@ public:
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
-            workspaceHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
-            setDockMode (DockMode::split);
+            const int nextHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
+            if (dockMode != DockMode::split)
+            {
+                workspaceHeight = nextHeight;
+                setDockMode (DockMode::split);
+            }
+            else if (workspaceHeight != nextHeight)
+            {
+                workspaceHeight = nextHeight;
+                // Split is already selected: setDockMode intentionally skips
+                // re-layout in that case, but every pointer drag must relayout.
+                resized();
+            }
         };
         addAndMakeVisible (trackPicker);
         trackPicker.setTextWhenNothingSelected ("Select a track");
@@ -970,7 +981,7 @@ private:
         const auto& m = studio::appearance;
         const int available = arrangement.getHeight();
         const int headerHeight = m.control (34);
-        const int dividerHeight = m.px (9);
+        const int dividerHeight = m.px (12);
         const auto room = m.dockRoom (available, workspaceHeight, dockMode);
         splitLimit = room.splitLimit;
         const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
@@ -2673,6 +2684,34 @@ int StudioView::runInterfaceReview (const File& output)
                 setDockMode (DockMode::split);
                 if (! workspaceViewport.isVisible() || ! mixer.isVisible() || ruler.getWidth() < 200)
                     return fail ("split arrangement and Mixer");
+                // Exercise actual pointer and keyboard resizing. Merely
+                // selecting Split does not catch a divider that stops moving
+                // once Split is already the active mode.
+                const int minDock = jmin (studio::appearance.px (minimumSplitHeight), splitLimit);
+                if (splitLimit - minDock > studio::appearance.px (32))
+                {
+                    workspaceHeight = minDock + (splitLimit - minDock) / 2;
+                    resized();
+                    const int beforeDrag = workspacePanel.getHeight();
+                    const int distance = jmin (studio::appearance.px (24), splitLimit - beforeDrag);
+                    const auto start = workspaceDivider.getLocalBounds().getCentre().toFloat();
+                    const auto end = start.translated (0.0f, (float) -distance);
+                    const auto time = Time::getCurrentTime();
+                    const auto source = Desktop::getInstance().getMainMouseSource();
+                    const auto event = [&] (Point<float> point, int flags, bool moved)
+                    {
+                        return MouseEvent (source, point, ModifierKeys (flags), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                           &workspaceDivider, &workspaceDivider, time, start, time, 1, moved);
+                    };
+                    workspaceDivider.mouseDown (event (start, ModifierKeys::leftButtonModifier, false));
+                    workspaceDivider.mouseDrag (event (end, ModifierKeys::leftButtonModifier, true));
+                    workspaceDivider.mouseUp (event (end, 0, true));
+                    if (workspacePanel.getHeight() != beforeDrag + distance)
+                        return fail ("Split divider pointer drag does not resize");
+                    const int afterDrag = workspacePanel.getHeight();
+                    if (! workspaceDivider.keyPressed (KeyPress::downKey) || workspacePanel.getHeight() >= afterDrag)
+                        return fail ("Split divider keyboard resize does not resize");
+                }
                 setDockMode (DockMode::expanded);
                 if (workspaceViewport.getHeight() == 0 || mixer.getWidth() <= 2 * studio::appearance.mixerStripWidth (mixer.getWidth()))
                     return fail ("expanded mixer width");
