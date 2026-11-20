@@ -96,7 +96,7 @@ public:
         std::optional<RoomSignal> room;
     };
 
-    Capture capture (te::Edit& edit, const std::function<void()>& onPlay = {})
+    Capture capture (te::Edit& edit, const std::function<void()>& onPlay = {}, int seekBlock = -1)
     {
         auto& transport = edit.getTransport();
         transport.stop (false, false);
@@ -118,6 +118,7 @@ public:
         juce::MidiBuffer midi;
         for (int i = 0; i < captureBlocks; ++i)
         {
+            if (i == seekBlock) transport.setPosition (te::TimePosition(), te::TimePosition());
             block.clear();
             audio.processBlock (block, midi);
             for (int ch = 0; ch < 2; ++ch) result.output.copyFrom (ch, i * blockSize, block, ch, 0, blockSize);
@@ -238,6 +239,11 @@ Result verifySignal()
     if (energyDb (changed.output, 0, &rear.output) < rearWet - 10.0f)
         return Result::fail ("room preset did not change the audible response while playing");
     auto expected = device.capture (*edit);
+    const int seekBlock = captureBlocks / 2, secondStart = (seekBlock + 30) * blockSize;
+    auto seek = device.capture (*edit, {}, seekBlock);
+    for (int ch = 0; ch < 2; ++ch)
+        if (seek.output.getMagnitude (ch, secondStart, seek.output.getNumSamples() - secondStart) < .04f)
+            return Result::fail ("seeking while playing did not retrigger the isolated MIDI phrase");
     setRoomCheck (*edit, true);
     auto bypass = stone;
     bypass.bypass = true;

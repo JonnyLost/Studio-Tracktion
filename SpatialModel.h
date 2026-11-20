@@ -65,6 +65,7 @@ struct Room
     std::array<float, 6> decayTrim { 1, 1, 1, 1, 1, 1 };
     float early = 0.40f, late = 0.62f, gain = -12;
     bool bypass = false;
+    float preDelayMs = 0.0f;
     bool operator== (const Room&) const = default;
 };
 
@@ -86,6 +87,7 @@ inline Room validate (Room r)
     r.early = bounded (r.early, 0, 1, 0.40f);
     r.late = bounded (r.late, 0, 1, 0.62f);
     r.gain = bounded (r.gain, -60, 0, -12);
+    r.preDelayMs = bounded (r.preDelayMs, 0, 100, 0);
     return r;
 }
 
@@ -109,12 +111,15 @@ inline std::array<float, 6> predictDecay (Room raw)
 
 struct FactoryRoom { const char* name; const char* category; Room room; };
 inline constexpr std::array factoryRooms {
-    FactoryRoom { "Wood Concert Hall", "Concert halls", { 24, 34, 14, 0.22f } },
+    FactoryRoom { "Wood Concert Hall", "Concert halls", { 24, 34, 14, 0.28f, Surface::wood, Surface::wood, Surface::plaster,
+        { .73f, .87f, 1.0f, 1.0f, .91f, .79f }, .40f, .67f, -12.0f, false, 16.0f } },
     FactoryRoom { "Chamber Hall", "Chamber halls", {} },
     FactoryRoom { "Recital Room", "Recital rooms", { 10, 15, 5, 0.31f } },
-    FactoryRoom { "Scoring Stage", "Scoring stages", { 22, 27, 10, 0.38f } },
+    FactoryRoom { "Scoring Stage", "Scoring stages", { 22, 27, 10, 0.53f, Surface::wood, Surface::wood, Surface::plaster,
+        { .68f, .77f, .86f, .86f, .81f, .74f }, .61f, .49f, -12.0f, false, 7.0f } },
     FactoryRoom { "Treated Studio", "Recording studios", { 8, 10, 3.5f, 0.65f } },
-    FactoryRoom { "Stone Nave", "Churches and cathedrals", { 17, 37, 18, 0.10f, Surface::stone, Surface::stone, Surface::stone } },
+    FactoryRoom { "Stone Nave", "Churches and cathedrals", { 17, 37, 18, 0.16f, Surface::stone, Surface::stone, Surface::stone,
+        { .58f, .76f, .90f, 1.0f, .92f, .79f }, .36f, .71f, -12.0f, false, 24.0f } },
     FactoryRoom { "Small Live Room", "Small rooms", { 5, 7, 3, 0.44f, Surface::plaster, Surface::carpet } }
 };
 

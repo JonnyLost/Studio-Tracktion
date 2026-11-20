@@ -29,7 +29,7 @@ Open **Stage** from the rail. Drag a seat or nudge it with the arrow keys. Shift
 
 **Enable stage audio** is explicit and requires the transport to be stopped. Studio adds a stage balance and a post-fader aux send to one shared stereo room return. Existing faders and the track's direct output remain in the signal path. At the same send trim, the front row sends 10 dB less than the rear row. **Disable stage audio** removes that track's Studio balance and send. The shared return can stay in the project for other tracks. Studio checks for existing aux sends and recognized insert reverbs before enabling. This first implementation supports top-level tracks using the default audio output.
 
-**Rooms** includes seven factory profiles and a project-specific custom library. Choose a preset or edit dimensions, surfaces, treatment, six octave trims, reflections, and return level. Use **Apply Room** to make the draft active. To duplicate a factory or custom design, enter a unique name and choose **Save copy**. The decay chart is a bounded Eyring estimate using generic materials. The wet-only DSP uses a shared four-line feedback network and sparse early reflection taps. Room changes reuse the memory already prepared for playback. Bypass return immediately fades the wet signal while preserving the draft room design. Reset draft restores the wet defaults for the next Apply.
+**Rooms** includes seven factory profiles and a project-specific custom library. Choose a preset or edit dimensions, surfaces, treatment, six octave trims, reflections, pre-delay, and return level. Use **Apply Room** to make the draft active. To duplicate a factory or custom design, enter a unique name and choose **Save copy**. The decay chart is a bounded Eyring estimate using generic materials. The wet-only DSP uses a shared eight-line modulated feedback network, input diffusion, and twelve early reflections. Room changes crossfade inside the existing DSP allocation. Bypass return immediately fades the wet signal while preserving the draft room design. Reset draft restores the wet defaults for the next Apply.
 
 **Microphones** shows virtual capsule markers as diamonds, with pickup shapes and aim. Place and edit a capsule or add an XY, ORTF, spaced omni, or Blumlein pair and adjust spacing and angle. Save named setups in the project. The **Mic Mixer** stores level, pan, delay trim, mute, and solo for future capture. Studio stays in **Normal Mix**. Virtual microphone audio and Mic Audition are unavailable, so the capsule controls have no effect on recorded audio or the current mix. The shared-room bypass in that view controls the real return independently.
 
@@ -38,6 +38,8 @@ Open **Stage** from the rail. Drag a seat or nudge it with the arrow keys. Shift
 The original room output was substantially lower than the send and return trims suggested because the sparse taps and diffusion tank attenuated the wet signal in series. The corrected wet reference compensates for that loss while retaining the stored trims. At an equal send trim, depth still adds 10 dB from the front to the rear. Managed room returns are solo-safe so that soloing a source can retain its ambience.
 
 Resource Inspector reports the native room's allocated delay-buffer bytes and Tracktion's callback-cost sample when available. Hosted plug-in memory remains separately attributed.
+
+The [M4R acoustic comparison and MacBook listening procedure](docs/acoustic-engine.md) covers the original ringing, the revised engine, and how to generate paired offline renders.
 
 The Swift [room-design prototype](https://github.com/JonnyLost/Garritan-studio/blob/fceed818b78d2ca8a6afcdc4312f0ae827a85903/docs/acoustic-room-designer.md) informed the six-band surface and treatment model. Its [wet-only reverb](https://github.com/JonnyLost/Garritan-studio/blob/fceed818b78d2ca8a6afcdc4312f0ae827a85903/docs/native-room-reverb.md) informed the feedback and early-tap design. The [mic geometry](https://github.com/JonnyLost/Garritan-studio/blob/864d26bdc133403678af8b861470544461ca0536/docs/virtual-recording-microphones-phase-1.md) and [experimental capture graph](https://github.com/JonnyLost/Garritan-studio/blob/864d26bdc133403678af8b861470544461ca0536/docs/native-microphone-spill-and-mixer-v1.md) informed placement, directional markers, stereo patterns, and explicit monitoring state.
 
@@ -80,8 +82,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-orchestral-stage-m4 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone4 &&
-cd Studio-Tracktion-Milestone4 &&
+git clone --branch feature/studio-acoustic-engine-m4r https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone4R &&
+cd Studio-Tracktion-Milestone4R &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&

@@ -151,7 +151,7 @@ SpatialWorkspace::SpatialWorkspace()
     add (roomPage, roomStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
          wall, floor, ceiling, applyRoom, saveRoom,
          renameRoom, deleteRoom, bypassRoom, resetRoom, widthField, lengthField, heightField, treatment,
-         early, late, roomGain);
+         early, late, roomGain, preDelay);
     for (auto& band : decay) roomPage.addAndMakeVisible (band);
     add (micPage, micStatus, micMap, micList, patterns, stereo, setups, micName, setupName, placement, micMixer,
          addMic, removeMic, addStereo, renameMic, saveSetup, recallSetup, removeSetup, audition, micRoomBypass,
@@ -251,7 +251,7 @@ SpatialWorkspace::SpatialWorkspace()
         roomGraphic.setRoom (readDraft());
         syncRooms();
     };
-    for (auto* field : { &widthField, &lengthField, &heightField, &treatment, &early, &late, &roomGain })
+    for (auto* field : { &widthField, &lengthField, &heightField, &treatment, &early, &late, &roomGain, &preDelay })
         field->onChange = draftChanged;
     for (auto& band : decay) band.onChange = draftChanged;
     wall.onChange = floor.onChange = ceiling.onChange = draftChanged;
@@ -269,6 +269,7 @@ SpatialWorkspace::SpatialWorkspace()
     {
         auto current = readDraft();
         current.early = Room().early; current.late = Room().late; current.gain = Room().gain;
+        current.preDelayMs = Room().preDelayMs;
         setDraft (current, roomName.getText());
         draftChanged();
     };
@@ -619,6 +620,7 @@ void SpatialWorkspace::setDraft (Room next, const String& name)
     draft = validate (next);
     widthField.set (draft.width); lengthField.set (draft.length); heightField.set (draft.height);
     treatment.set (100 * draft.treatment); early.set (100 * draft.early); late.set (100 * draft.late); roomGain.set (draft.gain);
+    preDelay.set (draft.preDelayMs);
     wall.setSelectedId ((int) draft.wall + 1, dontSendNotification);
     floor.setSelectedId ((int) draft.floor + 1, dontSendNotification);
     ceiling.setSelectedId ((int) draft.ceiling + 1, dontSendNotification);
@@ -633,6 +635,7 @@ Room SpatialWorkspace::readDraft() const
     auto next = draft;
     next.width = widthField.get(); next.length = lengthField.get(); next.height = heightField.get();
     next.treatment = treatment.get() / 100; next.early = early.get() / 100; next.late = late.get() / 100; next.gain = roomGain.get();
+    next.preDelayMs = preDelay.get();
     next.wall = (Surface) (wall.getSelectedId() - 1); next.floor = (Surface) (floor.getSelectedId() - 1);
     next.ceiling = (Surface) (ceiling.getSelectedId() - 1);
     for (size_t i = 0; i < decay.size(); ++i) next.decayTrim[i] = decay[i].get();
@@ -1035,7 +1038,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         fields (area, { &widthField, &lengthField, &heightField, &treatment });
         toolbar (area, { { &wall, 150 }, { &floor, 150 }, { &ceiling, 153 } });
         fields (area, { &decay[0], &decay[1], &decay[2], &decay[3], &decay[4], &decay[5] });
-        fields (area, { &early, &late, &roomGain });
+        fields (area, { &early, &late, &preDelay, &roomGain });
         toolbar (area, { { &resetRoom, 122 } });
     }
     else

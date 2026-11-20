@@ -3,6 +3,7 @@
 #include "SpatialReverb.h"
 #include "SpatialState.h"
 #include <atomic>
+#include <bit>
 
 using namespace juce;
 namespace te = tracktion;
@@ -47,8 +48,15 @@ public:
 
     void initialise (const te::PluginInitialisationInfo& info) override
     {
+        acceptedRevision = 1; // Odd revisions are never accepted by the reader.
+        const auto revision = revisionNumber.load();
+        auto initial = readPublishedPlan();
+        if ((revision & 1u) == 0 && revision == revisionNumber.load())
+            acceptedRevision = revision;
+        else
+            initial = makeRoomPlan (Room());
         reverb.setCheckEnabled (checkEnabled.load());
-        reverb.prepare (info.sampleRate, readPublishedRoom());
+        reverb.preparePlan (info.sampleRate, initial);
         // Compute the meter fall per sample during preparation. The render
         // callback uses the actual block length, including automation splits.
         meterTime = (float) (0.30 * jmax (8000.0, info.sampleRate));
@@ -70,11 +78,11 @@ public:
         const auto revision = revisionNumber.load();
         if (revision != acceptedRevision && (revision & 1u) == 0)
         {
-            const auto next = readPublishedRoom();
+            const auto next = readPublishedPlan();
             if (revision == revisionNumber.load())
             {
                 acceptedRevision = revision;
-                reverb.setRoom (next);
+                reverb.setPlan (next);
             }
         }
         const auto start = context.bufferStartSample;
@@ -113,7 +121,9 @@ public:
 
 private:
     static_assert (std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
-    static constexpr size_t parameterCount = 17;
+    static constexpr size_t parameterCount = roomLineCount * 7 + roomEarlyTaps * 2 + 5;
+    using PlanScalars = std::array<float, parameterCount>;
+    static_assert (sizeof (RoomPlan) == sizeof (PlanScalars));
     std::array<std::atomic<float>, parameterCount> publication {};
     std::atomic<unsigned> revisionNumber { 0 };
     std::atomic<std::size_t> bytes { 0 };
@@ -138,23 +148,20 @@ private:
     void publishRoom()
     {
         const auto xml = parseXML (state.getProperty (roomProperty).toString());
-        const Room r = xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room();
-        const std::array values { r.width, r.length, r.height, r.treatment, (float) r.wall,
-            (float) r.floor, (float) r.ceiling, r.decayTrim[0], r.decayTrim[1], r.decayTrim[2],
-            r.decayTrim[3], r.decayTrim[4], r.decayTrim[5], r.early, r.late, r.gain, r.bypass ? 1.0f : 0.0f };
-        // Single writer on the settings thread. The render reader retries on
-        // its next block if these scalar stores overlap a parameter read.
+        const auto plan = makeRoomPlan (xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room());
+        const auto values = std::bit_cast<PlanScalars> (plan);
+        // Single writer on the settings thread. The render reader keeps its
+        // last complete plan if a new plan overlaps its bounded scalar read.
         ++revisionNumber;
         for (size_t i = 0; i < values.size(); ++i) publication[i].store (values[i]);
         ++revisionNumber;
     }
 
-    Room readPublishedRoom() const
+    RoomPlan readPublishedPlan() const
     {
-        std::array<float, parameterCount> v {};
-        for (size_t i = 0; i < v.size(); ++i) v[i] = publication[i].load();
-        return { v[0], v[1], v[2], v[3], (Surface) v[4], (Surface) v[5], (Surface) v[6],
-                 { v[7], v[8], v[9], v[10], v[11], v[12] }, v[13], v[14], v[15], v[16] != 0.0f };
+        PlanScalars values {};
+        for (size_t i = 0; i < values.size(); ++i) values[i] = publication[i].load();
+        return std::bit_cast<RoomPlan> (values);
     }
 };
 
@@ -486,7 +493,7 @@ std::optional<ResourceReport> resourceReport (te::Edit& edit)
         const auto bytes = target.room->memoryBytes();
         const auto active = edit.state.getChildWithName (sceneType).getChildWithName (roomType);
         auto description = active.getProperty ("name", "Chamber Hall").toString()
-            + " | " + String (sends) + (sends == 1 ? " send" : " sends") + " | 4-line stereo tank";
+            + " | " + String (sends) + (sends == 1 ? " send" : " sends") + " | 8-line spatial reverb";
         if (readRoom (active).bypass) description << " | Bypassed";
        #if TRACKTION_ENABLE_PLUGIN_CPU_MEASUREMENT
         const auto cpu = bytes > 0 && edit.getTransport().isPlayContextActive()

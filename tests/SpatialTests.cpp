@@ -49,6 +49,7 @@ static void stateRoundTrip()
     auto savedRoom = factoryRooms[5].room;
     savedRoom.decayTrim[2] = 1.25f;
     savedRoom.gain = -19;
+    savedRoom.preDelayMs = 32;
     auto custom = writeRoom (savedRoom, "Stone & strings");
     juce::ValueTree library (libraryType);
     library.addChild (custom, -1, nullptr);
@@ -83,6 +84,8 @@ static void stateRoundTrip()
     assert (readMic (stored.getChildWithName (microphonesType).getChild (0)) == mic);
     assert (readMic (stored.getChildWithName (setupsType).getChild (0).getChildWithName (microphonesType).getChild (0)) == mic);
     assert (readRoom ({}) == Room());
+    room.removeProperty ("preDelayMs", nullptr);
+    assert (readRoom (room).preDelayMs == 0.0f);
 }
 
 static void audio()
@@ -126,7 +129,8 @@ static void audio()
         bypass.bypass = false;
         bypass.decayTrim = { 2, 0.25f, 2, 0.25f, 2, 0.25f };
         render.setRoom (bypass);
-        left[0] = 1;
+        for (int i = 0; i < (int) (sampleRate * .13); ++i)
+            left[(size_t) i] = .2f * (float) std::sin (2 * std::acos (-1.0) * 330.0 * i / sampleRate);
         render.process (left.data(), right.data(), frames);
         assert (std::all_of (left.begin(), left.end(), [] (float x) { return std::isfinite (x); }));
         assert (std::inner_product (left.begin(), left.end(), left.begin(), 0.0) > 1.0e-5);
@@ -140,12 +144,76 @@ static void audio()
     }
 }
 
+static int firstReflection (Room selected, int rate)
+{
+    std::vector<float> left (rate / 4), right (rate / 4);
+    RoomReverb process;
+    process.prepare (rate, selected);
+    left[0] = 0.2f;
+    process.process (left.data(), right.data(), (int) left.size());
+    return (int) (std::find_if (left.begin(), left.end(), [] (float x) { return std::abs (x) > 1.0e-6f; }) - left.begin());
+}
+
+static void transitions()
+{
+    Room delayed;
+    delayed.preDelayMs = 30;
+    for (int rate : { 44100, 48000, 96000 })
+    {
+        const int early = firstReflection ({}, rate);
+        assert (early > 0 && early < rate / 20);
+        assert (std::abs (firstReflection (delayed, rate) - early - rate * 30 / 1000) <= 1);
+
+        RoomReverb dsp;
+        dsp.prepare (rate, {});
+        const auto bytes = dsp.allocatedBytes();
+        std::array<float, 251> left {}, right {};
+        const auto processed = dsp.process (left.data(), right.data(), (int) left.size());
+        assert (processed.wet == 0 && processed.input == 0);
+        double phase = 0;
+        int sign = 1;
+        float last = 0;
+        for (int block = 0; block < 980; ++block)
+        {
+            if (block % 11 == 0)
+            {
+                auto room = factoryRooms[(size_t) block / 11 % factoryRooms.size()].room;
+                room.gain = 0.0f;
+                room.preDelayMs = sign > 0 ? 100 : 0;
+                room.bypass = block % 55 == 0;
+                room.decayTrim = { 2, 0.25f, 2, 0.25f, 2, 0.25f };
+                dsp.setRoom (room);
+                dsp.setCheckEnabled (sign > 0);
+                sign *= -1;
+            }
+            for (size_t i = 0; i < left.size(); ++i)
+            {
+                phase += 2.0 * std::acos (-1.0) * 197 / rate;
+                left[i] = 1.4f * (float) std::sin (phase);
+                right[i] = 1.4f * (float) std::cos (phase);
+            }
+            dsp.process (left.data(), right.data(), (int) left.size());
+            for (size_t i = 0; i < left.size(); ++i)
+            {
+                assert (std::isfinite (left[i]) && std::isfinite (right[i]));
+                assert (std::abs (left[i]) < 1 && std::abs (right[i]) < 1);
+                // 197 Hz continuous input gives this generous allowance for
+                // ordinary waveform slopes while catching abrupt tap swaps.
+                assert (std::abs (left[i] - last) < .65f);
+                last = left[i];
+            }
+        }
+        assert (dsp.allocatedBytes() == bytes);
+    }
+}
+
 int main()
 {
     juce::MessageManager::getInstance();
     models();
     stateRoundTrip();
     audio();
+    transitions();
     juce::MessageManager::deleteInstance();
     std::cout << "Spatial validation, state/undo, and deterministic stereo reverb tests passed.\n";
 }
