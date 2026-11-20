@@ -21,6 +21,7 @@ using namespace tracktion::literals;
 #include "ArticulationPalette.h"
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
+#include "StudioEnvironments.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -455,11 +456,16 @@ public:
         importAudio.onClick = [this] { chooseAudio(); };
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
+        addChildComponent (environmentWelcome);
+        environmentWelcome.onNewProject = [this] { chooseProject (true); };
+        environmentWelcome.onOpenProject = [this] { chooseProject (false); };
+        environmentWelcome.onContinue = [this] { grabKeyboardFocus(); };
         setSize (1024, 640);
         applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
         timerCallback();
         startTimerHz (24);
+        if (environmentWelcome.showAtLaunch()) environmentWelcome.open (true);
     }
 
     ~StudioView() override
@@ -606,6 +612,7 @@ public:
 
     bool keyPressed (const KeyPress& key) override
     {
+        if (environmentWelcome.isVisible()) return environmentWelcome.keyPressed (key);
         if (handleAppearanceKey (key) || articulation.keyPressed (key)) return true;
         if (key == KeyPress::spaceKey && play.isEnabled())
         {
@@ -731,6 +738,7 @@ public:
         arrangementZoomIn.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
         arrangementZoomOut.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
         rulerTrackLabel = zoomButtons;
+        environmentWelcome.setBounds (getLocalBounds());
         repaint();
     }
 
@@ -802,6 +810,11 @@ public:
                 [safe, percent] { if (safe != nullptr) safe->applyAppearance (studio::appearance.interfacePercent(), percent, true); });
         }
         PopupMenu menu;
+        menu.addItem ("Studio Environments...", [safe]
+        {
+            if (safe != nullptr) safe->environmentWelcome.open (false);
+        });
+        menu.addSeparator();
         menu.addItem ("Resource Inspector", [safe] { if (safe != nullptr) safe->resources.onOpen(); });
         menu.addItem ("MIDI Monitor", [safe] { if (safe != nullptr) safe->monitorButton.onClick(); });
         menu.addSeparator();
@@ -851,6 +864,7 @@ private:
     bool collapsedDockLinks = false;
     TextButton viewButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
+    studio::StudioEnvironmentWelcome environmentWelcome { engine.getPropertyStorage().getPropertiesFile() };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
@@ -2620,6 +2634,7 @@ private:
 int StudioView::runInterfaceReview (const File& output)
 {
     stopTimer();
+    environmentWelcome.dismiss();
     const ScopedValueSetter<studio::AppearanceMetrics> appearanceScope (studio::appearance, studio::appearance);
     const auto fail = [] (const char* reason)
     {
@@ -2739,6 +2754,12 @@ int StudioView::runInterfaceReview (const File& output)
     };
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
 
+    environmentWelcome.selectForReview (1);
+    environmentWelcome.open (false);
+    if (! environmentWelcome.essentialControlsFit()) return fail ("Welcome controls at 1280 x 800");
+    if (! capture ("studio-welcome-1280x800.png")) return fail ("write Welcome screenshot");
+    environmentWelcome.dismiss();
+
     showWorkspace (Workspace::stage);
     spatialWorkspace.refresh (tracks, { tracks[1] }, true, true);
     using studio::spatial::Seating;
@@ -2760,6 +2781,10 @@ int StudioView::runInterfaceReview (const File& output)
     if (! capture ("piano-arrangement-1024x640.png")) return fail ("write Piano Roll screenshot");
     applyAppearance (175, 130, false);
     if (! capture ("piano-arrangement-1024x640-largest-text.png")) return fail ("write scaled Piano Roll screenshot");
+    environmentWelcome.open (false);
+    if (! environmentWelcome.essentialControlsFit()) return fail ("Welcome controls at 1024 x 640 largest text");
+    if (! capture ("studio-welcome-1024x640-largest-text.png")) return fail ("write scaled Welcome screenshot");
+    environmentWelcome.dismiss();
 
     const auto original = studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType));
     const auto beforeReopen = projectGeneration;
