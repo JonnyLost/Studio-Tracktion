@@ -50,7 +50,7 @@ int main()
                 && a.number == b.number && a.value == b.value && a.shortcut == b.shortcut);
     }
     savedFlute->getFirstChildElement()->setAttribute ("channel", 17);
-    savedFlute->getLastChildElement()->setAttribute ("type", "unrecognised");
+    savedFlute->getFirstChildElement()->getNextElement()->setAttribute ("type", "unrecognised");
     assert (readArticulations (*savedFlute).empty());
     assert (readArticulations (*savedHorn).size() == 1);
 
