@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include <vector>
 #include <functional>
+#include <limits>
 using namespace juce;
 using namespace tracktion::literals;
 
@@ -79,6 +80,9 @@ public:
                                &audioSettings, &plugins,
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
+        addAndMakeVisible (regionActions);
+        regionActions.setTooltip ("Split, duplicate, copy or paste selected arrangement regions");
+        regionActions.onClick = [this] { showRegionActions(); };
 
         addAndMakeVisible (arrangementZoomOut);
         addAndMakeVisible (arrangementZoomIn);
@@ -386,6 +390,7 @@ public:
         for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject,
                               &openProject, &newProject })
             button->setBounds (files.removeFromRight (button == &plugins ? 116 : 94).reduced (3, 2));
+        regionActions.setBounds (files.removeFromRight (115).reduced (3, 2));
         title.setBounds (files);
 
         auto controls = topBar.withTrimmedTop (44).reduced (12, 5);
@@ -493,6 +498,15 @@ private:
     };
     std::vector<OriginalAriaState> originalAriaStates;
 
+    struct RegionClipboardItem
+    {
+        te::ClipCopy copy;
+        double relativeStartSeconds = 0.0;
+        int relativeTrack = 0;
+    };
+    std::vector<RegionClipboardItem> regionClipboard;
+    int clipboardBaseTrack = 0;
+
 
     Label title, position, tempo, mixerLabel, message, trackHeading, trackDetails,
           volumeLabel, panLabel, workspaceTitle, ariaReviewNotice;
@@ -510,6 +524,7 @@ private:
     TextButton newProject { "New Project" }, openProject { "Open Project" },
                saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
+               regionActions { "Edit Regions" },
                rewind { "To Start" }, play { "Play" }, record { "Record" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
                addMidiClip { "+ MIDI Clip" };
@@ -639,6 +654,175 @@ private:
         repaint();
     }
 
+    void copySelectedRegions()
+    {
+        if (edit == nullptr)
+            return;
+        auto clips = selection.getItemsOfType<te::Clip>();
+        if (clips.isEmpty())
+        {
+            message.setText ("Select one or more regions in the arrangement first.", dontSendNotification);
+            return;
+        }
+        regionClipboard.clear();
+        const auto tracks = te::getAudioTracks (*edit);
+        double earliest = std::numeric_limits<double>::max();
+        int firstTrack = tracks.size();
+        for (auto* clip : clips)
+        {
+            earliest = jmin (earliest, clip->getPosition().getStart().inSeconds());
+            const int index = tracks.indexOf (dynamic_cast<te::AudioTrack*> (clip->getTrack()));
+            if (index >= 0)
+                firstTrack = jmin (firstTrack, index);
+        }
+        if (firstTrack < 0 || firstTrack >= tracks.size())
+            return;
+        std::vector<RegionClipboardItem> copied;
+        copied.reserve ((size_t) clips.size());
+        for (auto* clip : clips)
+        {
+            const int index = tracks.indexOf (dynamic_cast<te::AudioTrack*> (clip->getTrack()));
+            if (index < 0)
+                continue;
+            copied.push_back ({ te::ClipCopy::fromClip (*clip),
+                                clip->getPosition().getStart().inSeconds() - earliest,
+                                index - firstTrack });
+        }
+        regionClipboard = std::move (copied);
+        clipboardBaseTrack = firstTrack;
+        message.setText (String (regionClipboard.size()) + " region(s) copied. Select a destination track and seek, then Paste.",
+                         dontSendNotification);
+    }
+
+    void pasteRegions()
+    {
+        if (edit == nullptr || regionClipboard.empty())
+            return;
+        const auto tracks = te::getAudioTracks (*edit);
+        int baseTrack = clipboardBaseTrack;
+        if (auto* chosen = selectedTrack())
+            baseTrack = tracks.indexOf (chosen);
+        if (! isPositiveAndBelow (baseTrack, tracks.size()))
+            return;
+
+        const double start = edit->getTransport().getPosition().inSeconds();
+        edit->getUndoManager().beginNewTransaction ("Paste regions");
+        int pasted = 0;
+        te::Clip::Ptr last;
+        for (const auto& item : regionClipboard)
+        {
+            const int index = baseTrack + item.relativeTrack;
+            if (! isPositiveAndBelow (index, tracks.size()))
+                continue;
+            if (auto* inserted = te::insertClipCopy (*tracks[index], item.copy.withNewItemID (*edit)))
+            {
+                inserted->setStart (te::TimePosition::fromSeconds (start + item.relativeStartSeconds), false, true);
+                last = inserted;
+                ++pasted;
+            }
+        }
+        if (last != nullptr)
+            selection.selectOnly (last.get());
+        message.setText (String (pasted) + " region(s) pasted at the playhead.", dontSendNotification);
+    }
+
+    void performRegionAction (int action)
+    {
+        if (edit == nullptr || busy || edit->getTransport().isRecording())
+            return;
+        if (action == 3)
+        {
+            copySelectedRegions();
+            return;
+        }
+        if (action == 4)
+        {
+            pasteRegions();
+            return;
+        }
+        if (action == 5)
+        {
+            const int selectedCount = selection.getItemsOfType<te::Clip>().size();
+            copySelectedRegions();
+            if ((int) regionClipboard.size() != selectedCount)
+                return; // Never delete a region if its clipboard copy failed.
+        }
+        auto clips = selection.getItemsOfType<te::Clip>();
+        if (clips.isEmpty())
+            return;
+        // The owning track's split and ClipCopy insert APIs retain clip
+        // state, source offsets, channel data and AU/plugin parameters.
+        edit->getUndoManager().beginNewTransaction (action == 1 ? "Split regions"
+                                                   : action == 2 ? "Duplicate regions"
+                                                   : action == 5 ? "Cut regions" : "Delete regions");
+        int count = 0;
+        te::Clip::Ptr last;
+        for (auto* clip : clips)
+        {
+            if (auto* track = clip->getClipTrack())
+            {
+                if (action == 1)
+                {
+                    const auto pos = edit->getTransport().getPosition();
+                    if (pos <= clip->getPosition().getStart() || pos >= clip->getPosition().getEnd())
+                        continue;
+                    if (auto* right = track->splitClip (*clip, pos))
+                    {
+                        last = right;
+                        ++count;
+                    }
+                }
+                else if (action == 2)
+                {
+                    const auto nextStart = clip->getPosition().getEnd();
+                    if (auto* duplicated = te::insertClipCopy (*track,
+                            te::ClipCopy::fromClip (*clip).withNewItemID (*edit)))
+                    {
+                        duplicated->setStart (nextStart, false, true);
+                        last = duplicated;
+                        ++count;
+                    }
+                }
+                else if (action == 5 || action == 6)
+                {
+                    clip->removeFromParent();
+                    ++count;
+                }
+            }
+        }
+        if (action == 5 || action == 6)
+        {
+            piano.setClip (nullptr);
+            selection.deselectAll();
+        }
+        else if (last != nullptr)
+            selection.selectOnly (last.get());
+        message.setText (String (count) + (action == 1 ? " region(s) split."
+                                   : action == 2 ? " region(s) duplicated."
+                                   : action == 5 ? " region(s) cut." : " region(s) deleted."),
+                         dontSendNotification);
+    }
+
+    void showRegionActions()
+    {
+        PopupMenu menu;
+        const bool selected = selection.getItemsOfType<te::Clip>().size() > 0;
+        menu.addItem (1, "Split selected at playhead", selected);
+        menu.addItem (2, "Duplicate selected", selected);
+        menu.addSeparator();
+        menu.addItem (3, "Copy selected regions", selected);
+        menu.addItem (4, "Paste at playhead", ! regionClipboard.empty());
+        menu.addItem (5, "Cut selected regions", selected);
+        menu.addItem (6, "Delete selected regions", selected);
+        Component::SafePointer<StudioView> safe (this);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&regionActions),
+                            [safe] (int choice)
+                            {
+                                if (safe != nullptr && choice != 0)
+                                    safe->performRegionAction (choice);
+                            });
+    }
+
     void timerCallback() override
     {
         monitorButton.setButtonText (monitor.isActive() ? "●  MIDI Monitor" : "MIDI Monitor");
@@ -653,6 +837,7 @@ private:
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
+        regionActions.setEnabled (ready && ! recording);
         for (auto* button : { &saveProject, &saveAsProject, &rewind, &addMidi,
                               &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
@@ -682,13 +867,25 @@ private:
             sizeEditor();
         }
 
-        if (auto* selectedClip = dynamic_cast<te::MidiClip*> (selection.getSelectedObject (0)))
-            if (piano.getClip() != selectedClip)
+        const auto selectedMidiClips = selection.getItemsOfType<te::MidiClip>();
+        if (! selectedMidiClips.isEmpty())
+        {
+            // Use the earliest region as the active edit target so the
+            // other selected clips line up to its right in the piano roll.
+            auto* primary = selectedMidiClips.getFirst();
+            for (auto* candidate : selectedMidiClips)
+                if (candidate->getPosition().getStart() < primary->getPosition().getStart())
+                    primary = candidate;
+            if (piano.getClip() != primary)
             {
-                piano.setClip (selectedClip);
+                piano.setClip (primary);
                 workspaceHeight = 360;
                 showWorkspace (Workspace::piano);
             }
+            piano.setComparisonClips (selectedMidiClips);
+        }
+        else
+            piano.setComparisonClips ({});
 
         auto* track = selectedTrack();
         StringArray names;
@@ -1132,6 +1329,7 @@ private:
         if (edit != nullptr)
             edit->getTransport().stop (false, false);
         piano.setClip (nullptr);
+        regionClipboard.clear();
         showWorkspace (Workspace::closed);
         selection.deselectAll();
         timeline.setViewedComponent (nullptr);

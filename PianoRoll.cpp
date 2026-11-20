@@ -64,10 +64,27 @@ void StudioPianoRoll::setClip (te::MidiClip::Ptr next)
     draggingKeyboard = false;
     keyboardPreviewPitch = -1;
     selectedNote = {};
+    selectedNotes.clear();
+    lassoInitialSelection.clear();
+    lassoBounds = {};
     draggedNote = {};
     clip = std::move (next);
+    comparisonClips.clear();
     transportWithinClip = false;
     horizontal.setCurrentRangeStart (0, dontSendNotification);
+    refresh();
+}
+
+void StudioPianoRoll::setComparisonClips (const Array<te::MidiClip*>& selectedClips)
+{
+    Array<te::MidiClip::Ptr> next;
+    for (auto* candidate : selectedClips)
+        if (candidate != nullptr && candidate != clip.get())
+            next.add (candidate);
+
+    if (next == comparisonClips)
+        return;
+    comparisonClips = std::move (next);
     refresh();
 }
 
@@ -82,6 +99,7 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
         draggingKeyboard = false;
         keyboardPreviewPitch = -1;
         draggedNote = {};
+        lassoBounds = {};
     }
     editingEnabled = enabled;
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo })
@@ -92,7 +110,18 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
 void StudioPianoRoll::refresh()
 {
     const bool hasClip = clip != nullptr && clip->hasValidSequence();
-    caption.setText (hasClip ? clip->getName() + "  •  " + String (clip->getSequence().getNumNotes()) + " notes"
+    if (hasClip)
+    {
+        for (int i = selectedNotes.size(); --i >= 0;)
+            if (clip->getSequence().getNoteFor (selectedNotes.getReference (i)) == nullptr)
+                selectedNotes.remove (i);
+        if (! selectedNotes.contains (selectedNote))
+            selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
+    }
+    caption.setText (hasClip ? clip->getName() + "  •  " + String (clip->getSequence().getNumNotes())
+                                 + " notes" + (comparisonClips.isEmpty() ? String()
+                                      : "  •  " + String (comparisonClips.size()) + " other clips (read-only)" )
+                                 + (selectedNotes.size() > 1 ? "  •  " + String (selectedNotes.size()) + " selected" : String())
                              : "Select a MIDI clip in the arrangement", dontSendNotification);
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo,
                                                               &zoomIn, &zoomOut, &verticalZoomIn,
@@ -255,6 +284,14 @@ te::MidiNote* StudioPianoRoll::selected() const
     return clip != nullptr && selectedNote.isValid() ? clip->getSequence().getNoteFor (selectedNote) : nullptr;
 }
 
+void StudioPianoRoll::selectOnlyNote (ValueTree state)
+{
+    selectedNotes.clear();
+    if (state.isValid())
+        selectedNotes.add (state);
+    selectedNote = state;
+}
+
 te::MidiNote* StudioPianoRoll::noteAt (Point<int> point) const
 {
     if (clip == nullptr || ! notesArea.contains (point))
@@ -273,6 +310,12 @@ void StudioPianoRoll::updateScrollBars()
     if (clip != nullptr && clip->hasValidSequence())
         for (auto* note : clip->getSequence().getNotes())
             endBeat = jmax (endBeat, note->getEndBeat().inBeats() + 4.0);
+    if (clip != nullptr)
+        for (const auto& other : comparisonClips)
+            if (other != nullptr && other->hasValidSequence())
+                for (auto* note : other->getSequence().getNotes())
+                    endBeat = jmax (endBeat, clip->getContentBeatAtTime (
+                        other->getTimeOfContentBeat (note->getEndBeat())).inBeats() + 4.0);
 
     const auto visibleBeats = notesArea.getWidth() / pixelsPerBeat;
     horizontal.setRangeLimits (0.0, jmax (endBeat, visibleBeats));
@@ -385,6 +428,16 @@ void StudioPianoRoll::paint (Graphics& g)
         return;
     paintGrid (g);
     paintNotes (g);
+    if (gesture == Gesture::lasso && ! lassoBounds.isEmpty())
+    {
+        g.saveState();
+        g.reduceClipRegion (notesArea);
+        g.setColour (Colour (0x385eacdd));
+        g.fillRect (lassoBounds);
+        g.setColour (Colour (0xff92caed));
+        g.drawRect (lassoBounds, 1);
+        g.restoreState();
+    }
     paintVelocity (g);
     paintRuler (g);
     paintPlayhead (g);
@@ -542,19 +595,43 @@ void StudioPianoRoll::paintNotes (Graphics& g)
         return;
     g.saveState();
     g.reduceClipRegion (notesArea);
+    // Selected neighbouring MIDI regions are shown in the active clip's
+    // musical time coordinates. Ghost notes are intentionally read-only.
+    for (const auto& other : comparisonClips)
+        if (other != nullptr && other->hasValidSequence())
+            for (auto* note : other->getSequence().getNotes())
+            {
+                const double start = clip->getContentBeatAtTime (
+                    other->getTimeOfContentBeat (note->getStartBeat())).inBeats();
+                const double end = clip->getContentBeatAtTime (
+                    other->getTimeOfContentBeat (note->getEndBeat())).inBeats();
+                const Rectangle<int> box { xAt (start), yAt (note->getNoteNumber()) + 2,
+                    jmax (3, xAt (end) - xAt (start)), rowHeight - 4 };
+                if (box.intersects (notesArea))
+                {
+                    g.setColour (Colour (0xff79a9c6).withAlpha (0.36f));
+                    g.fillRoundedRectangle (box.toFloat(), 2.0f);
+                    g.setColour (Colour (0xffa5c9dc).withAlpha (0.7f));
+                    g.drawRoundedRectangle (box.toFloat(), 2.0f, 1.0f);
+                }
+            }
     for (auto* note : clip->getSequence().getNotes())
     {
         auto bounds = noteBounds (*note);
-        if (! bounds.intersects (notesArea))
-            continue;
         if ((gesture == Gesture::draw || gesture == Gesture::move
              || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
             && draggedNote == note->state)
             bounds = { xAt (previewBeat), yAt (previewPitch) + 1,
                        jmax (3, roundToInt (previewLength * pixelsPerBeat)), rowHeight - 2 };
-        const bool active = note->state == selectedNote;
-        const auto velocity = gesture == Gesture::velocity && draggedNote == note->state
-                            ? previewVelocity : note->getVelocity();
+        else if (gesture == Gesture::move && selectedNotes.contains (note->state))
+            bounds.translate (xAt (previewBeat) - xAt (originalBeat),
+                              (originalPitch - previewPitch) * rowHeight);
+        if (! bounds.intersects (notesArea))
+            continue;
+        const bool active = selectedNotes.contains (note->state);
+        const auto velocity = gesture == Gesture::velocity && active
+                            ? jlimit (1, 127, note->getVelocity() + previewVelocity - originalVelocity)
+                            : note->getVelocity();
         const auto fraction = jlimit (0.0f, 1.0f, velocity / 127.0f);
         // Walk the visible colour wheel: soft blue -> cyan -> green -> yellow -> hard red.
         const auto noteColour = Colour::fromHSV (0.64f * (1.0f - fraction), 0.86f, 0.9f, 1.0f);
@@ -596,8 +673,9 @@ void StudioPianoRoll::paintVelocity (Graphics& g)
         const int x = xAt (note->getStartBeat().inBeats());
         if (x < velocityArea.getX() || x >= velocityArea.getRight())
             continue;
-        const int vel = gesture == Gesture::velocity && draggedNote == note->state
-                      ? previewVelocity : note->getVelocity();
+        const int vel = gesture == Gesture::velocity && selectedNotes.contains (note->state)
+                      ? jlimit (1, 127, note->getVelocity() + previewVelocity - originalVelocity)
+                      : note->getVelocity();
         const int h = roundToInt ((velocityArea.getHeight() - 8) * vel / 127.0);
         g.setColour (Colour::fromHSV (0.64f * (1.0f - vel / 127.0f), 0.86f, 0.9f, 1.0f));
         g.fillRect (x, velocityArea.getBottom() - h, 5, h);
@@ -650,6 +728,8 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
         }
         if (hit != nullptr)
         {
+            if (! selectedNotes.contains (hit->state))
+                selectOnlyNote (hit->state);
             selectedNote = draggedNote = hit->state;
             originalVelocity = hit->getVelocity();
             previewVelocity = velocityAt (point.y);
@@ -660,6 +740,19 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
     {
         if (auto* hit = noteAt (point))
         {
+            if (event.mods.isShiftDown())
+            {
+                if (selectedNotes.contains (hit->state))
+                    selectedNotes.removeFirstMatchingValue (hit->state);
+                else
+                    selectedNotes.add (hit->state);
+                selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
+                draggedNote = {};
+                repaint();
+                return;
+            }
+            if (! selectedNotes.contains (hit->state))
+                selectOnlyNote (hit->state);
             selectedNote = draggedNote = hit->state;
             originalBeat = previewBeat = hit->getStartBeat().inBeats();
             originalLength = previewLength = hit->getLengthBeats().inBeats();
@@ -677,10 +770,16 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
             originalLength = previewLength = jmax (1.0 / 48.0, gridBeats());
             originalPitch = previewPitch = pitchAt (point.y);
             gesture = Gesture::draw;
-            selectedNote = {};
+            selectOnlyNote ({});
         }
         else
-            selectedNote = {};
+        {
+            if (! event.mods.isShiftDown())
+                selectOnlyNote ({});
+            lassoInitialSelection = selectedNotes;
+            lassoBounds = {};
+            gesture = Gesture::lasso;
+        }
     }
     repaint();
 }
@@ -730,6 +829,19 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
     if (gesture == Gesture::none)
         return;
     const int x = event.getPosition().x, y = event.getPosition().y;
+    if (gesture == Gesture::lasso)
+    {
+        lassoBounds = { jmin (startX, x), jmin (startY, y),
+                        std::abs (x - startX), std::abs (y - startY) };
+        selectedNotes = lassoInitialSelection;
+        if (clip != nullptr)
+            for (auto* note : clip->getSequence().getNotes())
+                if (noteBounds (*note).intersects (lassoBounds))
+                    selectedNotes.addIfNotAlreadyThere (note->state);
+        selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
+        repaint();
+        return;
+    }
     // A mostly vertical drag near a trim handle means "change pitch".
     // This makes short notes easy to transpose without accidental trimming.
     if ((gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
@@ -748,6 +860,27 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
             break;
         case Gesture::move:
             previewBeat = snap (jmax (0.0, originalBeat + delta));
+            if (selectedNotes.size() > 1 && clip != nullptr)
+            {
+                double earliest = originalBeat;
+                int lowest = originalPitch, highest = originalPitch;
+                for (auto state : selectedNotes)
+                    if (auto* note = clip->getSequence().getNoteFor (state))
+                    {
+                        earliest = jmin (earliest, note->getStartBeat().inBeats());
+                        lowest = jmin (lowest, note->getNoteNumber());
+                        highest = jmax (highest, note->getNoteNumber());
+                    }
+                previewBeat = jmax (previewBeat, originalBeat - earliest);
+                const int pitchDelta = jlimit (-lowest, 127 - highest,
+                                              roundToInt ((startY - y) / (double) rowHeight));
+                if (const int newPitch = originalPitch + pitchDelta; previewPitch != newPitch)
+                {
+                    previewPitch = newPitch;
+                    audition (newPitch, selected() != nullptr ? selected()->getVelocity() : 100);
+                }
+                break;
+            }
             if (const auto pitch = jlimit (0, 127,
                     originalPitch + roundToInt ((startY - y) / (double) rowHeight));
                 pitch != previewPitch)
@@ -783,6 +916,15 @@ void StudioPianoRoll::mouseUp (const MouseEvent& event)
     }
     if (gesture == Gesture::none || clip == nullptr || ! editingEnabled)
         return;
+    if (gesture == Gesture::lasso)
+    {
+        mouseDrag (event);
+        gesture = Gesture::none;
+        lassoBounds = {};
+        lassoInitialSelection.clear();
+        repaint();
+        return;
+    }
     const bool dragged = std::abs (event.getPosition().x - startX) > 2
                       || std::abs (event.getPosition().y - startY) > 2;
     if (dragged || gesture == Gesture::draw || gesture == Gesture::velocity)
@@ -803,11 +945,23 @@ void StudioPianoRoll::mouseUp (const MouseEvent& event)
         if (auto* note = clip->getSequence().addNote (previewPitch,
                 te::BeatPosition::fromBeats (previewBeat),
                 te::BeatDuration::fromBeats (previewLength), 100, 0, um))
-            selectedNote = note->state;
+            selectOnlyNote (note->state);
     }
     else if (auto* note = clip->getSequence().getNoteFor (draggedNote))
     {
-        if (gesture == Gesture::move || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
+        if (gesture == Gesture::move && selectedNotes.size() > 1)
+        {
+            const double beatDelta = previewBeat - originalBeat;
+            const int pitchDelta = previewPitch - originalPitch;
+            for (auto state : selectedNotes)
+                if (auto* chosen = clip->getSequence().getNoteFor (state))
+                {
+                    chosen->setStartAndLength (te::BeatPosition::fromBeats (
+                        chosen->getStartBeat().inBeats() + beatDelta), chosen->getLengthBeats(), um);
+                    chosen->setNoteNumber (chosen->getNoteNumber() + pitchDelta, um);
+                }
+        }
+        else if (gesture == Gesture::move || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
         {
             note->setStartAndLength (te::BeatPosition::fromBeats (previewBeat),
                                      te::BeatDuration::fromBeats (previewLength), um);
@@ -815,7 +969,10 @@ void StudioPianoRoll::mouseUp (const MouseEvent& event)
                 note->setNoteNumber (previewPitch, um);
         }
         else if (gesture == Gesture::velocity)
-            note->setVelocity (previewVelocity, um);
+            for (auto state : selectedNotes)
+                if (auto* chosen = clip->getSequence().getNoteFor (state))
+                    chosen->setVelocity (jlimit (1, 127,
+                        chosen->getVelocity() + previewVelocity - originalVelocity), um);
     }
     gesture = Gesture::none;
     draggedNote = {};
@@ -826,13 +983,16 @@ void StudioPianoRoll::deleteSelected()
 {
     if (clip == nullptr || ! editingEnabled)
         return;
-    if (auto* note = selected())
+    if (! selectedNotes.isEmpty())
     {
         auto* um = clip->getUndoManager();
         if (um != nullptr)
-            um->beginNewTransaction ("Delete MIDI note");
-        clip->getSequence().removeNote (*note, um);
-        selectedNote = {};
+            um->beginNewTransaction ("Delete MIDI notes");
+        const auto toRemove = selectedNotes;
+        selectOnlyNote ({});
+        for (auto state : toRemove)
+            if (auto* note = clip->getSequence().getNoteFor (state))
+                clip->getSequence().removeNote (*note, um);
         refresh();
     }
 }
@@ -844,10 +1004,10 @@ void StudioPianoRoll::quantizeNotes()
     auto* um = clip->getUndoManager();
     if (um != nullptr)
         um->beginNewTransaction ("Quantize MIDI notes");
-    const auto* chosen = selected();
+    const bool hasSelection = ! selectedNotes.isEmpty();
     for (auto* note : clip->getSequence().getNotes())
     {
-        if (chosen != nullptr && note != chosen)
+        if (hasSelection && ! selectedNotes.contains (note->state))
             continue;
         const auto start = snap (note->getStartBeat().inBeats());
         const auto end = snap (note->getEndBeat().inBeats());
@@ -861,6 +1021,12 @@ bool StudioPianoRoll::keyPressed (const KeyPress& key)
 {
     if (! editingEnabled)
         return false;
+    if (key.getKeyCode() == KeyPress::escapeKey)
+    {
+        selectOnlyNote ({});
+        repaint();
+        return true;
+    }
     if (key.getKeyCode() == KeyPress::deleteKey || key.getKeyCode() == KeyPress::backspaceKey)
     {
         deleteSelected();
@@ -868,6 +1034,18 @@ bool StudioPianoRoll::keyPressed (const KeyPress& key)
     }
     if (key.getModifiers().isCommandDown())
     {
+        if (key.getKeyCode() == 'a' || key.getKeyCode() == 'A')
+        {
+            if (clip != nullptr)
+            {
+                selectedNotes.clear();
+                for (auto* note : clip->getSequence().getNotes())
+                    selectedNotes.add (note->state);
+                selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
+                repaint();
+            }
+            return true;
+        }
         if (key.getKeyCode() == 'z' || key.getKeyCode() == 'Z')
         {
             if (clip != nullptr)

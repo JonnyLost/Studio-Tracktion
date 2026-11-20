@@ -17,6 +17,7 @@ public:
     ~StudioPianoRoll() override;
 
     void setClip (te::MidiClip::Ptr);
+    void setComparisonClips (const juce::Array<te::MidiClip*>& selectedClips);
     te::MidiClip* getClip() const noexcept { return clip.get(); }
     void refresh();
     void setEditingEnabled (bool);
@@ -35,10 +36,14 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
 
 private:
-    enum class Gesture { none, draw, move, resizeStart, resizeEnd, velocity };
+    enum class Gesture { none, draw, move, resizeStart, resizeEnd, velocity, lasso };
 
     te::MidiClip::Ptr clip;
+    juce::Array<te::MidiClip::Ptr> comparisonClips;
     juce::ValueTree selectedNote;
+    juce::Array<juce::ValueTree> selectedNotes;
+    juce::Array<juce::ValueTree> lassoInitialSelection;
+    juce::Rectangle<int> lassoBounds;
     juce::ComboBox tool, grid;
     juce::TextButton quantize { "Quantize" }, undo { "Undo" }, redo { "Redo" },
                      zoomIn { "H+" }, zoomOut { "H-" },
@@ -87,6 +92,7 @@ private:
     te::MidiNote* selected() const;
     void quantizeNotes();
     void deleteSelected();
+    void selectOnlyNote (juce::ValueTree);
     void paintGrid (juce::Graphics&);
     void paintRuler (juce::Graphics&);
     void paintPlayhead (juce::Graphics&);
