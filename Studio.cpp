@@ -22,6 +22,7 @@ using namespace tracktion::literals;
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
 #include "SamplerEditor.h"
+#include "StudioSynth.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -190,6 +191,7 @@ public:
         LookAndFeel::setDefaultLookAndFeel (&style);
         studio::spatial::registerPlugins (engine);
         studio::sampler::registerPlugin (engine);
+        studio::synth::registerPlugin (engine);
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
@@ -212,7 +214,7 @@ public:
         };
         trackMenu.onClick = [this]
         {
-            showCommandMenu (trackMenu, { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions });
+            showCommandMenu (trackMenu, { &addMidi, &addSynthTrack, &addSamplerTrack, &addAudio, &addMidiClip, &importAudio, &regionActions });
         };
         dockMenu.onClick = [this]
         {
@@ -450,7 +452,23 @@ public:
                 EngineHelpers::togglePlay (*edit);
         };
         record.onClick = [this] { toggleRecordKeepingTake(); };
-        addMidi.onClick = [this] { addTrack ("Instrument"); };
+        addMidi.onClick = [this]
+        {
+            PopupMenu menu;
+            const Component::SafePointer<StudioView> safe (this);
+            menu.addItem ("Add Instrument", [safe] { if (safe != nullptr) safe->addTrack ("Instrument"); });
+            menu.addItem ("Add Synth", canInsertPlugin(), false, [safe]
+            {
+                if (safe != nullptr && safe->browser.loadSynth) safe->browser.loadSynth ("analog", true);
+            });
+            menu.addItem ("Add Sampler", canInsertPlugin(), false, [safe]
+            {
+                if (safe != nullptr && safe->browser.loadSampler) safe->browser.loadSampler (true);
+            });
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (addMidi.isVisible() ? &addMidi : &trackMenu));
+        };
+        addSynthTrack.onClick = [this] { if (browser.loadSynth) browser.loadSynth ("analog", true); };
+        addSamplerTrack.onClick = [this] { if (browser.loadSampler) browser.loadSampler (true); };
         addAndMakeVisible (addMidiClip);
         addMidiClip.onClick = [this] { createMidiClip(); };
         addAudio.onClick = [this] { addTrack ("Audio"); };
@@ -943,6 +961,7 @@ private:
                saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                regionActions { "Edit Regions" },
+               addSynthTrack { "Add Synth" }, addSamplerTrack { "Add Sampler" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
                addMidiClip { "+ MIDI Clip" };
 
@@ -1528,6 +1547,8 @@ private:
         for (auto* button : { &saveProject, &saveAsProject, &addMidi,
                               &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
+        addSynthTrack.setEnabled (canInsertPlugin());
+        addSamplerTrack.setEnabled (canInsertPlugin());
         // ARIA review protects Save and the original AU state, not MIDI editing.
         // A loaded project must remain editable while its ARIA slots are checked.
         piano.setEditingEnabled (ready && ! recording);
@@ -2203,6 +2224,38 @@ private:
             auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
             commitPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
         };
+        browser.loadSynth = [this] (String family, bool addNew)
+        {
+            if (! canInsertPlugin()) return;
+            auto* target = workflowTrack();
+            if (! addNew)
+                if (const auto reason = instrumentTrackRestriction (target); reason.isNotEmpty())
+                {
+                    pluginStatus (reason);
+                    return;
+                }
+            auto plugin = edit->getPluginCache().createNewPlugin (studio::synth::Plugin::xmlTypeName, {});
+            auto* synth = dynamic_cast<studio::synth::Plugin*> (plugin.get());
+            if (synth == nullptr)
+            {
+                pluginStatus ("Could not create Studio Synth.");
+                return;
+            }
+            const auto wanted = studio::synth::parseFamily (family);
+            const auto& catalog = studio::synth::catalog().sounds;
+            const auto first = std::find_if (catalog.begin(), catalog.end(), [wanted] (const auto& sound) { return sound.family == wanted; });
+            if (first == catalog.end())
+            {
+                pluginStatus ("No Studio Synth presets were found for that family.");
+                return;
+            }
+            if (auto result = synth->selectFactory (*first); result.failed())
+            {
+                pluginStatus (result.getErrorMessage());
+                return;
+            }
+            commitPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
+        };
         trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
         trackActions.selectTrack = [this] (te::EditItemID id)
         {
@@ -2436,7 +2489,8 @@ private:
         if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
-        if (dynamic_cast<studio::sampler::Plugin*> (plugin.get()) != nullptr)
+        if (dynamic_cast<studio::sampler::Plugin*> (plugin.get()) != nullptr
+            || dynamic_cast<studio::synth::Plugin*> (plugin.get()) != nullptr)
             plugin->showWindowExplicitly();
     }
 
@@ -2840,6 +2894,13 @@ public:
         if (commandLine == "--studio-test-spatial-routing")
         {
             setApplicationReturnValue (studio::spatial::runSpatialRoutingTest());
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-synth")
+        {
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SYNTH_SCREENSHOTS", {});
+            setApplicationReturnValue (studio::synth::runSynthIntegrationTest (path.isEmpty() ? File() : File (path)));
             quit();
             return;
         }

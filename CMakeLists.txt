@@ -279,6 +279,17 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc" region_editing)
 string(REPLACE "${single_clip_selection}" "${region_editing}" editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
+set(studio_synth_families Analog FM Wavetable Additive Granular Physical)
+add_library(StudioNativeSynth STATIC SynthEngine.cpp SynthDSP/src/StudioSharedPCM.cpp)
+foreach(family IN LISTS studio_synth_families)
+    target_sources(StudioNativeSynth PRIVATE "SynthDSP/src/Studio${family}DSP.cpp")
+endforeach()
+target_include_directories(StudioNativeSynth PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/SynthDSP/include")
+target_compile_features(StudioNativeSynth PUBLIC cxx_std_20)
+juce_add_binary_data(StudioSynthData
+    HEADER_NAME StudioSynthData.h NAMESPACE StudioSynthData
+    SOURCES SynthDSP/data/StudioSynthFactory.json)
+
 juce_add_gui_app(Studio
     COMPANY_NAME "Studio"
     BUNDLE_ID "org.studioproject.tracktion"
@@ -291,6 +302,7 @@ juce_add_gui_app(Studio
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
+    StudioSynth.cpp SynthEditor.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
@@ -300,6 +312,7 @@ target_compile_definitions(Studio PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
 target_link_libraries(Studio PRIVATE
+    StudioNativeSynth StudioSynthData
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
@@ -310,6 +323,17 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
+    target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)
+    add_custom_target(StudioSynthValidation DEPENDS StudioSynthBench)
+    foreach(family IN LISTS studio_synth_families)
+        set(target "StudioSynth${family}Original")
+        add_executable("${target}" "tests/synth-original/Studio${family}DSP.cpp")
+        target_link_libraries("${target}" PRIVATE StudioNativeSynth)
+        target_compile_options("${target}" PRIVATE -UNDEBUG)
+        add_dependencies(StudioSynthValidation "${target}")
+        add_test(NAME "${target}" COMMAND "${target}")
+    endforeach()
     add_executable(StudioMilestoneTests tests/MilestoneMidiTests.cpp)
     target_compile_features(StudioMilestoneTests PRIVATE cxx_std_20)
     target_compile_definitions(StudioMilestoneTests PRIVATE JUCE_USE_CURL=0)
@@ -332,7 +356,9 @@ if(BUILD_TESTING)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
 
-    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp)
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp)
+    add_test(NAME StudioSynthIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-synth)
+    set_tests_properties(StudioSynthIntegration PROPERTIES TIMEOUT 120)
     add_test(NAME StudioSamplerIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-sampler)
     set_tests_properties(StudioSamplerIntegration PROPERTIES TIMEOUT 90)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "PianoRoll.h"
 #include "StudioSampler.h"
+#include "StudioSynth.h"
 #include "MusicalRuler.h"
 #include "StudioUI.h"
 #include <cmath>
@@ -422,6 +423,17 @@ void StudioPianoRoll::audition (int pitch, int velocity)
             return;
         }
 
+    for (auto* plugin : target->pluginList)
+        if (auto* synth = dynamic_cast<studio::synth::Plugin*> (plugin))
+        {
+            auditionSampler = synth;
+            auditionPitch = jlimit (0, 127, pitch);
+            synth->preview (auditionPitch, jlimit (1, 127, velocity));
+            startTimer (450);
+            repaint (keyboard);
+            return;
+        }
+
     // Hosted instruments use the exclusive input route already assigned to the track.
 
     for (auto* instance : clip->edit.getAllInputDevices())
@@ -462,8 +474,12 @@ void StudioPianoRoll::stopAudition()
         auditionDevice->handleIncomingMidiMessage (nullptr,
             MidiMessage::noteOff (auditionChannel, auditionPitch));
     if (auditionPitch >= 0)
+    {
         if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (auditionSampler.get()))
             sampler->preview (2, auditionChannel, auditionPitch, 0);
+        else if (auto* synth = dynamic_cast<studio::synth::Plugin*> (auditionSampler.get()))
+            synth->preview (auditionPitch, 0);
+    }
     auditionPitch = -1;
     auditionSampler = nullptr;
     auditionDevice.reset();

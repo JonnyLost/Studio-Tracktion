@@ -30,7 +30,7 @@ template <auto Create, auto Destroy, auto Set, auto Midi, auto Reset, auto Rende
 class VoiceEngine final : public Native
 {
 public:
-    explicit VoiceEngine (double rate) : handle (Create (rate, voicesPerLayer)) {}
+    VoiceEngine (double rate, int voices) : handle (Create (rate, voices)) {}
     ~VoiceEngine() override { Destroy (handle); }
     bool ready() const override { return handle != nullptr; }
     bool set (int id, float value) noexcept override { return Set (handle, id, value) != 0; }
@@ -55,7 +55,7 @@ std::unique_ptr<Native> prepare (const Layer& layer, double rate)
     {
         case Family::analog:
         {
-            auto synth = std::make_unique<Analog> (rate);
+            auto synth = std::make_unique<Analog> (rate, layer.voices);
             if (synth->ready() && layer.wireCount >= 0)
             {
                 std::array<SARoute, 24> wires {};
@@ -70,13 +70,13 @@ std::unique_ptr<Native> prepare (const Layer& layer, double rate)
             }
             return synth;
         }
-        case Family::fm: return std::make_unique<FM> (rate);
-        case Family::wavetable: return std::make_unique<Table> (rate);
-        case Family::additive: return std::make_unique<Additive> (rate);
-        case Family::physical: return std::make_unique<Physical> (rate);
+        case Family::fm: return std::make_unique<FM> (rate, layer.voices);
+        case Family::wavetable: return std::make_unique<Table> (rate, layer.voices);
+        case Family::additive: return std::make_unique<Additive> (rate, layer.voices);
+        case Family::physical: return std::make_unique<Physical> (rate, layer.voices);
         case Family::granular:
         {
-            auto synth = std::make_unique<Granular> (rate);
+            auto synth = std::make_unique<Granular> (rate, layer.voices);
             if (! synth->ready()) return {};
             const auto accepted = layer.pcm ? sgr_load_shared_pcm_stopped (synth->handle, layer.pcm.get())
                                             : sgr_select_factory_source_stopped (synth->handle, layer.source);

@@ -15,6 +15,7 @@ public:
 
     std::function<void()> openPluginManager;
     std::function<void(bool newTrack)> loadSampler;
+    std::function<void(juce::String family, bool newTrack)> loadSynth;
     std::function<void()> openSampler;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction, bool samplerOnTrack = false);

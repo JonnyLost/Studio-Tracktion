@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentBrowser.h"
+#include "StudioSynth.h"
 #include "StudioUI.h"
 #include <algorithm>
 
@@ -133,8 +134,13 @@ void InstrumentBrowser::rebuildCatalog()
     if (! hasAria)
         entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan | Audio Unit",
                              "Install and scan the ARIA Audio Unit in Plug-ins.", {}, false });
-    entries.push_back ({ "planned-synth", "Studio Synth", "Studio", "Synthesizer", "Planned native instrument",
-                         "Studio Synth will be available in a later milestone.", {}, false });
+    for (int i = 0; i < 7; ++i)
+    {
+        const auto engine = static_cast<synth::Family> (i);
+        const auto title = synth::familyName (engine);
+        entries.push_back ({ "studio-synth-" + synth::familyKey (engine), "Studio Synth | " + title, "Synth", title,
+                            "Studio | Native instrument", "Open " + title + " factory sounds and edit the instrument.", {}, true });
+    }
     entries.push_back ({ "studio-sampler", "Studio Sampler", "Studio", "Sampler", "Studio | Native instrument",
                          "Play WAV and AIFF samples, edit the sound, and build multisample instruments.", {}, true });
     std::stable_sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
@@ -238,6 +244,8 @@ void InstrumentBrowser::loadSelected (bool newTrack)
         if (! newTrack && samplerOnTarget && openSampler) openSampler();
         else if (loadSampler) loadSampler (newTrack);
     }
+    else if (entry->key.startsWith ("studio-synth-") && loadSynth)
+        loadSynth (entry->key.fromFirstOccurrenceOf ("studio-synth-", false, false), newTrack);
     else if (loadInstrument)
         loadInstrument (entry->plugin, newTrack);
 }

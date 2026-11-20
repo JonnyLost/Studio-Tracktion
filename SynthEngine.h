@@ -18,7 +18,7 @@ struct Layer
     bool enabled = true;
     float gain = .75f, pan = 0;
     std::array<float, maxParameters> values {};
-    int source = 0, wireCount = -1;
+    int source = 0, wireCount = -1, voices = voicesPerLayer;
     std::array<AnalogWire, 24> wires {};
     std::shared_ptr<SSSharedPCM> pcm;
 };
