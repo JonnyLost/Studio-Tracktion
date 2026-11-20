@@ -154,7 +154,7 @@ public:
         if ((flags & (juce::TableHeaderComponent::sortedForwards | juce::TableHeaderComponent::sortedBackwards)) != 0)
         {
             auto direction = area.removeFromRight (appearance.px (14));
-            g.drawText ((flags & juce::TableHeaderComponent::sortedForwards) != 0 ? "↑" : "↓",
+            g.drawText ((flags & juce::TableHeaderComponent::sortedForwards) != 0 ? juce::String::charToString (0x2191) : juce::String::charToString (0x2193),
                         direction, juce::Justification::centred);
         }
         g.drawFittedText (name, area, juce::Justification::centredLeft, 1, 1.0f);

@@ -94,7 +94,7 @@ public:
         {
             g.setColour (colours::secondary);
             g.setFont (uiFont (11.0f));
-            g.drawText ("—", area, Justification::centred);
+            g.drawText ("-", area, Justification::centred);
             return;
         }
         for (const auto db : levels)
@@ -259,8 +259,8 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     id = selected != nullptr ? selected->itemID : te::EditItemID {};
     identity.setText (selected ? selected->getName() : "Select a track in the arrangement", dontSendNotification);
     auto* plugin = selected != nullptr ? findInstrument (*selected) : nullptr;
-    instrument.setText (plugin != nullptr ? plugin->getName() : selected != nullptr ? "No instrument" : "—", dontSendNotification);
-    output.setText (selected != nullptr ? outputLabel (*selected) : "—", dontSendNotification);
+    instrument.setText (plugin != nullptr ? plugin->getName() : selected != nullptr ? "No instrument" : "-", dontSendNotification);
+    output.setText (selected != nullptr ? outputLabel (*selected) : "-", dontSendNotification);
     instrument.setTooltip (instrument.getText());
     output.setTooltip (output.getText());
     identity.setTooltip (identity.getText());
@@ -284,9 +284,9 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
                 sendNames.add (bus.isNotEmpty() ? bus : "Bus " + String (send->getBusNumber() + 1));
             }
     }
-    inputSummary.setText (assigned.isEmpty() ? "No input assigned" : assigned.joinIntoString (" · "), dontSendNotification);
+    inputSummary.setText (assigned.isEmpty() ? "No input assigned" : assigned.joinIntoString (" | "), dontSendNotification);
     inputSummary.setTooltip (assigned.joinIntoString ("\n"));
-    sends.setText (sendNames.isEmpty() ? "No sends" : sendNames.joinIntoString (" · "), dontSendNotification);
+    sends.setText (sendNames.isEmpty() ? "No sends" : sendNames.joinIntoString (" | "), dontSendNotification);
     sends.setTooltip (sendNames.joinIntoString ("\n"));
     ariaStatus.setText (recovery, dontSendNotification);
     ariaStatus.setTooltip (recovery);
@@ -366,7 +366,7 @@ void ChannelInspector::paint (Graphics& g)
         g.setColour (colours::text);
         auto heading = columns[i].reduced (m.px (7), 0).withHeight (m.line (12, 4));
         if (i + 1 < columns.size() && ((int) i + 1) % count != 0)
-            g.drawText ("→", heading.removeFromRight (m.span (17)), Justification::centred);
+            g.drawText (String::charToString (0x2192), heading.removeFromRight (m.span (17)), Justification::centred);
         g.drawFittedText (stages[i], heading, Justification::centredLeft, 1, 1.0f);
     }
 }
@@ -393,7 +393,7 @@ public:
         mute.setColour (TextButton::buttonOnColourId, colours::record.darker (0.65f));
         mute.setTooltip ("Mute track");
         solo.setTooltip ("Solo track");
-        inserts.setTooltip ("Open the track’s insert chain");
+        inserts.setTooltip ("Open the track's insert chain");
         mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
         {
             if (! mixer.actions.canChangeMix() || mixer.edit == nullptr) return {};
@@ -489,7 +489,7 @@ private:
     StudioMixer& mixer;
     te::EditItemID id;
     bool masterStrip, selected = false;
-    TextButton name, inserts { "Inserts…" }, mute { "M" }, solo { "S" }, out;
+    TextButton name, inserts { "Inserts..." }, mute { "M" }, solo { "S" }, out;
     Label identity;
     MixControls mix { true };
     StereoMeter meter;

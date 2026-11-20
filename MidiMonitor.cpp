@@ -313,7 +313,7 @@ void StudioMidiMonitor::paintCell (Graphics& g, int row, int column, int width, 
         case 1: value = String ((event.milliseconds - startTime) / 1000.0, 3); break;
         case 2: value = devices[event.source].name; break;
         case 3: value = eventName (event.type); break;
-        case 4: value = event.channel > 0 ? String (event.channel) : String ("—"); break;
+        case 4: value = event.channel > 0 ? String (event.channel) : String ("-"); break;
         case 5: value = eventData (event); break;
         default: break;
     }
@@ -346,18 +346,18 @@ String StudioMidiMonitor::eventData (const Event& event)
     switch (event.type)
     {
         case noteOn:
-        case noteOff: return note() + "  ·  Velocity " + String (event.second);
+        case noteOff: return note() + "  |  Velocity " + String (event.second);
         case control:
         {
             String label = "CC " + String (event.first);
             if (event.first == 1) label += " Modulation";
             if (event.first == 11) label += " Expression";
             if (event.first == 64) label += event.second >= 64 ? " Sustain On" : " Sustain Off";
-            return label + "  ·  " + String (event.second);
+            return label + "  |  " + String (event.second);
         }
         case bend: return String ((event.first | (event.second << 7)) - 8192);
         case channelPressure: return "Pressure " + String (event.first);
-        case polyPressure: return note() + "  ·  Pressure " + String (event.second);
+        case polyPressure: return note() + "  |  Pressure " + String (event.second);
         case program: return "Program " + String (event.first + 1);
         case timing:
             if (event.first == 0xf8) return "Clock";
@@ -365,7 +365,7 @@ String StudioMidiMonitor::eventData (const Event& event)
             if (event.first == 0xfb) return "Continue";
             return "Stop";
         case other: return "0x" + String::toHexString (event.first)
-                               + "  ·  " + String (event.second) + " bytes";
+                               + "  |  " + String (event.second) + " bytes";
     }
     return {};
 }

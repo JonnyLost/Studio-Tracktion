@@ -31,7 +31,7 @@ class MidiMonitorWindow final : public DocumentWindow
 {
 public:
     MidiMonitorWindow()
-        : DocumentWindow ("Studio — MIDI Monitor", studio::colours::canvas, closeButton)
+        : DocumentWindow ("Studio - MIDI Monitor", studio::colours::canvas, closeButton)
     {
         setUsingNativeTitleBar (true);
         setResizable (true, false);
@@ -177,7 +177,7 @@ public:
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
         addChildComponent (ariaReviewNotice);
-        ariaReviewNotice.setText ("ARIA CHECK  ·  Play the restored instrument, then confirm to save.",
+        ariaReviewNotice.setText ("ARIA CHECK  |  Play the restored instrument, then confirm to save.",
                                  dontSendNotification);
         ariaReviewNotice.setFont (FontOptions (12.0f, Font::bold));
         ariaReviewNotice.setColour (Label::textColourId, studio::colours::warning);
@@ -272,7 +272,7 @@ public:
         for (auto* readout : { &bars, &position, &tempo, &meter })
         {
             addAndMakeVisible (*readout);
-            readout->setValue ("—");
+            readout->setValue ("-");
         }
         title.setFont (FontOptions (15.0f, Font::bold));
         for (auto* label : { &message, &trackDetails, &workspaceSummary, &placeholder })
@@ -701,7 +701,7 @@ private:
     TooltipWindow tooltips { this, 650 };
     Viewport railViewport, workspaceViewport;
     bool collapsedDockLinks = false;
-    TextButton appearanceButton { "Appearance…" }, projectMenu { "Project…" }, trackMenu { "Tracks…" }, dockMenu { "Layout…" };
+    TextButton appearanceButton { "Appearance..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -1283,7 +1283,7 @@ private:
 
     void timerCallback() override
     {
-        monitorButton.setButtonText (monitor.isActive() ? "●  MIDI Monitor" : "MIDI Monitor");
+        monitorButton.setButtonText (monitor.isActive() ? "* MIDI Monitor" : "MIDI Monitor");
         monitorButton.setColour (TextButton::textColourOffId,
                                  monitor.isActive() ? Colour (0xff8edec0) : Colours::white);
         // Tracktion creates AU instances during project setup. The successful
@@ -2008,9 +2008,9 @@ private:
         else if (workspace == Workspace::channel)
         {
             const auto recovery = ariaReviewPending
-                ? (autoAriaRetryPending ? "ARIA recovery · Automatic restore pending"
-                                        : "ARIA recovery · Verify sound, then Confirm ARIA below transport")
-                : "ARIA recovery · No verification pending";
+                ? (autoAriaRetryPending ? "ARIA recovery | Automatic restore pending"
+                                        : "ARIA recovery | Verify sound, then Confirm ARIA below transport")
+                : "ARIA recovery | No verification pending";
             channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery);
         }
         else
@@ -2069,7 +2069,7 @@ private:
             return;
         }
 
-        pluginStatus ("Loading " + description.name + "…");
+        pluginStatus ("Loading " + description.name + "...");
         {
             const ScopedValueSetter<bool> loading (busy, true);
             auto plugin = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, description);
@@ -2150,7 +2150,7 @@ private:
         if (newTrack != nullptr) selection.selectOnly (track);
         auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
         if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
-            status << " Choose the patch in Channel → Open Instrument.";
+            status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
     }
 
@@ -2249,7 +2249,7 @@ private:
     {
         const auto id = track.itemID;
         auto& output = track.getOutput();
-        menu.addSectionHeader ("Current output · " + studio::outputLabel (track));
+        menu.addSectionHeader ("Current output | " + studio::outputLabel (track));
         menu.addItem ("Default Audio (Master)", true, output.usesDefaultAudioOut(),
             trackMenuAction (id, [] (StudioView&, te::AudioTrack& target)
             {
@@ -2284,7 +2284,7 @@ private:
     void populateInsertMenu (PopupMenu& menu, te::AudioTrack& track)
     {
         const auto id = track.itemID;
-        menu.addSectionHeader ("Insert chain · " + track.getName());
+        menu.addSectionHeader ("Insert chain | " + track.getName());
         bool any = false;
         for (auto* plugin : track.pluginList.getPlugins())
         {

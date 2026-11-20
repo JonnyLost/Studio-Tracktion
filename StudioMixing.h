@@ -55,9 +55,9 @@ private:
     tracktion::EditItemID id;
     tracktion::AudioTrack* track() const;
     juce::Label identity, inputSummary, instrument, sends, output, ariaStatus;
-    juce::TextButton audioInput { "Audio Input…" }, midiInput { "MIDI Input…" }, arm { "Arm" },
-                     monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts…" },
-                     routing { "Output…" };
+    juce::TextButton audioInput { "Audio Input..." }, midiInput { "MIDI Input..." }, arm { "Arm" },
+                     monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts..." },
+                     routing { "Output..." };
     MixControls mix { false };
     std::array<juce::Rectangle<int>, 5> columns;
 };

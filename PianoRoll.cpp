@@ -119,10 +119,10 @@ void StudioPianoRoll::refresh()
         if (! selectedNotes.contains (selectedNote))
             selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
     }
-    caption.setText (hasClip ? clip->getName() + "  •  " + String (clip->getSequence().getNumNotes())
+    caption.setText (hasClip ? clip->getName() + "  |  " + String (clip->getSequence().getNumNotes())
                                  + " notes" + (comparisonClips.isEmpty() ? String()
-                                      : "  •  " + String (comparisonClips.size()) + " other clips (read-only)" )
-                                 + (selectedNotes.size() > 1 ? "  •  " + String (selectedNotes.size()) + " selected" : String())
+                                      : "  |  " + String (comparisonClips.size()) + " other clips (read-only)" )
+                                 + (selectedNotes.size() > 1 ? "  |  " + String (selectedNotes.size()) + " selected" : String())
                              : "Select a MIDI clip in the arrangement", dontSendNotification);
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo,
                                                               &zoomIn, &zoomOut, &verticalZoomIn,

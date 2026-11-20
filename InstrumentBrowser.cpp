@@ -124,12 +124,12 @@ void InstrumentBrowser::rebuildCatalog()
         entries.push_back ({ plugin.createIdentifierString(), plugin.name,
             aria ? "Orchestral" : "Audio Units",
             aria ? "Sample Player" : (plugin.category.isNotEmpty() ? plugin.category : "Instrument"),
-            plugin.manufacturerName + " · Audio Unit",
+            plugin.manufacturerName + " | Audio Unit",
             aria ? "Choose library patches in the hosted ARIA editor." : "Scanned Audio Unit instrument.",
             plugin, true });
     }
     if (! hasAria)
-        entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan · Audio Unit",
+        entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan | Audio Unit",
                              "Install and scan the ARIA Audio Unit in Plug-ins.", {}, false });
     entries.push_back ({ "planned-synth", "Studio Synth", "Studio", "Synthesizer", "Planned native instrument",
                          "Studio Synth will be available in a later milestone.", {}, false });
@@ -241,7 +241,7 @@ void InstrumentBrowser::updateDetails()
     load.setTitle (targetRestriction.isEmpty() ? "Load on " + targetName : "Load on Selected Track. " + targetRestriction);
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
-                   : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track · " + targetName,
+                   : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track | " + targetName,
                    dontSendNotification);
     status.setTooltip (status.getText());
     repaint (detailPanel);
@@ -281,7 +281,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
     g.setColour (selectedRow ? colours::text.withAlpha (0.86f) : colours::secondary);
-    g.drawFittedText (entry.type + " · " + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
+    g.drawFittedText (entry.type + " | " + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
