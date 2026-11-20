@@ -20,13 +20,13 @@ StudioPianoRoll::StudioPianoRoll()
     tool.setTooltip ("Select notes to move or resize; Draw places new notes");
     grid.addItem ("Snap off", 1);
     grid.addItem ("1/4", 2);
-    grid.addItem ("1/8", 3);
-    grid.addItem ("1/16", 4);
-    grid.addItem ("1/32", 5);
-    grid.addItem ("1/8 T", 6);
-    grid.addItem ("1/16 T", 7);
-    grid.addItem ("1/32 T", 8);
     grid.addItem ("1/4 T", 9);
+    grid.addItem ("1/8", 3);
+    grid.addItem ("1/8 T", 6);
+    grid.addItem ("1/16", 4);
+    grid.addItem ("1/16 T", 7);
+    grid.addItem ("1/32", 5);
+    grid.addItem ("1/32 T", 8);
     grid.setSelectedId (4, dontSendNotification);
     grid.setTooltip ("Snap grid, in musical note values");
     caption.setColour (Label::textColourId, Colour (0xffdce5ed));
@@ -415,16 +415,23 @@ void StudioPianoRoll::paintGrid (Graphics& g)
 
     g.saveState();
     g.reduceClipRegion (notesArea);
-    const auto fineStep = gridBeats() > 0.0 ? gridBeats() : 0.25;
-    // Sub-pixel grid lines serve no purpose and waste cycles at wide zoom.
-    const auto step = fineStep * pixelsPerBeat >= 5.0 ? fineStep : std::max (1.0, fineStep);
-    const auto first = std::floor (horizontal.getCurrentRangeStart() / step) * step;
-    const auto last = horizontal.getCurrentRangeStart() + notesArea.getWidth() / pixelsPerBeat;
-    for (double beat = first; beat <= last; beat += step)
+    const auto subdivision = gridBeats();
+    // Only draw the selected snap subdivision when it can be distinguished
+    // from the adjacent line. Snapping itself is unchanged at every zoom.
+    if (subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
     {
-        const int x = xAt (beat);
-        g.setColour (Colour (0xff394954));
-        g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+        const auto first = std::ceil (horizontal.getCurrentRangeStart() / subdivision) * subdivision;
+        const auto last = horizontal.getCurrentRangeStart() + notesArea.getWidth() / pixelsPerBeat;
+        g.setColour (Colour (0xff34424e));
+        // Compute each line directly from its index to avoid floating drift.
+        const auto firstIndex = (int64) std::round (first / subdivision);
+        const auto lastIndex = (int64) std::floor (last / subdivision);
+        for (int64 i = firstIndex; i <= lastIndex; ++i)
+        {
+            const int x = xAt (i * subdivision);
+            if (x >= notesArea.getX() && x < notesArea.getRight())
+                g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+        }
     }
     if (clip != nullptr)
     {
@@ -434,13 +441,24 @@ void StudioPianoRoll::paintGrid (Graphics& g)
         const auto to = sequence.toTime (te::BeatPosition::fromBeats (
             jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
                                    + notesArea.getWidth() / pixelsPerBeat))));
+        int lastBeatLineX = notesArea.getX() - 16;
         studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
         {
             const int x = xAt (toSourceBeat (sequence.toBeats (tick.time).inBeats()));
             if (x < notesArea.getX() || x >= notesArea.getRight())
                 return;
-            g.setColour (tick.beatIndex == 0 ? Colour (0xff7e8c9a) : Colour (0xff50616f));
-            g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+            if (tick.beatIndex == 0)
+            {
+                g.setColour (Colour (0xff8497a6));
+                g.fillRect (x, notesArea.getY(), 2, notesArea.getHeight());
+                lastBeatLineX = x;
+            }
+            else if (x - lastBeatLineX >= 14)
+            {
+                g.setColour (Colour (0xff536a7b));
+                g.drawVerticalLine (x, (float) notesArea.getY(), (float) notesArea.getBottom());
+                lastBeatLineX = x;
+            }
         });
     }
     g.restoreState();
@@ -460,6 +478,7 @@ void StudioPianoRoll::paintRuler (Graphics& g)
         jmax (0.0, toEditBeat (horizontal.getCurrentRangeStart()
                                + rulerArea.getWidth() / pixelsPerBeat))));
     int lastLabelRight = rulerArea.getX() - 50;
+    int lastBeatTickX = rulerArea.getX() - 14;
     g.saveState();
     g.reduceClipRegion (rulerArea);
     studio::forEachMusicalTick (sequence, from, to, [&] (const studio::MusicalTick& tick)
@@ -468,9 +487,12 @@ void StudioPianoRoll::paintRuler (Graphics& g)
         if (x < rulerArea.getX() || x >= rulerArea.getRight())
             return;
         const bool bar = tick.beatIndex == 0;
+        if (! bar && x - lastBeatTickX < 14)
+            return;
         g.setColour (bar ? Colour (0xffd3ba87) : Colour (0xff768c9a));
         g.drawVerticalLine (x, (float) (rulerArea.getBottom() - (bar ? 13 : 7)),
                             (float) rulerArea.getBottom());
+        lastBeatTickX = x;
         if (bar && x >= lastLabelRight)
         {
             g.setFont (FontOptions (11.0f));
