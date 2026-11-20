@@ -143,7 +143,7 @@ void Engine::stop (int source, int channel, int note) noexcept
         }
 }
 
-void Engine::preview (int source, int channel, int note, int velocity) noexcept
+void Engine::preview (int source, int channel, int note, int velocity, int zone) noexcept
 {
     if (note < 0)
     {
@@ -152,8 +152,19 @@ void Engine::preview (int source, int channel, int note, int velocity) noexcept
                 voice = {};
         return;
     }
-    if (velocity != 0) start (source, channel, note, velocity);
-    else stop (source, channel, note);
+    if (velocity == 0)
+    {
+        stop (source, channel, note);
+        return;
+    }
+    if (zone < 0)
+        start (source, channel, note, velocity);
+    else if (static_cast<std::size_t> (zone) < bank->zones.size())
+    {
+        const auto& selected = bank->zones[static_cast<std::size_t> (zone)];
+        if (selected.sample)
+            trigger (selected, source, channel, note, velocity);
+    }
 }
 
 void Engine::midi (int status, int data1, int data2) noexcept

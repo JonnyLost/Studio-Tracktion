@@ -15,8 +15,9 @@ public:
 
     std::function<void()> openPluginManager;
     std::function<void(bool newTrack)> loadSampler;
+    std::function<void()> openSampler;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
-    void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction);
+    void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction, bool samplerOnTrack = false);
     void setStatus (const juce::String&);
     void appearanceChanged();
     int minimumContentHeight (int width) const;
@@ -48,7 +49,7 @@ private:
     std::vector<size_t> filtered;
     juce::StringArray families, types;
     juce::String family, type, selectedKey, targetName, targetRestriction, statusMessage;
-    bool canCreate = false, refreshing = false, compact = false;
+    bool canCreate = false, samplerOnTarget = false, refreshing = false, compact = false;
     Rows familyRows { *this, Rows::families }, typeRows { *this, Rows::types }, resultRows { *this, Rows::results };
     juce::ListBox familyList, typeList, resultList;
     juce::ComboBox compactFamily, compactType;

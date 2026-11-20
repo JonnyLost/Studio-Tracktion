@@ -2183,6 +2183,13 @@ private:
             auto* target = workflowTrack();
             startExternalPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
         };
+        browser.openSampler = [this]
+        {
+            if (! busy)
+                if (auto* track = workflowTrack())
+                    if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*track)))
+                        sampler->showWindowExplicitly();
+        };
         browser.loadSampler = [this] (bool addNew)
         {
             if (! canInsertPlugin()) return;
@@ -2277,7 +2284,9 @@ private:
                 : ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
                 : pendingPlugin ? "An Audio Unit is loading."
                 : canEditRegions() ? instrumentTrackRestriction (target) : "Finish the current task or stop recording.";
-            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(), restriction);
+            const bool hasSampler = target != nullptr && ! busy
+                && dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*target)) != nullptr;
+            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(), restriction, hasSampler);
         }
         else if (workspace == Workspace::channel)
         {

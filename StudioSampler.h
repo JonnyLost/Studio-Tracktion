@@ -51,7 +51,7 @@ public:
     unsigned changeCount() const { return modelRevision; }
     juce::String stateError() const { return restoreError; }
     bool noteActive (int note) const { return renderer.noteActive (note); }
-    void preview (int source, int channel, int note, int velocity);
+    void preview (int source, int channel, int note, int velocity, int zone = -1);
     juce::Result loadSample (const juce::File&, int replace = -1);
     void removeZone (int);
     void editZone (int, const Zone&);
@@ -74,6 +74,8 @@ private:
     unsigned modelRevision = 0;
     std::uint64_t sampleRevision = 0;
     bool writing = false;
+    std::size_t loadedBytes = 0;
+    unsigned loadedSamples = 0;
 
     Engine renderer;
     double rate = 44100;
@@ -86,7 +88,7 @@ private:
     std::unique_ptr<const Bank> retired;
     std::atomic<const Bank*> published { nullptr }, borrowed { nullptr };
 
-    struct Preview { int source, channel, note, velocity; };
+    struct Preview { int source, channel, note, velocity, zone; std::uint64_t revision; };
     static constexpr unsigned queueSize = 128;
     std::array<Preview, queueSize> queue {};
     std::atomic<unsigned> writeIndex { 0 }, readIndex { 0 };

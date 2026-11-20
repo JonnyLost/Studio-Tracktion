@@ -53,7 +53,7 @@ public:
     void use (const Bank&) noexcept;
     void panic() noexcept;
     void midi (int status, int data1, int data2) noexcept;
-    void preview (int source, int channel, int note, int velocity) noexcept;
+    void preview (int source, int channel, int note, int velocity, int zone = -1) noexcept;
     void render (float* left, float* right, int frames) noexcept;
     void publishMeters() noexcept;
     unsigned activeVoices() const noexcept { return active.load (std::memory_order_relaxed); }

@@ -118,7 +118,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
     return Result::ok();
 }
 
-std::size_t sampleBytes (const Instrument& model)
+std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullptr)
 {
     std::size_t bytes = 0;
     std::array<const Sample*, maxZones> counted {};
@@ -130,6 +130,7 @@ std::size_t sampleBytes (const Instrument& model)
             counted[count++] = sample;
             bytes += sample->bytes();
         }
+    if (sampleCount) *sampleCount = static_cast<unsigned> (count);
     return bytes;
 }
 
@@ -281,6 +282,7 @@ void Plugin::publish (Instrument next)
     if (retired.get() != reading) retired.reset();
     if (previous && previous.get() == reading) retired = std::move (previous);
     model = std::move (next);
+    loadedBytes = sampleBytes (model, &loadedSamples);
     ++modelRevision;
 }
 
@@ -394,11 +396,11 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
 {
     InstrumentDiagnosticSnapshot stats;
     stats.attribution = ResourceAttribution::measured;
-    stats.sampleBytes = sampleBytes (model);
+    stats.sampleBytes = loadedBytes;
     stats.memoryBytes = stats.sampleBytes;
     stats.activeVoices = renderer.activeVoices();
-    stats.detail = String (std::count_if (model.zones.begin(), model.zones.end(), [] (const auto& z) { return z.mapping.sample != nullptr; }))
-                 + " loaded zone(s) | " + String (model.settings.polyphony) + " max voices.";
+    stats.detail = String (loadedSamples)
+                 + " loaded sample(s) | " + String (model.settings.polyphony) + " max voices.";
     return stats;
 }
 
@@ -418,7 +420,7 @@ void Plugin::deinitialise()
 
 void Plugin::reset() { needsReset.store (true, std::memory_order_relaxed); }
 
-void Plugin::preview (int source, int channel, int note, int velocity)
+void Plugin::preview (int source, int channel, int note, int velocity, int zone)
 {
     const auto write = writeIndex.load (std::memory_order_relaxed);
     if (write - readIndex.load (std::memory_order_acquire) >= queueSize)
@@ -426,7 +428,7 @@ void Plugin::preview (int source, int channel, int note, int velocity)
         previewOverflow.store (true, std::memory_order_release);
         return;
     }
-    queue[write % queueSize] = { source, channel - 1, note, velocity };
+    queue[write % queueSize] = { source, channel - 1, note, velocity, zone, sampleRevision };
     writeIndex.store (write + 1, std::memory_order_release);
 }
 
@@ -465,7 +467,8 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
         for (; read != write; ++read)
         {
             const auto& event = queue[read % queueSize];
-            renderer.preview (event.source, event.channel, event.note, event.velocity);
+            if (event.zone < 0 || event.revision == bank->sampleRevision)
+                renderer.preview (event.source, event.channel, event.note, event.velocity, event.zone);
         }
     readIndex.store (read, std::memory_order_release);
 

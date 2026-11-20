@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
 #include "../SpatialRouting.h"
+#include "../SpatialState.h"
 #include "../StudioMixing.h"
 #include <cmath>
 #include <cstdio>

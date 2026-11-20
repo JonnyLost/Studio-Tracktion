@@ -60,6 +60,7 @@ Editor::Editor (Plugin& p) : plugin (p)
         addAndMakeVisible (*c);
 
     viewport.setViewedComponent (&body, false);
+    viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
              &loopEnabled, &display, &load, &locate, &remove, &audition, &envelope })
@@ -107,6 +108,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     mode.addItem ("Sustained", 1);
     mode.addItem ("One-shot", 2);
     loopEnabled.setTitle ("Enable sample loop");
+    loopEnabled.setTooltip ("Sustained playback repeats the marked range while the note plays.");
     const auto setSetting = [this] (auto member, double factor = 1.0)
     {
         return [this, member, factor] (double value)
@@ -184,7 +186,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     keys.addListener (this);
     appearanceChanged();
     refresh();
-    setSize (800, 530);
+    setSize (800, 564);
     startTimerHz (24);
 }
 
@@ -402,7 +404,7 @@ void Editor::resized()
     viewport.setBounds (area);
 
     const int width = jmax (1, viewport.getMaximumVisibleWidth() - viewport.getScrollBarThickness());
-    const int waveform = m.px (page == Page::mapping ? 152 : 155);
+    const int waveform = m.px (page == Page::mapping ? 148 : 145);
     const int dialHeight = m.px (88) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
         : page == Page::loops ? 2 : (width < m.span (500) ? 2 : 3);
@@ -534,7 +536,13 @@ void Editor::choose (bool presetFile, bool save, bool replace)
                     safe->import (file, replace ? index : -1);
                     return;
                 }
-                const auto result = save ? safe->plugin.savePreset (file.withFileExtension (".studiosampler"))
+                const auto destination = file.withFileExtension (".studiosampler");
+                if (save && destination != file && destination.existsAsFile())
+                {
+                    safe->setStatus ("An existing preset has that name. Select the .studiosampler file to replace it.");
+                    return;
+                }
+                const auto result = save ? safe->plugin.savePreset (destination)
                                          : safe->plugin.loadPreset (file);
                 if (result.wasOk() && ! save) safe->selection = 0;
                 safe->refresh();
@@ -564,8 +572,8 @@ void Editor::playAudition()
     if (const auto* entry = zone())
     {
         const auto& z = entry->mapping;
-        auditionNote = jlimit (z.low, z.high, z.root);
-        plugin.preview (3, 1, auditionNote, jlimit (z.soft, z.hard, 100));
+        auditionNote = z.root;
+        plugin.preview (3, 1, auditionNote, 100, selection);
         clearAudition = false;
         audition.setButtonText ("Stop Audition");
     }
@@ -622,7 +630,12 @@ void Editor::Keyboard::drawBlackNote (int note, Graphics& g, Rectangle<float> ar
 }
 
 Editor::Display::Display (Editor& editor) : owner (editor) { setTitle ("Sample waveform or keyboard mapping"); }
-Rectangle<int> Editor::Display::plot() const { return getLocalBounds().reduced (appearance.px (12), appearance.px (8)); }
+Rectangle<int> Editor::Display::plot() const
+{
+    auto area = getLocalBounds().reduced (appearance.px (12), appearance.px (8));
+    if (owner.page == Page::mapping) area.removeFromLeft (appearance.span (24));
+    return area;
+}
 Rectangle<float> Editor::Display::zoneBounds (const Zone& z) const
 {
     const auto area = plot().withTrimmedBottom (appearance.line (10, 4)).toFloat();
@@ -639,6 +652,11 @@ void Editor::Display::paint (Graphics& g)
     if (owner.page == Page::mapping && entry)
     {
         const auto keys = area.removeFromBottom (appearance.line (10, 4));
+        g.setFont (uiFont (10));
+        g.setColour (colours::secondary);
+        const auto legend = Rectangle<int> (appearance.px (4), area.getY(), area.getX() - appearance.px (8), area.getHeight());
+        g.drawText ("127", legend, Justification::topRight);
+        g.drawText ("1", legend, Justification::bottomRight);
         for (int i = 0; i < 128; ++i)
         {
             const float left = static_cast<float> (keys.getX()) + static_cast<float> (i * keys.getWidth()) / 128;
@@ -674,7 +692,10 @@ void Editor::Display::paint (Graphics& g)
     {
         g.setColour (colours::text);
         g.setFont (uiFont (16));
-        g.drawFittedText (entry ? "Sample unavailable" : "Drop a sample here or choose Load Sample.",
+        const auto empty = owner.page == Page::mapping ? "Drop a sample here or choose Add Sample."
+            : owner.page == Page::loops ? "Load a sample in Basic to edit its loop."
+            : "Drop a sample here or choose Load Sample.";
+        g.drawFittedText (entry ? "Sample unavailable" : empty,
                           area, Justification::centred, 2, 1.0f);
         return;
     }
@@ -836,7 +857,8 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     attack.slider.setValue (23, sendNotificationSync);
     if (std::abs (plugin.instrument().settings.attack - .023f) > .0001f) return false;
 
-    const auto key = keyboard.getRectangleForKey (60).getCentre();
+    const auto rect = keyboard.getRectangleForKey (60);
+    const Point<float> key { rect.getCentreX(), rect.getBottom() - 7 };
     const auto time = Time::getCurrentTime();
     const auto mouse = Desktop::getInstance().getMainMouseSource();
     const auto event = [&] (int flags)

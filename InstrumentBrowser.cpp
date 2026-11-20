@@ -213,10 +213,11 @@ const InstrumentBrowser::Entry* InstrumentBrowser::selected() const
     return i == entries.end() ? nullptr : &*i;
 }
 
-void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction)
+void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction, bool samplerOnTrack)
 {
     if (canCreate == ready && targetName == name && targetRestriction == restriction) return;
     canCreate = ready;
+    samplerOnTarget = samplerOnTrack;
     targetName = std::move (name);
     targetRestriction = std::move (restriction);
     updateDetails();
@@ -234,7 +235,8 @@ void InstrumentBrowser::loadSelected (bool newTrack)
     if (entry == nullptr || ! entry->available) return;
     if (entry->key == "studio-sampler")
     {
-        if (loadSampler) loadSampler (newTrack);
+        if (! newTrack && samplerOnTarget && openSampler) openSampler();
+        else if (loadSampler) loadSampler (newTrack);
     }
     else if (loadInstrument)
         loadInstrument (entry->plugin, newTrack);
@@ -250,10 +252,13 @@ void InstrumentBrowser::updateDetails()
     instrumentName.setTooltip (instrumentName.getText());
     explanation.setText (e != nullptr ? e->description : "Change the search or filters.", dontSendNotification);
     explanation.setTooltip (explanation.getText());
-    load.setEnabled (available && canCreate && targetRestriction.isEmpty());
+    const bool openNative = available && e->key == "studio-sampler" && samplerOnTarget;
+    load.setButtonText (openNative ? "Open Instrument" : "Load on Selected Track");
+    load.setEnabled (openNative || (available && canCreate && targetRestriction.isEmpty()));
     add.setEnabled (available && canCreate);
-    load.setTooltip (targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
-    load.setTitle (targetRestriction.isEmpty() ? "Load on " + targetName : "Load on Selected Track. " + targetRestriction);
+    load.setTooltip (openNative ? "Open the Studio Sampler on " + targetName
+                                : targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
+    load.setTitle (openNative ? "Open Studio Sampler" : targetRestriction.isEmpty() ? "Load on " + targetName : "Load on Selected Track. " + targetRestriction);
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
                    : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track | " + targetName,
