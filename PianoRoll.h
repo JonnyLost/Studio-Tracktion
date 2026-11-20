@@ -73,6 +73,7 @@ private:
     int keyboardPreviewPitch = -1;
     int auditionPitch = -1, auditionChannel = 1;
     std::shared_ptr<te::MidiInputDevice> auditionDevice;
+    te::Plugin::Ptr auditionSampler;
     double transportSourceBeat = 0.0;
     bool transportWithinClip = false;
 

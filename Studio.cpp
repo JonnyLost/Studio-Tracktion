@@ -21,6 +21,7 @@ using namespace tracktion::literals;
 #include "ArticulationPalette.h"
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
+#include "SamplerEditor.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -188,6 +189,7 @@ public:
         setLookAndFeel (&style);
         LookAndFeel::setDefaultLookAndFeel (&style);
         studio::spatial::registerPlugins (engine);
+        studio::sampler::registerPlugin (engine);
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
@@ -759,6 +761,12 @@ public:
         articulation.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
         fitFloatingMonitor();
+        if (edit != nullptr)
+            for (auto* track : te::getAudioTracks (*edit))
+                for (auto* plugin : track->pluginList)
+                    if (auto* window = dynamic_cast<PluginWindow*> (plugin->windowState->pluginWindow.get()))
+                        if (auto* sampler = dynamic_cast<studio::sampler::Editor*> (window->getEditor()))
+                            sampler->appearanceChanged();
         if (editor != nullptr) editor->refreshStudioLayout();
         resized();
         repaint();
@@ -2175,6 +2183,19 @@ private:
             auto* target = workflowTrack();
             startExternalPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
         };
+        browser.loadSampler = [this] (bool addNew)
+        {
+            if (! canInsertPlugin()) return;
+            auto* target = workflowTrack();
+            if (! addNew)
+                if (auto reason = instrumentTrackRestriction (target); reason.isNotEmpty())
+                {
+                    pluginStatus (reason);
+                    return;
+                }
+            auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
+            commitPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
+        };
         trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
         trackActions.selectTrack = [this] (te::EditItemID id)
         {
@@ -2406,6 +2427,8 @@ private:
         if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
+        if (dynamic_cast<studio::sampler::Plugin*> (plugin.get()) != nullptr)
+            plugin->showWindowExplicitly();
     }
 
     // Menu callbacks re-resolve the original track and project after the popup closes.
@@ -2808,6 +2831,13 @@ public:
         if (commandLine == "--studio-test-spatial-routing")
         {
             setApplicationReturnValue (studio::spatial::runSpatialRoutingTest());
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-sampler")
+        {
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SAMPLER_SCREENSHOTS", {});
+            setApplicationReturnValue (studio::sampler::runSamplerIntegrationTest (path.isEmpty() ? File() : File (path)));
             quit();
             return;
         }

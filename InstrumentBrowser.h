@@ -14,6 +14,7 @@ public:
     ~InstrumentBrowser() override;
 
     std::function<void()> openPluginManager;
+    std::function<void(bool newTrack)> loadSampler;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction);
     void setStatus (const juce::String&);
@@ -60,6 +61,7 @@ private:
     void rebuildTypes();
     void rebuildResults();
     void updateDetails();
+    void loadSelected (bool newTrack);
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 };
 }

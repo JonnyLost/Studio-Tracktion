@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "PianoRoll.h"
+#include "StudioSampler.h"
 #include "MusicalRuler.h"
 #include "StudioUI.h"
 #include <cmath>
@@ -405,12 +406,23 @@ void StudioPianoRoll::audition (int pitch, int velocity)
     if (clip == nullptr || clip->edit.getTransport().isRecording())
         return;
 
-    // Inject only into a MIDI input ALREADY assigned to this clip's track.
-    // We must not arm a track, change device routing, record preview notes,
-    // or alter the clip's stored MIDI channel to audition a note.
     auto* target = dynamic_cast<te::AudioTrack*> (clip->getTrack());
     if (target == nullptr)
         return;
+
+    for (auto* plugin : target->pluginList)
+        if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin))
+        {
+            auditionSampler = sampler;
+            auditionPitch = jlimit (0, 127, pitch);
+            auditionChannel = jlimit (1, 16, clip->getMidiChannel().getChannelNumber());
+            sampler->preview (2, auditionChannel, auditionPitch, jlimit (1, 127, velocity));
+            startTimer (450);
+            repaint (keyboard);
+            return;
+        }
+
+    // Hosted instruments use the exclusive input route already assigned to the track.
 
     for (auto* instance : clip->edit.getAllInputDevices())
     {
@@ -449,7 +461,11 @@ void StudioPianoRoll::stopAudition()
     if (auditionPitch >= 0 && auditionDevice != nullptr)
         auditionDevice->handleIncomingMidiMessage (nullptr,
             MidiMessage::noteOff (auditionChannel, auditionPitch));
+    if (auditionPitch >= 0)
+        if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (auditionSampler.get()))
+            sampler->preview (2, auditionChannel, auditionPitch, 0);
     auditionPitch = -1;
+    auditionSampler = nullptr;
     auditionDevice.reset();
     repaint (keyboard);
 }
