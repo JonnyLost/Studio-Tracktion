@@ -2,6 +2,9 @@ name: Intel macOS build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - development
 
 permissions:
   contents: read

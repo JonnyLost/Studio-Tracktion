@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "MidiMonitor.h"
+#include "StudioUI.h"
 using namespace juce;
 
 StudioMidiMonitor::StudioMidiMonitor()
@@ -275,7 +276,7 @@ void StudioMidiMonitor::paintRowBackground (Graphics& g, int row, int width, int
 {
     if (selected || row % 2 == 0)
     {
-        g.setColour (Colour (selected ? 0xff37535d : 0xff26343b));
+        g.setColour (selected ? studio::colours::selected : studio::colours::panel);
         g.fillRect (0, 0, width, height);
     }
 }
