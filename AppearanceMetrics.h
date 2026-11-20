@@ -71,9 +71,11 @@ public:
 
     bool resourcesFitHeader (int width) const
     {
-        return width >= span (resourceCPUWidth) + span (resourceRAMWidth) + span (resourceXRWidth)
-            + span (viewWidth) + span (projectMenuWidth) + span (63);
+        return width >= span (resourceCPUWidth) + span (resourceRAMWidth)
+            + span (viewWidth) + span (projectMenuWidth) + span (120);
     }
+
+    bool dropoutsFitHeader (int width) const { return resourcesFitHeader (width - span (resourceXRWidth)); }
 
     DockRoom dockRoom (int available, int preferred, DockMode mode) const
     {

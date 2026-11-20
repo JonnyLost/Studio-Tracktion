@@ -649,8 +649,9 @@ public:
         viewButton.setBounds (files.removeFromRight (m.span (m.viewWidth)).reduced (m.px (2), 0));
         for (auto item : indicators)
         {
-            item.component->setVisible (showResources);
-            if (showResources)
+            const bool visible = item.component == &resources.dropouts ? m.dropoutsFitHeader (transportWidth) : showResources;
+            item.component->setVisible (visible);
+            if (visible)
                 item.component->setBounds (files.removeFromRight (m.span (item.baseWidth)).reduced (m.px (1), 0));
         }
         const bool fullFileRow = files.getWidth() >= m.span (735);
@@ -2616,7 +2617,7 @@ int StudioView::runInterfaceReview (const File& output)
     };
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
-    if (edit == nullptr) return fail ("create temporary project");
+    if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
@@ -2635,7 +2636,22 @@ int StudioView::runInterfaceReview (const File& output)
     edit->dispatchPendingUpdatesSynchronously();
     auto tracks = te::getAudioTracks (*edit);
     title.setText ("Studio 0.2  /  Chamber Session", dontSendNotification);
+    message.setText ("Chamber Session", dontSendNotification);
     selection.selectOnly (tracks[0]);
+    // The production editor builds its rows and regions on the message loop.
+    // Wait for those updates so review images show the actual arrangement.
+    const auto hasRegion = [] (const auto& self, Component& root) -> bool
+    {
+        if (dynamic_cast<ClipComponent*> (&root) != nullptr) return true;
+        for (auto* child : root.getChildren())
+            if (self (self, *child)) return true;
+        return false;
+    };
+    const auto arrangementReady = [&] { return editor->getVisibleTrackCount() >= tracks.size() && hasRegion (hasRegion, *editor); };
+    for (int attempt = 0; attempt < 12 && ! arrangementReady(); ++attempt)
+        MessageManager::getInstance()->runDispatchLoopUntil (50);
+    if (! arrangementReady()) return fail ("arrangement rows and regions did not load");
+    timerCallback();
     for (auto scale : studio::AppearanceMetrics::interfaceOptions)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {

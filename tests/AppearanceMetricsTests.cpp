@@ -93,5 +93,8 @@ int main()
     assert (metrics.browserFilterRow (840));
     assert (metrics.stackedBrowserDetails (840));
     assert (! metrics.stackedBrowserDetails (1100));
+    assert (metrics.resourcesFitHeader (1024 - metrics.px (20)));
+    assert (! metrics.dropoutsFitHeader (1024 - metrics.px (20)));
+    assert (metrics.dropoutsFitHeader (1280 - metrics.px (20)));
     std::cout << "Appearance metrics passed at all 15 combinations.\n";
 }
