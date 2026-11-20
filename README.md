@@ -23,6 +23,20 @@ Appearance uses macOS logical points and native JUCE text layout. Retina backing
 - **Articulations** follows the selected track. **Pin track** keeps it on that track within the open project, across dock and float. Use a verified message and receiving channel from the instrument's patch documentation to add each mapping. The palette saves mappings with their instrument instance in the project and restores its layout and floating-window geometry from Studio preferences. Unknown patches start unmapped. Check existing mappings after changing a patch within the same plug-in instance. A pad or assigned Control-Command-digit auditions through the track's live route. **Insert at playhead** writes a controller event or short keyswitch note only to a selected clip with the matching track and channel. The optional shortcut is available while the palette is visible. Incoming MIDI triggers and recording live pad gestures to a take are deferred.
 - **Resource Inspector** opens from **View...** or the transport CPU, RAM or XR readouts. The audio percentage is Tracktion callback utilization, while process CPU uses 100% per core. Peak fields are the highest sampled values since launch or reset. Studio footprint comes from macOS task information, total physical RAM from the system, and pressure from macOS memory-pressure notifications. XR is the device's native overload counter when supported. The instrument table is sortable and reports Unavailable for hosted instruments without attributable diagnostics. The app takes system samples at 2 Hz on the message thread and installs no additional audio callback. Device overload detection can vary by driver.
 
+## Orchestral Stage, Rooms, and Microphones
+
+Open **Stage** from the rail. Drag a seat or nudge it with the arrow keys. Shift moves the section. The track selector lets you pick overlapping seats and duplicate instrument names. **Auto Arrange** uses the selected Concert, Chamber, or Scoring preset and applies to all tracks, the arrangement selection, or the selected section. Stage settings travel with each Tracktion track and participate in project undo.
+
+**Enable stage audio** is explicit and requires the transport to be stopped. Studio adds a stage balance and a post-fader aux send to one shared stereo room return. Existing faders and the track's direct output remain in the signal path. At the same send trim, the front row sends 10 dB less than the rear row. **Disable stage audio** removes that track's Studio balance and send. The shared return can stay in the project for other tracks. Studio checks for existing aux sends and recognized insert reverbs before enabling. This first implementation supports top-level tracks using the default audio output.
+
+**Rooms** includes seven factory profiles and a project-specific custom library. Choose a preset or edit dimensions, surfaces, treatment, six octave trims, reflections, and return level. Use **Apply Room** to make the draft active. To duplicate a factory or custom design, enter a unique name and choose **Save copy**. The decay chart is a bounded Eyring estimate using generic materials. The wet-only DSP uses a shared four-line feedback network and sparse early reflection taps. Room changes reuse the memory already prepared for playback. Return bypass fades the wet signal, and Reset return restores the draft wet defaults for the next Apply.
+
+**Microphones** shows virtual capsule markers as diamonds, with pickup shapes and aim. Place and edit a capsule or add an XY, ORTF, spaced omni, or Blumlein pair and adjust spacing and angle. Save named setups in the project. The **Mic Mixer** stores level, pan, delay trim, mute, and solo for future capture. Studio stays in **Normal Mix**. Virtual microphone audio and Mic Audition are unavailable, so the capsule controls have no effect on recorded audio or the current mix. The shared-room bypass in that view controls the real return independently.
+
+Resource Inspector reports the native room's allocated delay-buffer bytes and Tracktion's callback-cost sample when available. Hosted plug-in memory remains separately attributed.
+
+The Swift [room-design prototype](https://github.com/JonnyLost/Garritan-studio/blob/fceed818b78d2ca8a6afcdc4312f0ae827a85903/docs/acoustic-room-designer.md) informed the six-band surface and treatment model. Its [wet-only reverb](https://github.com/JonnyLost/Garritan-studio/blob/fceed818b78d2ca8a6afcdc4312f0ae827a85903/docs/native-room-reverb.md) informed the feedback and early-tap design. The [mic geometry](https://github.com/JonnyLost/Garritan-studio/blob/864d26bdc133403678af8b861470544461ca0536/docs/virtual-recording-microphones-phase-1.md) and [experimental capture graph](https://github.com/JonnyLost/Garritan-studio/blob/864d26bdc133403678af8b861470544461ca0536/docs/native-microphone-spill-and-mixer-v1.md) informed placement, directional markers, stereo patterns, and explicit monitoring state.
+
 ## Instruments, Channel, and Mixer
 
 - **Instruments** shows family, type, searchable results, and details with lightweight line artwork. On a compact window Type moves into the search toolbar. **Plug-ins…** opens the existing Tracktion/JUCE scanner. Results represent the scanned Audio Unit catalog. ARIA is shown as a hosted player. Open its actual editor from **Channel → Open Instrument** to select a Garritan library and patch. The Studio Synth and Sampler entries show their planned status.
@@ -62,8 +76,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-professional-midi-m3 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone3 &&
-cd Studio-Tracktion-Milestone3 &&
+git clone --branch feature/studio-orchestral-stage-m4 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone4 &&
+cd Studio-Tracktion-Milestone4 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
@@ -88,6 +102,8 @@ The standalone metrics test can also be run with:
 c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o /tmp/studio-appearance-tests &&
 /tmp/studio-appearance-tests
 ```
+
+**Milestone 4 acceptance.** Use a disposable copy of a project. Confirm an older edit opens and sounds as before without any Studio spatial inserts. Place and reorder duplicate-named instruments, move a section, and undo and redo Auto Arrange. Opt in one track and then a second. Confirm the same return serves both, that dry playback continues, and that front/rear send and pan are audible. Try a track with an existing send or reverb, bypass and restore the wet return, and turn off stage audio on one track. Save As and reopen while checking for duplicate returns and sends. Change rooms while playing and listen for artifacts, then repeat at 44.1 and 48 kHz with recording and ARIA playback. Verify microphone setups and strips persist while Normal Mix stays audible. At 1024 × 640 and 1280 × 800, exercise contextual navigation and scrolling at 175% with Extra Large text. Compare the room return's Resource Inspector figures during a larger session.
 
 **Milestone 3 acceptance.** Open two MIDI clips with different channels and a disposable ARIA project. Add, move, copy, paste, undo, and delete controller points, including sustain off/on, extreme and center pitch bend, and channel aftertouch. Confirm an incompatible paste leaves both clips intact, then listen for the messages and save/reopen. Repeat in a trimmed or looped clip. Verify CC editing leaves the original notes and other controller data intact. Map two known patches to different pads and receiving channels, switch tracks, pin, float, resize, redock, change orientation, and relaunch. Confirm an unmapped pad sends nothing and live pad audition never adds events to a take. Test explicit insert, undo/redo and project reopen. Check callback vs process CPU, memory pressure and XR while playing and recording, and confirm ARIA's per-instance status is Unavailable. Compare process footprint and CPU trends with Activity Monitor and listen for glitches.
 
@@ -115,7 +131,7 @@ At 1024 × 640, switch through the rail, More menu, Compact, Split, Expanded, an
 
 ### Verification boundary
 
-The Intel macOS workflow runs the appearance metrics tests and the MIDI value, articulation serialization, and resource sample tests, and builds Studio with Xcode. Confirm the appearance checklist, Audio Unit execution, physical Oxygen 25 input, and on-disk save and reload on the Intel MacBook before merging.
+Intel macOS CI builds Studio with Xcode and runs the appearance, MIDI, articulation, resource, spatial state, DSP, and Tracktion routing tests. The automated spatial tests exercise wet-only impulse response, bypass, reset, stable output, undo, and project reopen without starting an audio device. Confirm the appearance checklist, Audio Unit execution, physical Oxygen 25 input, and on-disk save and reload on the Intel MacBook before merging.
 
 The Tracktion checkout is read during configuration. Studio writes the adapted example editor into its own build directory. Project files use the existing `.tracktionedit` format and Studio retains the previous audio-device and plugin settings location.
 

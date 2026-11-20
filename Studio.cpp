@@ -19,6 +19,8 @@ using namespace tracktion::literals;
 #include "StudioMixing.h"
 #include "StudioResources.h"
 #include "ArticulationPalette.h"
+#include "SpatialWorkspace.h"
+#include "SpatialRouting.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -181,6 +183,7 @@ public:
     {
         setLookAndFeel (&style);
         LookAndFeel::setDefaultLookAndFeel (&style);
+        studio::spatial::registerPlugins (engine);
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
@@ -234,6 +237,12 @@ public:
             addAndMakeVisible (*indicator);
         workspaceBody.addChildComponent (resources);
         workspaceBody.addChildComponent (articulation);
+        workspaceBody.addChildComponent (spatialWorkspace);
+        spatialWorkspace.onLayoutChange = [this] { resized(); };
+        spatialWorkspace.onSelectTrack = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id)) selection.selectOnly (track);
+        };
         articulation.onToggleDock = [this] { toggleArticulationDock(); };
         articulation.onLayoutChange = [this]
         {
@@ -441,6 +450,7 @@ public:
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        spatialWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         if (articulationWindow != nullptr)
         {
@@ -715,6 +725,7 @@ public:
         piano.appearanceChanged();
         monitor.appearanceChanged();
         resources.appearanceChanged();
+        spatialWorkspace.appearanceChanged();
         articulation.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
         fitFloatingMonitor();
@@ -872,6 +883,7 @@ private:
     studio::ChannelInspector channelInspector { trackActions };
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
+    studio::spatial::SpatialWorkspace spatialWorkspace;
     studio::ArticulationPalette articulation { engine.getPropertyStorage().getPropertiesFile() };
     std::unique_ptr<ArticulationWindow> articulationWindow;
 
@@ -985,6 +997,7 @@ private:
             if (mixer.isVisible()) return mixer.minimumContentHeight();
             if (piano.isVisible()) return piano.minimumContentHeight (width);
             if (resources.isVisible()) return resources.minimumContentHeight (width);
+            if (spatialWorkspace.isVisible()) return spatialWorkspace.minimumContentHeight (width);
             if (articulationWindow == nullptr && articulation.isVisible()) return articulation.minimumContentHeight (width);
             return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
         };
@@ -998,7 +1011,7 @@ private:
             height = minimumContentHeight (width);
         }
         workspaceBody.setSize (width, jmax (height, body.getHeight()));
-        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources })
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
@@ -1049,8 +1062,10 @@ private:
         const bool inspecting = workspace == Workspace::channel;
         const bool checkingResources = workspace == Workspace::resources;
         const bool showingArticulation = workspace == Workspace::articulations;
+        const bool showingSpatial = workspace == Workspace::stage || workspace == Workspace::rooms
+                                 || workspace == Workspace::microphones;
         const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting
-                                        || checkingResources || showingArticulation);
+                                        || checkingResources || showingArticulation || showingSpatial);
         String name;
         bool inPrimaryRail = false;
         for (const auto& item : railItems())
@@ -1067,7 +1082,7 @@ private:
         for (const auto& entry : extraWorkspaces)
             if (workspace == entry.destination)
                 name = entry.name;
-        moreButton.setToggleState (planned && ! inPrimaryRail, dontSendNotification);
+        moreButton.setToggleState (open && ! inPrimaryRail && ! monitoring, dontSendNotification);
         if (monitoring)
             name = "MIDI Monitor";
         if (workspace == Workspace::instruments)
@@ -1078,6 +1093,13 @@ private:
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
+        spatialWorkspace.setVisible (showingSpatial && ! compact);
+        if (showingSpatial)
+        {
+            using View = studio::spatial::SpatialWorkspace::View;
+            const auto view = workspace == Workspace::stage ? View::stage : workspace == Workspace::rooms ? View::rooms : View::microphones;
+            spatialWorkspace.setView (view);
+        }
         articulation.setVisible (articulationWindow != nullptr || (showingArticulation && ! compact));
         mixer.setVisible (mixing && ! compact);
         if (! mixer.isVisible()) mixer.pauseMeters();
@@ -1544,6 +1566,14 @@ private:
             refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
             if (articulation.isShowing())
                 articulation.refresh (workflowTrack(), selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr, ready);
+            if (spatialWorkspace.isShowing())
+            {
+                auto selectedTracks = selection.getItemsOfType<te::AudioTrack>();
+                if (selectedTracks.isEmpty())
+                    if (auto* context = workflowTrack()) selectedTracks.add (context);
+                spatialWorkspace.refresh (tracks, selectedTracks, ready && ! recording,
+                    ready && ! recording && ! ariaReviewPending && ! edit->getTransport().isPlaying());
+            }
         }
     }
 
@@ -1968,11 +1998,13 @@ private:
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        spatialWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         ++projectGeneration;
         edit = std::move (next);
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
+        spatialWorkspace.setEdit (edit.get());
         articulation.setContext (edit.get());
         mixer.setEdit (edit.get());
         projectFile = file;
@@ -2535,6 +2567,10 @@ private:
     }
 };
 
+#if STUDIO_SPATIAL_TESTS
+namespace studio::spatial { int runSpatialRoutingTest(); }
+#endif
+
 class StudioApplication final : public JUCEApplication
 {
     class Window final : public DocumentWindow
@@ -2561,7 +2597,20 @@ public:
     const String getApplicationName() override { return "Studio"; }
     const String getApplicationVersion() override { return "0.2.0"; }
     bool moreThanOneInstanceAllowed() override { return false; }
-    void initialise (const String&) override { window = std::make_unique<Window>(); }
+    void initialise (const String& commandLine) override
+    {
+       #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-spatial-routing")
+        {
+            setApplicationReturnValue (studio::spatial::runSpatialRoutingTest());
+            quit();
+            return;
+        }
+       #else
+        ignoreUnused (commandLine);
+       #endif
+        window = std::make_unique<Window>();
+    }
     void shutdown() override { window.reset(); }
     void systemRequestedQuit() override
     {

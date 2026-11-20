@@ -219,7 +219,9 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h)
+target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+    SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
+    SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -242,4 +244,14 @@ if(BUILD_TESTING)
     target_compile_definitions(StudioMilestoneTests PRIVATE JUCE_USE_CURL=0)
     target_link_libraries(StudioMilestoneTests PRIVATE juce::juce_core)
     add_test(NAME StudioMilestoneMidi COMMAND StudioMilestoneTests)
+
+    add_executable(StudioSpatialTests tests/SpatialTests.cpp SpatialReverb.cpp)
+    target_compile_features(StudioSpatialTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioSpatialTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioSpatialTests PRIVATE juce::juce_data_structures)
+    add_test(NAME StudioSpatialModel COMMAND StudioSpatialTests)
+
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp)
+    target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
+    add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)
 endif()

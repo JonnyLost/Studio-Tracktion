@@ -2,6 +2,7 @@
 #include "StudioResources.h"
 #include "StudioMixing.h"
 #include "ResourceSample.h"
+#include "SpatialRouting.h"
 #include "StudioUI.h"
 
 #include <chrono>
@@ -238,6 +239,15 @@ void StudioResources::updateRows()
                 }
                 next.push_back (std::move (row));
             }
+    if (edit != nullptr)
+        if (const auto report = spatial::resourceReport (*edit))
+        {
+            auto detail = report->description;
+            if (report->callbackFraction) detail << " | DSP " << String (*report->callbackFraction * 100.0, 2) << "% of audio block";
+            next.push_back ({ "Studio Room Return", "Studio Wet Room", "Spatial return", detail,
+                report->allocatedBytes > 0 ? std::optional<std::uint64_t> (report->allocatedBytes) : std::nullopt,
+                report->allocatedBytes > 0 ? ResourceAttribution::measured : ResourceAttribution::unavailable });
+        }
     rows = std::move (next);
     sortOrderChanged (table.getHeader().getSortColumnId(), table.getHeader().isSortedForwards());
     table.updateContent();
