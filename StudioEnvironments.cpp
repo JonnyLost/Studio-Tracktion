@@ -121,6 +121,7 @@ StudioEnvironmentWelcome::StudioEnvironmentWelcome (PropertiesFile& prefs) : pre
             drawCover (graphics, decoded, preview.getBounds().toFloat());
         }
         tile->setPreview (std::move (preview), scenes[(std::size_t) i].title);
+        tile->setTooltip (scenes[(std::size_t) i].title);
         tile->onClick = [this, i] { selectScene (i, true); };
         addAndMakeVisible (*tile);
         tiles[(std::size_t) i] = std::move (tile);
@@ -344,8 +345,10 @@ void StudioEnvironmentWelcome::paint (Graphics& g)
     const auto subtitleHeight = m.line (14, 8);
     const auto subtitleTop = jmin (top + m.line (70, 8),
                                   newProject.getY() - subtitleHeight - m.px (4));
-    g.drawFittedText (String (scenes[(std::size_t) scene].title) + "  |  " + scenes[(std::size_t) scene].subtitle,
-                      left, subtitleTop, jmin (getWidth() * 3 / 5, m.span (520)),
+    String sceneDescription = scenes[(std::size_t) scene].title;
+    if (getWidth() >= m.span (850))
+        sceneDescription += "  |  " + String (scenes[(std::size_t) scene].subtitle);
+    g.drawFittedText (sceneDescription, left, subtitleTop, jmin (getWidth() * 3 / 5, m.span (520)),
                       m.line (14, 8), Justification::centredLeft, 1);
 
     g.setColour (colours::secondary.withAlpha (0.65f));
