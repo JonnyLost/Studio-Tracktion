@@ -21,6 +21,7 @@ struct TrackActions
     std::function<void(tracktion::EditItemID)> toggleMonitoring;
 };
 
+bool isInstrumentPlugin (tracktion::Plugin&);
 tracktion::Plugin* findInstrument (tracktion::AudioTrack&);
 juce::String outputLabel (tracktion::AudioTrack&);
 
@@ -43,7 +44,8 @@ class ChannelInspector final : public juce::Component
 public:
     explicit ChannelInspector (TrackActions&);
     void setEdit (tracktion::Edit*);
-    void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery);
+    void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
+                  const tracktion::MidiClip* selectedClip = nullptr);
     int minimumContentHeight (int width) const;
     void appearanceChanged();
     void resized() override;
@@ -54,7 +56,7 @@ private:
     tracktion::Edit* edit = nullptr;
     tracktion::EditItemID id;
     tracktion::AudioTrack* track() const;
-    juce::Label identity, inputSummary, instrument, sends, output, ariaStatus;
+    juce::Label identity, inputSummary, instrument, sends, output, ariaStatus, midiStatus;
     juce::TextButton audioInput { "Audio Input..." }, midiInput { "MIDI Input..." }, arm { "Arm" },
                      monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts..." },
                      routing { "Output..." };

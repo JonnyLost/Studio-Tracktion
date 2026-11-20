@@ -235,6 +235,7 @@ void InstrumentBrowser::updateDetails()
     vendor.setTooltip (vendor.getText());
     instrumentName.setTooltip (instrumentName.getText());
     explanation.setText (e != nullptr ? e->description : "Change the search or filters.", dontSendNotification);
+    explanation.setTooltip (explanation.getText());
     load.setEnabled (available && canCreate && targetRestriction.isEmpty());
     add.setEnabled (available && canCreate);
     load.setTooltip (targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
@@ -326,12 +327,12 @@ void InstrumentBrowser::appearanceChanged()
 int InstrumentBrowser::minimumContentHeight (int width) const
 {
     const auto& m = appearance;
-    const int details = m.line (11) + m.px (35) + m.line (14) + m.line (12)
+    const int details = m.line (11) + m.px (35) + 2 * m.line (14, 1) + 2 * m.line (13, 1)
         + 2 * m.line (13, 1) + 2 * m.control (25) + m.px (10);
     const int list = 3 * (m.line (12, 2) + m.line (11, 2));
     const bool stacked = m.stackedBrowserDetails (width);
     const bool stackedFilters = m.browserFilterRow (width);
-    return m.control (30) * (stackedFilters ? 2 : 1) + m.line (13, 6) + m.px (6)
+    return m.control (30) * (stackedFilters ? 2 : 1) + 2 * m.line (13, 2) + m.px (6)
         + (stacked ? details + list + m.px (5) : jmax (details, list));
 }
 
@@ -359,7 +360,7 @@ void InstrumentBrowser::resized()
     else if (compact)
         compactType.setBounds (toolbar.removeFromRight (m.span (128)).reduced (m.px (2), 0));
     search.setBounds (toolbar.reduced (m.px (2), 0));
-    status.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (4), 0));
+    status.setBounds (area.removeFromBottom (2 * m.line (13, 2)).reduced (m.px (4), 0));
     if (stackDetails)
     {
         const int rows = 3 * resultList.getRowHeight();
@@ -380,8 +381,8 @@ void InstrumentBrowser::resized()
     add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     load.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     explanation.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
-    vendor.setBounds (detail.removeFromBottom (m.line (12)));
-    instrumentName.setBounds (detail.removeFromBottom (m.line (14)));
+    vendor.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
+    instrumentName.setBounds (detail.removeFromBottom (2 * m.line (14, 1)));
     detailsTitle.setBounds (detail.removeFromTop (m.line (11)));
     art = detail.reduced (m.px (2), m.px (1));
 }

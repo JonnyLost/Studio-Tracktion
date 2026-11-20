@@ -11,11 +11,17 @@ Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified 
 
 ## Appearance and readability
 
-Open **Appearance…** in the top row. **Interface Scale** offers 100%, 110%, 125%, 150%, and 175%. **Text Size** offers Standard, Large (115%), and Extra Large (130%). Both apply immediately and are stored in Studio's application preferences. **Reset Appearance** restores both defaults. **Command–Option–=** and **Command–Option–−** step through interface sizes. **Command–Option–0** resets interface scale and keeps the text setting.
+Open **View...** in the top row. **Interface Scale** offers 100%, 110%, 125%, 150%, and 175%. **Text Size** offers Standard, Large (115%), and Extra Large (130%). Both apply immediately and are stored in Studio's application preferences. **Reset Appearance** restores both defaults. **Command–Option–=** and **Command–Option–−** step through interface sizes. **Command–Option–0** resets interface scale and keeps the text setting.
 
 When space is tight, project controls move into **Project…**, arrangement commands into **Tracks…**, and dock controls into **Layout…**. MIDI Monitor is available from Project if it leaves the transport row. The rail and dock scroll as needed. At larger sizes the Browser puts filters in dropdowns and can stack details below results. Channel reflows its signal-flow cards, and Mixer scrolls the track bank horizontally while keeping Master pinned. Long names remain available through tooltips.
 
 Appearance uses macOS logical points and native JUCE text layout. Retina backing scale, the musical timeline, Piano Roll time and pitch zoom, and waveform zoom are independent. Third-party plug-in editors and operating-system dialogs use their own scaling.
+
+## MIDI expression, Articulations, and resources
+
+- In **Piano Roll → Expression...**, enable any combination of CC1, CC11, CC7, CC64, Pitch Bend, and Channel Aftertouch. Lanes share the note timeline and snap grid. **Draw** writes stepped MIDI messages along the gesture. Sustain sends explicit off/on values with a single point per gesture. Pitch bend shows the signed offset from center and stores the full 14-bit value. Select a point to see its value, drag it to edit, or Shift-click to add points to the selected lane's selection. With a controller lane focused, use Command-A, Command-C, Command-V, and Delete. Paste uses the last lane click or the playhead if there is no lane cursor. It preserves events' relative timing and requires a matching destination clip channel. Undo and redo use project history. MPE data is read-only in these lanes.
+- **Articulations** follows the selected track. **Pin track** keeps it on that track within the open project, across dock and float. Use a verified message and receiving channel from the instrument's patch documentation to add each mapping. The palette saves mappings with their instrument instance in the project and restores its layout and floating-window geometry from Studio preferences. Unknown patches start unmapped. Check existing mappings after changing a patch within the same plug-in instance. A pad or assigned Ctrl-Shift-digit auditions through the track's live route. **Insert at playhead** writes a controller event or short keyswitch note only to a selected clip with the matching track and channel. The optional shortcut is available while the palette is visible. Incoming MIDI triggers and recording live pad gestures to a take are deferred.
+- **Resource Inspector** opens from **View...** or the transport CPU, RAM or XR readouts. The audio percentage is Tracktion callback utilization, while process CPU uses 100% per core. Peak fields are the highest sampled values since launch or reset. Studio footprint comes from macOS task information, total physical RAM from the system, and pressure from macOS memory-pressure notifications. XR is the device's native overload counter when supported. The instrument table is sortable and reports Unavailable for hosted instruments without attributable diagnostics. The app takes system samples at 2 Hz on the message thread and installs no additional audio callback. Device overload detection can vary by driver.
 
 ## Instruments, Channel, and Mixer
 
@@ -56,8 +62,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-global-ui-scaling https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Appearance &&
-cd Studio-Tracktion-Appearance &&
+git clone --branch feature/studio-professional-midi-m3 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone3 &&
+cd Studio-Tracktion-Milestone3 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
@@ -83,6 +89,8 @@ c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o /tmp/
 /tmp/studio-appearance-tests
 ```
 
+**Milestone 3 acceptance.** Open two MIDI clips with different channels and a disposable ARIA project. Add, move, copy, paste, undo, and delete controller points, including sustain off/on, extreme and center pitch bend, and channel aftertouch. Confirm an incompatible paste leaves both clips intact, then listen for the messages and save/reopen. Repeat in a trimmed or looped clip. Verify CC editing leaves the original notes and other controller data intact. Map two known patches to different pads and receiving channels, switch tracks, pin, float, resize, redock, change orientation, and relaunch. Confirm an unmapped pad sends nothing and live pad audition never adds events to a take. Test explicit insert, undo/redo and project reopen. Check callback vs process CPU, memory pressure and XR while playing and recording, and confirm ARIA's per-instance status is Unavailable. Compare process footprint and CPU trends with Activity Monitor and listen for glitches.
+
 **Instrument and mixing acceptance.** At 1280 × 800 and 1024 × 640, open Instruments, Channel and Mixer in Split and Expanded and check keyboard focus and fitting. Scan ARIA and another instrument AU. Load one onto a compatible track, add one as a new track, undo and redo, open each instance, and verify the selected patch or plug-in state survives Save As and reopen. Try an occupied, frozen, or audio track, a stale scan entry, and a selection spanning two tracks. Check that a rejected load retains the track and plug-in state.
 
 Assign a physical MIDI input and an audio input, exercise arm and monitoring, and record a take from each. Check the scope of the MIDI device channel filter. Add an effect, verify which instance opens, and change a track's output to an enabled device and back. Verify track and master faders, pan, mute/solo, meters, and strip selection while the mixer scrolls. Check a legacy track without a meter. Use disposable projects for ARIA restore and the editing regressions below.
@@ -107,7 +115,7 @@ At 1024 × 640, switch through the rail, More menu, Compact, Split, Expanded, an
 
 ### Verification boundary
 
-The Intel macOS workflow runs the appearance metrics tests and builds Studio with Xcode. Confirm the appearance checklist, Audio Unit execution, physical Oxygen 25 input, and on-disk save and reload on the Intel MacBook before merging.
+The Intel macOS workflow runs the appearance metrics tests and the MIDI value, articulation serialization, and resource sample tests, and builds Studio with Xcode. Confirm the appearance checklist, Audio Unit execution, physical Oxygen 25 input, and on-disk save and reload on the Intel MacBook before merging.
 
 The Tracktion checkout is read during configuration. Studio writes the adapted example editor into its own build directory. Project files use the existing `.tracktionedit` format and Studio retains the previous audio-device and plugin settings location.
 

@@ -51,7 +51,7 @@ private:
     juce::Array<juce::ValueTree> selection;
     juce::ValueTree dragged;
     std::vector<DraftPoint> stroke;
-    juce::Point<int> origin;
+    juce::Point<int> origin, lastSample;
     DraftPoint preview {};
     struct ClipboardEvent { juce::ValueTree state; double relativeBeat; };
     std::vector<ClipboardEvent> clipboard;

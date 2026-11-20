@@ -2,6 +2,7 @@
 #include "MidiControllerLanes.h"
 #include "StudioUI.h"
 #include <cmath>
+#include <limits>
 
 using namespace juce;
 namespace te = tracktion;
@@ -277,6 +278,7 @@ void MidiControllerLanes::mouseDown (const MouseEvent& event)
         if (drawMode() && beatInClip (*cursorBeat))
         {
             drawing = true;
+            lastSample = origin;
             addPoint (origin);
         }
     }
@@ -314,8 +316,17 @@ void MidiControllerLanes::mouseDrag (const MouseEvent& event)
     }
     else if (drawing)
     {
-        if (specs[(size_t) active].format == ExpressionValue::switch64) stroke.clear();
-        addPoint (event.getPosition());
+        const auto next = event.getPosition();
+        if (specs[(size_t) active].format == ExpressionValue::switch64)
+            stroke.clear();
+        else
+        {
+            const int intervals = jlimit (1, 32, std::abs (next.x - lastSample.x) / appearance.px (6));
+            for (int i = 1; i < intervals; ++i)
+                addPoint (lastSample + (next - lastSample) * (i / (float) intervals));
+        }
+        addPoint (next);
+        lastSample = next;
     }
     repaint();
 }
@@ -331,8 +342,10 @@ void MidiControllerLanes::mouseUp (const MouseEvent&)
             event && (event->getControllerValue() != preview.stored || event->getBeatPosition().inBeats() != preview.beat))
         {
             if (um) um->beginNewTransaction ("Edit MIDI controller");
-            event->setBeatPosition (te::BeatPosition::fromBeats (preview.beat), um);
-            event->setControllerValue (preview.stored, um);
+            if (event->getBeatPosition().inBeats() != preview.beat)
+                event->setBeatPosition (te::BeatPosition::fromBeats (preview.beat), um);
+            if (event->getControllerValue() != preview.stored)
+                event->setControllerValue (preview.stored, um);
             if (um) um->beginNewTransaction();
         }
     }
@@ -395,8 +408,11 @@ void MidiControllerLanes::paste()
             for (int i = 0; i < (int) specs.size(); ++i)
                 if (specs[(size_t) i].midiType == event->getType())
                 {
-                    selectLane (i);
-                    selection.add (event->state);
+                    if (visible[(size_t) i])
+                    {
+                        selectLane (i);
+                        selection.add (event->state);
+                    }
                     break;
                 }
         }

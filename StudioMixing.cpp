@@ -9,14 +9,6 @@ namespace studio
 {
 namespace
 {
-bool instrumentPlugin (te::Plugin& plugin)
-{
-    if (plugin.isSynth()) return true;
-    if (auto* external = dynamic_cast<te::ExternalPlugin*> (&plugin))
-        return external->isAU() && external->getName().containsIgnoreCase ("ARIA Player");
-    return false;
-}
-
 te::AudioTrack* trackFor (te::Edit* edit, te::EditItemID id)
 {
     return edit != nullptr && id.isValid() ? te::findAudioTrackForID (*edit, id) : nullptr;
@@ -42,7 +34,7 @@ int cardHeight (int card)
     const int heading = m.line (12, 4);
     const int detail = 2 * m.line (12, 1);
     const int control = m.control (23);
-    if (card == 0) return heading + detail + 3 * control + m.px (6);
+    if (card == 0) return heading + detail + 3 * control + m.px (12);
     if (card == 2) return heading + control + m.px (6);
     if (card == 3) return heading + detail + m.px (6);
     return heading + detail + control + m.px (6);
@@ -116,10 +108,18 @@ private:
 };
 }
 
+bool isInstrumentPlugin (te::Plugin& plugin)
+{
+    if (plugin.isSynth()) return true;
+    if (auto* external = dynamic_cast<te::ExternalPlugin*> (&plugin))
+        return external->isAU() && external->getName().containsIgnoreCase ("ARIA Player");
+    return false;
+}
+
 te::Plugin* findInstrument (te::AudioTrack& track)
 {
     for (auto* plugin : track.pluginList)
-        if (instrumentPlugin (*plugin)) return plugin;
+        if (isInstrumentPlugin (*plugin)) return plugin;
     return nullptr;
 }
 
@@ -193,8 +193,8 @@ void MixControls::refresh (te::VolumeAndPanPlugin* plugin, bool enabled)
 void MixControls::resized()
 {
     const auto& m = appearance;
-    const auto valueWidth = m.span (70);
-    const auto valueHeight = m.line (12, 2);
+    const auto valueWidth = m.span (74);
+    const auto valueHeight = m.line (13, 2);
     auto area = getLocalBounds();
     for (auto* slider : { &volume, &pan })
         slider->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
@@ -202,7 +202,7 @@ void MixControls::resized()
     if (vertical)
     {
         panLabel.setBounds (area.removeFromTop (m.line (11, 1)));
-        pan.setBounds (area.removeFromTop (m.control (31, 12)));
+        pan.setBounds (area.removeFromTop (m.line (13, 2) + m.px (15)));
         volumeLabel.setBounds (area.removeFromTop (m.line (11, 1)));
         volume.setBounds (area);
     }
@@ -219,11 +219,11 @@ void MixControls::resized()
 ChannelInspector::ChannelInspector (TrackActions& callbacks) : actions (callbacks)
 {
     for (Component* component : std::initializer_list<Component*> {
-             &identity, &inputSummary, &instrument, &sends, &output, &ariaStatus, &audioInput,
+             &identity, &inputSummary, &instrument, &sends, &output, &ariaStatus, &audioInput, &midiStatus,
              &midiInput, &arm, &monitor, &editor, &inserts, &routing, &mix })
         addAndMakeVisible (*component);
     identity.setFont (FontOptions (14.0f, Font::bold));
-    for (auto* label : { &inputSummary, &instrument, &sends, &output, &ariaStatus })
+    for (auto* label : { &inputSummary, &instrument, &sends, &output, &ariaStatus, &midiStatus })
     {
         label->setColour (Label::textColourId, colours::secondary);
         label->setFont (FontOptions (11.5f));
@@ -254,7 +254,7 @@ void ChannelInspector::setEdit (te::Edit* next)
     refresh (nullptr, false, false, {});
 }
 
-void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRoute, const String& recovery)
+void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRoute, const String& recovery, const te::MidiClip* selectedClip)
 {
     id = selected != nullptr ? selected->itemID : te::EditItemID {};
     identity.setText (selected ? selected->getName() : "Select a track in the arrangement", dontSendNotification);
@@ -272,7 +272,17 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
             if (instance->getTargets().contains (selected->itemID))
             {
                 const auto& device = instance->getInputDevice();
-                assigned.add (device.getName());
+                String name = device.getName();
+                if (const auto* input = dynamic_cast<const te::MidiInputDevice*> (&device))
+                {
+                    StringArray channels;
+                    for (int ch = 1; ch <= 16; ++ch)
+                        if (input->isChannelAllowed (ch)) channels.add (String (ch));
+                    name << (channels.size() == 16 ? " (all incoming channels)"
+                          : channels.isEmpty() ? " (no incoming channels)"
+                          : " (incoming " + channels.joinIntoString (", ") + ")");
+                }
+                assigned.add (name);
                 isArmed |= instance->isRecordingEnabled (selected->itemID);
                 isMonitoring |= instance->isLivePlayEnabled (*selected);
                 fixedMonitor |= device.getMonitorMode() != te::InputDevice::MonitorMode::automatic;
@@ -288,6 +298,14 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
     inputSummary.setTooltip (assigned.joinIntoString ("\n"));
     sends.setText (sendNames.isEmpty() ? "No sends" : sendNames.joinIntoString (" | "), dontSendNotification);
     sends.setTooltip (sendNames.joinIntoString ("\n"));
+    String transmit = "Select a MIDI clip to see its transmit channel";
+    if (selectedClip != nullptr)
+        transmit = selectedClip->getMPEMode() ? "Clip transmit: MPE"
+            : "Clip transmit: channel " + String (selectedClip->getMidiChannel().getChannelNumber());
+    if (plugin != nullptr)
+        transmit << "  |  Instrument receive: set in plug-in";
+    midiStatus.setText (selected != nullptr ? transmit : String(), dontSendNotification);
+    midiStatus.setTooltip (midiStatus.getText());
     ariaStatus.setText (recovery, dontSendNotification);
     ariaStatus.setTooltip (recovery);
     const bool configurable = canRoute && selected != nullptr && ! selected->isFrozen (te::Track::anyFreeze);
@@ -304,7 +322,7 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
 int ChannelInspector::minimumContentHeight (int width) const
 {
     const auto& m = appearance;
-    int height = m.line (14, 5) + 2 * m.control (25) + m.line (12, 6) + m.px (4);
+    int height = m.line (14, 5) + 2 * m.control (25) + 3 * m.line (12, 4) + m.px (4);
     const int count = channelColumns (width);
     for (int i = 0; i < 5; i += count)
         height += cardRowHeight (i, count) + m.px (3);
@@ -332,14 +350,17 @@ void ChannelInspector::resized()
     }
     auto bottom = area.removeFromTop (2 * m.control (25));
     mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
-    ariaStatus.setBounds (area.removeFromTop (m.line (12, 6)));
+    midiStatus.setBounds (area.removeFromTop (2 * m.line (12, 4)));
+    ariaStatus.setBounds (area.removeFromTop (m.line (12, 4)));
     const auto heading = m.line (12, 4);
     const auto detail = 2 * m.line (12, 1);
     const auto control = m.control (23);
     auto input = columns[0].reduced (m.px (4), m.px (2)).withTrimmedTop (heading);
     inputSummary.setBounds (input.removeFromTop (detail));
     audioInput.setBounds (input.removeFromTop (control));
+    input.removeFromTop (m.px (3));
     midiInput.setBounds (input.removeFromTop (control));
+    input.removeFromTop (m.px (3));
     auto toggles = input.removeFromTop (control);
     arm.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3));
     monitor.setBounds (toggles.reduced (m.px (2), 0));
@@ -481,7 +502,7 @@ public:
             mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
             solo.setBounds (toggles.reduced (m.px (1)));
         }
-        meter.setBounds (area.removeFromRight (m.px (20)).withTrimmedTop (2 * m.line (11, 1) + m.control (31, 12)));
+        meter.setBounds (area.removeFromRight (m.px (20)).withTrimmedTop (2 * m.line (11, 1) + m.line (13, 2) + m.px (15)));
         mix.setBounds (area);
     }
 
@@ -577,7 +598,7 @@ int StudioMixer::minimumContentHeight() const
 {
     const auto& m = appearance;
     return m.px (12) + 4 * m.control (22) + m.line (11, 3) + 2 * m.line (11, 1)
-        + m.control (31, 12) + m.line (12, 2) + m.px (33) + m.scrollbar();
+        + 2 * m.line (13, 2) + m.px (48) + m.scrollbar();
 }
 
 void StudioMixer::resized()

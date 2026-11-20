@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioResources.h"
 #include "StudioMixing.h"
+#include "ResourceSample.h"
 #include "StudioUI.h"
 
 #include <chrono>
@@ -99,8 +100,8 @@ struct StudioResources::ProcessStats
             const double seconds = (double) usage.ru_utime.tv_sec + (double) usage.ru_stime.tv_sec
                 + ((double) usage.ru_utime.tv_usec + (double) usage.ru_stime.tv_usec) / 1000000.0;
             const auto elapsed = std::chrono::duration<double> (now - lastSample).count();
-            if (previousCPU && elapsed > 0.0 && seconds >= *previousCPU)
-                cpu = (float) ((seconds - *previousCPU) / elapsed);
+            if (previousCPU)
+                cpu = processCPUFraction (*previousCPU, seconds, elapsed);
             previousCPU = seconds;
             lastSample = now;
         }
@@ -119,7 +120,7 @@ StudioResources::StudioResources (tracktion::DeviceManager& manager)
     dropouts.setTooltip ("Native audio device overloads. Open Resource Inspector.");
     for (Component* item : std::initializer_list<Component*> { &current, &peaks, &system, &reset, &table })
         addAndMakeVisible (*item);
-    reset.onClick = [this] { peakMemory.reset(); peakLoad.reset(); timerCallback(); };
+    reset.onClick = [this] { peakMemory.reset(); peakLoad.reset(); };
 
     auto& header = table.getHeader();
     header.addColumn ("Track", 1, 128);
@@ -178,7 +179,7 @@ void StudioResources::resized()
 
 void StudioResources::visibilityChanged()
 {
-    if (isShowing()) timerCallback();
+    if (isShowing()) updateRows();
 }
 
 void StudioResources::timerCallback()
@@ -217,8 +218,9 @@ void StudioResources::updateRows()
     std::vector<Row> next;
     if (edit != nullptr)
         for (auto* track : tracktion::getAudioTracks (*edit))
-            if (auto* instrument = findInstrument (*track))
+            for (auto* instrument : track->pluginList)
             {
+                if (! isInstrumentPlugin (*instrument)) continue;
                 Row row { track->getName(), instrument->getName(),
                           dynamic_cast<tracktion::ExternalPlugin*> (instrument) != nullptr ? "Hosted Audio Unit" : "Studio",
                           "The instrument does not report per-instance memory.", {}, ResourceAttribution::unavailable };

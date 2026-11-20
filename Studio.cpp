@@ -18,6 +18,7 @@ using namespace tracktion::literals;
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
 #include "StudioResources.h"
+#include "ArticulationPalette.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -46,6 +47,60 @@ public:
         return (onAppearanceKey && onAppearanceKey (key)) || DocumentWindow::keyPressed (key);
     }
     void closeButtonPressed() override { if (onClose) onClose(); }
+};
+
+class ArticulationWindow final : public DocumentWindow
+{
+public:
+    explicit ArticulationWindow (studio::ArticulationPalette& paletteToShow)
+        : DocumentWindow ("Studio - Articulations", studio::colours::canvas, closeButton),
+          palette (paletteToShow)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (true, false);
+        setResizeLimits (280, 210, 1800, 1200);
+        viewport.setScrollBarsShown (true, false);
+        viewport.setViewedComponent (&palette, false);
+        setContentNonOwned (&viewport, false);
+    }
+
+    ~ArticulationWindow() override
+    {
+        viewport.setViewedComponent (nullptr);
+        clearContentComponent();
+    }
+
+    void resized() override
+    {
+        DocumentWindow::resized();
+        fitPalette();
+    }
+
+    void fitPalette()
+    {
+        const auto thickness = studio::appearance.scrollbar();
+        viewport.setScrollBarThickness (thickness);
+        auto width = viewport.getWidth();
+        auto height = palette.minimumContentHeight (width);
+        if (height > viewport.getHeight())
+        {
+            width = jmax (1, width - thickness);
+            height = palette.minimumContentHeight (width);
+        }
+        palette.setSize (width, jmax (height, viewport.getHeight()));
+    }
+
+    std::function<void()> onClose;
+    std::function<bool(const KeyPress&)> onAppearanceKey;
+    bool keyPressed (const KeyPress& key) override
+    {
+        return (onAppearanceKey && onAppearanceKey (key)) || palette.keyPressed (key) || DocumentWindow::keyPressed (key);
+    }
+    void closeButtonPressed() override { if (onClose) onClose(); }
+
+private:
+    studio::ArticulationPalette& palette;
+    Viewport viewport;
 };
 
 class WorkspaceDivider final : public Component
@@ -178,6 +233,15 @@ public:
         for (auto* indicator : { &resources.audio, &resources.ram, &resources.dropouts })
             addAndMakeVisible (*indicator);
         workspaceBody.addChildComponent (resources);
+        workspaceBody.addChildComponent (articulation);
+        articulation.onToggleDock = [this] { toggleArticulationDock(); };
+        articulation.onLayoutChange = [this]
+        {
+            if (articulationWindow != nullptr)
+                articulationWindow->fitPalette();
+            else
+                resized();
+        };
         resources.onOpen = [this]
         {
             if (dockMode == DockMode::compact) dockMode = DockMode::split;
@@ -219,6 +283,16 @@ public:
             railContent.addAndMakeVisible (*item.button);
             item.button->onClick = [this, destination = item.destination] { toggleWorkspace (destination); };
         }
+        articulationsButton.onClick = [this]
+        {
+            if (articulationWindow != nullptr)
+                articulationWindow->toFront (true);
+            else
+            {
+                if (dockMode == DockMode::compact) dockMode = DockMode::split;
+                toggleWorkspace (Workspace::articulations);
+            }
+        };
         railContent.addAndMakeVisible (moreButton);
         moreButton.onClick = [this] { showMoreWorkspaces(); };
         addAndMakeVisible (closeWorkspace);
@@ -367,6 +441,13 @@ public:
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        articulation.setContext (nullptr);
+        if (articulationWindow != nullptr)
+        {
+            rememberArticulationWindow();
+            articulationWindow->setLookAndFeel (nullptr);
+        }
+        articulationWindow.reset();
         workspaceViewport.setViewedComponent (nullptr);
         railViewport.setViewedComponent (nullptr);
         LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -488,7 +569,7 @@ public:
 
     bool keyPressed (const KeyPress& key) override
     {
-        if (handleAppearanceKey (key)) return true;
+        if (handleAppearanceKey (key) || articulation.keyPressed (key)) return true;
         if (key == KeyPress::spaceKey && play.isEnabled())
         {
             play.onClick();
@@ -526,19 +607,24 @@ public:
         const auto transport = { studio::ToolbarItem { &rewind, tightTransport ? 48 : 58 },
             studio::ToolbarItem { &play, tightTransport ? 47 : 60 }, studio::ToolbarItem { &record, tightTransport ? 78 : 94 },
             studio::ToolbarItem { &bars, tightTransport ? 66 : 82 }, studio::ToolbarItem { &position, tightTransport ? 80 : 95 },
-            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 },
-            studio::ToolbarItem { &resources.audio, 80 }, studio::ToolbarItem { &resources.ram, 119 },
-            studio::ToolbarItem { &resources.dropouts, 69 } };
+            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 } };
+        const auto indicators = { studio::ToolbarItem { &resources.audio, 68 },
+            studio::ToolbarItem { &resources.ram, 105 }, studio::ToolbarItem { &resources.dropouts, 55 } };
+        const bool inlineResources = transportWidth >= m.span (427);
         const int transportHeight = studio::toolbarHeight (transportWidth
-            - (showMonitor ? m.span (125) : 0), transport);
+            - (showMonitor ? m.span (125) : 0), transport)
+            + (inlineResources ? 0 : studio::toolbarHeight (transportWidth, indicators));
         topBar = area.removeFromTop (projectRowHeight + transportHeight + m.px (10));
 
         auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
-        appearanceButton.setBounds (files.removeFromRight (m.span (110)).reduced (m.px (2), 0));
+        appearanceButton.setBounds (files.removeFromRight (m.span (62)).reduced (m.px (2), 0));
+        if (inlineResources)
+            for (auto item : indicators)
+                item.component->setBounds (files.removeFromRight (m.span (item.baseWidth)).reduced (m.px (1), 0));
         const bool fullFileRow = files.getWidth() >= m.span (735);
         projectMenu.setVisible (! fullFileRow || ! showMonitor);
         if (projectMenu.isVisible())
-            projectMenu.setBounds (files.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+            projectMenu.setBounds (files.removeFromRight (m.span (74)).reduced (m.px (2), 0));
         for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &openProject, &newProject })
         {
             button->setVisible (fullFileRow);
@@ -549,9 +635,12 @@ public:
 
         auto controls = topBar.withTrimmedTop (projectRowHeight + m.px (4)).reduced (m.px (10), 0);
         monitorButton.setVisible (showMonitor);
+        auto wrappedIndicators = inlineResources ? Rectangle<int>() : controls.removeFromBottom (
+            studio::toolbarHeight (transportWidth, indicators) + m.px (6));
         if (showMonitor)
             monitorButton.setBounds (controls.removeFromRight (m.span (125)).withHeight (m.control (30)).reduced (m.px (2)));
         studio::layoutToolbar (controls, transport);
+        if (! inlineResources) studio::layoutToolbar (wrappedIndicators, indicators);
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
         ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
@@ -625,6 +714,8 @@ public:
         piano.appearanceChanged();
         monitor.appearanceChanged();
         resources.appearanceChanged();
+        articulation.appearanceChanged();
+        if (articulationWindow != nullptr) articulationWindow->fitPalette();
         fitFloatingMonitor();
         if (editor != nullptr) editor->refreshStudioLayout();
         resized();
@@ -780,6 +871,8 @@ private:
     studio::ChannelInspector channelInspector { trackActions };
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
+    studio::ArticulationPalette articulation { engine.getPropertyStorage().getPropertiesFile() };
+    std::unique_ptr<ArticulationWindow> articulationWindow;
 
     struct PendingPlugin
     {
@@ -891,6 +984,7 @@ private:
             if (mixer.isVisible()) return mixer.minimumContentHeight();
             if (piano.isVisible()) return piano.minimumContentHeight (width);
             if (resources.isVisible()) return resources.minimumContentHeight (width);
+            if (articulationWindow == nullptr && articulation.isVisible()) return articulation.minimumContentHeight (width);
             return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
         };
         auto width = body.getWidth();
@@ -906,6 +1000,7 @@ private:
         for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
+        if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
     }
 
     void toggleWorkspace (Workspace destination)
@@ -952,14 +1047,17 @@ private:
         const bool browsing = workspace == Workspace::instruments;
         const bool inspecting = workspace == Workspace::channel;
         const bool checkingResources = workspace == Workspace::resources;
-        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting || checkingResources);
+        const bool showingArticulation = workspace == Workspace::articulations;
+        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting
+                                        || checkingResources || showingArticulation);
         String name;
         bool inPrimaryRail = false;
         for (const auto& item : railItems())
         {
-            const bool selected = workspace == item.destination;
+            const bool selected = workspace == item.destination
+                || (item.destination == Workspace::articulations && articulationWindow != nullptr);
             item.button->setToggleState (selected, dontSendNotification);
-            if (selected)
+            if (workspace == item.destination)
             {
                 name = item.button->getButtonText();
                 inPrimaryRail = true;
@@ -979,6 +1077,7 @@ private:
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
+        articulation.setVisible (articulationWindow != nullptr || (showingArticulation && ! compact));
         mixer.setVisible (mixing && ! compact);
         if (! mixer.isVisible()) mixer.pauseMeters();
         workspaceTicks = 1; // Refresh the newly shown workspace on the next host tick.
@@ -1079,6 +1178,47 @@ private:
             monitorWindow->toFront (true);
             showWorkspace (Workspace::closed);
         }
+    }
+
+    void rememberArticulationWindow()
+    {
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        prefs.setValue ("studio.articulationWindow", articulationWindow->getWindowStateAsString());
+        prefs.saveIfNeeded();
+    }
+
+    void toggleArticulationDock()
+    {
+        if (articulationWindow != nullptr)
+        {
+            rememberArticulationWindow();
+            // Close may originate in the window's own close-button handler.
+            // Keep the window alive until that callback has unwound.
+            MessageManager::callAsync ([safe = SafePointer<StudioView> (this)]
+            {
+                if (! safe || safe->articulationWindow == nullptr) return;
+                safe->articulationWindow.reset();
+                safe->workspaceBody.addAndMakeVisible (safe->articulation);
+                safe->articulation.setFloating (false);
+                if (safe->dockMode == DockMode::compact) safe->dockMode = DockMode::split;
+                safe->showWorkspace (Workspace::articulations);
+            });
+            return;
+        }
+
+        articulationWindow = std::make_unique<ArticulationWindow> (articulation);
+        articulationWindow->setLookAndFeel (&style);
+        articulationWindow->onClose = [this] { toggleArticulationDock(); };
+        articulationWindow->onAppearanceKey = [this] (const KeyPress& key) { return handleAppearanceKey (key); };
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        if (! articulationWindow->restoreWindowStateFromString (prefs.getValue ("studio.articulationWindow")))
+            articulationWindow->centreAroundComponent (this, studio::appearance.px (520), studio::appearance.px (300));
+        auto bounds = articulationWindow->getBounds();
+        if (const auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (bounds))
+            articulationWindow->setBounds (bounds.constrainedWithin (displayClientArea (*articulationWindow, *display)));
+        articulation.setFloating (true);
+        articulationWindow->setVisible (true);
+        showWorkspace (Workspace::closed);
     }
 
     te::AudioTrack* selectedTrack()
@@ -1367,7 +1507,8 @@ private:
             {
                 piano.setClip (primary);
                 workspaceHeight = studio::appearance.px (360);
-                showWorkspace (Workspace::piano);
+                if (workspace != Workspace::articulations)
+                    showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
         }
@@ -1398,7 +1539,11 @@ private:
             : EngineHelpers::trackHasInput (*track) ? "Input assigned" : "No input assigned", dontSendNotification);
 
         if ((++workspaceTicks & 1u) == 0)
-            refreshInstrumentWorkflow (tracks);
+        {
+            refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
+            if (articulation.isShowing())
+                articulation.refresh (workflowTrack(), selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr, ready);
+        }
     }
 
     // Diagnostics intentionally contain metadata only, never AU state bytes or sample paths.
@@ -1822,10 +1967,12 @@ private:
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        articulation.setContext (nullptr);
         ++projectGeneration;
         edit = std::move (next);
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
+        articulation.setContext (edit.get());
         mixer.setEdit (edit.get());
         projectFile = file;
         lastRecordingStopRequestedAt = 0;
@@ -2014,7 +2161,7 @@ private:
         };
     }
 
-    void refreshInstrumentWorkflow (const Array<te::AudioTrack*>& tracks)
+    void refreshInstrumentWorkflow (const Array<te::AudioTrack*>& tracks, const te::MidiClip* selectedClip)
     {
         if (dockMode == DockMode::compact || (workspace != Workspace::instruments
              && workspace != Workspace::channel && workspace != Workspace::mix))
@@ -2035,7 +2182,8 @@ private:
                 ? (autoAriaRetryPending ? "ARIA recovery | Automatic restore pending"
                                         : "ARIA recovery | Verify sound, then Confirm ARIA below transport")
                 : "ARIA recovery | No verification pending";
-            channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery);
+            channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery,
+                selectedClip != nullptr && selectedClip->getAudioTrack() == target ? selectedClip : nullptr);
         }
         else
             mixer.refresh (tracks, target, edit != nullptr && ! busy, canEditRegions());

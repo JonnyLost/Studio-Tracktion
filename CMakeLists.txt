@@ -219,7 +219,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h)
+target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -233,4 +233,13 @@ if(APPLE)
     target_compile_options(Studio PRIVATE -fno-aligned-allocation)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(Studio PRIVATE atomic)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(StudioMilestoneTests tests/MilestoneMidiTests.cpp)
+    target_compile_features(StudioMilestoneTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioMilestoneTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioMilestoneTests PRIVATE juce::juce_core)
+    add_test(NAME StudioMilestoneMidi COMMAND StudioMilestoneTests)
 endif()
