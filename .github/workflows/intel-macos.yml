@@ -2,6 +2,9 @@ name: Intel macOS build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - development
 
 permissions:
   contents: read
@@ -12,6 +15,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Test Studio appearance metrics
+        run: |
+          c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o "$RUNNER_TEMP/studio-appearance-tests"
+          "$RUNNER_TEMP/studio-appearance-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"
@@ -25,5 +32,6 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio --parallel 4
+          cmake --build build --config Debug --target Studio StudioMilestoneTests StudioSpatialTests --parallel 4
+          ctest --test-dir build -C Debug --verbose --output-on-failure
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
