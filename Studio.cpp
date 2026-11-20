@@ -598,7 +598,8 @@ public:
         if (handleAppearanceKey (key) || articulation.keyPressed (key)) return true;
         if (key == KeyPress::spaceKey && play.isEnabled())
         {
-            if (stop.isEnabled()) stop.onClick();
+            if (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording()))
+                stop.onClick();
             else play.onClick();
             return true;
         }
@@ -2701,12 +2702,15 @@ int StudioView::runInterfaceReview (const File& output)
     showWorkspace (Workspace::piano);
     setSize (1024, 640);
     if (! capture ("piano-arrangement-1024x640.png")) return fail ("write Piano Roll screenshot");
+    applyAppearance (175, 130, false);
+    if (! capture ("piano-arrangement-1024x640-largest-text.png")) return fail ("write scaled Piano Roll screenshot");
 
     const auto original = studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType));
+    const auto beforeReopen = projectGeneration;
     save();
     loadProject (fixture.getFile(), false);
     tracks = te::getAudioTracks (*edit);
-    if (tracks.size() < 2 || tracks[0]->getClips().isEmpty()
+    if (projectGeneration != beforeReopen + 1 || tracks.size() < 2 || tracks[0]->getClips().isEmpty()
         || studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType)) != original)
         return fail ("restore project with MIDI and Stage positions");
     std::puts ("Studio interface review passed at 45 size and appearance combinations.");

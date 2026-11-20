@@ -266,7 +266,7 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     dragOrigin = preview = best->point;
     dragged = key;
     moving = false;
-    grabKeyboardFocus();
+    if (isShowing()) grabKeyboardFocus();
     if (onSelect) onSelect (key);
 }
 

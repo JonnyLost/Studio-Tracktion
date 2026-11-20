@@ -623,7 +623,18 @@ bool SpatialWorkspace::verifyMoveForInterfaceReview (te::AudioTrack& track)
     const auto read = [&] { return readSeat (track.state.getChildWithName (seatType)); };
     const auto before = read();
     const auto target = validPosition ({ before.position.x + 0.13f, before.position.depth + 0.09f });
-    stageMap.onMove (track.itemID.toString(), target, false);
+    const auto start = stageMap.screen (before.position);
+    const auto end = stageMap.screen (target);
+    const auto time = Time::getCurrentTime();
+    const auto source = Desktop::getInstance().getMainMouseSource();
+    const auto event = [&] (Point<float> point, int flags, bool moved)
+    {
+        return MouseEvent (source, point, ModifierKeys (flags), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                           &stageMap, &stageMap, time, start, time, 1, moved);
+    };
+    stageMap.mouseDown (event (start, ModifierKeys::leftButtonModifier, false));
+    stageMap.mouseDrag (event (end, ModifierKeys::leftButtonModifier, true));
+    stageMap.mouseUp (event (end, 0, true));
     const auto after = read();
     const auto moved = std::abs (after.position.x - target.x) < 0.0001f
         && std::abs (after.position.depth - target.depth) < 0.0001f && before != after;

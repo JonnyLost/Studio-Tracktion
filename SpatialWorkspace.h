@@ -44,6 +44,7 @@ public:
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
 private:
+    friend class SpatialWorkspace;
     std::vector<Marker> markers;
     juce::String selected, dragged;
     Position preview, dragOrigin;
