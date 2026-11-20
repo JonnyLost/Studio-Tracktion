@@ -203,7 +203,10 @@ Result run (const File& screenshots)
         window.setUsingNativeTitleBar (true);
         window.setContentNonOwned (&editor, true);
         window.centreWithSize (window.getWidth(), window.getHeight());
+        window.setAlwaysOnTop (true);
         window.setVisible (true);
+        window.toFront (true);
+        MessageManager::getInstance()->runDispatchLoopUntil (60);
         if (! editor.runReview (wavFile, aiffFile, screenshots, [&] { return playback.peak (8) > 0.01f; }))
             return Result::fail ("editor interactions or screenshots");
     }

@@ -889,16 +889,37 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         return MouseEvent (mouse, key, ModifierKeys (flags), 0, 0, 0, 0, 0,
                            &keyboard, &keyboard, time, key, time, 1, false);
     };
-    keyboard.mouseDown (event (ModifierKeys::leftButtonModifier));
+    const bool pointerCanReachKeyboard = keyboard.reallyContains (key, false);
+    if (pointerCanReachKeyboard)
+        keyboard.mouseDown (event (ModifierKeys::leftButtonModifier));
+    else
+    {
+        // CI can draw native windows without WindowServer exposing them for
+        // hit-testing. In that environment send the notes from the same JUCE
+        // keyboard state that mouse and QWERTY interaction normally update.
+        std::puts ("Sampler keyboard: testing note dispatch through JUCE keyboard state (window is unavailable to pointer hit-testing).");
+        keys.noteOn (1, 60, 0.9f);
+    }
     const bool down = keys.isNoteOn (1, 60);
     const bool sounded = auditionCheck();
-    keyboard.mouseUp (event (0));
-    if (! sounded)
+    if (pointerCanReachKeyboard)
+        keyboard.mouseUp (event (0));
+    else
+        keys.noteOff (1, 60, 0.0f);
+    if (! down || ! sounded || keys.isNoteOn (1, 60))
     {
-        std::fprintf (stderr, "Sampler keyboard preview produced no audio (%u voices, key %d,%d, down %d)\n",
-                      plugin.resourceSnapshot().activeVoices.value_or (0), roundToInt (key.x), roundToInt (key.y), static_cast<int> (down));
+        std::fprintf (stderr, "Sampler keyboard did not sound and release (%u voices, key %d,%d).\n",
+                      plugin.resourceSnapshot().activeVoices.value_or (0), roundToInt (key.x), roundToInt (key.y));
         return false;
     }
+    auditionCheck(); // Pump the queued release before checking the active key meter.
+    if (plugin.noteActive (60)) return false;
+
+    audition.onClick();
+    if (! auditionCheck() || audition.getButtonText() != "Stop Audition") return false;
+    audition.onClick();
+    auditionCheck();
+    if (plugin.noteActive (60) || audition.getButtonText() != "Audition") return false;
 
     mapping.onClick();
     if (page != Page::mapping || ! samples.isVisible()) return false;
