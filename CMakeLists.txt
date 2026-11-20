@@ -11,8 +11,60 @@ add_subdirectory("${TRACKTION_ROOT}" tracktion)
 
 # Keep Studio's changes to the example editor in the build directory.
 set(common "${TRACKTION_ROOT}/examples/common")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.cpp")
-configure_file("${common}/Components.h" generated/Components.h COPYONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.h")
+file(READ "${common}/Components.h" editor_header)
+string(REPLACE "#pragma once" "#pragma once\n#include <utility>\n#include <vector>"
+               editor_header "${editor_header}")
+# The upstream example uses four spaces on some visually empty lines.
+# Normalize those in the generated copy to keep the anchor legible.
+string(REPLACE "    \n" "\n" editor_header "${editor_header}")
+set(clip_header_anchor [=[    void mouseDown (const MouseEvent& e) override;
+
+    te::Clip& getClip() { return *clip; }
+
+protected:
+    EditViewState& editViewState;
+    te::Clip::Ptr clip;
+};]=])
+string(FIND "${editor_header}" "${clip_header_anchor}" clip_header_match)
+if(clip_header_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example ClipComponent header has changed.")
+endif()
+string(REPLACE "${clip_header_anchor}" [=[    void mouseDown (const MouseEvent& e) override;
+    void mouseDrag (const MouseEvent& e) override;
+    void mouseUp (const MouseEvent& e) override;
+    void mouseMove (const MouseEvent& e) override;
+    void mouseExit (const MouseEvent& e) override;
+
+    te::Clip& getClip() { return *clip; }
+
+protected:
+    EditViewState& editViewState;
+    te::Clip::Ptr clip;
+
+private:
+    enum class RegionGesture { none, move, trimLeft, trimRight };
+    RegionGesture regionGesture = RegionGesture::none;
+    std::vector<std::pair<te::Clip::Ptr, te::ClipPosition>> regionDragClips;
+    std::unique_ptr<Component> regionDragPreview;
+    bool regionDragStarted = false;
+};]=] editor_header "${editor_header}")
+set(track_header_anchor [=[    void resized() override;
+
+private:
+    void changeListenerCallback (ChangeBroadcaster*) override;]=])
+string(FIND "${editor_header}" "${track_header_anchor}" track_header_match)
+if(track_header_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example TrackComponent header has changed.")
+endif()
+string(REPLACE "${track_header_anchor}" [=[    void resized() override;
+    te::Track* getTrack() const { return track.get(); }
+
+private:
+    void changeListenerCallback (ChangeBroadcaster*) override;]=] editor_header "${editor_header}")
+file(CONFIGURE OUTPUT generated/Components.h CONTENT "${editor_header}" @ONLY)
 file(READ "${common}/Components.cpp" editor)
 set(midi_assignment [=[else if (res >= 100)
             {
@@ -77,6 +129,18 @@ string(REPLACE "inputsState = track->edit.state.getChildWithName (te::IDs::INPUT
 string(REPLACE "g.setColour (Colours::grey);" "g.setColour (Colour (0xff303d48));" editor "${editor}")
 string(REPLACE "g.setColour (Colours::red);" "g.setColour (Colour (0xffc5a56b));" editor "${editor}")
 string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (Colour (0xff24303b));" editor "${editor}")
+# The stock example always replaces clip selection on click. Keep Shift-click
+# additive/toggle selection without modifying the Tracktion checkout itself.
+set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)
+{
+    editViewState.selectionManager.selectOnly (clip.get());
+}]=])
+string(FIND "${editor}" "${single_clip_selection}" selection_match)
+if(selection_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example clip-selection implementation has changed.")
+endif()
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc" region_editing)
+string(REPLACE "${single_clip_selection}" "${region_editing}" editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 juce_add_gui_app(Studio
@@ -89,7 +153,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h)
+target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
