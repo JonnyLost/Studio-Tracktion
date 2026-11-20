@@ -19,6 +19,7 @@ struct TrackActions
     std::function<void(tracktion::EditItemID, bool solo)> toggleTrackState;
     std::function<void(tracktion::EditItemID)> toggleArm;
     std::function<void(tracktion::EditItemID)> toggleMonitoring;
+    std::function<void(tracktion::EditItemID)> showStage;
 };
 
 bool isInstrumentPlugin (tracktion::Plugin&);
@@ -59,7 +60,7 @@ private:
     juce::Label identity, inputSummary, instrument, sends, output, ariaStatus, midiStatus;
     juce::TextButton audioInput { "Audio Input..." }, midiInput { "MIDI Input..." }, arm { "Arm" },
                      monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts..." },
-                     routing { "Output..." };
+                     routing { "Output..." }, stage { "Open Stage" };
     MixControls mix { false };
     std::array<juce::Rectangle<int>, 5> columns;
 };

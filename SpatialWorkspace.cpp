@@ -148,19 +148,17 @@ SpatialWorkspace::SpatialWorkspace()
     add (*this, stagePage, roomPage, micPage);
     add (stagePage, stageStatus, stageSignal, stageCheck, stageMap, seating, arrangeScope, trackList, sections,
          arrange, resetSeat, toggleSend, pan, depth, trim);
-    add (roomPage, roomStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
+    add (roomPage, roomStatus, roomDraftStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
          wall, floor, ceiling, applyRoom, saveRoom,
          renameRoom, deleteRoom, bypassRoom, resetRoom, widthField, lengthField, heightField, treatment,
          early, late, roomGain, preDelay);
     for (auto& band : decay) roomPage.addAndMakeVisible (band);
     add (micPage, micStatus, micMap, micList, patterns, stereo, setups, micName, setupName, placement, micMixer,
-         addMic, removeMic, addStereo, renameMic, saveSetup, recallSetup, removeSetup, audition, micRoomBypass,
+         addMic, removeMic, addStereo, renameMic, saveSetup, recallSetup, removeSetup, micRoomBypass,
          micX, micDepth, micHeight, azimuth, elevation, spacing, pairAngle, micBankViewport);
     micBankViewport.setViewedComponent (&micBank, false);
     micBankViewport.setScrollBarsShown (false, true);
-    audition.setEnabled (false);
-    audition.setTooltip ("Virtual capture is unavailable. Studio is in Normal Mix.");
-    for (auto* status : { &stageStatus, &roomStatus, &micStatus, &stageSignal, &roomSignalLabel })
+    for (auto* status : { &stageStatus, &roomStatus, &roomDraftStatus, &micStatus, &stageSignal, &roomSignalLabel })
     {
         status->setFont (FontOptions (12.0f));
         status->setColour (Label::textColourId, colours::secondary);
@@ -178,6 +176,9 @@ SpatialWorkspace::SpatialWorkspace()
     populate (patterns, patternNames, 2);
     populate (stereo, stereoNames, 2);
     seating.setTitle ("Stage seating preset");
+    seating.setTooltip ("Choose a layout, then Auto Arrange to apply it");
+    arrange.setTooltip ("Place instruments in the chosen layout and scope. Undo restores the previous placement.");
+    applyRoom.setTooltip ("Use the draft room for the shared Stage return");
     arrangeScope.setTitle ("Auto Arrange scope");
     trackList.setTitle ("Stage track");
     sections.setTitle ("Track instrument section");
@@ -195,7 +196,6 @@ SpatialWorkspace::SpatialWorkspace()
     setupName.setTitle ("Setup name"); setupName.setTextToShowWhenEmpty ("Setup name", colours::secondary);
     stageMap.setWantsKeyboardFocus (true);
     stageMap.setTitle ("Orchestral Stage seating plan");
-    stageMap.setDescription ("Select a track marker and use arrow keys to move. Shift moves its whole section.");
     micMap.setWantsKeyboardFocus (true);
     micMap.setTitle ("Virtual microphone geometry");
     micMap.setDescription ("Select a diamond capsule and use arrow keys to move it.");
@@ -215,6 +215,7 @@ SpatialWorkspace::SpatialWorkspace()
         if (isPositiveAndBelow (i, (int) tracks.size())) stageMap.onSelect (tracks[(size_t) i].id.toString());
     };
     arrange.onClick = [this] { arrangeTracks(); };
+    stageMap.setDescription ("Drag a seat or use arrow keys. Shift moves its section. Right-click overlapping seats to choose one.");
     resetSeat.onClick = [this]
     {
         if (auto* track = lookup (selectedTrack); editable && track != nullptr)
@@ -510,8 +511,9 @@ void SpatialWorkspace::syncMaps()
         const auto value = readMic (mic);
         markers.push_back ({ keyOf (mic), nameOf (mic), value.position, 0, true, value.azimuth, value.pattern });
     }
-    if (view == View::microphones) micMap.display (std::move (markers), selectedMic, true);
-    else stageMap.display (std::move (markers), selectedTrack.toString(), false);
+    const auto seatingLayout = (Seating) jlimit (0, 2, (int) scene().getProperty ("seating", 0));
+    if (view == View::microphones) micMap.display (std::move (markers), selectedMic, true, seatingLayout);
+    else stageMap.display (std::move (markers), selectedTrack.toString(), false, seatingLayout);
 }
 
 void SpatialWorkspace::setSeat (te::AudioTrack& track, Seat value)
@@ -609,6 +611,28 @@ void SpatialWorkspace::toggleTrackAudio()
     finish();
 }
 
+#if STUDIO_SPATIAL_TESTS
+void SpatialWorkspace::arrangeForInterfaceReview (Seating layout)
+{
+    seating.setSelectedId ((int) layout + 1, dontSendNotification);
+    arrangeTracks();
+}
+
+bool SpatialWorkspace::verifyMoveForInterfaceReview (te::AudioTrack& track)
+{
+    const auto read = [&] { return readSeat (track.state.getChildWithName (seatType)); };
+    const auto before = read();
+    const auto target = validPosition ({ before.position.x + 0.13f, before.position.depth + 0.09f });
+    stageMap.onMove (track.itemID.toString(), target, false);
+    const auto after = read();
+    const auto moved = std::abs (after.position.x - target.x) < 0.0001f
+        && std::abs (after.position.depth - target.depth) < 0.0001f && before != after;
+    const bool undone = edit->getUndoManager().undo() && read() == before;
+    const bool redone = edit->getUndoManager().redo() && read() == after;
+    return moved && undone && redone;
+}
+#endif
+
 ValueTree SpatialWorkspace::library() const { return scene().getChildWithName (libraryType); }
 ValueTree SpatialWorkspace::presets() const { return scene().getChildWithName (setupsType); }
 ValueTree SpatialWorkspace::microphones() const { return scene().getChildWithName (microphonesType); }
@@ -676,10 +700,14 @@ void SpatialWorkspace::syncRooms()
     applyRoom.setEnabled (editable);
     const auto current = active.isValid() ? nameOf (active) : String ("Chamber Hall");
     roomStatus.setText (edit == nullptr ? "Open or create a project to apply a room." : ! supported()
-        ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage
-        : "Active: " + current + (roomDraftDirty ? " | Pending design changes" : "")
-          + " | Generic materials and estimated decay", dontSendNotification);
+        ? "This project uses a newer spatial state version."
+        : "Active room · " + current, dontSendNotification);
     roomStatus.setTooltip (roomStatus.getText());
+    roomDraftStatus.setText (statusMessage.isNotEmpty() ? statusMessage
+        : roomDraftDirty ? "Draft room · Apply Room to hear these changes" : String(), dontSendNotification);
+    roomDraftStatus.setColour (Label::textColourId, colours::warning);
+    roomDraftStatus.setTooltip (roomDraftStatus.getText());
+    applyRoom.setToggleState (roomDraftDirty, dontSendNotification);
     syncRoomAudioControls();
 }
 
@@ -839,8 +867,9 @@ void SpatialWorkspace::syncMicrophones()
     removeSetup.setEnabled (editable && presets().getNumChildren() > 0);
     saveSetup.setEnabled (editable && current.getNumChildren() > 0);
     if (view == View::microphones && mixer) syncRoomAudioControls();
-    micStatus.setText (! supported() ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage
-        : "Normal Mix | Virtual capsules and mixer settings are saved for setup only.", dontSendNotification);
+    micStatus.setText (! supported() ? "This project uses a newer spatial state version."
+        : "Visual setup only · Microphone capture is unavailable."
+            + (statusMessage.isNotEmpty() ? " " + statusMessage : String()), dontSendNotification);
     micStatus.setTooltip (micStatus.getText());
 }
 
@@ -1031,7 +1060,8 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
     {
         toolbar (area, { { &roomList, 188 }, { &roomName, 162 }, { &applyRoom, 110 },
             { &saveRoom, 91 }, { &renameRoom, 76 }, { &deleteRoom, 114 } });
-        place (area, roomStatus, 2 * m.line (12, 1));
+        place (area, roomStatus, m.line (12, 1));
+        place (area, roomDraftStatus, m.line (12, 1));
         toolbar (area, { { &bypassRoom, 133 }, { &roomCheck, 161 }, { &roomMixer, 182 } });
         place (area, roomSignalLabel, 2 * m.line (12, 1));
         place (area, roomGraphic, m.px (112) + extra);
@@ -1048,7 +1078,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         toolbar (area, { { &setups, 137 }, { &setupName, 140 }, { &saveSetup, 105 }, { &recallSetup, 112 }, { &removeSetup, 108 } });
         if (mixer)
         {
-            toolbar (area, { { &audition, 191 }, { &micRoomBypass, 177 } });
+            toolbar (area, { { &micRoomBypass, 177 } });
             place (area, micBankViewport, MicStrip::height() + m.scrollbar() + extra);
             if (bounds)
             {
@@ -1080,7 +1110,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
                  &renameMic, &removeMic, &patterns, &micX, &micDepth, &micHeight, &azimuth, &elevation, &stereo,
                  &addStereo, &spacing, &pairAngle })
                 item->setVisible (! mixer);
-            for (Component* item : std::initializer_list<Component*> { &audition, &micRoomBypass, &micBankViewport })
+            for (Component* item : std::initializer_list<Component*> { &micRoomBypass, &micBankViewport })
                 item->setVisible (mixer);
         }
     }

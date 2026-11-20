@@ -37,9 +37,15 @@ inline Position seat (Seating layout, Section section, int index, int sectionSiz
     const int count = std::clamp (sectionSize - row * 9, 1, 9);
     const float spread = count == 1 ? 0.0f : ((float) col / (float) (count - 1) - 0.5f) * 2.0f;
     const float centre = section == Section::keys ? -0.70f : section == Section::other ? 0.70f : 0.0f;
+    if (layout == Seating::scoring)
+    {
+        // Parallel scoring rows with keys and miscellaneous sources in the wings.
+        constexpr std::array scoringDepth { 0.18f, 0.41f, 0.65f, 0.82f, 0.25f, 0.49f };
+        return validPosition ({ centre + spread * (centre == 0.0f ? 0.84f : 0.17f),
+                                scoringDepth[(size_t) section] + (float) row * 0.053f });
+    }
     return validPosition ({ stagger * (centre + spread * (centre == 0.0f ? 0.77f : 0.19f)),
-        depth[(size_t) section] * stagger + (float) row * 0.053f
-            + (layout == Seating::scoring ? 0.035f : 0.0f) });
+        depth[(size_t) section] * stagger + (float) row * 0.053f });
 }
 
 inline float sendDb (Position position, float trimDb)

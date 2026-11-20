@@ -154,6 +154,11 @@ void MidiControllerLanes::paint (Graphics& g)
         g.fillRect (plot);
         g.setColour (colours::divider);
         g.drawHorizontalLine (row.getBottom() - 1, 0.0f, (float) row.getRight());
+        if (i == active)
+        {
+            g.setColour (colours::focus);
+            g.fillRect (row.withWidth (m.px (2)));
+        }
         g.setFont (uiFont (11.0f, Font::bold));
         auto label = row.withWidth (gutter).reduced (m.px (4), m.px (3));
         g.setColour (colours::text);

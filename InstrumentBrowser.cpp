@@ -94,6 +94,8 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     count.setJustificationType (Justification::centredRight);
     load.setColour (TextButton::buttonColourId, colours::action);
     load.setColour (TextButton::textColourOffId, colours::rail);
+    load.setTooltip ("Load the selected instrument on the selected track");
+    add.setTooltip ("Create a track with the selected instrument");
     load.onClick = [this] { if (const auto* e = selected(); e && e->available && loadInstrument) loadInstrument (e->plugin, false); };
     add.onClick = [this] { if (const auto* e = selected(); e && e->available && loadInstrument) loadInstrument (e->plugin, true); };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
@@ -268,9 +270,14 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     auto bounds = Rectangle<int> (0, 0, w, h).reduced (3, 1);
     g.setColour (selectedRow ? colours::selected : kind == results ? colours::control : colours::canvas);
     g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
+    if (selectedRow)
+    {
+        g.setColour (colours::focus.withAlpha (0.7f));
+        g.fillRoundedRectangle (bounds.reduced (1).withWidth (appearance.px (2)).toFloat(), 1.0f);
+    }
     bounds.reduce (appearance.px (6), 0);
     g.setColour (colours::text);
-    g.setFont (uiFont (12.0f));
+    g.setFont (uiFont (12.0f, selectedRow ? Font::bold : Font::plain));
     if (kind != results)
     {
         g.drawFittedText ((kind == families ? browser.families : browser.types)[row], bounds, Justification::centredLeft, 1, 1.0f);
@@ -281,7 +288,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
-    g.setColour (selectedRow ? colours::text.withAlpha (0.86f) : colours::secondary);
+    g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
     g.drawFittedText (entry.type + " | " + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
@@ -389,9 +396,16 @@ void InstrumentBrowser::resized()
 
 void InstrumentBrowser::paint (Graphics& g)
 {
+    const auto detail = detailPanel.toFloat().reduced (0.5f);
     g.setColour (colours::control);
-    g.fillRect (detailPanel);
+    g.fillRoundedRectangle (detail, (float) appearance.px (5));
+    g.setColour (colours::divider);
+    g.drawRoundedRectangle (detail, (float) appearance.px (5), 0.75f);
     if (const auto* e = selected(); e && art.getHeight() > 8)
+    {
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (art.toFloat(), (float) appearance.px (4));
         drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", colours::action);
+    }
 }
 }

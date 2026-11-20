@@ -135,22 +135,92 @@ string(REPLACE "inputsState = track->edit.state.getChildWithName (te::IDs::INPUT
                "inputsState = track->edit.inputDeviceState;" editor "${editor}")
 # Style only the generated editor's drawing code. Track/clip geometry,
 # hit testing, recording, and drag/trim still use the pinned implementation.
-set(header_fill [=[g.setColour (Colours::grey);
-    g.fillRect (getLocalBounds().withTrimmedRight (2));]=])
+set(header_fill [=[    g.setColour (Colours::grey);
+    g.fillRect (getLocalBounds().withTrimmedRight (2));
+
+    if (editViewState.selectionManager.isSelected (track.get()))
+    {
+        g.setColour (Colours::red);
+        g.drawRect (getLocalBounds().withTrimmedRight (-4), 2);
+    }]=])
 string(FIND "${editor}" "${header_fill}" header_fill_match)
 if(header_fill_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example track header drawing has changed.")
 endif()
-string(REPLACE "${header_fill}" [=[g.setColour (editViewState.selectionManager.isSelected (track.get())
-                     ? studio::colours::selected : studio::colours::panel);
-    g.fillRect (getLocalBounds().withTrimmedRight (2));]=] editor "${editor}")
+string(REPLACE "${header_fill}" [=[    auto area = getLocalBounds().withTrimmedRight (1);
+    const bool selected = editViewState.selectionManager.isSelected (track.get());
+    g.setColour (selected ? studio::colours::selected : studio::colours::panel);
+    g.fillRect (area);
+    g.setColour (selected ? studio::colours::focus : track->getColour().interpolatedWith (studio::colours::action, 0.42f));
+    g.fillRect (area.removeFromLeft (studio::appearance.px (3)));
+    if (selected)
+    {
+        g.setColour (studio::colours::focus.withAlpha (0.38f));
+        g.drawRect (area, 1);
+    }]=] editor "${editor}")
 string(REPLACE "g.setColour (Colours::grey);" "g.setColour (studio::colours::panel);" editor "${editor}")
-string(REPLACE "g.setColour (Colours::red);" "g.setColour (studio::colours::focus.withAlpha (0.65f));" editor "${editor}")
 string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (studio::colours::timeline);" editor "${editor}")
 string(REPLACE "g.setColour (Colours::yellow);" "g.setColour (studio::colours::playhead);" editor "${editor}")
-string(REPLACE "g.fillAll (clip->getColour().withAlpha (0.5f));"
-               "g.fillAll (studio::colours::selected.interpolatedWith (clip->getColour().withAlpha (1.0f), 0.27f));"
-               editor "${editor}")
+set(clip_fill [=[    g.fillAll (clip->getColour().withAlpha (0.5f));
+    g.setColour (Colours::black);
+    g.drawRect (getLocalBounds());
+
+    if (editViewState.selectionManager.isSelected (clip.get()))
+    {
+        g.setColour (Colours::red);
+        g.drawRect (getLocalBounds(), 2);
+    }]=])
+string(FIND "${editor}" "${clip_fill}" clip_fill_match)
+if(clip_fill_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example clip drawing has changed.")
+endif()
+string(REPLACE "${clip_fill}" [=[    const auto area = getLocalBounds().reduced (1);
+    const bool midi = dynamic_cast<const te::MidiClip*> (clip.get()) != nullptr;
+    const auto base = midi ? studio::colours::midiClip : studio::colours::audioClip;
+    const bool selected = editViewState.selectionManager.isSelected (clip.get());
+    const auto fill = base.interpolatedWith (clip->getColour(), 0.16f);
+    g.setColour (selected ? fill.brighter (0.13f) : fill);
+    g.fillRoundedRectangle (area.toFloat(), 3.0f);
+    g.setColour (selected ? studio::colours::focus : studio::colours::divider);
+    g.drawRoundedRectangle (area.toFloat().reduced (0.5f), 3.0f, selected ? 1.25f : 0.75f);
+    if (area.getWidth() >= studio::appearance.span (24))
+    {
+        const auto header = area.withHeight (studio::appearance.line (11, 2)).reduced (studio::appearance.px (5), 0);
+        g.setFont (studio::uiFont (11.0f, Font::bold));
+        g.setColour (studio::colours::text);
+        g.drawFittedText (clip->getName(), header, Justification::centredLeft, 1, 1.0f);
+    }]=] editor "${editor}")
+string(REPLACE "0, getWidth(), 0, getHeight(), 0);" "0, getWidth(), studio::appearance.line (11, 2), jmax (1, getHeight() - studio::appearance.line (11, 2)), 0);" editor "${editor}")
+string(REPLACE "Colours::black.withAlpha (0.5f)," "studio::colours::winds.withAlpha (0.76f)," editor "${editor}")
+string(REPLACE "double y = (1.0 - double (n->getNoteNumber()) / 127.0) * getHeight();" [=[const auto top = studio::appearance.line (11, 2);
+                double y = top + (1.0 - double (n->getNoteNumber()) / 127.0) * jmax (0, getHeight() - top - 2);]=] editor "${editor}")
+string(REPLACE "armButton.setColour (TextButton::buttonOnColourId, Colours::red);"
+               [=[armButton.setColour (TextButton::buttonOnColourId, studio::colours::record.darker (0.48f));
+    armButton.setTooltip ("Arm track for recording");
+    armButton.setTitle ("Record arm");
+    inputButton.setTooltip ("Choose audio or MIDI input");
+    inputButton.setTitle ("Track input");
+    muteButton.setTooltip ("Mute track");
+    muteButton.setTitle ("Mute");
+    soloButton.setTooltip ("Solo track");
+    soloButton.setTitle ("Solo");
+    trackName.setFont (FontOptions (12.0f, Font::bold));
+    trackName.setMinimumHorizontalScale (1.0f);]=] editor "${editor}")
+string(REPLACE "muteButton.setColour (TextButton::buttonOnColourId, Colours::red);" "muteButton.setColour (TextButton::buttonOnColourId, studio::colours::warning.darker (0.7f));" editor "${editor}")
+string(REPLACE "soloButton.setColour (TextButton::buttonOnColourId, Colours::green);" "soloButton.setColour (TextButton::buttonOnColourId, studio::colours::selected.brighter (0.28f));" editor "${editor}")
+set(track_header_geometry [=[    auto r = getLocalBounds().reduced (4);
+    trackName.setBounds (r.removeFromTop (r.getHeight() / 2));
+
+    int w = r.getHeight();]=])
+string(FIND "${editor}" "${track_header_geometry}" track_header_geometry_match)
+if(track_header_geometry_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example track header geometry has changed.")
+endif()
+string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appearance;
+    auto r = getLocalBounds().reduced (m.px (7), m.px (3));
+    trackName.setBounds (r.removeFromTop (m.line (12, 2)));
+
+    int w = jmin (jmin (r.getHeight(), m.control (23, 11)), (r.getWidth() - 6) / 4);]=] editor "${editor}")
 # Keep the ruler and generated arrangement in the same logical-point geometry.
 set(track_geometry [=[    const int trackHeight = 50, trackGap = 2;
     const int headerWidth = editViewState.showHeaders ? 150 : 0;
@@ -221,7 +291,7 @@ juce_add_gui_app(Studio
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
-    SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h)
+    SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -261,4 +331,6 @@ if(BUILD_TESTING)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
     add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)
     set_tests_properties(StudioSpatialRouting PROPERTIES TIMEOUT 45)
+    add_test(NAME StudioInterfaceReview COMMAND $<TARGET_FILE:Studio> --studio-interface-review)
+    set_tests_properties(StudioInterfaceReview PROPERTIES TIMEOUT 120)
 endif()

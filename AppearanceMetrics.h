@@ -9,6 +9,17 @@ namespace studio
 {
 enum class DockMode { compact, split, expanded };
 struct DockRoom { int panelHeight, splitLimit; };
+enum class Workspace { closed, instruments, channel, stage, articulations, piano, mix, midi, rooms, microphones, resources, count };
+
+class WorkspaceScroll
+{
+public:
+    void store (Workspace workspace, int y) { offsets[(std::size_t) workspace] = std::max (0, y); }
+    int position (Workspace workspace) const { return offsets[(std::size_t) workspace]; }
+
+private:
+    std::array<int, (std::size_t) Workspace::count> offsets {};
+};
 
 // Sizes are macOS logical points. The component peer still owns backing-pixel
 // scaling, and neither setting participates in musical time or pitch zoom.
@@ -41,10 +52,14 @@ public:
     }
 
     int scrollbar() const { return px (14); }
-    int trackHeader() const { return span (150); }
-    int trackFooter() const { return px (150); }
+    int trackHeader() const { return std::min (span (150), px (164)); }
+    int trackFooter() const { return px (106); }
     int trackHeight() const { return std::max (px (50), line (15) + control (20)); }
     int trackGap() const { return px (2); }
+    int transportKey() const { return px (39); }
+    int transportPrimaryWidth() const { return 4 * transportKey() + span (92) + span (73) + span (60); }
+    bool elapsedFits (int width) const { return width >= transportPrimaryWidth() + span (102); }
+    int mixerStripWidth (int width) const { return span (width < span (950) ? 120 : 134); }
 
     bool compactBrowser (int width) const { return width < span (1000); }
     bool browserFilterRow (int width) const { return width < span (660); }
