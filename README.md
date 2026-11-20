@@ -74,7 +74,7 @@ Use `cmake` in place of the CMake.app path if CMake is installed on your PATH.
 
 ## Mac verification
 
-**Appearance acceptance.** At 1024 × 640 and 1280 × 800, cycle all five interface sizes with all three text sizes. Check the top-row menus and keyboard shortcuts, including reset from a focused editor and the floated MIDI Monitor. At 175% with Extra Large text, scroll the rail, Browser details, Channel controls and Mixer, and use the Project, Tracks and Layout overflow menus. Confirm that Retry and Confirm ARIA remain reachable, labels and fader values are legible, and controls line up with their hit targets. Reopen Studio to verify preferences and move the window between Retina and standard-density displays. Check that changing appearance leaves the musical zoom values unchanged and leaves the recording, saving and editing checks below usable.
+**Appearance acceptance.** At 1024 × 640 and 1280 × 800, cycle all five interface sizes with all three text sizes. With the macOS menu bar and Dock visible, check that the main window opens fully onscreen. Check the top-row menus and keyboard shortcuts, including reset from a focused editor and the floated MIDI Monitor. At 175% with Extra Large text, scroll the rail, Browser details, Channel controls and Mixer, and use the Project, Tracks and Layout overflow menus. Confirm that Retry and Confirm ARIA remain reachable, labels and fader values are legible, and controls line up with their hit targets. Reopen Studio to verify preferences and move the window between Retina and standard-density displays. Check that changing appearance leaves the musical zoom values unchanged and leaves the recording, saving and editing checks below usable.
 
 The standalone metrics test can also be run with:
 
@@ -107,7 +107,7 @@ At 1024 × 640, switch through the rail, More menu, Compact, Split, Expanded, an
 
 ### Verification boundary
 
-The feature is checked against Tracktion/JUCE C++ headers in a Linux environment. The macOS Xcode build, Audio Unit execution, physical Oxygen 25 input, and on-disk save/reload behavior must be confirmed on the Intel MacBook before merging. The included GitHub Actions workflow is an on-demand Intel build check.
+The Intel macOS workflow runs the appearance metrics tests and builds Studio with Xcode. Confirm the appearance checklist, Audio Unit execution, physical Oxygen 25 input, and on-disk save and reload on the Intel MacBook before merging.
 
 The Tracktion checkout is read during configuration. Studio writes the adapted example editor into its own build directory. Project files use the existing `.tracktionedit` format and Studio retains the previous audio-device and plugin settings location.
 

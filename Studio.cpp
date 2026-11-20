@@ -18,6 +18,15 @@ using namespace tracktion::literals;
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
 
+static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
+{
+    auto area = display.userBounds.toNearestInt();
+    if (auto* peer = window.getPeer())
+        if (const auto frame = peer->getFrameSizeIfPresent())
+            frame->subtractFrom (area);
+    return area;
+}
+
 class MidiMonitorWindow final : public DocumentWindow
 {
 public:
@@ -1011,8 +1020,11 @@ private:
             return;
         const int height = monitor.minimumContentHeight (monitor.getWidth()) + studio::appearance.px (40);
         monitorWindow->setResizeLimits (770, jmax (200, height), 2200, 1000);
-        if (monitorWindow->getHeight() < height)
-            monitorWindow->setSize (monitorWindow->getWidth(), height);
+        auto bounds = monitorWindow->getBounds();
+        bounds.setHeight (jmax (bounds.getHeight(), height));
+        if (const auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (bounds))
+            bounds = bounds.constrainedWithin (displayClientArea (*monitorWindow, *display));
+        monitorWindow->setBounds (bounds);
     }
 
     void toggleMonitorDock()
@@ -2359,9 +2371,13 @@ class StudioApplication final : public JUCEApplication
         {
             setUsingNativeTitleBar (true);
             setResizable (true, false);
-            setResizeLimits (920, 610, 2600, 1800);
+            setResizeLimits (920, 500, 2600, 1800);
             setContentOwned (new StudioView(), true);
-            centreWithSize (getWidth(), getHeight());
+            if (const auto* display = Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            {
+                const auto area = displayClientArea (*this, *display);
+                setBounds (getBounds().withCentre (area.getCentre()).constrainedWithin (area));
+            }
             setVisible (true);
         }
 

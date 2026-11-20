@@ -29,7 +29,7 @@ int main()
             assert (metrics.control() >= metrics.fontSize (13.0f));
             assert (metrics.line (14) >= metrics.fontSize (14.0f));
 
-            for (const int available : { 60, 315, 385, 490, 665 })
+            for (const int available : { 60, 275, 315, 385, 490, 665 })
             {
                 const auto minimumToolbar = metrics.control (32) + metrics.control (26) + metrics.px (9);
                 const auto split = metrics.dockRoom (available, metrics.px (270), studio::DockMode::split);
