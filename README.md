@@ -1,4 +1,4 @@
-# Studio 0.2 — Studio Interface Shell
+# Studio 0.2 — Instruments, Channel, and Mixer
 
 Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified Studio 0.2 arrangement and automatic ARIA restoration milestone.
 
@@ -7,7 +7,15 @@ Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified 
 - **Project and transport** run across the top. Use **Start**, **Play/Stop**, and **Record**, with readouts for bars/beats, elapsed time, BPM, and meter. Space controls playback from the arrangement. Command-S saves and Command-Shift-S opens Save As. Save As creates a new `.tracktionedit` file, switches the current project to it, and refuses to overwrite an existing file.
 - **Arrangement** stays above the dock. Use the track picker, track/clip creation and import buttons, and **Edit Regions** in the arrangement toolbar. Use **I** and **A** on a track for input and record arm, and **+** in Inserts to load an instrument or effect. Click the ruler to seek. Use the **− / +** next to **Tracks** or the toolbar's timeline zoom menu, which includes **Fit project**. Command-Z and Command-Shift-Z also work from the arrangement, and **Edit Regions** includes Undo and Redo.
 - **Lower workspace** opens from the left rail and the transport's **MIDI Monitor**. **Compact** shows a workspace summary, **Split** restores the resizable editor, **Expanded** leaves a shallow arrangement above the editor, and **Hide** closes the dock. Drag the dotted divider or focus it and press Up or Down to resize in Split. A newly selected MIDI clip opens the Piano Roll from Compact. MIDI Monitor continues collecting while its own workspace is in Compact, and its **Float** and **Dock** actions remain available in the full monitor.
-- **Planned workspaces** are labeled in the dock. **More** lists additional destinations. Stage, Rooms, and Microphones link to one another, and Channel links to Synth and Sampler. Use the existing Inserts and Plugin Manager for instrument and effect hosting during this milestone.
+- **Planned workspaces** are labeled in the dock. **More** lists additional destinations. Stage, Rooms, and Microphones link to one another, and Channel links to the planned Synth and Sampler. The existing arrangement Inserts and Plugin Manager are also available.
+
+## Instruments, Channel, and Mixer
+
+- **Instruments** shows family, type, searchable results, and details with lightweight line artwork. On a compact window Type moves into the search toolbar. **Plug-ins…** opens the existing Tracktion/JUCE scanner. Results represent the scanned Audio Unit catalog. ARIA is shown as a hosted player. Open its actual editor from **Channel → Open Instrument** to select a Garritan library and patch. The Studio Synth and Sampler entries show their planned status.
+- **Load on Selected Track** accepts one compatible unfrozen destination with no instrument, audio clips, or audio input. **Add as New Track** creates a new instrument track. The host confirms that the AU has an instance before either action changes the edit. A failed or timed-out load leaves the destination and its inserts intact. Existing instrument tracks remain available and can be used alongside the new track.
+- **Channel** follows the selected track, including a clip or plug-in owned by that track. Assign or disconnect an enabled audio or physical MIDI device from the Input menus. Assigning MIDI uses the same auto-arm behavior as the arrangement input control. The physical MIDI device's channel filter and fixed Monitor settings apply device-wide. Automatic monitor mode follows Tracktion, and original MIDI events keep their channels. **Inserts** opens the exact instance or adds an effect before the track fader. **Sends** lists existing aux sends. **Output** selects the default or an enabled device and displays existing track-to-track destinations.
+- **Mixer** scrolls track strips horizontally with Master pinned. A strip's name selects the arrangement track. Volume and pan share the Channel controls, and mute, solo, insert access and output selection use the same Tracktion track state. Meters read the existing Tracktion level meter inserts and default-output master measurer. An unavailable meter displays a dash, including on tracks without a meter insert. The mixer does not add meter inserts or change the routing graph when opened.
+- The ARIA verification banner and save protection remain active. Browser and new effect insert actions wait until verification completes. Channel can open the restored instrument so you can check the patch and sound before confirming.
 
 ## MIDI Piano Roll
 
@@ -40,8 +48,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-interface-shell-m1 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Shell &&
-cd Studio-Tracktion-Shell &&
+git clone --branch feature/studio-instrument-channel-mixer-m2 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Mixing &&
+cd Studio-Tracktion-Mixing &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
@@ -57,6 +65,10 @@ open "$PWD/build/Studio_artefacts/Debug/Studio.app"
 Use `cmake` in place of the CMake.app path if CMake is installed on your PATH.
 
 ## Mac verification
+
+**Instrument and mixing acceptance.** At 1280 × 800 and 1024 × 640, open Instruments, Channel and Mixer in Split and Expanded and check keyboard focus and fitting. Scan ARIA and another instrument AU. Load one onto a compatible track, add one as a new track, undo and redo, open each instance, and verify the selected patch or plug-in state survives Save As and reopen. Try an occupied, frozen, or audio track, a stale scan entry, and a selection spanning two tracks. Check that a rejected load retains the track and plug-in state.
+
+Assign a physical MIDI input and an audio input, exercise arm and monitoring, and record a take from each. Check the scope of the MIDI device channel filter. Add an effect, verify which instance opens, and change a track's output to an enabled device and back. Verify track and master faders, pan, mute/solo, meters, and strip selection while the mixer scrolls. Check a legacy track without a meter. Use disposable projects for ARIA restore and the editing regressions below.
 
 At 1024 × 640, switch through the rail, More menu, Compact, Split, Expanded, and Hide. Drag and keyboard-resize the divider. Confirm that the upper arrangement can still scroll and seek, the focused control is visible, the ARIA notice stays reachable, and MIDI Monitor continues receiving events in Compact and while floated. Repeat navigation with VoiceOver.
 
