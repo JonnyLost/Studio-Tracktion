@@ -59,6 +59,8 @@ void StudioPianoRoll::setClip (te::MidiClip::Ptr next)
         return;
     stopAudition();
     gesture = Gesture::none;
+    draggingKeyboard = false;
+    keyboardPreviewPitch = -1;
     selectedNote = {};
     draggedNote = {};
     clip = std::move (next);
@@ -74,6 +76,8 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
     {
         stopAudition();
         gesture = Gesture::none;
+        draggingKeyboard = false;
+        keyboardPreviewPitch = -1;
         draggedNote = {};
     }
     editingEnabled = enabled;
@@ -281,6 +285,7 @@ void StudioPianoRoll::audition (int pitch, int velocity)
     auditionDevice->handleIncomingMidiMessage (nullptr,
         MidiMessage::noteOn (auditionChannel, auditionPitch, (uint8) jlimit (1, 127, velocity)));
     startTimer (450); // Audibly preview slow-attack sounds even on quick clicks.
+    repaint (keyboard);
 }
 
 void StudioPianoRoll::stopAudition()
@@ -291,6 +296,7 @@ void StudioPianoRoll::stopAudition()
             MidiMessage::noteOff (auditionChannel, auditionPitch));
     auditionPitch = -1;
     auditionDevice.reset();
+    repaint (keyboard);
 }
 
 void StudioPianoRoll::silencePreview()
@@ -337,6 +343,11 @@ void StudioPianoRoll::paintGrid (Graphics& g)
         g.fillRect (notesArea.getX(), y, notesArea.getWidth(), rowHeight - 1);
         g.setColour (black ? Colour (0xff111923) : Colour (0xffd5dde4));
         g.fillRect (keyboard.getX(), y, keyboard.getWidth() - 1, rowHeight - 1);
+        if (pitch == auditionPitch)
+        {
+            g.setColour (Colour (0xffc5a56b).withAlpha (0.85f));
+            g.fillRect (keyboard.getX(), y, keyboard.getWidth() - 1, rowHeight - 1);
+        }
         if (pitch % 12 == 0)
         {
             g.setColour (Colour (0xff384957));
@@ -439,7 +450,9 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
     const auto point = event.getPosition();
     if (keyboard.contains (point))
     {
-        audition (pitchAt (point.y), 100);
+        draggingKeyboard = true;
+        keyboardPreviewPitch = pitchAt (point.y);
+        audition (keyboardPreviewPitch, 100);
         return;
     }
     startX = point.x;
@@ -523,9 +536,25 @@ void StudioPianoRoll::mouseExit (const MouseEvent&)
 
 void StudioPianoRoll::mouseDrag (const MouseEvent& event)
 {
+    if (draggingKeyboard)
+    {
+        const int nextPitch = pitchAt (event.getPosition().y);
+        if (nextPitch != keyboardPreviewPitch)
+        {
+            keyboardPreviewPitch = nextPitch;
+            audition (nextPitch, 100);
+        }
+        return;
+    }
     if (gesture == Gesture::none)
         return;
     const int x = event.getPosition().x, y = event.getPosition().y;
+    // A mostly vertical drag near a trim handle means "change pitch".
+    // This makes short notes easy to transpose without accidental trimming.
+    if ((gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
+        && std::abs (y - startY) > rowHeight / 2
+        && std::abs (y - startY) > 2 * std::abs (x - startX))
+        gesture = Gesture::move;
     const auto delta = (x - startX) / pixelsPerBeat;
     const auto step = jmax (1.0 / 48.0, gridBeats());
     switch (gesture)
@@ -535,7 +564,13 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
             break;
         case Gesture::move:
             previewBeat = snap (jmax (0.0, originalBeat + delta));
-            previewPitch = jlimit (0, 127, originalPitch + roundToInt ((startY - y) / (double) rowHeight));
+            if (const auto pitch = jlimit (0, 127,
+                    originalPitch + roundToInt ((startY - y) / (double) rowHeight));
+                pitch != previewPitch)
+            {
+                previewPitch = pitch;
+                audition (pitch, selected() != nullptr ? selected()->getVelocity() : 100);
+            }
             break;
         case Gesture::resizeStart:
             previewBeat = jlimit (0.0, jmax (0.0, originalBeat + originalLength - step),
@@ -555,8 +590,10 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
 
 void StudioPianoRoll::mouseUp (const MouseEvent& event)
 {
-    if (keyboard.contains (event.getMouseDownPosition()))
+    if (draggingKeyboard)
     {
+        draggingKeyboard = false;
+        keyboardPreviewPitch = -1;
         // Let the short audition timer release this quick tap audibly.
         return;
     }

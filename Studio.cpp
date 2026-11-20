@@ -74,7 +74,8 @@ public:
         style.setColour (Slider::trackColourId, Colour (0xffc5a56b));
         setLookAndFeel (&style);
         setWantsKeyboardFocus (true);
-        for (auto* control : { &newProject, &openProject, &saveProject, &audioSettings, &plugins,
+        for (auto* control : { &newProject, &openProject, &saveProject, &saveAsProject,
+                               &audioSettings, &plugins,
                                &rewind, &play, &record, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
 
@@ -209,6 +210,7 @@ public:
         newProject.onClick = [this] { chooseProject (true); };
         openProject.onClick = [this] { chooseProject (false); };
         saveProject.onClick = [this] { save(); };
+        saveAsProject.onClick = [this] { chooseSaveAs(); };
         audioSettings.onClick = [this] { EngineHelpers::showAudioDeviceSettings (engine); };
         plugins.onClick = [this] { showPlugins(); };
         rewind.onClick = [this] { edit->getTransport().setPosition (0s); };
@@ -327,7 +329,10 @@ public:
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'S' || key.getKeyCode() == 's')
             && saveProject.isEnabled())
         {
-            save();
+            if (key.getModifiers().isShiftDown())
+                chooseSaveAs();
+            else
+                save();
             return true;
         }
         return false;
@@ -338,7 +343,8 @@ public:
         auto area = getLocalBounds();
         topBar = area.removeFromTop (88);
         auto files = topBar.reduced (12, 5).removeFromTop (34);
-        for (auto* button : { &plugins, &audioSettings, &saveProject, &openProject, &newProject })
+        for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject,
+                              &openProject, &newProject })
             button->setBounds (files.removeFromRight (button == &plugins ? 116 : 94).reduced (3, 2));
         title.setBounds (files);
 
@@ -430,6 +436,7 @@ private:
     // states remain immutable and Save remains locked until manual verification.
     bool autoAriaRetryPending = false;
     uint32 autoAriaRetryScheduledAt = 0;
+    uint32 lastRecordingStopRequestedAt = 0;
     File restoreLogFile;
 
     // Immutable snapshots taken from the on-disk XML BEFORE Tracktion loads the Edit.
@@ -457,7 +464,8 @@ private:
     TextButton monitorButton { "MIDI Monitor" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
-    TextButton newProject { "New Project" }, openProject { "Open Project" }, saveProject { "Save" },
+    TextButton newProject { "New Project" }, openProject { "Open Project" },
+               saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                rewind { "To Start" }, play { "Play" }, record { "Record" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
@@ -575,7 +583,8 @@ private:
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
-        for (auto* button : { &saveProject, &rewind, &addMidi, &addAudio, &importAudio, &addMidiClip })
+        for (auto* button : { &saveProject, &saveAsProject, &rewind, &addMidi,
+                              &addAudio, &importAudio, &addMidiClip })
             button->setEnabled (ready && ! recording);
         // ARIA review protects Save and the original AU state, not MIDI editing.
         // A loaded project must remain editable while its ARIA slots are checked.
@@ -840,9 +849,72 @@ private:
         piano.silencePreview();
         auto& transport = edit->getTransport();
         if (transport.isRecording())
+        {
+            lastRecordingStopRequestedAt = Time::getMillisecondCounter();
             transport.stop (false, false); // false: retain the take
+        }
         else
             transport.record (false);
+    }
+
+    bool canWriteProject()
+    {
+        if (! ariaReviewPending)
+            return true;
+
+        const String reason = "Saving is paused to protect the original ARIA instrument state.\n\n"
+                              "Open ARIA and check that the instrument plays, then click Confirm ARIA "
+                              "in the left sidebar. You can edit MIDI while checking, but Save and "
+                              "Save As remain protected until confirmation.";
+        message.setText ("Save blocked: verify ARIA playback, then click Confirm ARIA.",
+                         dontSendNotification);
+        writeRestoreLog ("Save / Save As blocked: ARIA restoration not yet confirmed.");
+        AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon,
+                                          "Confirm ARIA before saving", reason, "OK");
+        return false;
+    }
+
+    // Tracktion's transport may still be finalising the take after Stop is
+    // requested. Do not serialize the Edit until that work has finished.
+    void writeWhenRecordingFinished (te::Edit* expectedEdit, int attempts,
+                                     std::function<void()> write,
+                                     std::function<void()> failed)
+    {
+        if (edit.get() != expectedEdit)
+        {
+            busy = false;
+            failed();
+            return;
+        }
+
+        const auto& transport = edit->getTransport();
+        const bool recentlyStopped = lastRecordingStopRequestedAt != 0
+            && Time::getMillisecondCounter() - lastRecordingStopRequestedAt < 400;
+        if (! transport.isRecording() && ! transport.isStopping()
+            && ! transport.isRecordingStopping() && ! recentlyStopped)
+        {
+            write();
+            return;
+        }
+
+        if (attempts >= 100)
+        {
+            busy = false;
+            message.setText ("Could not finish the MIDI recording in time. Project was not overwritten.",
+                             dontSendNotification);
+            failed();
+            return;
+        }
+
+        message.setText ("Finishing the MIDI take before saving...", dontSendNotification);
+        Component::SafePointer<StudioView> safe (this);
+        Timer::callAfterDelay (100,
+            [safe, expectedEdit, attempts, write = std::move (write), failed = std::move (failed)]() mutable
+            {
+                if (safe != nullptr)
+                    safe->writeWhenRecordingFinished (expectedEdit, attempts + 1,
+                                                       std::move (write), std::move (failed));
+            });
     }
 
     void save (std::function<void (bool)> after = {})
@@ -853,24 +925,79 @@ private:
             return;
         }
 
-        if (ariaReviewPending)
+        if (busy || ! canWriteProject())
         {
-            message.setText ("Save blocked: verify ARIA slots, then click Confirm ARIA. Original file is protected.",
-                             dontSendNotification);
-            writeRestoreLog ("Save blocked: ARIA restoration not yet confirmed.");
             if (after) after (false);
             return;
         }
         if (edit->getTransport().isRecording())
             toggleRecordKeepingTake();
         busy = true;
-        te::EditFileOperations (*edit).save (true, true, false,
-            [this, after = std::move (after)] (bool ok)
+        auto onFailure = [after] { if (after) after (false); };
+        writeWhenRecordingFinished (edit.get(), 0,
+            [this, after = std::move (after)] () mutable
+            {
+                te::EditFileOperations (*edit).save (true, true, false,
+                    [this, after = std::move (after)] (bool ok)
+                    {
+                        busy = false;
+                        message.setText (ok ? "Saved " + projectFile.getFileName()
+                                            : "Project save failed. Try Save As with a new filename.",
+                                         dontSendNotification);
+                        if (after)
+                            MessageManager::callAsync ([after, ok] { after (ok); });
+                    });
+            }, std::move (onFailure));
+    }
+
+    void chooseSaveAs()
+    {
+        if (edit == nullptr || busy || ! canWriteProject())
+            return;
+        auto target = projectFile.getSiblingFile (projectFile.getFileNameWithoutExtension()
+                                                  + " Copy.tracktionedit");
+        chooser = std::make_unique<FileChooser> ("Save a copy of this Studio project", target,
+                                                 "*.tracktionedit");
+        busy = true;
+        chooser->launchAsync (FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles,
+            [this] (const FileChooser& dialog)
             {
                 busy = false;
-                message.setText (ok ? "Saved " + projectFile.getFileName() : "Project save failed.", dontSendNotification);
-                if (after)
-                    MessageManager::callAsync ([after, ok] { after (ok); });
+                auto newFile = dialog.getResult();
+                if (newFile == File())
+                    return;
+                newFile = newFile.withFileExtension (".tracktionedit");
+                if (newFile == projectFile || newFile.exists())
+                {
+                    message.setText ("Save As needs a different, unused filename. Nothing was overwritten.",
+                                     dontSendNotification);
+                    return;
+                }
+                if (edit == nullptr || ! canWriteProject())
+                    return;
+
+                if (edit->getTransport().isRecording())
+                    toggleRecordKeepingTake();
+                busy = true;
+                writeWhenRecordingFinished (edit.get(), 0,
+                    [this, newFile]
+                    {
+                        te::EditFileOperations (*edit).saveAs (newFile, false,
+                            [this, newFile] (bool ok)
+                            {
+                                busy = false;
+                                if (ok)
+                                {
+                                    projectFile = newFile;
+                                    edit->editFileRetriever = [newFile] { return newFile; };
+                                    title.setText ("Studio 0.2  /  " + newFile.getFileNameWithoutExtension(),
+                                                   dontSendNotification);
+                                }
+                                message.setText (ok ? "Saved new copy: " + newFile.getFullPathName()
+                                                    : "Save As failed. Original project is unchanged.",
+                                                 dontSendNotification);
+                            });
+                    }, [this] {});
             });
     }
 
@@ -938,6 +1065,7 @@ private:
         editor.reset();
         edit = std::move (next);
         projectFile = file;
+        lastRecordingStopRequestedAt = 0;
         ariaReviewPending = false;
         autoAriaRetryPending = false;
         originalAriaStates = std::move (pendingOriginalStates);

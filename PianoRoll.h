@@ -58,6 +58,8 @@ private:
     int rowHeight = 14;
     bool editingEnabled = true;
     bool initialViewport = true;
+    bool draggingKeyboard = false;
+    int keyboardPreviewPitch = -1;
     int auditionPitch = -1, auditionChannel = 1;
     std::shared_ptr<te::MidiInputDevice> auditionDevice;
 
