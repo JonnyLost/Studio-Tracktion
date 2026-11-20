@@ -77,6 +77,29 @@ string(REPLACE "inputsState = track->edit.state.getChildWithName (te::IDs::INPUT
 string(REPLACE "g.setColour (Colours::grey);" "g.setColour (Colour (0xff303d48));" editor "${editor}")
 string(REPLACE "g.setColour (Colours::red);" "g.setColour (Colour (0xffc5a56b));" editor "${editor}")
 string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (Colour (0xff24303b));" editor "${editor}")
+# The stock example always replaces clip selection on click. Keep Shift-click
+# additive/toggle selection without modifying the Tracktion checkout itself.
+set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)
+{
+    editViewState.selectionManager.selectOnly (clip.get());
+}]=])
+string(FIND "${editor}" "${single_clip_selection}" selection_match)
+if(selection_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example clip-selection implementation has changed.")
+endif()
+string(REPLACE "${single_clip_selection}" [=[void ClipComponent::mouseDown (const MouseEvent& event)
+{
+    auto& selection = editViewState.selectionManager;
+    if (event.mods.isShiftDown())
+    {
+        if (selection.isSelected (clip.get()))
+            selection.deselect (clip.get());
+        else
+            selection.addToSelection (clip.get());
+    }
+    else
+        selection.selectOnly (clip.get());
+}]=] editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 juce_add_gui_app(Studio
@@ -89,7 +112,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h)
+target_sources(Studio PRIVATE Studio.cpp MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
