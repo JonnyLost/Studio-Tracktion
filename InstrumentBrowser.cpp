@@ -302,7 +302,9 @@ void InstrumentBrowser::resized()
     auto toolbar = area.removeFromTop (30).reduced (0, 2);
     manage.setBounds (toolbar.removeFromRight (90));
     count.setBounds (toolbar.removeFromRight (126));
-    compact = getWidth() < 930;
+    // The dock width excludes Studio's rail. A 1024-point window has about
+    // 958 points available here; make room for results before shrinking them.
+    compact = getWidth() < 1000;
     compactType.setVisible (compact);
     typeList.setVisible (! compact);
     if (compact) compactType.setBounds (toolbar.removeFromRight (132).reduced (3, 0));
