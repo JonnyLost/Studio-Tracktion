@@ -15,7 +15,7 @@ const Identifier roomProperty { "studioRoomSettings" }, panProperty { "studioSta
     roleProperty { "studioSpatialRole" }, sendGainProperty { "studioSpatialSendDb" };
 const String returnRole { "roomReturnV1" }, receiverRole { "roomInputV1" };
 
-class RoomPlugin final : public te::Plugin
+class RoomPlugin final : public te::Plugin, private Timer
 {
 public:
     static constexpr const char* xmlTypeName = "studioWetRoomV1";
@@ -27,6 +27,7 @@ public:
 
     ~RoomPlugin() override
     {
+        stopTimer();
         notifyListenersOfDeletion();
     }
 
@@ -46,12 +47,21 @@ public:
 
     void initialise (const te::PluginInitialisationInfo& info) override
     {
-        activeRoom = readPublishedRoom();
-        reverb.prepare (info.sampleRate, activeRoom);
+        reverb.setCheckEnabled (checkEnabled.load());
+        reverb.prepare (info.sampleRate, readPublishedRoom());
+        // Compute the meter fall per sample during preparation. The render
+        // callback uses the actual block length, including automation splits.
+        meterTime = (float) (0.30 * jmax (8000.0, info.sampleRate));
+        inputPeak.store (0.0f);
+        wetPeak.store (0.0f);
         bytes.store (reverb.allocatedBytes());
     }
 
-    void deinitialise() override {}
+    void deinitialise() override
+    {
+        inputPeak.store (0.0f);
+        wetPeak.store (0.0f);
+    }
 
     void applyToBuffer (const te::PluginRenderContext& context) override
     {
@@ -64,14 +74,16 @@ public:
             if (revision == revisionNumber.load())
             {
                 acceptedRevision = revision;
-                activeRoom = next;
-                reverb.setRoom (activeRoom);
+                reverb.setRoom (next);
             }
         }
         const auto start = context.bufferStartSample;
-        reverb.process (buffer->getWritePointer (0, start),
-                        buffer->getNumChannels() > 1 ? buffer->getWritePointer (1, start) : nullptr,
-                        context.bufferNumSamples);
+        reverb.setCheckEnabled (checkEnabled.load (std::memory_order_relaxed));
+        const auto peaks = reverb.process (buffer->getWritePointer (0, start),
+            buffer->getNumChannels() > 1 ? buffer->getWritePointer (1, start) : nullptr, context.bufferNumSamples);
+        const float fall = 1.0f / (1.0f + (float) context.bufferNumSamples / meterTime);
+        inputPeak.store (jmax (peaks.input, fall * inputPeak.load (std::memory_order_relaxed)), std::memory_order_relaxed);
+        wetPeak.store (jmax (peaks.wet, fall * wetPeak.load (std::memory_order_relaxed)), std::memory_order_relaxed);
         for (int channel = 2; channel < buffer->getNumChannels(); ++channel)
             buffer->clear (channel, start, context.bufferNumSamples);
     }
@@ -84,6 +96,21 @@ public:
 
     std::size_t memoryBytes() const { return bytes.load(); }
 
+    bool isBypassed() const { return publication.back().load() != 0.0f; }
+
+    void setCheck (bool enable)
+    {
+        checkEnabled.store (enable && ! isBypassed());
+        if (checkEnabled.load()) startTimer (15000);
+        else stopTimer();
+    }
+
+    RoomSignal getSignal (bool reachesMaster) const
+    {
+        return { inputPeak.load (std::memory_order_relaxed), wetPeak.load (std::memory_order_relaxed),
+                 isBypassed(), checkEnabled.load(), reachesMaster };
+    }
+
 private:
     static_assert (std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
     static constexpr size_t parameterCount = 17;
@@ -91,12 +118,20 @@ private:
     std::atomic<unsigned> revisionNumber { 0 };
     std::atomic<std::size_t> bytes { 0 };
     unsigned acceptedRevision = 0;
-    Room activeRoom;
+    std::atomic<float> inputPeak { 0.0f }, wetPeak { 0.0f };
+    std::atomic<bool> checkEnabled { false };
+    float meterTime = 14400.0f;
     RoomReverb reverb;
+
+    void timerCallback() override { setCheck (false); }
 
     void valueTreePropertyChanged (ValueTree& tree, const Identifier& p) override
     {
-        if (tree == state && p == roomProperty) publishRoom();
+        if (tree == state && p == roomProperty)
+        {
+            publishRoom();
+            if (isBypassed()) setCheck (false);
+        }
         Plugin::valueTreePropertyChanged (tree, p);
     }
 
@@ -302,6 +337,7 @@ Return ensureReturn (te::Edit& edit, Room settings)
 
     track->state.setProperty (roleProperty, returnRole, &edit.getUndoManager());
     track->setName ("Studio Room Return");
+    track->setSoloIsolate (true);
     track->getOutput().setOutputToDefaultDevice (false);
     returnPlugin->state.setProperty (roleProperty, receiverRole, nullptr);
     returnPlugin->busNumber = bus;
@@ -335,10 +371,26 @@ void registerPlugins (te::Engine& engine)
     engine.getPluginManager().createBuiltInType<RoomSendPlugin>();
 }
 
+void prepareRoomPlayback (te::Edit& edit)
+{
+    // Older Studio returns inherited normal track solo behavior. Preserve any
+    // explicit choice and solo-safe the legacy managed aux when it had none.
+    const auto target = findReturn (edit);
+    if (target.room != nullptr && ! target.track->state.hasProperty (te::IDs::soloIsolate))
+        target.track->setSoloIsolate (true);
+}
+
 bool isRoomReturn (const te::AudioTrack& track) { return track.state.getProperty (roleProperty).toString() == returnRole; }
 te::AudioTrack* roomReturnTrack (te::Edit& edit) { return findReturn (edit).track; }
 
 bool hasRoomSend (te::AudioTrack& track) { return find<RoomSendPlugin> (track) != nullptr; }
+
+std::optional<float> activeRoomSendDb (te::AudioTrack& track)
+{
+    if (auto* send = find<RoomSendPlugin> (track); send != nullptr && send->isEnabled())
+        return send->getGainDb();
+    return std::nullopt;
+}
 
 String routeRestriction (te::AudioTrack& track)
 {
@@ -404,6 +456,24 @@ void updateRoomSend (te::AudioTrack& track, Position position, float trimDb)
 void updateReturn (te::Edit& edit, Room settings)
 {
     if (auto target = findReturn (edit); target.room != nullptr) target.room->setRoom (settings);
+}
+
+void setRoomCheck (te::Edit& edit, bool enabled)
+{
+    if (auto target = findReturn (edit); target.room != nullptr)
+        target.room->setCheck (enabled);
+}
+
+std::optional<RoomSignal> roomSignal (te::Edit& edit)
+{
+    if (const auto target = findReturn (edit); target.room != nullptr)
+    {
+        const bool toMaster = target.track->getOutput().usesDefaultAudioOut()
+            && target.track->getParentTrack() == nullptr
+            && target.track->shouldBePlayed();
+        return target.room->getSignal (toMaster);
+    }
+    return std::nullopt;
 }
 
 std::optional<ResourceReport> resourceReport (te::Edit& edit)

@@ -68,7 +68,7 @@ public:
     enum class View { stage, rooms, microphones };
     SpatialWorkspace();
     ~SpatialWorkspace() override;
-    std::function<void(tracktion::EditItemID)> onSelectTrack;
+    std::function<void(tracktion::EditItemID)> onSelectTrack, onOpenRoomMixer;
     std::function<void()> onLayoutChange;
     void setEdit (tracktion::Edit*);
     void setView (View);
@@ -96,19 +96,21 @@ private:
     std::vector<TrackRow> tracks;
     juce::String selectedMic, statusMessage, lastRoomStamp, lastMicStamp;
     juce::Component stagePage, roomPage, micPage;
-    juce::Label stageStatus, roomStatus, micStatus;
+    juce::Label stageStatus, roomStatus, micStatus, stageSignal, roomSignalLabel;
     SpatialMap stageMap, micMap;
     RoomGraphic roomGraphic;
 
     juce::ComboBox seating, arrangeScope, trackList, sections;
-    juce::TextButton arrange { "Auto Arrange" }, resetSeat { "Reset seat" }, toggleSend { "Enable stage audio" };
+    juce::TextButton arrange { "Auto Arrange" }, resetSeat { "Reset seat" }, toggleSend { "Enable stage audio" },
+                     stageCheck { "Room Check +12 dB" };
     SpatialField pan { "Stage pan", -1, 1, 0.01 }, depth { "Stage depth", 0, 1, 0.01 },
                  trim { "Send trim", -60, 0, 1, " dB" };
 
     juce::ComboBox roomList, wall, floor, ceiling;
     juce::TextEditor roomName;
     juce::TextButton applyRoom { "Apply Room" }, saveRoom { "Save copy" }, renameRoom { "Rename" },
-                     deleteRoom { "Delete custom" }, bypassRoom { "Bypass return" }, resetRoom { "Reset return" };
+                     deleteRoom { "Delete custom" }, bypassRoom { "Bypass return" }, resetRoom { "Reset draft" },
+                     roomCheck { "Room Check +12 dB" }, roomMixer { "Show return in Mixer" };
     SpatialField widthField { "Width", 3, 80, 0.1, " m" }, lengthField { "Length", 3, 80, 0.1, " m" },
                  heightField { "Ceiling height", 2.2, 35, 0.1, " m" }, treatment { "Treatment", 0, 100, 1, "%" },
                  early { "Early reflections", 0, 100, 1, "%" }, late { "Late reverb", 0, 100, 1, "%" },
@@ -154,6 +156,9 @@ private:
     juce::ValueTree activeRoom() const;
     juce::ValueTree selectedMicState() const;
     void syncRooms();
+    void syncRoomAudioControls();
+    void toggleRoomCheck();
+    void toggleRoomBypass();
     void setDraft (Room, const juce::String&);
     Room readDraft() const;
     void apply (Room, const juce::String&);

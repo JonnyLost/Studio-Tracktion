@@ -146,9 +146,10 @@ SpatialWorkspace::SpatialWorkspace()
               SpatialField (bandNames[4], 0.25, 2, 0.05, " x"), SpatialField (bandNames[5], 0.25, 2, 0.05, " x") }
 {
     add (*this, stagePage, roomPage, micPage);
-    add (stagePage, stageStatus, stageMap, seating, arrangeScope, trackList, sections, arrange, resetSeat,
-         toggleSend, pan, depth, trim);
-    add (roomPage, roomStatus, roomGraphic, roomList, roomName, wall, floor, ceiling, applyRoom, saveRoom,
+    add (stagePage, stageStatus, stageSignal, stageCheck, stageMap, seating, arrangeScope, trackList, sections,
+         arrange, resetSeat, toggleSend, pan, depth, trim);
+    add (roomPage, roomStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
+         wall, floor, ceiling, applyRoom, saveRoom,
          renameRoom, deleteRoom, bypassRoom, resetRoom, widthField, lengthField, heightField, treatment,
          early, late, roomGain);
     for (auto& band : decay) roomPage.addAndMakeVisible (band);
@@ -159,7 +160,7 @@ SpatialWorkspace::SpatialWorkspace()
     micBankViewport.setScrollBarsShown (false, true);
     audition.setEnabled (false);
     audition.setTooltip ("Virtual capture is unavailable. Studio is in Normal Mix.");
-    for (auto* status : { &stageStatus, &roomStatus, &micStatus })
+    for (auto* status : { &stageStatus, &roomStatus, &micStatus, &stageSignal, &roomSignalLabel })
     {
         status->setFont (FontOptions (12.0f));
         status->setColour (Label::textColourId, colours::secondary);
@@ -255,15 +256,19 @@ SpatialWorkspace::SpatialWorkspace()
     for (auto& band : decay) band.onChange = draftChanged;
     wall.onChange = floor.onChange = ceiling.onChange = draftChanged;
     applyRoom.onClick = [this] { apply (readDraft(), roomName.getText().trim()); };
-    bypassRoom.onClick = [this, draftChanged]
+    bypassRoom.onClick = micRoomBypass.onClick = [this] { toggleRoomBypass(); };
+    stageCheck.onClick = roomCheck.onClick = [this] { toggleRoomCheck(); };
+    for (auto* button : { &stageCheck, &roomCheck })
+        button->setTooltip ("Temporarily raises only the wet reverb by 12 dB for up to 15 seconds.");
+    roomMixer.onClick = [this]
     {
-        draftBypass = ! draftBypass;
-        draftChanged();
+        if (edit != nullptr && onOpenRoomMixer)
+            if (auto* track = roomReturnTrack (*edit)) onOpenRoomMixer (track->itemID);
     };
     resetRoom.onClick = [this, draftChanged]
     {
         auto current = readDraft();
-        current.early = Room().early; current.late = Room().late; current.gain = Room().gain; current.bypass = false;
+        current.early = Room().early; current.late = Room().late; current.gain = Room().gain;
         setDraft (current, roomName.getText());
         draftChanged();
     };
@@ -314,21 +319,6 @@ SpatialWorkspace::SpatialWorkspace()
     saveSetup.onClick = [this] { manageSetup (false, false); };
     recallSetup.onClick = [this] { manageSetup (true, false); };
     removeSetup.onClick = [this] { manageSetup (false, true); };
-    micRoomBypass.onClick = [this]
-    {
-        const bool hadDraft = roomDraftDirty;
-        const auto pending = readDraft();
-        const auto pendingName = roomName.getText();
-        auto room = readRoom (activeRoom());
-        room.bypass = ! room.bypass;
-        apply (room, nameOf (activeRoom()));
-        if (hadDraft)
-        {
-            setDraft (pending, pendingName);
-            roomDraftDirty = true;
-            syncRooms();
-        }
-    };
     setDraft ({}, "Chamber Hall");
     setView (View::stage);
 }
@@ -337,6 +327,7 @@ SpatialWorkspace::~SpatialWorkspace() { micBankViewport.setViewedComponent (null
 
 void SpatialWorkspace::setEdit (te::Edit* next)
 {
+    if (edit != nullptr) setRoomCheck (*edit, false);
     edit = next;
     editable = routable = false;
     selectedTrack = lastArrangementSelection = {};
@@ -497,11 +488,14 @@ void SpatialWorkspace::syncStage()
         toggleSend.setTooltip (enabled ? "Remove Studio's stage balance and owned aux send."
             : "Explicitly add Studio stage balance and a shared room send to this track.");
     }
-    const auto signal = enabled ? "Stage audio | Effective send " + String (sendDb (found->seat.position, found->seat.sendTrim), 1)
-        + " dB" : String ("Placement only | Enable stage audio to hear pan and room send");
+    const auto liveGain = enabled ? activeRoomSendDb (*track) : std::nullopt;
+    const auto signal = liveGain ? "Stage audio | Effective send " + String (*liveGain, 1) + " dB"
+        : enabled ? String ("Stage audio | Room send bypassed")
+                  : String ("Placement only | Enable stage audio to hear pan and room send");
     stageStatus.setText (edit == nullptr ? "Create or open a project to place instruments." : ! supported()
         ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage : signal, dontSendNotification);
     stageStatus.setTooltip (stageStatus.getText());
+    syncRoomAudioControls();
 }
 
 void SpatialWorkspace::syncMaps()
@@ -677,13 +671,75 @@ void SpatialWorkspace::syncRooms()
     deleteRoom.setEnabled (editable && custom);
     saveRoom.setEnabled (editable);
     applyRoom.setEnabled (editable);
-    bypassRoom.setButtonText (draftBypass ? "Enable return" : "Bypass return");
     const auto current = active.isValid() ? nameOf (active) : String ("Chamber Hall");
     roomStatus.setText (edit == nullptr ? "Open or create a project to apply a room." : ! supported()
         ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage
         : "Active: " + current + (roomDraftDirty ? " | Pending design changes" : "")
           + " | Generic materials and estimated decay", dontSendNotification);
     roomStatus.setTooltip (roomStatus.getText());
+    syncRoomAudioControls();
+}
+
+void SpatialWorkspace::syncRoomAudioControls()
+{
+    const auto signal = edit != nullptr ? roomSignal (*edit) : std::nullopt;
+    const bool checking = signal && signal->checkEnabled;
+    for (auto* button : { &stageCheck, &roomCheck })
+    {
+        button->setEnabled (signal && (checking || (editable && ! signal->bypassed && signal->reachesMaster)));
+        button->setToggleState (checking, dontSendNotification);
+        button->setButtonText (checking ? "Stop Room Check" : "Room Check +12 dB");
+    }
+    bypassRoom.setEnabled (editable && signal.has_value());
+    micRoomBypass.setEnabled (editable && signal.has_value());
+    const bool bypassed = signal && signal->bypassed;
+    bypassRoom.setButtonText (bypassed ? "Enable return" : "Bypass return");
+    micRoomBypass.setButtonText (bypassed ? "Enable shared room" : "Bypass shared room");
+    roomMixer.setEnabled (signal.has_value());
+
+    const auto levelText = [] (float peak)
+    {
+        return peak > 1.0e-4f ? String (Decibels::gainToDecibels (peak), 0) + " dBFS" : String ("silent");
+    };
+    String text = "Enable stage audio on a track to create the room return.";
+    if (signal)
+    {
+        text = "Room DSP input " + levelText (signal->inputPeak) + " | Wet output " + levelText (signal->wetPeak);
+        if (bypassed) text << " | Return bypassed";
+        if (checking) text << " | Temporary +12 dB";
+        if (! signal->reachesMaster) text << " | Return muted or off Master";
+    }
+    for (auto* label : { &stageSignal, &roomSignalLabel })
+    {
+        label->setText (text, dontSendNotification);
+        label->setTooltip (text + " | Levels are measured before the return fader.");
+    }
+}
+
+void SpatialWorkspace::toggleRoomCheck()
+{
+    if (edit == nullptr) return;
+    if (auto signal = roomSignal (*edit); signal && (signal->checkEnabled || (editable && signal->reachesMaster)))
+        setRoomCheck (*edit, ! signal->checkEnabled);
+    syncRoomAudioControls();
+}
+
+void SpatialWorkspace::toggleRoomBypass()
+{
+    if (! editable || edit == nullptr) return;
+    const auto signal = roomSignal (*edit);
+    if (! signal) return;
+    const auto active = activeRoom();
+    auto settings = readRoom (active);
+    settings.bypass = ! signal->bypassed;
+    begin (settings.bypass ? "Bypass room return" : "Enable room return");
+    auto root = requireScene();
+    replaceChild (root, active, writeRoom (settings, active.isValid() ? nameOf (active) : String ("Chamber Hall")),
+                  edit->getUndoManager());
+    updateReturn (*edit, settings);
+    draftBypass = settings.bypass;
+    statusMessage.clear();
+    finish();
 }
 
 void SpatialWorkspace::apply (Room settings, const String& name)
@@ -779,8 +835,7 @@ void SpatialWorkspace::syncMicrophones()
     recallSetup.setEnabled (editable && presets().getNumChildren() > 0);
     removeSetup.setEnabled (editable && presets().getNumChildren() > 0);
     saveSetup.setEnabled (editable && current.getNumChildren() > 0);
-    micRoomBypass.setEnabled (editable && edit != nullptr && roomReturnTrack (*edit) != nullptr);
-    micRoomBypass.setButtonText (readRoom (activeRoom()).bypass ? "Enable shared room" : "Bypass shared room");
+    if (view == View::microphones && mixer) syncRoomAudioControls();
     micStatus.setText (! supported() ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage
         : "Normal Mix | Virtual capsules and mixer settings are saved for setup only.", dontSendNotification);
     micStatus.setTooltip (micStatus.getText());
@@ -956,8 +1011,9 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
     };
     if (view == View::stage)
     {
-        toolbar (area, { { &seating, 180 }, { &arrangeScope, 155 }, { &arrange, 120 } });
+        toolbar (area, { { &seating, 180 }, { &arrangeScope, 155 }, { &arrange, 120 }, { &stageCheck, 161 } });
         place (area, stageStatus, 2 * m.line (12, 1));
+        place (area, stageSignal, 2 * m.line (12, 1));
         mapAndInspector (stageMap, [&] (Rectangle<int>& region, bool assign)
         {
             const auto items = { ToolbarItem { &trackList, 147 }, ToolbarItem { &sections, 130 },
@@ -973,12 +1029,14 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         toolbar (area, { { &roomList, 188 }, { &roomName, 162 }, { &applyRoom, 110 },
             { &saveRoom, 91 }, { &renameRoom, 76 }, { &deleteRoom, 114 } });
         place (area, roomStatus, 2 * m.line (12, 1));
+        toolbar (area, { { &bypassRoom, 133 }, { &roomCheck, 161 }, { &roomMixer, 182 } });
+        place (area, roomSignalLabel, 2 * m.line (12, 1));
         place (area, roomGraphic, m.px (112) + extra);
         fields (area, { &widthField, &lengthField, &heightField, &treatment });
         toolbar (area, { { &wall, 150 }, { &floor, 150 }, { &ceiling, 153 } });
         fields (area, { &decay[0], &decay[1], &decay[2], &decay[3], &decay[4], &decay[5] });
         fields (area, { &early, &late, &roomGain });
-        toolbar (area, { { &bypassRoom, 133 }, { &resetRoom, 122 } });
+        toolbar (area, { { &resetRoom, 122 } });
     }
     else
     {

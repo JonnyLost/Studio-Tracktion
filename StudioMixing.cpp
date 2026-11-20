@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioMixing.h"
+#include "SpatialRouting.h"
 #include "StudioUI.h"
 
 using namespace juce;
@@ -452,7 +453,9 @@ public:
             name.setButtonText (track->getName());
             name.setTooltip (track->getName());
             auto* instrument = findInstrument (*track);
-            identity.setText (instrument != nullptr ? instrument->getName() : "Audio / MIDI", dontSendNotification);
+            const bool wetReturn = spatial::isRoomReturn (*track);
+            identity.setText (wetReturn ? "Wet room return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
+                              dontSendNotification);
             if (instrument != nullptr) identity.setTooltip (instrument->getName());
             else identity.setTooltip ({});
             out.setButtonText (outputLabel (*track));
@@ -468,7 +471,8 @@ public:
             const bool frozen = track->isFrozen (te::Track::anyFreeze);
             meter.attach (levelPlugin != nullptr && ! frozen ? &levelPlugin->measurer : nullptr);
             meter.setTooltip (frozen ? "Meter unavailable on a frozen track"
-                                     : levelPlugin == nullptr ? "This track has no Level Meter insert" : "Track peak levels");
+                                     : levelPlugin == nullptr ? "This track has no Level Meter insert"
+                                     : wetReturn ? "Wet room return after the fader" : "Track peak levels");
         }
         meter.sample();
     }

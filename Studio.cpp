@@ -251,6 +251,15 @@ public:
             else
                 resized();
         };
+        spatialWorkspace.onOpenRoomMixer = [this] (te::EditItemID id)
+        {
+            if (auto* track = trackById (id))
+            {
+                selection.selectOnly (track);
+                if (dockMode == DockMode::compact) dockMode = DockMode::split;
+                showWorkspace (Workspace::mix);
+            }
+        };
         resources.onOpen = [this]
         {
             if (dockMode == DockMode::compact) dockMode = DockMode::split;
@@ -2002,6 +2011,7 @@ private:
         articulation.setContext (nullptr);
         ++projectGeneration;
         edit = std::move (next);
+        studio::spatial::prepareRoomPlayback (*edit);
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());

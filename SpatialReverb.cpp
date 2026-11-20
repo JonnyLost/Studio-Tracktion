@@ -48,6 +48,23 @@ void RoomReverb::setRoom (Room next)
     updateTargets();
 }
 
+void RoomReverb::setCheckEnabled (bool enabled)
+{
+    if (checkEnabled == enabled) return;
+    checkEnabled = enabled;
+    updateOutputTarget();
+}
+
+void RoomReverb::updateOutputTarget()
+{
+    // The early taps and diffusion tank attenuate a dry instrument well
+    // below the level implied by the send and return trims. Calibrate the
+    // wet output, after the feedback network, with the existing trims intact.
+    constexpr float wetCalibrationDb = 20.0f;
+    const float outputDb = room.gain + wetCalibrationDb + (checkEnabled ? roomCheckBoostDb : 0.0f);
+    target.output = room.bypass ? 0.0f : std::pow (10.0f, outputDb / 20.0f);
+}
+
 void RoomReverb::updateTargets()
 {
     const auto decay = predictDecay (room);
@@ -55,7 +72,7 @@ void RoomReverb::updateTargets()
                      (float) (room.height * rate / 287.0), (float) ((room.width + room.length) * rate / 814.0) };
     target.early = room.early;
     target.late = room.late;
-    target.output = room.bypass ? 0.0f : std::pow (10.0f, room.gain / 20.0f);
+    updateOutputTarget();
     for (size_t i = 0; i < tank.size(); ++i)
     {
         std::array<float, 6> gain;
@@ -84,9 +101,10 @@ float RoomReverb::read (unsigned channel, float delay) const noexcept
     return std::lerp (data[index], data[prior], delay - (float) integer);
 }
 
-void RoomReverb::process (float* left, float* right, int count) noexcept
+RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
 {
-    if (history[0].empty() || left == nullptr) return;
+    RoomPeaks peaks;
+    if (history[0].empty() || left == nullptr) return peaks;
     const auto smoothTo = [this] (float& currentValue, float next)
     {
         currentValue += smooth * (next - currentValue);
@@ -94,6 +112,7 @@ void RoomReverb::process (float* left, float* right, int count) noexcept
     for (int frame = 0; frame < count; ++frame)
     {
         const float inputL = finiteAudio (left[frame]), inputR = right != nullptr ? finiteAudio (right[frame]) : inputL;
+        peaks.input = std::max (peaks.input, std::max (std::abs (inputL), std::abs (inputR)));
         history[0][cursor] = inputL;
         history[1][cursor] = inputR;
         for (size_t i = 0; i < current.delay.size(); ++i)
@@ -142,7 +161,10 @@ void RoomReverb::process (float* left, float* right, int count) noexcept
         const float wetR = (reflectionsR * current.early + current.late * 0.5f * (output[1] - output[2])) * current.output;
         left[frame] = right != nullptr ? wetL : 0.5f * (wetL + wetR);
         if (right != nullptr) right[frame] = wetR;
+        peaks.wet = std::max (peaks.wet, right != nullptr
+            ? std::max (std::abs (wetL), std::abs (wetR)) : std::abs (left[frame]));
     }
+    return peaks;
 }
 
 std::size_t RoomReverb::allocatedBytes() const noexcept

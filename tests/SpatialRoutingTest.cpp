@@ -89,7 +89,14 @@ public:
         devices.removeHostedAudioDeviceInterface();
     }
 
-    AudioBuffer<float> capture (te::Edit& edit, const std::function<void()>& onPlay = {})
+    struct Capture
+    {
+        AudioBuffer<float> output;
+        std::array<float, 2> returnDb { -100.0f, -100.0f };
+        std::optional<RoomSignal> room;
+    };
+
+    Capture capture (te::Edit& edit, const std::function<void()>& onPlay = {})
     {
         auto& transport = edit.getTransport();
         transport.stop (false, false);
@@ -100,19 +107,31 @@ public:
         transport.play (false);
         if (onPlay) onPlay();
 
-        AudioBuffer<float> output (2, captureBlocks * blockSize);
+        te::LevelMeasurer::Client meter;
+        auto* returned = roomReturnTrack (edit);
+        auto* level = returned != nullptr ? returned->getLevelMeterPlugin() : nullptr;
+        if (level != nullptr) level->measurer.addClient (meter);
+
+        Capture result;
+        result.output.setSize (2, captureBlocks * blockSize);
         AudioBuffer<float> block (2, blockSize);
         juce::MidiBuffer midi;
         for (int i = 0; i < captureBlocks; ++i)
         {
             block.clear();
             audio.processBlock (block, midi);
-            for (int ch = 0; ch < 2; ++ch) output.copyFrom (ch, i * blockSize, block, ch, 0, blockSize);
+            for (int ch = 0; ch < 2; ++ch) result.output.copyFrom (ch, i * blockSize, block, ch, 0, blockSize);
             midi.clear();
+        }
+        result.room = roomSignal (edit);
+        if (level != nullptr)
+        {
+            for (int ch = 0; ch < 2; ++ch) result.returnDb[(size_t) ch] = meter.getAndClearAudioLevel (ch).dB;
+            level->measurer.removeClient (meter);
         }
         transport.stop (false, false);
         transport.freePlaybackContext();
-        return output;
+        return result;
     }
 
 private:
@@ -162,20 +181,91 @@ Result verifySignal()
     room.bypass = true;
     updateReturn (*edit, room);
     auto dry = device.capture (*edit);
-    const auto dryL = energyDb (dry, 0);
-    if (! std::isfinite (dryL) || dryL < -36.0f) return Result::fail ("live graph dry piano did not reach the master, dBFS " + juce::String (dryL));
+    const auto dryL = energyDb (dry.output, 0);
+    if (! std::isfinite (dryL) || dryL < -36.0f)
+        return Result::fail ("live graph dry piano did not reach the master, dBFS " + juce::String (dryL));
+    if (! dry.room || dry.room->wetPeak != 0.0f || dry.returnDb[0] > -90.0f)
+        return Result::fail ("bypassed return must be silent");
 
     room.bypass = false;
     updateReturn (*edit, room);
     auto front = device.capture (*edit, [&] { updateRoomSend (*source, { 0, 0 }, Seat().sendTrim); });
     auto rear = device.capture (*edit, [&] { updateRoomSend (*source, { 0, 1 }, Seat().sendTrim); });
-    const auto frontWet = energyDb (front, 0, &dry);
-    const auto rearWet = energyDb (rear, 0, &dry);
-    const auto rightWet = energyDb (rear, 1, &dry);
+    const auto frontWet = energyDb (front.output, 0, &dry.output);
+    const auto rearWet = energyDb (rear.output, 0, &dry.output);
+    const auto rightWet = energyDb (rear.output, 1, &dry.output);
     fprintf (stdout, "Hosted device RMS dBFS: dry L %.2f, front wet L %.2f, rear wet L %.2f, rear wet R %.2f.\n",
              (double) dryL, (double) frontWet, (double) rearWet, (double) rightWet);
-    if (! std::isfinite (frontWet) || ! std::isfinite (rearWet) || ! std::isfinite (rightWet) || rearWet < -125.0f)
-        return Result::fail ("room audio did not reach the master");
+    if (! std::isfinite (frontWet) || ! std::isfinite (rearWet) || ! std::isfinite (rightWet)
+        || std::abs (rearWet - frontWet - 10.0f) > 0.8f
+        || std::min (rearWet, rightWet) < dryL - 23.0f || ! rear.room || ! rear.room->reachesMaster
+        || rear.room->inputPeak <= 0.0f || rear.room->wetPeak <= 0.0f
+        || std::min (rear.returnDb[0], rear.returnDb[1]) < -55.0f)
+        return Result::fail ("audible stereo wet signal, room metering, or live depth gain");
+
+    AudioBuffer<float> wetStereo (rear.output);
+    wetStereo.addFrom (0, 0, dry.output, 0, 0, wetStereo.getNumSamples(), -1.0f);
+    wetStereo.addFrom (1, 0, dry.output, 1, 0, wetStereo.getNumSamples(), -1.0f);
+    wetStereo.addFrom (0, 0, wetStereo, 1, 0, wetStereo.getNumSamples(), -1.0f);
+    if (energyDb (wetStereo, 0) < rearWet - 12.0f)
+        return Result::fail ("wet left and right must carry distinct reflections");
+
+    returned->getVolumePlugin()->setVolumeDb (-12.0f);
+    auto lower = device.capture (*edit);
+    if (std::abs (rearWet - energyDb (lower.output, 0, &dry.output) - 12.0f) > 0.7f
+        || std::abs (rear.returnDb[0] - lower.returnDb[0] - 12.0f) > 0.7f)
+        return Result::fail ("room return fader and post-fader meter");
+    returned->getVolumePlugin()->setVolumeDb (0.0f);
+
+    source->setSolo (true);
+    auto solo = device.capture (*edit);
+    if (! returned->isSoloIsolate (false) || std::abs (rearWet - energyDb (solo.output, 0, &dry.output)) > 0.5f)
+        return Result::fail ("managed room return must remain audible when an instrument is soloed");
+    source->setSolo (false);
+
+    setRoomCheck (*edit, true);
+    auto boosted = device.capture (*edit);
+    const float checkDelta = energyDb (boosted.output, 0, &dry.output) - rearWet;
+    if (! boosted.room || ! boosted.room->checkEnabled || std::abs (checkDelta - 12.0f) > 0.7f)
+        return Result::fail ("temporary wet-only room check");
+    setRoomCheck (*edit, false);
+    auto stable = device.capture (*edit);
+    if (energyDb (stable.output, 0, &rear.output) > -95.0f)
+        return Result::fail ("room check should restore the original wet level");
+
+    const auto stone = factoryRooms[5].room;
+    auto changed = device.capture (*edit, [&] { updateReturn (*edit, stone); });
+    if (energyDb (changed.output, 0, &rear.output) < rearWet - 10.0f)
+        return Result::fail ("room preset did not change the audible response while playing");
+    auto expected = device.capture (*edit);
+    setRoomCheck (*edit, true);
+    auto bypass = stone;
+    bypass.bypass = true;
+    updateReturn (*edit, bypass);
+    auto bypassed = device.capture (*edit);
+    if (! bypassed.room || bypassed.room->checkEnabled || energyDb (bypassed.output, 0, &dry.output) > -95.0f)
+        return Result::fail ("bypass must clear the diagnostic and preserve the dry signal");
+
+    updateReturn (*edit, stone);
+    setRoomCheck (*edit, true);
+    // Exercise migration of a saved pre-correction return, which did not mark
+    // itself as solo-safe. The runtime check should never become saved state.
+    returned->state.removeProperty (te::IDs::soloIsolate, nullptr);
+    if (! te::EditFileOperations (*edit).writeToFile (temporary.getFile(), false))
+        return Result::fail ("save signal fixture");
+    clip = nullptr;
+    instrument = nullptr;
+    source = nullptr;
+    edit.reset();
+    edit = te::loadEditFromFile (engine, temporary.getFile());
+    if (edit == nullptr) return Result::fail ("reopen signal fixture");
+    prepareRoomPlayback (*edit);
+    auto restored = device.capture (*edit);
+    if (! restored.room || restored.room->checkEnabled || restored.room->bypassed
+        || ! roomReturnTrack (*edit)->isSoloIsolate (false)
+        || energyDb (restored.output, 0, &expected.output) > -90.0f)
+        return Result::fail ("restored preset, wet level, solo safety, or diagnostic persistence");
+
     return Result::ok();
 }
 
@@ -286,7 +376,7 @@ int runSpatialRoutingTest()
     auto result = verify();
     if (result.wasOk()) result = verifySignal();
     if (result.failed()) fprintf (stderr, "Studio spatial routing test failed: %s\n", result.getErrorMessage().toRawUTF8());
-    else fprintf (stdout, "Tracktion room send, undo, isolation, and native project reopen passed.\n");
+    else fprintf (stdout, "Tracktion room routing, audible stereo wet signal, meters, depth, solo, bypass, and project reopen passed.\n");
     return result.wasOk() ? 0 : 1;
 }
 }

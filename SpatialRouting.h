@@ -8,13 +8,23 @@
 namespace studio::spatial
 {
 void registerPlugins (tracktion::Engine&);
+void prepareRoomPlayback (tracktion::Edit&);
 tracktion::AudioTrack* roomReturnTrack (tracktion::Edit&);
 bool isRoomReturn (const tracktion::AudioTrack&);
 bool hasRoomSend (tracktion::AudioTrack&);
+std::optional<float> activeRoomSendDb (tracktion::AudioTrack&);
 juce::String routeRestriction (tracktion::AudioTrack&);
 juce::Result setRoomSend (tracktion::AudioTrack&, bool enabled, Position, float trimDb, Room);
 void updateRoomSend (tracktion::AudioTrack&, Position, float trimDb);
 void updateReturn (tracktion::Edit&, Room);
+void setRoomCheck (tracktion::Edit&, bool enabled);
+
+struct RoomSignal
+{
+    float inputPeak, wetPeak;
+    bool bypassed, checkEnabled, reachesMaster;
+};
+std::optional<RoomSignal> roomSignal (tracktion::Edit&);
 
 struct ResourceReport
 {
