@@ -12,7 +12,7 @@ StudioPianoRoll::StudioPianoRoll()
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo,
                                                               &zoomIn, &zoomOut, &verticalZoomIn,
                                                               &verticalZoomOut, &caption,
-                                                              &horizontal, &vertical })
+                                                              &horizontal, &vertical, &expression, &controllers })
         addAndMakeVisible (c);
 
     tool.addItem ("Select", 1);
@@ -46,6 +46,19 @@ StudioPianoRoll::StudioPianoRoll()
     undo.onClick = [this] { if (clip) clip->edit.undo(); refresh(); };
     redo.onClick = [this] { if (clip) clip->edit.redo(); refresh(); };
     quantize.onClick = [this] { quantizeNotes(); };
+    expression.setTooltip ("Show MIDI controller lanes");
+    expression.onClick = [this] { controllers.showMenu (expression); };
+    controllers.xForBeat = [this] (double beat) { return xAt (beat) - controllers.getX(); };
+    controllers.beatForX = [this] (int x) { return beatAt (x + controllers.getX()); };
+    controllers.snapBeat = [this] (double beat) { return snap (beat); };
+    controllers.drawMode = [this] { return tool.getSelectedId() == 2; };
+    controllers.onChange = [this] { refresh(); };
+    controllers.onLayoutChange = [this]
+    {
+        if (onControllerLayout) onControllerLayout();
+        resized();
+    };
+    controllers.setEditingEnabled (editingEnabled);
     refresh();
 }
 
@@ -70,6 +83,7 @@ void StudioPianoRoll::setClip (te::MidiClip::Ptr next)
     lassoBounds = {};
     draggedNote = {};
     clip = std::move (next);
+    controllers.setClip (clip.get());
     comparisonClips.clear();
     transportWithinClip = false;
     horizontal.setCurrentRangeStart (0, dontSendNotification);
@@ -103,6 +117,7 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
         lassoBounds = {};
     }
     editingEnabled = enabled;
+    controllers.setEditingEnabled (enabled);
     for (Component* c : std::initializer_list<Component*> { &tool, &grid, &quantize, &undo, &redo })
         c->setEnabled (enabled && clip != nullptr);
     repaint();
@@ -131,6 +146,7 @@ void StudioPianoRoll::refresh()
     verticalZoomIn.setEnabled (hasClip);
     verticalZoomOut.setEnabled (hasClip);
     updateScrollBars();
+    controllers.repaint();
     repaint();
     if (onMidiChanged)
         onMidiChanged();
@@ -147,8 +163,9 @@ int StudioPianoRoll::minimumContentHeight (int width)
     const auto& m = studio::appearance;
     return studio::toolbarHeight (jmax (1, width - m.px (8)),
         { { &tool, 85 }, { &grid, 94 }, { &quantize, 83 }, { &undo, 54 }, { &redo, 54 },
-          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 } })
-        + m.line (13, 2) + m.control (24) + m.scrollbar() + m.px (118);
+          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 },
+          { &expression, 112 } })
+        + m.line (13, 2) + m.control (24) + m.scrollbar() + m.px (118) + controllers.preferredHeight();
 }
 
 void StudioPianoRoll::resized()
@@ -158,13 +175,17 @@ void StudioPianoRoll::resized()
     auto area = getLocalBounds().reduced (m.px (4), m.px (2));
     studio::layoutToolbar (area,
         { { &tool, 85 }, { &grid, 94 }, { &quantize, 83 }, { &undo, 54 }, { &redo, 54 },
-          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 } });
+          { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 },
+          { &expression, 112 } });
     caption.setBounds (area.removeFromTop (m.line (13, 2)));
     auto rulerRow = area.removeFromTop (m.control (24));
     const auto scrollbar = m.scrollbar();
     rulerArea = rulerRow.withTrimmedLeft (keyWidth).withTrimmedRight (scrollbar);
+    auto controllerRow = area.removeFromBottom (controllers.preferredHeight()).withTrimmedRight (scrollbar);
     auto horizontalRow = area.removeFromBottom (scrollbar);
     vertical.setBounds (area.removeFromRight (scrollbar));
+    controllers.setBounds (controllerRow);
+    controllers.setGutter (keyWidth);
     auto velocityRow = area.removeFromBottom (jmin (m.px (72), area.getHeight() / 2));
     velocityArea = velocityRow.withTrimmedLeft (keyWidth);
     keyboard = area.removeFromLeft (keyWidth);
@@ -257,6 +278,7 @@ void StudioPianoRoll::setTransportPosition (te::TimePosition time)
                 transportSourceBeat = start + std::fmod (transportSourceBeat - start, length);
         }
     }
+    updateControllerPlayhead();
     // The arrangement and piano roll read the same transport clock. Avoid
     // repainting if neither the visible state nor screen position changed.
     if (oldVisible == transportWithinClip
@@ -312,12 +334,28 @@ te::MidiNote* StudioPianoRoll::noteAt (Point<int> point) const
     return nullptr;
 }
 
+void StudioPianoRoll::updateControllerPlayhead()
+{
+    const int x = xAt (transportSourceBeat);
+    controllers.setPlayhead (transportWithinClip && x >= notesArea.getX() && x < notesArea.getRight()
+        ? std::optional<int> (x - controllers.getX()) : std::nullopt);
+}
+
 void StudioPianoRoll::updateScrollBars()
 {
     double endBeat = 16.0;
     if (clip != nullptr && clip->hasValidSequence())
+    {
+        const auto bounds = clip->getPosition();
+        endBeat = jmax (endBeat, clip->isLooping()
+            ? (clip->getLoopStartBeats() + clip->getLoopLengthBeats()).inBeats()
+            : clip->getContentBeatAtTime (bounds.getEnd()).inBeats());
         for (auto* note : clip->getSequence().getNotes())
             endBeat = jmax (endBeat, note->getEndBeat().inBeats() + 4.0);
+        const auto& events = clip->getSequence().getControllerEvents();
+        if (auto* tail = events.getLast())
+            endBeat = jmax (endBeat, tail->getBeatPosition().inBeats() + 1.0);
+    }
     if (clip != nullptr)
         for (const auto& other : comparisonClips)
             if (other != nullptr && other->hasValidSequence())
@@ -333,6 +371,8 @@ void StudioPianoRoll::updateScrollBars()
     vertical.setRangeLimits (0.0, 128.0 * rowHeight);
     vertical.setCurrentRange (vertical.getCurrentRangeStart(), notesArea.getHeight(), dontSendNotification);
     vertical.setSingleStepSize (rowHeight);
+    updateControllerPlayhead();
+    controllers.repaint();
     if (initialViewport && notesArea.getHeight() > 0)
     {
         vertical.setCurrentRangeStart (57.0 * rowHeight, dontSendNotification);
@@ -426,6 +466,8 @@ void StudioPianoRoll::timerCallback()
 
 void StudioPianoRoll::scrollBarMoved (ScrollBar*, double)
 {
+    updateControllerPlayhead();
+    controllers.repaint();
     repaint();
 }
 

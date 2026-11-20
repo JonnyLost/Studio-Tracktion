@@ -219,7 +219,7 @@ juce_add_gui_app(Studio
     NEEDS_WEB_BROWSER FALSE
     PLUGINHOST_AU TRUE)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h)
+target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE

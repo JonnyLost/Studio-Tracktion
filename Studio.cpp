@@ -17,6 +17,7 @@ using namespace tracktion::literals;
 #include "StudioUI.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
+#include "StudioResources.h"
 
 static Rectangle<int> displayClientArea (const Component& window, const Displays::Display& display)
 {
@@ -174,6 +175,14 @@ public:
         arrangementZoomIn.onClick = [this] { zoomArrangement (1.0 / 1.25); };
 
         addAndMakeVisible (monitorButton);
+        for (auto* indicator : { &resources.audio, &resources.ram, &resources.dropouts })
+            addAndMakeVisible (*indicator);
+        workspaceBody.addChildComponent (resources);
+        resources.onOpen = [this]
+        {
+            if (dockMode == DockMode::compact) dockMode = DockMode::split;
+            showWorkspace (Workspace::resources);
+        };
         addAndMakeVisible (retryAriaButton);
         addAndMakeVisible (confirmAriaButton);
         addChildComponent (ariaReviewNotice);
@@ -267,6 +276,7 @@ public:
         workspaceBody.addChildComponent (piano);
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
+        piano.onControllerLayout = [this] { resized(); };
         for (auto* label : { &title, &message, &trackDetails, &workspaceTitle })
             addAndMakeVisible (*label);
         for (auto* readout : { &bars, &position, &tempo, &meter })
@@ -356,6 +366,7 @@ public:
         pendingPlugin.reset();
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
+        resources.setEdit (nullptr);
         workspaceViewport.setViewedComponent (nullptr);
         railViewport.setViewedComponent (nullptr);
         LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -515,8 +526,11 @@ public:
         const auto transport = { studio::ToolbarItem { &rewind, tightTransport ? 48 : 58 },
             studio::ToolbarItem { &play, tightTransport ? 47 : 60 }, studio::ToolbarItem { &record, tightTransport ? 78 : 94 },
             studio::ToolbarItem { &bars, tightTransport ? 66 : 82 }, studio::ToolbarItem { &position, tightTransport ? 80 : 95 },
-            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 } };
-        const int transportHeight = studio::toolbarHeight (transportWidth, transport);
+            studio::ToolbarItem { &tempo, tightTransport ? 54 : 60 }, studio::ToolbarItem { &meter, 50 },
+            studio::ToolbarItem { &resources.audio, 80 }, studio::ToolbarItem { &resources.ram, 119 },
+            studio::ToolbarItem { &resources.dropouts, 69 } };
+        const int transportHeight = studio::toolbarHeight (transportWidth
+            - (showMonitor ? m.span (125) : 0), transport);
         topBar = area.removeFromTop (projectRowHeight + transportHeight + m.px (10));
 
         auto files = topBar.withHeight (projectRowHeight).reduced (m.px (10), m.px (3));
@@ -610,6 +624,7 @@ public:
         mixer.appearanceChanged();
         piano.appearanceChanged();
         monitor.appearanceChanged();
+        resources.appearanceChanged();
         fitFloatingMonitor();
         if (editor != nullptr) editor->refreshStudioLayout();
         resized();
@@ -654,6 +669,9 @@ public:
                 [safe, percent] { if (safe != nullptr) safe->applyAppearance (studio::appearance.interfacePercent(), percent, true); });
         }
         PopupMenu menu;
+        menu.addItem ("Resource Inspector", [safe] { if (safe != nullptr) safe->resources.onOpen(); });
+        menu.addItem ("MIDI Monitor", [safe] { if (safe != nullptr) safe->monitorButton.onClick(); });
+        menu.addSeparator();
         menu.addSubMenu ("Interface Scale", scale);
         menu.addSubMenu ("Text Size", textSize);
         menu.addSeparator();
@@ -686,7 +704,7 @@ private:
     enum class Workspace
     {
         closed, instruments, channel, stage, articulations, piano, mix, midi,
-        rooms, microphones, synth, sampler, effects, templates, picture
+        rooms, microphones, synth, sampler, effects, templates, picture, resources
     };
     using DockMode = studio::DockMode;
 
@@ -701,7 +719,7 @@ private:
     TooltipWindow tooltips { this, 650 };
     Viewport railViewport, workspaceViewport;
     bool collapsedDockLinks = false;
-    TextButton appearanceButton { "Appearance..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
+    TextButton appearanceButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<ExtendedUIBehaviour>(), nullptr };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -761,6 +779,7 @@ private:
     studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
     studio::ChannelInspector channelInspector { trackActions };
     studio::StudioMixer mixer { trackActions };
+    studio::StudioResources resources { engine.getDeviceManager() };
 
     struct PendingPlugin
     {
@@ -808,7 +827,7 @@ private:
         { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
         { Workspace::synth, "Studio Synth" }, { Workspace::sampler, "Studio Sampler" },
         { Workspace::effects, "Effects" }, { Workspace::templates, "Template Manager" },
-        { Workspace::picture, "Picture" }
+        { Workspace::picture, "Picture" }, { Workspace::resources, "Resource Inspector" }
     };
 
     std::array<WorkspaceEntry, 2> contextLinks() const
@@ -871,6 +890,7 @@ private:
             if (channelInspector.isVisible()) return channelInspector.minimumContentHeight (width);
             if (mixer.isVisible()) return mixer.minimumContentHeight();
             if (piano.isVisible()) return piano.minimumContentHeight (width);
+            if (resources.isVisible()) return resources.minimumContentHeight (width);
             return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
         };
         auto width = body.getWidth();
@@ -883,7 +903,7 @@ private:
             height = minimumContentHeight (width);
         }
         workspaceBody.setSize (width, jmax (height, body.getHeight()));
-        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano })
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
     }
@@ -931,7 +951,8 @@ private:
         const bool editingMidi = workspace == Workspace::piano;
         const bool browsing = workspace == Workspace::instruments;
         const bool inspecting = workspace == Workspace::channel;
-        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting);
+        const bool checkingResources = workspace == Workspace::resources;
+        const bool planned = open && ! (mixing || monitoring || editingMidi || browsing || inspecting || checkingResources);
         String name;
         bool inPrimaryRail = false;
         for (const auto& item : railItems())
@@ -957,6 +978,7 @@ private:
 
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
+        resources.setVisible (checkingResources && ! compact);
         mixer.setVisible (mixing && ! compact);
         if (! mixer.isVisible()) mixer.pauseMeters();
         workspaceTicks = 1; // Refresh the newly shown workspace on the next host tick.
@@ -1799,9 +1821,11 @@ private:
         browser.setStatus ({});
         channelInspector.setEdit (nullptr);
         mixer.setEdit (nullptr);
+        resources.setEdit (nullptr);
         ++projectGeneration;
         edit = std::move (next);
         channelInspector.setEdit (edit.get());
+        resources.setEdit (edit.get());
         mixer.setEdit (edit.get());
         projectFile = file;
         lastRecordingStopRequestedAt = 0;

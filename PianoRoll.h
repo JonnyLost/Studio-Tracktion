@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include <functional>
 #include <memory>
+#include "MidiControllerLanes.h"
 
 namespace te = tracktion;
 
@@ -23,7 +24,7 @@ public:
     void setEditingEnabled (bool);
     void setTransportPosition (tracktion::TimePosition);
     void silencePreview();
-    std::function<void()> onMidiChanged;
+    std::function<void()> onMidiChanged, onControllerLayout;
 
     void paint (juce::Graphics&) override;
     void appearanceChanged();
@@ -49,7 +50,9 @@ private:
     juce::ComboBox tool, grid;
     juce::TextButton quantize { "Quantize" }, undo { "Undo" }, redo { "Redo" },
                      zoomIn { "H+" }, zoomOut { "H-" },
-                     verticalZoomIn { "V+" }, verticalZoomOut { "V-" };
+                     verticalZoomIn { "V+" }, verticalZoomOut { "V-" },
+                     expression { "Expression..." };
+    studio::MidiControllerLanes controllers;
     juce::Label caption;
     juce::ScrollBar horizontal { false }, vertical { true };
 
@@ -75,6 +78,7 @@ private:
 
     void scrollBarMoved (juce::ScrollBar*, double) override;
     void updateScrollBars();
+    void updateControllerPlayhead();
     void setZoom (double);
     void setVerticalZoom (int);
     void audition (int pitch, int velocity);
