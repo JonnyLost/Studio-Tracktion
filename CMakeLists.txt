@@ -11,8 +11,60 @@ add_subdirectory("${TRACKTION_ROOT}" tracktion)
 
 # Keep Studio's changes to the example editor in the build directory.
 set(common "${TRACKTION_ROOT}/examples/common")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.cpp")
-configure_file("${common}/Components.h" generated/Components.h COPYONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.h")
+file(READ "${common}/Components.h" editor_header)
+string(REPLACE "#pragma once" "#pragma once\n#include <utility>\n#include <vector>"
+               editor_header "${editor_header}")
+# The upstream example uses four spaces on some visually empty lines.
+# Normalize those in the generated copy to keep the anchor legible.
+string(REPLACE "    \n" "\n" editor_header "${editor_header}")
+set(clip_header_anchor [=[    void mouseDown (const MouseEvent& e) override;
+
+    te::Clip& getClip() { return *clip; }
+
+protected:
+    EditViewState& editViewState;
+    te::Clip::Ptr clip;
+};]=])
+string(FIND "${editor_header}" "${clip_header_anchor}" clip_header_match)
+if(clip_header_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example ClipComponent header has changed.")
+endif()
+string(REPLACE "${clip_header_anchor}" [=[    void mouseDown (const MouseEvent& e) override;
+    void mouseDrag (const MouseEvent& e) override;
+    void mouseUp (const MouseEvent& e) override;
+    void mouseMove (const MouseEvent& e) override;
+    void mouseExit (const MouseEvent& e) override;
+
+    te::Clip& getClip() { return *clip; }
+
+protected:
+    EditViewState& editViewState;
+    te::Clip::Ptr clip;
+
+private:
+    enum class RegionGesture { none, move, trimLeft, trimRight };
+    RegionGesture regionGesture = RegionGesture::none;
+    std::vector<std::pair<te::Clip::Ptr, te::ClipPosition>> regionDragClips;
+    std::unique_ptr<Component> regionDragPreview;
+    bool regionDragStarted = false;
+};]=] editor_header "${editor_header}")
+set(track_header_anchor [=[    void resized() override;
+
+private:
+    void changeListenerCallback (ChangeBroadcaster*) override;]=])
+string(FIND "${editor_header}" "${track_header_anchor}" track_header_match)
+if(track_header_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example TrackComponent header has changed.")
+endif()
+string(REPLACE "${track_header_anchor}" [=[    void resized() override;
+    te::Track* getTrack() const { return track.get(); }
+
+private:
+    void changeListenerCallback (ChangeBroadcaster*) override;]=] editor_header "${editor_header}")
+file(CONFIGURE OUTPUT generated/Components.h CONTENT "${editor_header}" @ONLY)
 file(READ "${common}/Components.cpp" editor)
 set(midi_assignment [=[else if (res >= 100)
             {
@@ -87,19 +139,8 @@ string(FIND "${editor}" "${single_clip_selection}" selection_match)
 if(selection_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example clip-selection implementation has changed.")
 endif()
-string(REPLACE "${single_clip_selection}" [=[void ClipComponent::mouseDown (const MouseEvent& event)
-{
-    auto& selection = editViewState.selectionManager;
-    if (event.mods.isShiftDown())
-    {
-        if (selection.isSelected (clip.get()))
-            selection.deselect (clip.get());
-        else
-            selection.addToSelection (clip.get());
-    }
-    else
-        selection.selectOnly (clip.get());
-}]=] editor "${editor}")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc" region_editing)
+string(REPLACE "${single_clip_selection}" "${region_editing}" editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 juce_add_gui_app(Studio

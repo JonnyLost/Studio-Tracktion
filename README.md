@@ -19,12 +19,15 @@ Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified 
 
 When reopening a project containing ARIA, piano editing remains available. An **ARIA CHECK** reminder and **Retry ARIA / Confirm ARIA** controls appear near the top of the left sidebar. Studio blocks **both Save and Save As** until you have verified the restored ARIA slot sounds correct and clicked **Confirm ARIA**; a warning now explains this when you try to save. This protects the original AU state and backup. Editing a clip is not the same as confirming safe ARIA restoration.
 
-## Region selection and editing — preview milestone
+## Region selection, dragging and editing
 
 - In the arrangement, **Shift-click** other regions to extend or toggle the clip selection. The Tracktion example editor now passes these selections to Tracktion's native multi-selection manager.
+- **Drag from the body of a region** to move it earlier/later on its track, or vertically to another compatible, unfrozen track. A translucent region preview shows the proposed drop; a red preview indicates that track cannot accept the drop. A selection of multiple regions moves together in time. Cross-track group drops are supported when all selected regions originate on the same track; mixed-source multi-track selections remain on their original tracks unless you move them individually. The model changes only on mouse release, in one Undo transaction.
+- **Drag the first or last 8 pixels of a region** to trim its start or end without dragging its MIDI notes or audio source. The cursor becomes a horizontal resize indicator at either edge. The opposite edge remains in place. The trim uses Tracktion's native source-offset-preserving methods and enforces a small minimum region duration; double-check the contents of short clips after trimming.
+- Arrangement dragging and trimming snap to the nearest **quarter-note beat**, using the project tempo map. **Hold Option** while dragging for unsnapped positioning and fine edge edits. This initial arrangement gesture grid is independent of the piano-roll Snap dropdown; a shared user-configurable region grid is still planned. The translucent preview remains on the source track until the cursor enters another valid track.
 - With multiple MIDI regions selected, the piano roll displays the earliest region as the **active, editable take** and other regions as translucent **read-only ghost notes** at their corresponding project times. The caption identifies the additional clips; click one region alone to make it the editable take. This preview is not simultaneous multi-clip editing.
 - **Edit Regions** in Studio's top bar opens **Split selected at playhead**, **Duplicate selected**, **Copy**, **Paste**, **Cut** and **Delete**. Split uses Tracktion's clip-splitting API so existing source offsets and take data are retained. Duplicate inserts a separate clip after each selected source. Copy retains multiple clips and their relative time and track offsets. Paste inserts them at the transport position; select a destination track before pasting to place the group at that track and subsequent tracks. The clipboard clears when you open or create another project. Missing destination tracks are not created automatically.
-- **Limitations:** Arrangement lasso selection, group resizing, and MIDI or audio **Join** are not yet implemented. Joining MIDI must include CC/pedal/expression data, and joining audio requires a safe render/comp strategy. Audio clips cannot appear as notes in the piano roll. The new region operations must be tested on copies of projects before being treated as production-safe.
+- **Limitations:** Arrangement lasso selection, group resizing, simultaneous editing of ghosted MIDI clips, and MIDI or audio **Join** are not yet implemented. Joining MIDI must include CC/pedal/expression data, and joining audio requires a safe render/comp strategy. Dragging is limited to visible tracks (no automatic scroll while dragging), and audio clips cannot appear as notes in the piano roll. The new region operations must be tested on copies of projects before being treated as production-safe.
 
 After stopping an Oxygen 25 recording, saving waits until the Tracktion transport completes its recording-stop transition, with a bounded timeout rather than writing a partially finalized take. If it cannot finish safely, Studio leaves the existing file untouched and reports the failure.
 
@@ -37,7 +40,7 @@ Quit any running Studio instance. On the MacBook, switch to this feature branch 
 ```bash
 cd "$HOME/Developer/Studio-Tracktion" &&
 git fetch origin &&
-git switch --track origin/feature/midi-piano-roll-m2 &&
+git switch --track origin/feature/region-drag-trim-m3b &&
 /Applications/CMake.app/Contents/bin/cmake -S . -B build -G Xcode \
   -DTRACKTION_ROOT="$HOME/Developer/Tracktion-Studio" \
   -DCMAKE_OSX_ARCHITECTURES=x86_64 \
@@ -50,7 +53,7 @@ If you already built the branch, update it without reconfiguring:
 
 ```bash
 cd "$HOME/Developer/Studio-Tracktion" &&
-git switch feature/midi-piano-roll-m2 &&
+git switch feature/region-drag-trim-m3b &&
 git pull --ff-only &&
 /Applications/CMake.app/Contents/bin/cmake --build build --config Debug --target Studio --parallel 4 &&
 open "$PWD/build/Studio_artefacts/Debug/Studio.app"
@@ -72,6 +75,7 @@ open "$PWD/build/Studio_artefacts/Debug/Studio.app"
 12. Find the **− / + buttons next to Tracks at the top of the arrangement**, including when the sidebar's zoom menu is offscreen. Repeatedly zoom in/out around the transport playhead; the MIDI clip and arrangement bars should scale together without affecting the tempo or the piano-roll zoom. Confirm the preset/fit menu still works afterward.
 13. **Multi-note test:** in a fresh project, draw eight notes. Shift-click three; verify three outlines. Drag the selected notes horizontally and vertically, adjust velocity from one selected stem, quantize, delete, undo, redo and Save/reopen. Draw a lasso across several notes, then Shift-lasso to add others. Command-A selects all; Escape clears the selection. Trimming one note's edge should not resize the others.
 14. **Region test (use a disposable project copy):** Shift-click two noncontiguous MIDI regions. They should both stay selected and their notes should appear together in the piano roll, with the other region's notes ghosted. Use **Edit Regions → Split** at a playhead inside a selected region, undo, then duplicate, copy and paste. Select a different destination track before paste to test cross-track placement. Use Cut/Delete and immediately Undo. Check audio playback, ARIA program state, MIDI routing, recording and save/reopen afterward. **Join and arrangement lasso remain outstanding.**
+15. **Drag/trim test (use the same disposable copy):** Drag a region by its middle left/right on Track 1; undo and redo. Drag it vertically to Track 2, then back to Track 1; verify it still plays through the appropriate instrument, its source notes remain unchanged and its MIDI channels are preserved. Hold **Option** and drag to confirm fine, unsnapped movement. Hover over the **left** and **right** edges to see the horizontal resize cursor. Drag each edge separately and confirm the opposite edge remains stationary, note/audio content is not time-stretched, and Undo restores each trim. Test an audio region, save/reopen, and do a new Oxygen 25 recording. Shift-select two regions from the same track and drag them together horizontally and then to another compatible track. Confirm a red preview refuses a drop onto an incompatible/frozen track.
 
 ### Verification boundary
 
