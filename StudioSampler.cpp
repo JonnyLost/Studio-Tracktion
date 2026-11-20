@@ -12,7 +12,7 @@ namespace
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
 constexpr int version = 1;
-constexpr auto maxPresetBytes = 512 * 1024;
+constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
 {
@@ -448,7 +448,7 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
     }
 
     const auto* midi = context.bufferForMidiMessages;
-    const auto write = writeIndex.load (std::memory_order_acquire);
+    auto write = writeIndex.load (std::memory_order_acquire);
     auto read = readIndex.load (std::memory_order_relaxed);
     renderer.use (*bank);
     const bool stopped = wasPlaying && ! context.isPlaying;
@@ -461,7 +461,7 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
         renderer.preview (1, 0, -1, 0);
         renderer.preview (2, 0, -1, 0);
         renderer.preview (3, 0, -1, 0);
-        read = write;
+        read = write = writeIndex.load (std::memory_order_acquire);
     }
     if (! context.isRendering)
         for (; read != write; ++read)

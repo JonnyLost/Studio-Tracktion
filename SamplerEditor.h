@@ -104,6 +104,7 @@ private:
     void choose (bool presetFile, bool save, bool replace);
     void import (const juce::File&, int replace);
     void selectZone (int);
+    int initialZone() const;
     void setStatus (const juce::String&);
     void playAudition();
     void handleNoteOn (juce::MidiKeyboardState*, int, int, float) override;

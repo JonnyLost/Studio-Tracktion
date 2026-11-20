@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SamplerEditor.h"
-#include "StudioUI.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace studio::sampler
 {
@@ -184,6 +185,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     keyboard.setColour (MidiKeyboardComponent::mouseOverKeyOverlayColourId, colours::focus.withAlpha (0.30f));
     keyboard.setWantsKeyboardFocus (true);
     keys.addListener (this);
+    selection = initialZone();
     appearanceChanged();
     refresh();
     setSize (800, 564);
@@ -231,6 +233,16 @@ const SampleZone* Editor::zone() const
     return isPositiveAndBelow (selection, static_cast<int> (zones.size())) ? &zones[static_cast<std::size_t> (selection)] : nullptr;
 }
 
+int Editor::initialZone() const
+{
+    const auto& zones = plugin.instrument().zones;
+    const auto missing = std::find_if (zones.begin(), zones.end(), [] (const auto& entry)
+    {
+        return entry.mapping.sample == nullptr;
+    });
+    return missing == zones.end() ? 0 : static_cast<int> (missing - zones.begin());
+}
+
 void Editor::selectZone (int index)
 {
     selection = index;
@@ -246,8 +258,10 @@ void Editor::setPage (Page value)
 
 void Editor::setStatus (const String& value)
 {
+    const bool changesLayout = status.getText().isEmpty() != value.isEmpty();
     status.setText (value, dontSendNotification);
     status.setTooltip (value);
+    if (changesLayout && ! updating) resized();
 }
 
 void Editor::refresh()
@@ -420,8 +434,9 @@ void Editor::resized()
     const bool sampleList = page != Page::basic;
     const bool hasWaveform = page != Page::advanced;
     const bool sampleName = page == Page::basic || page == Page::loops;
+    const bool hasStatus = status.getText().isNotEmpty();
     const int height = (actionRows + (sampleList ? 1 : 0)) * (button + gap)
-        + (sampleName ? line : 0) + (hasWaveform ? waveform + gap : 0) + line + gap
+        + (sampleName ? line : 0) + (hasWaveform ? waveform + gap : 0) + (hasStatus ? line + gap : 0)
         + (page == Page::basic ? dialHeight + gap : 0)
         + (page == Page::loops ? button + gap : 0)
         + rows * (line + button + gap) + (page == Page::advanced ? line * 3 : 0);
@@ -446,8 +461,12 @@ void Editor::resized()
     if (page != Page::advanced)
         display.setBounds (content.removeFromTop (waveform));
     content.removeFromTop (gap);
-    status.setBounds (content.removeFromTop (line));
-    content.removeFromTop (gap);
+    status.setVisible (hasStatus);
+    if (hasStatus)
+    {
+        status.setBounds (content.removeFromTop (line));
+        content.removeFromTop (gap);
+    }
 
     const auto placeGrid = [=, &content] (std::initializer_list<Control*> items, int columns)
     {
@@ -544,7 +563,7 @@ void Editor::choose (bool presetFile, bool save, bool replace)
                 }
                 const auto result = save ? safe->plugin.savePreset (destination)
                                          : safe->plugin.loadPreset (file);
-                if (result.wasOk() && ! save) safe->selection = 0;
+                if (result.wasOk() && ! save) safe->selection = safe->initialZone();
                 safe->refresh();
                 if (result.failed()) safe->setStatus (result.getErrorMessage());
             });
@@ -855,7 +874,11 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     display.filesDropped ({ first.getFullPathName() }, 30, 30);
     if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return false;
     attack.slider.setValue (23, sendNotificationSync);
-    if (std::abs (plugin.instrument().settings.attack - .023f) > .0001f) return false;
+    if (std::abs (plugin.instrument().settings.attack - .023f) > .0001f)
+    {
+        std::fprintf (stderr, "Sampler Attack control did not change the instrument\n");
+        return false;
+    }
 
     const auto rect = keyboard.getRectangleForKey (60);
     const Point<float> key { rect.getCentreX(), rect.getBottom() - 7 };
@@ -867,9 +890,15 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
                            &keyboard, &keyboard, time, key, time, 1, false);
     };
     keyboard.mouseDown (event (ModifierKeys::leftButtonModifier));
+    const bool down = keys.isNoteOn (1, 60);
     const bool sounded = auditionCheck();
     keyboard.mouseUp (event (0));
-    if (! sounded) return false;
+    if (! sounded)
+    {
+        std::fprintf (stderr, "Sampler keyboard preview produced no audio (%u voices, key %d,%d, down %d)\n",
+                      plugin.resourceSnapshot().activeVoices.value_or (0), roundToInt (key.x), roundToInt (key.y), static_cast<int> (down));
+        return false;
+    }
 
     mapping.onClick();
     if (page != Page::mapping || ! samples.isVisible()) return false;
