@@ -554,7 +554,10 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
     if ((gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
         && std::abs (y - startY) > rowHeight / 2
         && std::abs (y - startY) > 2 * std::abs (x - startX))
+    {
         gesture = Gesture::move;
+        previewLength = originalLength;
+    }
     const auto delta = (x - startX) / pixelsPerBeat;
     const auto step = jmax (1.0 / 48.0, gridBeats());
     switch (gesture)
