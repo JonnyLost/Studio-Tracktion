@@ -52,3 +52,26 @@ On a physical Intel MacBook, open a copy of a project with a Sampler and ARIA tr
 ## Remaining compatibility
 
 The recovered Analog source supports up to eight voices, single-voice operation and oscillator pitch offsets. Legato priority, portamento and oscillator glide are pending. Legacy .studiosynth JSON is supported at the patch and preset level. Entire AVAudioEngine project files, the former SwiftUI preset manager, creating MIDI Learn assignments from this editor, and automatic Synth-to-Sampler capture remain separate integration work. The Granular adapter currently accepts mono or stereo source files. Engine response and subjective sound quality remain part of hardware acceptance.
+
+## Reproduce the catalog and standalone tests
+
+From the repository root, pass a path to a local Garritan-studio clone with historical commit `3787b602` fetched. The export leaves that clone untouched.
+
+```bash
+tools/synth-recovery/export-catalog.sh /path/to/Garritan-studio > /tmp/studio-synth-factory.json
+cmp SynthDSP/data/StudioSynthFactory.json /tmp/studio-synth-factory.json
+```
+
+The six original standalone harnesses can run without JUCE. Use a C++20 compiler with sanitizer support.
+
+```bash
+set -e
+mkdir -p /tmp/studio-synth-sanitizers
+for family in Analog FM Wavetable Additive Granular Physical; do
+  engine="Studio${family}DSP"
+  c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -I SynthDSP/include "SynthDSP/src/$engine.cpp" SynthDSP/src/StudioSharedPCM.cpp \
+    "tests/synth-original/$engine.cpp" -o "/tmp/studio-synth-sanitizers/$engine"
+  "/tmp/studio-synth-sanitizers/$engine"
+done
+```

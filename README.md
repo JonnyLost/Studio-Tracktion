@@ -90,8 +90,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-native-sampler-m5 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone5 &&
-cd Studio-Tracktion-Milestone5 &&
+git clone --branch feature/studio-native-synth-m6 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone6 &&
+cd Studio-Tracktion-Milestone6 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
