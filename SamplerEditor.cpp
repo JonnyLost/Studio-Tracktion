@@ -684,8 +684,9 @@ void Editor::resized()
         const int toolColumns = wide ? 6 : 3;
         const int toolRows = 6 / toolColumns;
         const int toolsHeight = (toolRows + 2) * (button + gap);
+        const int propertyRows = page == Page::groups ? 8 : 4;
         const int graphHeight = wide ? jmax (m.px (300), jmax (8 * propertyHeight, viewport.getHeight() - toolsHeight - 2 * line)) : m.px (240);
-        body.setSize (width, jmax (viewport.getHeight(), toolsHeight + graphHeight + line * 2 + (wide ? 0 : 4 * propertyHeight)));
+        body.setSize (width, jmax (viewport.getHeight(), toolsHeight + graphHeight + line * 2 + (wide ? 0 : propertyRows * propertyHeight)));
         auto content = body.getLocalBounds();
         samples.setBounds (content.removeFromTop (button)); content.removeFromTop (gap);
         std::array<Component*, 6> tools { &load, &locate, &duplicate, &undo, &redo, &remove };
@@ -708,7 +709,7 @@ void Editor::resized()
             { action->setBounds (left.removeFromBottom (button)); left.removeFromBottom (gap); }
             groupRows.setBounds (left);
         }
-        auto properties = wide ? graph.removeFromRight (m.span (220)) : content.removeFromTop (4 * propertyHeight);
+        auto properties = wide ? graph.removeFromRight (m.span (220)) : content.removeFromTop (propertyRows * propertyHeight);
         if (wide) graph.removeFromRight (gap);
         display.setBounds (graph);
         if (page == Page::groups)
