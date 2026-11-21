@@ -269,7 +269,9 @@ Editor::Editor (Plugin& p) : plugin (p)
             {
                 auto z = entry->mapping;
                 change (z, value);
+                const auto before = plugin.changeCount();
                 plugin.editZone (selection, z);
+                if (plugin.changeCount() == before) { refresh(); setStatus ("Keep the loop inside the sample boundaries, with at least two frames. Disable Loop before trimming past it."); }
             }
         };
     };
@@ -593,6 +595,52 @@ void Editor::resized()
     viewport.setBounds (area);
 
     const int width = jmax (1, viewport.getMaximumVisibleWidth() - viewport.getScrollBarThickness());
+    if (page == Page::mapping || page == Page::groups)
+    {
+        const bool wide = width >= m.span (720);
+        const int propertyHeight = line + button + gap;
+        const int toolsHeight = 3 * (button + gap);
+        const int graphHeight = wide ? jmax (m.px (300), 8 * propertyHeight) : m.px (240);
+        body.setSize (width, jmax (viewport.getHeight(), toolsHeight + graphHeight + line * 2 + (wide ? 0 : 4 * propertyHeight)));
+        auto content = body.getLocalBounds();
+        samples.setBounds (content.removeFromTop (button)); content.removeFromTop (gap);
+        std::array<Component*, 6> tools { &load, &locate, &duplicate, &undo, &redo, &remove };
+        for (int rowIndex = 0; rowIndex < 2; ++rowIndex)
+        {
+            auto row = content.removeFromTop (button);
+            for (int col = 0; col < 3; ++col) put (row, *tools[static_cast<std::size_t> (rowIndex * 3 + col)], (width - 2 * gap) / 3);
+            content.removeFromTop (gap);
+        }
+        auto graph = content.removeFromTop (graphHeight);
+        if (page == Page::groups)
+        {
+            auto left = graph.removeFromLeft (jmin (m.span (160), width / 3)); graph.removeFromLeft (gap);
+            groupList.setVisible (false);
+            groupName.setBounds (left.removeFromTop (button)); left.removeFromTop (gap);
+            for (auto* action : { &moveGroup, &deleteGroup, &copyGroup, &addGroup })
+            { action->setBounds (left.removeFromBottom (button)); left.removeFromBottom (gap); }
+            groupRows.setBounds (left);
+        }
+        auto properties = wide ? graph.removeFromRight (m.span (220)) : content.removeFromTop (4 * propertyHeight);
+        if (wide) graph.removeFromRight (gap);
+        display.setBounds (graph);
+        std::array<Control*, 8> controls { &root, &low, &high, &soft, &hard, &zoneGain, &cents, &group };
+        for (int i = 0; i < 8; ++i)
+        {
+            Rectangle<int> cell;
+            if (wide) cell = properties.removeFromTop (propertyHeight);
+            else
+            {
+                const int column = i % 2, row = i / 2;
+                cell = Rectangle<int> (properties.getX() + column * (properties.getWidth() + gap) / 2,
+                    properties.getY() + row * propertyHeight, (properties.getWidth() - gap) / 2, propertyHeight);
+            }
+            controls[static_cast<std::size_t> (i)]->label.setBounds (cell.removeFromTop (line));
+            controls[static_cast<std::size_t> (i)]->slider.setBounds (cell.removeFromTop (button));
+        }
+        status.setVisible (status.getText().isNotEmpty()); status.setBounds (content.removeFromTop (line * 2));
+        return;
+    }
     const int waveform = m.px (page == Page::basic ? 125 : 148);
     const int dialHeight = m.px (74) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
@@ -780,6 +828,7 @@ void Editor::importFiles (const StringArray& paths)
         }
         else files.add (f);
     }
+    std::sort (files.begin(), files.end(), [] (const File& a, const File& b) { return a.getFullPathName() < b.getFullPathName(); });
     const auto revision = plugin.changeCount();
     const auto safe = Component::SafePointer<Editor> (this);
     AlertWindow::showAsync (MessageBoxOptions().withTitle ("Import samples").withMessage ("Choose a starting map. Review the proposed roots and ranges before importing. C4 = MIDI 60. No acoustic pitch detection is performed.")
