@@ -443,31 +443,30 @@ private struct SeatingStage: View {
     }
 
     private func diagram(_ projection: SeatingProjection) -> some View {
-        Canvas { context, _ in
-            func arc(_ radius: Double) -> Path {
-                var path = Path()
-                for i in 0...48 {
-                    let angle = Double(i) * .pi / 48
-                    let point = projection.location(x: cos(angle) * radius, depth: sin(angle) * radius)
-                    if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
-                }
-                return path
+        func arc(_ radius: Double) -> Path {
+            var path = Path()
+            for i in 0...48 {
+                let angle = Double(i) * .pi / 48
+                let point = projection.location(x: cos(angle) * radius, depth: sin(angle) * radius)
+                if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
             }
-            var outline = arc(1)
-            outline.closeSubpath()
-            context.fill(outline, with: .linearGradient(
-                Gradient(colors: [panel, Color(red: 0.17, green: 0.21, blue: 0.27)]),
-                startPoint: .zero, endPoint: CGPoint(x: 0, y: projection.baseline)))
-            context.stroke(outline, with: .color(line), lineWidth: 1.5)
-            for band in [0.28, 0.49, 0.70, 0.89] {
-                context.stroke(arc(band), with: .color(line.opacity(0.65)), lineWidth: 0.8)
+            return path
+        }
+        var outline = arc(1)
+        outline.closeSubpath()
+        var center = Path()
+        center.move(to: projection.location(x: 0, depth: 0))
+        center.addLine(to: projection.location(x: 0, depth: 1))
+        // Native shapes keep the floor in SwiftUI's normal view compositor.
+        return ZStack {
+            outline.fill(LinearGradient(colors: [panel, Color(red: 0.17, green: 0.21, blue: 0.27)],
+                                        startPoint: .top, endPoint: .bottom))
+            outline.stroke(line, lineWidth: 1.5)
+            ForEach([0.28, 0.49, 0.70, 0.89], id: \.self) { band in
+                arc(band).stroke(line.opacity(0.65), lineWidth: 0.8)
             }
-            var center = Path()
-            center.move(to: projection.location(x: 0, depth: 0))
-            center.addLine(to: projection.location(x: 0, depth: 1))
-            context.stroke(center, with: .color(line), style: StrokeStyle(lineWidth: 0.75, dash: [3, 5]))
-            let podium = projection.location(x: 0, depth: -0.03)
-            context.fill(Path(ellipseIn: CGRect(x: podium.x - 3, y: podium.y - 3, width: 6, height: 6)), with: .color(focus))
+            center.stroke(line, style: StrokeStyle(lineWidth: 0.75, dash: [3, 5]))
+            Circle().fill(focus).frame(width: 6, height: 6).position(projection.location(x: 0, depth: -0.03))
         }
         .allowsHitTesting(false)
     }
