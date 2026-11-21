@@ -42,10 +42,8 @@ static double studioRegionSnapSeconds (te::Edit& edit, double seconds, bool snap
     if (! snap)
         return seconds;
 
-    auto& tempo = edit.tempoSequence;
-    const auto beats = tempo.toBeats (te::TimePosition::fromSeconds (seconds)).inBeats();
-    // Default: quarter-note arrangement snap. Hold Option for freehand edits.
-    return tempo.toTime (te::BeatPosition::fromBeats (std::round (beats))).inSeconds();
+    return studio::snapMusicalTime (edit.tempoSequence, te::TimePosition::fromSeconds (seconds),
+                                   studio::regionSnapStep (edit)).inSeconds();
 }
 
 void ClipComponent::mouseDown (const MouseEvent& event)

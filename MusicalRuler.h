@@ -54,6 +54,27 @@ void forEachMusicalTick (const tracktion::TempoSequence& sequence,
     }
 }
 
+inline const juce::Identifier regionSnapProperty { "studioRegionSnap" };
+
+inline double regionSnapStep (const tracktion::Edit& edit)
+{
+    return juce::jlimit (0.0, 1.0, (double) edit.state.getProperty (regionSnapProperty, 1.0));
+}
+
+inline tracktion::TimePosition snapMusicalTime (const tracktion::TempoSequence& sequence,
+                                               tracktion::TimePosition time, double step)
+{
+    if (step <= 0)
+        return time;
+    const auto bar = std::max (0, sequence.toBarsAndBeats (time).bars);
+    const double start = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar, {} }).inBeats();
+    const double end = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar + 1, {} }).inBeats();
+    const double beat = sequence.toBeats (time).inBeats();
+    const double previous = start + std::max (0.0, std::floor ((beat - start) / step)) * step;
+    const double next = std::min (end, previous + step);
+    return sequence.toTime (tracktion::BeatPosition::fromBeats (beat - previous < next - beat ? previous : next));
+}
+
 // Snap subdivisions are measured *from each actual bar boundary*, not from
 // the MIDI source's beat zero. That keeps a clip with a source offset aligned
 // with the bar lines shown in both rulers.

@@ -11,7 +11,7 @@ add_subdirectory("${TRACKTION_ROOT}" tracktion)
 
 # Keep Studio's changes to the example editor in the build directory.
 set(common "${TRACKTION_ROOT}/examples/common")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc" "${CMAKE_CURRENT_SOURCE_DIR}/ArrangementLasso.inc")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.h")
 file(READ "${common}/Components.h" editor_header)
@@ -60,9 +60,12 @@ if(track_header_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackComponent header has changed.")
 endif()
 string(REPLACE "${track_header_anchor}" [=[    void resized() override;
+    void mouseDrag (const MouseEvent&) override;
+    void mouseUp (const MouseEvent&) override;
     te::Track* getTrack() const { return track.get(); }
 
 private:
+    std::unique_ptr<Component> lasso;
     void changeListenerCallback (ChangeBroadcaster*) override;]=] editor_header "${editor_header}")
 set(edit_view_accessor "    EditViewState& getEditViewState()   { return editViewState; }")
 string(FIND "${editor_header}" "${edit_view_accessor}" edit_view_match)
@@ -264,7 +267,7 @@ string(REPLACE "${footer_geometry}" [=[    const auto& metrics = studio::appeara
     place (addButton);
     for (auto* plugin : plugins)
         place (*plugin);]=] editor "${editor}")
-string(PREPEND editor "#include \"StudioUI.h\"\n")
+string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
 # additive/toggle selection without modifying the Tracktion checkout itself.
 set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)
@@ -277,6 +280,16 @@ if(selection_match EQUAL -1)
 endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/RegionEditing.inc" region_editing)
 string(REPLACE "${single_clip_selection}" "${region_editing}" editor "${editor}")
+set(track_mouse_down [=[void TrackComponent::mouseDown (const MouseEvent&)
+{
+    editViewState.selectionManager.selectOnly (track.get());
+}]=])
+string(FIND "${editor}" "${track_mouse_down}" track_mouse_down_match)
+if(track_mouse_down_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example track-selection implementation has changed.")
+endif()
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/ArrangementLasso.inc" arrangement_lasso)
+string(REPLACE "${track_mouse_down}" "${arrangement_lasso}" editor "${editor}")
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 set(studio_synth_families Analog FM Wavetable Additive Granular Physical)
@@ -309,7 +322,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
@@ -382,7 +395,13 @@ if(BUILD_TESTING)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
 
-    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp)
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp)
+    add_test(NAME StudioComposerMidi COMMAND $<TARGET_FILE:Studio> --studio-test-composer-midi)
+    set_tests_properties(StudioComposerMidi PROPERTIES TIMEOUT 90)
+    add_test(NAME StudioComposerBounce COMMAND $<TARGET_FILE:Studio> --studio-test-composer-bounce)
+    set_tests_properties(StudioComposerBounce PROPERTIES TIMEOUT 120)
+    add_test(NAME StudioComposerTransport COMMAND $<TARGET_FILE:Studio> --studio-test-composer-transport)
+    set_tests_properties(StudioComposerTransport PROPERTIES TIMEOUT 90)
     add_test(NAME StudioSynthIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-synth)
     set_tests_properties(StudioSynthIntegration PROPERTIES TIMEOUT 120)
     add_test(NAME StudioSamplerIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-sampler)
