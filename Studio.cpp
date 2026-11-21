@@ -25,6 +25,7 @@ using namespace tracktion::literals;
 #include "SamplerEditor.h"
 #include "StudioSynth.h"
 #include "InstrumentWorkspace.h"
+#include "Seating/SeatingWorkspace.h"
 
 class StudioPluginWindows final : public ExtendedUIBehaviour
 {
@@ -199,6 +200,7 @@ public:
    #if STUDIO_SPATIAL_TESTS
     int runInterfaceReview (const File& output);
     int runInstrumentWorkspaceReview (const File& output);
+    int runSeatingProjectReview (const File& output);
    #endif
 
     StudioView()
@@ -276,6 +278,14 @@ public:
         instrumentWorkspace.onPreferenceChange = [this] { rememberInstrumentWorkspace(); };
         workspaceBody.addChildComponent (articulation);
         workspaceBody.addChildComponent (spatialWorkspace);
+       #if JUCE_MAC
+        addChildComponent (seatingWorkspace);
+        spatialWorkspace.onOpenSeating = [this]
+        {
+            setDockMode (DockMode::expanded);
+            showWorkspace (Workspace::orchestraSeating);
+        };
+       #endif
         spatialWorkspace.onLayoutChange = [this] { resized(); };
         spatialWorkspace.onSelectTrack = [this] (te::EditItemID id)
         {
@@ -535,6 +545,9 @@ public:
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+       #if JUCE_MAC
+        seatingWorkspace.setEdit (nullptr);
+       #endif
         articulation.setContext (nullptr);
         if (articulationWindow != nullptr)
         {
@@ -815,6 +828,9 @@ public:
         monitor.appearanceChanged();
         resources.appearanceChanged();
         spatialWorkspace.appearanceChanged();
+       #if JUCE_MAC
+        seatingWorkspace.appearanceChanged();
+       #endif
         articulation.appearanceChanged();
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
@@ -986,6 +1002,9 @@ private:
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
     studio::spatial::SpatialWorkspace spatialWorkspace;
+   #if JUCE_MAC
+    studio::seating::Workspace seatingWorkspace;
+   #endif
     studio::ArticulationPalette articulation { engine.getPropertyStorage().getPropertiesFile() };
     std::unique_ptr<ArticulationWindow> articulationWindow;
 
@@ -1038,7 +1057,10 @@ private:
     static constexpr WorkspaceEntry extraWorkspaces[] {
         { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
         { Workspace::midi, "MIDI Monitor" }, { Workspace::resources, "Resource Inspector" },
-        { Workspace::instrumentEditor, "Instrument Editor" }
+        { Workspace::instrumentEditor, "Instrument Editor" },
+       #if JUCE_MAC
+        { Workspace::orchestraSeating, "Seating Designer" },
+       #endif
     };
 
     std::array<WorkspaceEntry, 2> contextLinks() const
@@ -1049,6 +1071,7 @@ private:
             case Workspace::rooms:       return {{ { Workspace::stage, "Stage" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::microphones: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Channel" } }};
+            case Workspace::orchestraSeating: return {{ { Workspace::stage, "Audio Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::channel:     return {{ { Workspace::instruments, "Instruments" }, { Workspace::stage, "Stage" } }};
             default:                    return {{ { Workspace::closed, "" }, { Workspace::closed, "" } }};
         }
@@ -1091,6 +1114,10 @@ private:
         }
         workspaceTitle.setBounds (header);
         workspaceSummary.setBounds (body.reduced (m.px (9), m.px (1)));
+       #if JUCE_MAC
+        seatingWorkspace.setBounds (body);
+        updateSeatingVisibility();
+       #endif
 
         const bool dockedMonitor = monitor.getParentComponent() == &workspaceBody && monitor.isVisible();
         const auto minimumContentHeight = [this, dockedMonitor] (int width)
@@ -1120,6 +1147,14 @@ private:
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
     }
+
+   #if JUCE_MAC
+    void updateSeatingVisibility()
+    {
+        seatingWorkspace.setVisible (workspace == Workspace::orchestraSeating && dockMode != DockMode::compact
+                                     && ! seatingWorkspace.getBounds().isEmpty() && ! environmentWelcome.isVisible());
+    }
+   #endif
 
     void toggleWorkspace (Workspace destination)
     {
@@ -1163,7 +1198,8 @@ private:
     {
         const bool changing = workspace != next;
         if (changing) rememberWorkspaceScroll();
-        if ((next == Workspace::piano || (next == Workspace::instrumentEditor && changing)) && dockMode == DockMode::compact)
+        if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
+            && dockMode == DockMode::compact)
             dockMode = DockMode::split;
         workspace = next;
         syncWorkspace();
@@ -1583,6 +1619,9 @@ private:
 
     void timerCallback() override
     {
+       #if JUCE_MAC
+        updateSeatingVisibility();
+       #endif
         monitorButton.setButtonText (monitor.isActive() ? "* MIDI Monitor" : "MIDI Monitor");
         monitorButton.setColour (TextButton::textColourOffId,
                                  monitor.isActive() ? Colour (0xff8edec0) : Colours::white);
@@ -2129,12 +2168,18 @@ private:
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
+       #if JUCE_MAC
+        seatingWorkspace.setEdit (nullptr);
+       #endif
         ++projectGeneration;
         edit = std::move (next);
         studio::spatial::prepareRoomPlayback (*edit);
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());
+       #if JUCE_MAC
+        seatingWorkspace.setEdit (edit.get());
+       #endif
         articulation.setContext (edit.get());
         mixer.setEdit (edit.get());
         projectFile = file;
@@ -2797,6 +2842,63 @@ private:
 };
 
 #if STUDIO_SPATIAL_TESTS
+int StudioView::runSeatingProjectReview (const File& output)
+{
+    stopTimer();
+    environmentWelcome.dismiss();
+    applyAppearance (100, 100, false);
+    setSize (1360, 800);
+    const auto fail = [] (const char* reason)
+    {
+        std::fprintf (stderr, "Orchestral seating review failed: %s\n", reason);
+        return 1;
+    };
+    TemporaryFile fixture (".tracktionedit");
+    loadProject (fixture.getFile(), true);
+    if (! edit || ! studio::seating::read (edit->state).isEmpty()) return fail ("new project starts with no seating layout");
+    auto tracks = te::getAudioTracks (*edit);
+    if (tracks.isEmpty()) return fail ("create an audio track for the isolation test");
+    const auto originalTrack = tracks.getFirst()->state.createCopy();
+    auto& undo = edit->getUndoManager();
+    if (studio::seating::write (*edit, "{\"version\":2,\"seats\":[]}", "Invalid layout"))
+        return fail ("reject a future layout version on write");
+
+   #if JUCE_MAC
+    showWorkspace (Workspace::stage);
+    if (! spatialWorkspace.onOpenSeating) return fail ("Stage opens the Seating Designer");
+    spatialWorkspace.onOpenSeating();
+    if (! seatingWorkspace.isVisible() || ! workspaceDivider.isVisible()) return fail ("seat editor uses the Studio workspace");
+    if (output != File() && output.createDirectory().failed()) return fail ("make screenshot directory");
+    const auto screenshot = [&] (const char* name) { return output == File() ? File() : output.getChildFile (name); };
+    if (! seatingWorkspace.exercise (0, screenshot ("modern-symphony.png")) || ! seatingWorkspace.exercise (1, {}))
+        return fail ("SwiftUI model uses project callbacks for preset, insertion, section and coordinate edits");
+   #else
+    ignoreUnused (output);
+    if (! studio::seating::write (*edit, "{\"version\":1,\"name\":\"Orchestra & Choir\",\"seats\":[]}", "Change seating"))
+        return fail ("commit seating data to the Tracktion edit");
+   #endif
+
+    const auto stored = studio::seating::read (edit->state);
+    if (stored.isEmpty() || ! edit->hasChangedSinceSaved()) return fail ("seating changes mark the project dirty");
+    if (! tracks.getFirst()->state.isEquivalentTo (originalTrack)) return fail ("seating leaves track and routing properties intact");
+    if (! undo.undo() || studio::seating::read (edit->state) == stored || ! undo.redo() || studio::seating::read (edit->state) != stored)
+        return fail ("seating actions participate in project undo and redo");
+    const auto generation = projectGeneration;
+    if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false)) return fail ("save the seating project");
+    loadProject (fixture.getFile(), false);
+    if (projectGeneration != generation + 1 || studio::seating::read (edit->state) != stored)
+        return fail ("reopen the saved layout through Tracktion XML persistence");
+   #if JUCE_MAC
+    spatialWorkspace.onOpenSeating();
+    if (! seatingWorkspace.exercise (2, screenshot ("restored-seating.png")))
+        return fail ("SwiftUI restores the placement, section and coordinates");
+    showWorkspace (Workspace::stage);
+    if (seatingWorkspace.isVisible()) return fail ("leaving Seating hides the native view");
+   #endif
+    std::puts ("Orchestral seating project, routing isolation, undo and restoration passed.");
+    return 0;
+}
+
 int StudioView::runInstrumentWorkspaceReview (const File& output)
 {
     stopTimer();
@@ -3201,6 +3303,19 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-seating-project")
+        {
+           #if JUCE_MAC
+            Window reviewWindow;
+            auto& view = *static_cast<StudioView*> (reviewWindow.getContentComponent());
+           #else
+            StudioView view;
+           #endif
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SEATING_SCREENSHOTS", {});
+            setApplicationReturnValue (view.runSeatingProjectReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-spatial-routing")
         {
             setApplicationReturnValue (studio::spatial::runSpatialRoutingTest());

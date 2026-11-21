@@ -11,11 +11,22 @@ on:
       - feature/studio-native-sampler-m5
       - feature/studio-native-synth-m6
       - feature/studio-unified-integration-m6
+      - feature/studio-unified-instruments-m65
 
 permissions:
   contents: read
 
 jobs:
+  seating-swift:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check native seating views and run the model tests
+        run: |
+          xcrun swiftc -swift-version 5 -target x86_64-apple-macosx14.0 -typecheck -D STUDIO_SEATING_TESTS Seating/*.swift
+          xcrun swiftc -swift-version 5 -target x86_64-apple-macosx14.0 Seating/SeatingModel.swift Seating/SeatingCatalog.swift tests/SeatingModelTests.swift -o "$RUNNER_TEMP/studio-seating-tests"
+          "$RUNNER_TEMP/studio-seating-tests"
   build:
     runs-on: macos-15-intel
     timeout-minutes: 35
@@ -40,11 +51,12 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSynthValidation --parallel 4
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSynthValidation StudioSeatingModelTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
           STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
+          STUDIO_SEATING_SCREENSHOTS: ${{ runner.temp }}/studio-seating-review
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
@@ -68,6 +80,11 @@ jobs:
         with:
           name: Studio-M65-instrument-workspace
           path: ${{ runner.temp }}/studio-instrument-workspace/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-Orchestral-Seating-macOS
+          path: ${{ runner.temp }}/studio-seating-review/
           if-no-files-found: error
       - name: Measure native synth block times
         run: build/Debug/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"

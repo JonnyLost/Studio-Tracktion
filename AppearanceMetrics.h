@@ -9,7 +9,7 @@ namespace studio
 {
 enum class DockMode { compact, split, expanded };
 struct DockRoom { int panelHeight, splitLimit; };
-enum class Workspace { closed, instruments, channel, stage, articulations, piano, mix, midi, rooms, microphones, resources, instrumentEditor, count };
+enum class Workspace { closed, instruments, channel, stage, articulations, piano, mix, midi, rooms, microphones, resources, instrumentEditor, orchestraSeating, count };
 
 class WorkspaceScroll
 {
