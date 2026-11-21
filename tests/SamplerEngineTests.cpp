@@ -211,5 +211,14 @@ int main()
     envelopeAndPitch();
     mappingAndStealing();
     loopsAndOneShots();
+    {
+        Harness h;
+        auto sample = tone();
+        std::fill (sample->left.begin(), sample->left.begin() + 100, 0.0f);
+        Zone z; z.sample = sample; z.start = 100; z.end = 300;
+        h.bank.zones = { z }; h.use(); h.on();
+        const auto audio = h.render (400);
+        require (audio[50] > 0 && audio[250] == 0, "trim begins at selected frame and stops at exclusive end");
+    }
     std::cout << "Sampler playback, expression, mapping and offline render passed.\n";
 }

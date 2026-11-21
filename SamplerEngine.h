@@ -25,6 +25,7 @@ struct Zone
     int root = 60, low = 0, high = 127, soft = 1, hard = 127;
     float gainDb = 0, cents = 0;
     bool oneShot = false, loop = false;
+    int start = 0, end = 0; // Zero end means the complete sample (legacy presets).
     int loopStart = 0, loopEnd = 0, group = 0; // End is exclusive, group zero layers.
     std::shared_ptr<const Sample> sample;
 };
@@ -74,7 +75,7 @@ private:
         double position = 0, baseStep = 0;
         std::uint64_t age = 0;
         bool down = false, oneShot = false, loop = false;
-        int loopStart = 0, loopEnd = 0, previewFrames = 0;
+        int end = 0, loopStart = 0, loopEnd = 0, previewFrames = 0;
         enum Stage { attack, decay, sustain, release } stage = attack;
     };
 

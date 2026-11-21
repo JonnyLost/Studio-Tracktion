@@ -57,14 +57,14 @@ Editor::Editor (Plugin& p) : plugin (p)
     limits.setSizeLimits (460, 320, 1600, 1000);
     limits.setMinimumOnscreenAmounts (0x10000, 30, 28, 30);
     for (Component* c : std::initializer_list<Component*> { &name, &preset, &loadPreset, &savePreset,
-             &basic, &mapping, &loops, &advanced, &keyboard, &viewport })
+             &basic, &mapping, &groups, &loops, &advanced, &keyboard, &viewport })
         addAndMakeVisible (*c);
 
     viewport.setViewedComponent (&body, false);
     viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
-             &loopEnabled, &display, &load, &locate, &remove, &audition, &envelope })
+             &loopEnabled, &display, &load, &locate, &remove, &audition, &envelope, &groupList, &groupName, &addGroup, &deleteGroup, &moveGroup, &duplicate, &undo, &redo })
         body.addAndMakeVisible (*c);
 
     auto* plot = owned.add (new EnvelopePlot (p));
@@ -81,7 +81,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     name.setTitle ("Instrument name");
     name.onTextChange = [this] { plugin.rename (name.getText()); };
 
-    for (auto* button : { &loadPreset, &savePreset, &basic, &mapping, &loops, &advanced,
+    for (auto* button : { &loadPreset, &savePreset, &basic, &mapping, &groups, &loops, &advanced,
                           &load, &locate, &remove, &audition })
     {
         button->setTitle (button->getButtonText());
@@ -94,6 +94,40 @@ Editor::Editor (Plugin& p) : plugin (p)
     loadPreset.onClick = [this] { choose (true, false, false); };
     savePreset.onClick = [this] { choose (true, true, false); };
     basic.onClick = [this] { setPage (Page::basic); };
+    groups.onClick = [this] { setPage (Page::groups); };
+    undo.onClick = [this] { plugin.undoMapping (false); refresh(); };
+    redo.onClick = [this] { plugin.undoMapping (true); refresh(); };
+    duplicate.onClick = [this] { plugin.duplicateZone (selection); refresh(); };
+    addGroup.onClick = [this]
+    {
+        auto list = plugin.instrument().groups;
+        for (int id = 0; id < maxGroups; ++id)
+            if (std::none_of (list.begin(), list.end(), [id] (auto& g) { return g.id == id; }))
+            { list.push_back ({ id, "New group" }); plugin.editGroups (list); refresh(); groupList.setSelectedId (id + 1); return; }
+        setStatus ("Group limit reached (16).");
+    };
+    deleteGroup.onClick = [this]
+    {
+        auto list = plugin.instrument().groups;
+        if (list.size() <= 1) { setStatus ("Keep at least one group."); return; }
+        std::erase_if (list, [this] (auto& g) { return g.id == groupList.getSelectedId() - 1; });
+        plugin.editGroups (list); refresh();
+    };
+    moveGroup.onClick = [this] { plugin.moveZone (selection, groupList.getSelectedId() - 1); refresh(); };
+    groupName.setEditable (false, true);
+    groupName.setTooltip ("Double-click to rename this organizational group. Round robin is configured independently.");
+    groupList.onChange = [this]
+    {
+        for (const auto& g : plugin.instrument().groups)
+            if (g.id == groupList.getSelectedId() - 1) groupName.setText (g.name, dontSendNotification);
+    };
+    groupName.onTextChange = [this]
+    {
+        if (updating) return;
+        auto list = plugin.instrument().groups;
+        for (auto& g : list) if (g.id == groupList.getSelectedId() - 1) g.name = groupName.getText().trim().substring (0, 120);
+        plugin.editGroups (list);
+    };
     mapping.onClick = [this] { setPage (Page::mapping); };
     loops.onClick = [this] { setPage (Page::loops); };
     advanced.onClick = [this] { setPage (Page::advanced); };
@@ -157,6 +191,10 @@ Editor::Editor (Plugin& p) : plugin (p)
     root.slider.setTooltip ("The key that plays this sample at its original pitch.");
     soft.slider.setTooltip ("Quietest MIDI velocity that triggers this sample zone.");
     hard.slider.setTooltip ("Loudest MIDI velocity that triggers this sample zone.");
+    setup (sampleStart, "Sample start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n)
+    { z.start = jlimit (0, (z.end ? z.end : static_cast<int> (z.sample->left.size())) - 2, roundToInt (n)); }));
+    setup (sampleEnd, "Sample end (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n)
+    { z.end = jmax (z.start + 2, roundToInt (n)); }));
     setup (loopStart, "Loop start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopStart = jlimit (0, jmax (0, z.loopEnd - 2), roundToInt (n)); }));
     setup (loopEnd, "Loop end (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopEnd = jmax (z.loopStart + 2, roundToInt (n)); }));
     for (auto* control : { &root, &low, &high })
@@ -328,7 +366,13 @@ void Editor::refresh()
     {
         loopStart.slider.setRange (0, length, 1);
         loopEnd.slider.setRange (0, length, 1);
+        sampleStart.slider.setRange (0, length, 1);
+        sampleEnd.slider.setRange (0, length, 1);
     }
+    value (sampleStart, z.start);
+    value (sampleEnd, z.end ? z.end : length);
+    sampleStart.slider.setEnabled (playable);
+    sampleEnd.slider.setEnabled (playable);
     value (loopStart, z.loopStart);
     value (loopEnd, z.loopEnd);
     mode.setSelectedId (z.oneShot ? 2 : 1, dontSendNotification);
@@ -340,9 +384,18 @@ void Editor::refresh()
 
     basic.setToggleState (page == Page::basic, dontSendNotification);
     mapping.setToggleState (page == Page::mapping, dontSendNotification);
+    groups.setToggleState (page == Page::groups, dontSendNotification);
+    const bool grouping = page == Page::groups;
+    for (Component* c : std::initializer_list<Component*> { &groupList, &groupName, &addGroup, &deleteGroup, &moveGroup }) c->setVisible (grouping);
+    for (Component* c : std::initializer_list<Component*> { &duplicate, &undo, &redo }) c->setVisible (page == Page::mapping || grouping);
+    const int gid = groupList.getSelectedId();
+    groupList.clear (dontSendNotification);
+    for (const auto& g : model.groups) groupList.addItem (g.name, g.id + 1);
+    groupList.setSelectedId (gid > 0 && groupList.indexOfItemId (gid) >= 0 ? gid : model.groups.front().id + 1, dontSendNotification);
+    for (const auto& g : model.groups) if (g.id == groupList.getSelectedId() - 1) groupName.setText (g.name, dontSendNotification);
     loops.setToggleState (page == Page::loops, dontSendNotification);
     advanced.setToggleState (page == Page::advanced, dontSendNotification);
-    const bool main = page == Page::basic, map = page == Page::mapping, loop = page == Page::loops;
+    const bool main = page == Page::basic, map = page == Page::mapping || page == Page::groups, loop = page == Page::loops;
     load.setButtonText (map ? "Add Sample" : "Load Sample");
     load.setTitle (load.getButtonText());
     load.setVisible (main || map);
@@ -361,11 +414,11 @@ void Editor::refresh()
     envelope.setVisible (main);
     meter.setVisible (page == Page::advanced);
     for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
-                     &zoneGain, &cents, &loopStart, &loopEnd, &voices, &bend, &group })
+                     &zoneGain, &cents, &sampleStart, &sampleEnd, &loopStart, &loopEnd, &voices, &bend, &group })
     {
         const bool show = main ? c == &attack || c == &decay || c == &sustain || c == &release || c == &gain || c == &root
             : map ? c == &root || c == &low || c == &high || c == &soft || c == &hard || c == &zoneGain || c == &cents || c == &group
-            : loop ? c == &loopStart || c == &loopEnd : c == &voices || c == &bend || c == &tune;
+            : loop ? c == &sampleStart || c == &sampleEnd || c == &loopStart || c == &loopEnd : c == &voices || c == &bend || c == &tune;
         c->label.setVisible (show);
         c->slider.setVisible (show);
     }
@@ -382,7 +435,7 @@ void Editor::appearanceChanged()
     for (auto* label : { &preset, &filename, &status, &meter })
         label->setFont (FontOptions (12));
     for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
-                     &zoneGain, &cents, &loopStart, &loopEnd, &voices, &bend, &group })
+                     &zoneGain, &cents, &sampleStart, &sampleEnd, &loopStart, &loopEnd, &voices, &bend, &group })
     {
         c->label.setFont (FontOptions (12));
         c->slider.setTextBoxStyle (c->slider.getTextBoxPosition(), false, appearance.span (67), appearance.control (23, 10));
@@ -401,7 +454,7 @@ String Editor::viewState() const { return String (static_cast<int> (page)); }
 
 void Editor::restoreView (const String& stored)
 {
-    setPage (static_cast<Page> (jlimit (0, 3, stored.getIntValue())));
+    setPage (static_cast<Page> (jlimit (0, 4, stored.getIntValue())));
 }
 
 void Editor::resized()
@@ -427,8 +480,8 @@ void Editor::resized()
 
     area.removeFromTop (gap);
     auto tabs = area.removeFromTop (button);
-    const int tabWidth = jmax (0, jmin (m.span (107), (tabs.getWidth() - 3 * gap) / 4));
-    for (auto* tab : { &basic, &mapping, &loops, &advanced }) put (tabs, *tab, tabWidth);
+    const int tabWidth = jmax (0, jmin (m.span (107), (tabs.getWidth() - 4 * gap) / 5));
+    for (auto* tab : { &basic, &mapping, &groups, &loops, &advanced }) put (tabs, *tab, tabWidth);
     area.removeFromTop (gap);
     keyboard.setBounds (area.removeFromBottom (m.px (61)));
     area.removeFromBottom (gap);
@@ -439,7 +492,7 @@ void Editor::resized()
     const int dialHeight = m.px (74) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
         : page == Page::loops ? 2 : (width < m.span (500) ? 2 : 3);
-    const int cells = page == Page::mapping ? 8 : page == Page::loops || page == Page::basic ? 2 : 3;
+    const int cells = page == Page::mapping || page == Page::groups ? 8 : page == Page::loops ? 4 : page == Page::basic ? 2 : 3;
     const int rows = (cells + gridColumns - 1) / gridColumns;
     const int actionMinimum = m.span (132);
     const int actionColumns = jlimit (1, 4, (width + gap) / (actionMinimum + gap));
@@ -452,13 +505,28 @@ void Editor::resized()
     const bool hasWaveform = page != Page::advanced;
     const bool sampleName = page == Page::basic || page == Page::loops;
     const bool hasStatus = status.getText().isNotEmpty();
-    const int height = (actionRows + (sampleList ? 1 : 0)) * (button + gap)
+    const int builderRows = (page == Page::mapping ? 1 : page == Page::groups ? 3 : 0);
+    const int height = builderRows * (button + gap) + (actionRows + (sampleList ? 1 : 0)) * (button + gap)
         + (sampleName ? line : 0) + (hasWaveform ? waveform + gap : 0) + (hasStatus ? line + gap : 0)
         + (page == Page::basic ? dialHeight + gap : 0)
         + (page == Page::loops ? button + gap : 0)
         + rows * (line + button + gap) + (page == Page::advanced ? line * 3 : 0);
     body.setSize (width, jmax (viewport.getHeight(), height));
     auto content = body.getLocalBounds();
+    if (page == Page::mapping || page == Page::groups)
+    {
+        auto row = content.removeFromTop (button);
+        put (row, duplicate, m.span (140)); put (row, undo, m.span (70)); put (row, redo, m.span (70));
+        content.removeFromTop (gap);
+    }
+    if (page == Page::groups)
+    {
+        auto row = content.removeFromTop (button);
+        put (row, groupList, width / 2 - gap); put (row, groupName, width / 2 - gap);
+        content.removeFromTop (gap); row = content.removeFromTop (button);
+        put (row, addGroup, width / 3 - gap); put (row, deleteGroup, width / 3 - gap); put (row, moveGroup, width / 3 - gap);
+        content.removeFromTop (gap);
+    }
     if (sampleList)
     {
         auto row = content.removeFromTop (button);
@@ -520,7 +588,7 @@ void Editor::resized()
         content.removeFromTop (gap);
         placeGrid ({ &root, &gain }, 2);
     }
-    else if (page == Page::mapping)
+    else if (page == Page::mapping || page == Page::groups)
         placeGrid ({ &root, &low, &high, &soft, &hard, &zoneGain, &cents, &group }, gridColumns);
     else if (page == Page::loops)
     {
@@ -528,7 +596,7 @@ void Editor::resized()
         put (options, mode, m.span (130));
         put (options, loopEnabled, m.span (150));
         content.removeFromTop (gap);
-        placeGrid ({ &loopStart, &loopEnd }, 2);
+        placeGrid ({ &sampleStart, &sampleEnd, &loopStart, &loopEnd }, 2);
     }
     else
     {
@@ -551,13 +619,14 @@ void Editor::choose (bool presetFile, bool save, bool replace)
         presetFile ? "*.studiosampler" : "*.wav;*.wave;*.aif;*.aiff;*.aifc", true, false, this);
     const auto modeFlags = save ? FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting
                                 : FileBrowserComponent::openMode;
-    chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles,
+    chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles | (! presetFile && ! replace ? FileBrowserComponent::canSelectMultipleItems | FileBrowserComponent::canSelectDirectories : 0),
         [safe = Component::SafePointer<Editor> (this), presetFile, save, replace, index = selection,
          revision = plugin.changeCount()] (const FileChooser& dialog)
         {
             if (safe == nullptr) return;
             const auto file = dialog.getResult();
-            MessageManager::callAsync ([safe, file, presetFile, save, replace, index, revision]
+            const auto files = dialog.getResults();
+            MessageManager::callAsync ([safe, file, files, presetFile, save, replace, index, revision]
             {
                 if (safe == nullptr) return;
                 safe->chooser.reset();
@@ -569,7 +638,8 @@ void Editor::choose (bool presetFile, bool save, bool replace)
                 }
                 if (! presetFile)
                 {
-                    safe->import (file, replace ? index : -1);
+                    if (replace) safe->import (file, index);
+                    else { StringArray paths; for (const auto& f : files) paths.add (f.getFullPathName()); safe->importFiles (paths); }
                     return;
                 }
                 const auto destination = file.withFileExtension (".studiosampler");
@@ -585,6 +655,39 @@ void Editor::choose (bool presetFile, bool save, bool replace)
                 if (result.failed()) safe->setStatus (result.getErrorMessage());
             });
         });
+}
+
+void Editor::importFiles (const StringArray& paths)
+{
+    Array<File> files;
+    for (const auto& path : paths)
+    {
+        File f (path);
+        if (f.isDirectory())
+        {
+            auto children = f.findChildFiles (File::findFiles, true);
+            std::sort (children.begin(), children.end(), [] (const File& a, const File& b) { return a.getFullPathName() < b.getFullPathName(); });
+            files.addArray (children);
+        }
+        else files.add (f);
+    }
+    const auto revision = plugin.changeCount();
+    const auto safe = Component::SafePointer<Editor> (this);
+    AlertWindow::showAsync (MessageBoxOptions().withTitle ("Import samples").withMessage ("Choose a starting map. Review the proposed roots and ranges before importing. C4 = MIDI 60. No acoustic pitch detection is performed.")
+        .withButton ("Map Automatically").withButton ("Map Manually").withButton ("Cancel"), [safe, files, revision] (int choice)
+    {
+        if (! safe || choice == 0 || choice == 3) return;
+        auto proposal = std::make_shared<Instrument>(); String summary;
+        auto result = safe->plugin.proposeImport (files, choice == 1, *proposal, summary);
+        if (result.failed()) { safe->setStatus (summary); return; }
+        AlertWindow::showAsync (MessageBoxOptions().withTitle ("Review proposed mapping").withMessage (summary + "\nImport to refine visually, or cancel to revise your import choice.")
+            .withButton ("Import").withButton ("Cancel"), [safe, proposal, revision, summary] (int commit)
+        {
+            if (! safe || commit != 1) return;
+            if (safe->plugin.changeCount() != revision) { safe->setStatus ("Instrument changed. Import again to make a fresh proposal."); return; }
+            safe->plugin.commitImport (std::move (*proposal)); safe->setPage (Page::mapping); safe->setStatus (summary);
+        });
+    });
 }
 
 void Editor::import (const File& file, int replace)
@@ -669,7 +772,7 @@ Editor::Display::Display (Editor& editor) : owner (editor) { setTitle ("Sample w
 Rectangle<int> Editor::Display::plot() const
 {
     auto area = getLocalBounds().reduced (appearance.px (12), appearance.px (8));
-    if (owner.page == Page::mapping) area.removeFromLeft (appearance.span (24));
+    if ((owner.page == Page::mapping || owner.page == Page::groups)) area.removeFromLeft (appearance.span (24));
     return area;
 }
 Rectangle<float> Editor::Display::zoneBounds (const Zone& z) const
@@ -685,7 +788,7 @@ void Editor::Display::paint (Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 7);
     auto area = plot();
     const auto* entry = owner.zone();
-    if (owner.page == Page::mapping && entry)
+    if ((owner.page == Page::mapping || owner.page == Page::groups) && entry)
     {
         const auto keys = area.removeFromBottom (appearance.line (10, 4));
         g.setFont (uiFont (10));
@@ -728,7 +831,7 @@ void Editor::Display::paint (Graphics& g)
     {
         g.setColour (colours::text);
         g.setFont (uiFont (16));
-        const auto empty = owner.page == Page::mapping ? "Drop a sample here or choose Add Sample."
+        const auto empty = (owner.page == Page::mapping || owner.page == Page::groups) ? "Drop a sample here or choose Add Sample."
             : owner.page == Page::loops ? "Load a sample in Basic to edit its loop."
             : "Drop a sample here or choose Load Sample.";
         g.drawFittedText (entry ? "Sample unavailable" : empty,
@@ -783,7 +886,7 @@ void Editor::Display::paint (Graphics& g)
     }
     if (owner.page == Page::loops)
     {
-        for (int frame : { z.loopStart, z.loopEnd })
+        for (int frame : { z.loopStart, z.loopEnd, z.start, z.end ? z.end : length })
         {
             const auto x = roundToInt (position (jlimit (0, length, frame)));
             g.setColour (colours::focus);
@@ -796,7 +899,7 @@ void Editor::Display::paint (Graphics& g)
 void Editor::Display::mouseDown (const MouseEvent& event)
 {
     dragRevision = owner.plugin.changeCount();
-    if (owner.page == Page::mapping)
+    if ((owner.page == Page::mapping || owner.page == Page::groups))
     {
         const auto& zones = owner.plugin.instrument().zones;
         const auto hit = [&] (const Zone& z) { return zoneBounds (z).expanded (4, 2).contains (event.position); };
@@ -816,6 +919,7 @@ void Editor::Display::mouseDown (const MouseEvent& event)
             const auto x = event.position.x;
             if (std::abs (x - bounds.getX()) < 8) marker = 1;
             else if (std::abs (x - bounds.getRight()) < 8) marker = 2;
+            else marker = event.mods.isShiftDown() ? 4 : 3;
         }
     }
     else if (owner.page == Page::loops)
@@ -825,7 +929,8 @@ void Editor::Display::mouseDown (const MouseEvent& event)
             dragZone = entry->mapping;
             const auto area = plot();
             const auto frame = (event.position.x - area.getX()) * dragZone.sample->left.size() / jmax (1, area.getWidth());
-            marker = std::abs (frame - dragZone.loopStart) < std::abs (frame - dragZone.loopEnd) ? 1 : 2;
+            if (event.position.y < area.getCentreY()) marker = std::abs (frame - dragZone.loopStart) < std::abs (frame - dragZone.loopEnd) ? 1 : 2;
+            else marker = std::abs (frame - dragZone.start) < std::abs (frame - (dragZone.end ? dragZone.end : static_cast<int> (dragZone.sample->left.size()))) ? 3 : 4;
         }
 }
 
@@ -834,18 +939,28 @@ void Editor::Display::mouseDrag (const MouseEvent& event)
     if (marker == 0) return;
     const auto area = plot();
     const auto ratio = jlimit (0.0f, 1.0f, (event.position.x - area.getX()) / jmax (1, area.getWidth()));
-    if (owner.page == Page::mapping)
+    if ((owner.page == Page::mapping || owner.page == Page::groups))
     {
         const int note = jlimit (0, 127, roundToInt (ratio * 128) - (marker == 2 ? 1 : 0));
         if (marker == 1) dragZone.low = jmin (note, dragZone.high);
-        else dragZone.high = jmax (note, dragZone.low);
+        else if (marker == 2) dragZone.high = jmax (note, dragZone.low);
+        else if (marker == 4) dragZone.root = note;
+        else
+        {
+            const auto& original = owner.plugin.instrument().zones[static_cast<std::size_t> (dragSelection)].mapping;
+            const int delta = jlimit (-original.low, 127 - original.high, roundToInt (event.getDistanceFromDragStartX() * 128.0f / jmax (1, area.getWidth())));
+            dragZone.low = original.low + delta; dragZone.high = original.high + delta;
+            dragZone.root = jlimit (0, 127, original.root + delta);
+        }
     }
     else
     {
         const int length = static_cast<int> (dragZone.sample->left.size());
         const int frame = roundToInt (ratio * length);
         if (marker == 1) dragZone.loopStart = jlimit (0, jmax (0, dragZone.loopEnd - 2), frame);
-        else dragZone.loopEnd = jlimit (jmin (length, dragZone.loopStart + 2), length, frame);
+        else if (marker == 2) dragZone.loopEnd = jlimit (jmin (length, dragZone.loopStart + 2), length, frame);
+        else if (marker == 3) dragZone.start = jlimit (0, (dragZone.end ? dragZone.end : length) - 2, frame);
+        else dragZone.end = jlimit (dragZone.start + 2, length, frame);
     }
     repaint();
 }
@@ -862,7 +977,7 @@ void Editor::Display::mouseUp (const MouseEvent& event)
 bool Editor::Display::isInterestedInFileDrag (const StringArray& files)
 {
     for (const auto& file : files)
-        if (sampleFile (file)) return true;
+        if (sampleFile (file) || File (file).isDirectory()) return true;
     return false;
 }
 void Editor::Display::fileDragEnter (const StringArray&, int, int) { draggingFiles = true; repaint(); }
@@ -870,8 +985,7 @@ void Editor::Display::fileDragExit (const StringArray&) { draggingFiles = false;
 void Editor::Display::filesDropped (const StringArray& files, int, int)
 {
     draggingFiles = false;
-    for (const auto& file : files)
-        if (sampleFile (file)) owner.import (File (file), -1);
+    owner.importFiles (files);
     repaint();
 }
 
@@ -888,7 +1002,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
     if (page != Page::basic || zone() || audition.isEnabled() || ! capture ("sampler-empty.png")) return false;
-    display.filesDropped ({ first.getFullPathName() }, 30, 30);
+    import (first, -1);
     if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return false;
     attack.slider.setValue (23, sendNotificationSync);
     if (std::abs (plugin.instrument().settings.attack - .023f) > .0001f)
@@ -940,7 +1054,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
 
     mapping.onClick();
     if (page != Page::mapping || ! samples.isVisible()) return false;
-    display.filesDropped ({ second.getFullPathName() }, 30, 30);
+    import (second, -1);
     if (samples.getNumItems() != 2 || selection != 1 || ! zone() || ! zone()->mapping.sample) return false;
     root.slider.setValue (67, sendNotificationSync);
     low.slider.setValue (65, sendNotificationSync);

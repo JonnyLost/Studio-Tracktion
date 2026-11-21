@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
+#include "SamplerMapping.h"
 #include <algorithm>
 #include <cmath>
 
@@ -11,7 +12,7 @@ namespace
 {
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
-constexpr int version = 1;
+constexpr int version = 2;
 constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
@@ -36,6 +37,12 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
     xml.setAttribute ("tune", s.semitones);
     xml.setAttribute ("bend", s.bendRange);
     xml.setAttribute ("voices", s.polyphony);
+    for (const auto& group : model.groups)
+    {
+        auto* child = xml.createNewChildElement ("GROUP");
+        child->setAttribute ("id", group.id);
+        child->setAttribute ("name", group.name);
+    }
     for (const auto& entry : model.zones)
     {
         auto& node = *xml.createNewChildElement ("ZONE");
@@ -48,6 +55,9 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
             node.setAttribute ("file", entry.file.getFullPathName());
 
         const auto& z = entry.mapping;
+        node.setAttribute ("folder", entry.folder);
+        node.setAttribute ("start", z.start);
+        node.setAttribute ("end", z.end);
         node.setAttribute ("root", z.root);
         node.setAttribute ("low", z.low);
         node.setAttribute ("high", z.high);
@@ -66,8 +76,8 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
 
 Result decode (const XmlElement* xml, const File& base, Instrument& model)
 {
-    if (xml == nullptr || ! xml->hasTagName (documentTag) || xml->getIntAttribute ("version") != version
-        || xml->getNumChildElements() > maxZones)
+    if (xml == nullptr || ! xml->hasTagName (documentTag) || (xml->getIntAttribute ("version") < 1 || xml->getIntAttribute ("version") > version)
+        || xml->getNumChildElements() > maxZones + maxGroups)
         return Result::fail ("Unsupported or invalid Studio Sampler instrument.");
 
     model.name = xml->getStringAttribute ("name", "Studio Sampler").substring (0, 120);
@@ -85,6 +95,16 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
     s.polyphony = jlimit (1, maxVoices, xml->getIntAttribute ("voices", s.polyphony));
     for (auto* child : xml->getChildIterator())
     {
+        if (child->hasTagName ("GROUP"))
+        {
+            const int id = child->getIntAttribute ("id", -1);
+            if (id < 0 || id >= maxGroups) return Result::fail ("Invalid instrument group.");
+            auto found = std::find_if (model.groups.begin(), model.groups.end(), [id] (auto& g) { return g.id == id; });
+            if (found != model.groups.end()) found->name = child->getStringAttribute ("name").substring (0, 120);
+            else model.groups.push_back ({ id, child->getStringAttribute ("name").substring (0, 120) });
+            continue;
+        }
+        if (model.zones.size() >= maxZones) return Result::fail ("Too many sample zones.");
         if (! child->hasTagName ("ZONE")) return Result::fail ("Invalid sample zone.");
         SampleZone entry;
         const auto absolute = child->getStringAttribute ("file");
@@ -97,7 +117,12 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
                 entry.file = candidate;
         }
         if (entry.file == File()) return Result::fail ("Invalid sample reference.");
+        entry.folder = child->getIntAttribute ("folder");
         auto& z = entry.mapping;
+        z.start = child->getIntAttribute ("start");
+        z.end = child->getIntAttribute ("end");
+        if (entry.folder < 0 || entry.folder >= maxGroups || z.start < 0 || z.end < 0 || (z.end && z.end <= z.start))
+            return Result::fail ("Invalid sample boundaries or group.");
         z.root = child->getIntAttribute ("root", z.root);
         z.low = child->getIntAttribute ("low", z.low);
         z.high = child->getIntAttribute ("high", z.high);
@@ -183,6 +208,8 @@ void prepareSamples (Instrument& next, const Instrument& current)
             entry.problem = readSample (entry.file, maxBankBytes - sampleBytes (next), sample).getErrorMessage();
 
         if (! sample) continue;
+        if (entry.mapping.start >= static_cast<int> (sample->left.size()) || entry.mapping.end > static_cast<int> (sample->left.size()))
+        { entry.problem = "Sample boundaries exceed file length"; sample.reset(); continue; }
         const auto frames = static_cast<int> (sample->left.size());
         if (entry.mapping.loopEnd == 0) entry.mapping.loopEnd = frames;
         if (entry.mapping.loop && ! validLoop (entry.mapping, frames))
@@ -298,6 +325,7 @@ Result Plugin::loadSample (const File& file, int replace)
     entry.file = file;
     if (replace >= 0)
     {
+        entry.folder = next.zones[static_cast<std::size_t> (replace)].folder;
         entry.mapping = next.zones[static_cast<std::size_t> (replace)].mapping;
         next.zones[static_cast<std::size_t> (replace)].mapping.sample.reset();
     }
@@ -328,6 +356,61 @@ Result Plugin::loadSample (const File& file, int replace)
     return Result::ok();
 }
 
+void Plugin::undoMapping (bool redo)
+{
+    if (auto* undo = getUndoManager()) { if (redo) undo->redo(); else undo->undo(); }
+}
+void Plugin::duplicateZone (int index)
+{
+    if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size())) || model.zones.size() >= maxZones) return;
+    auto next = model; next.zones.push_back (next.zones[static_cast<std::size_t> (index)]); change (std::move (next), true);
+}
+void Plugin::editGroups (std::vector<InstrumentGroup> groups)
+{
+    if (groups.empty() || groups.size() > maxGroups) return;
+    auto next = model; next.groups = std::move (groups);
+    for (auto& z : next.zones)
+        if (std::none_of (next.groups.begin(), next.groups.end(), [&] (auto& g) { return g.id == z.folder; })) z.folder = next.groups.front().id;
+    change (std::move (next), true);
+}
+void Plugin::moveZone (int index, int folder)
+{
+    if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size()))) return;
+    auto next = model; next.zones[static_cast<std::size_t> (index)].folder = folder; change (std::move (next), true);
+}
+Result Plugin::proposeImport (const Array<File>& files, bool automatic, Instrument& next, String& summary)
+{
+    next = model;
+    int accepted = 0, unsupported = 0, provisional = 0;
+    StringArray errors;
+    std::vector<Zone> mapping;
+    for (const auto& file : files)
+    {
+        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc")) { ++unsupported; continue; }
+        if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
+        SampleZone entry; entry.file = file;
+        if (auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample); result.failed())
+        { errors.add (file.getFileName() + ": " + result.getErrorMessage()); continue; }
+        entry.mapping.loopEnd = static_cast<int> (entry.mapping.sample->left.size());
+        if (auto note = filenameNote (file.getFileName().toStdString())) entry.mapping.root = *note;
+        else { entry.mapping.root = jlimit (0, 127, 48 + accepted); ++provisional; }
+        if (! automatic) entry.mapping.low = entry.mapping.high = entry.mapping.root;
+        mapping.push_back (entry.mapping); next.zones.push_back (std::move (entry)); ++accepted;
+    }
+    if (automatic) spreadMapping (mapping);
+    summary = String (accepted) + " files accepted / zones created; " + String (unsupported) + " unsupported; "
+        + String (errors.size()) + " errors.\nC4 = MIDI 60. " + String (provisional) + " provisional roots (no pitch detection).\n";
+    const auto offset = next.zones.size() - mapping.size();
+    for (std::size_t i = 0; i < mapping.size(); ++i)
+    {
+        next.zones[offset + i].mapping = mapping[i];
+        summary += next.zones[offset + i].file.getFileName() + ": root " + String (mapping[i].root)
+            + ", keys " + String (mapping[i].low) + "–" + String (mapping[i].high) + "\n";
+    }
+    summary += errors.joinIntoString ("\n");
+    return accepted ? Result::ok() : Result::fail (summary);
+}
+
 void Plugin::removeZone (int index)
 {
     if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size()))) return;
@@ -341,6 +424,7 @@ void Plugin::editZone (int index, const Zone& z)
     if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size())) || ! validMapping (z)) return;
     auto next = model;
     auto& entry = next.zones[static_cast<std::size_t> (index)];
+    if (z.start < 0 || (z.end && z.end <= z.start) || (z.sample && (z.start >= static_cast<int> (z.sample->left.size()) || z.end > static_cast<int> (z.sample->left.size())))) return;
     if (z.sample != entry.mapping.sample || z.loopStart < 0 || z.loopEnd < z.loopStart) return;
     if (z.loop && z.sample && ! validLoop (z, static_cast<int> (z.sample->left.size()))
         && (z.loopStart != entry.mapping.loopStart || z.loopEnd != entry.mapping.loopEnd || ! entry.mapping.loop))
@@ -368,6 +452,8 @@ void Plugin::rename (String name)
 
 Result Plugin::savePreset (const File& file)
 {
+    if (! file.hasFileExtension ("studiosampler")) return Result::fail ("Use the .studiosampler instrument extension.");
+    for (const auto& zone : model.zones) if (zone.file == file) return Result::fail ("Cannot overwrite a source sample.");
     auto next = model;
     next.preset = file.getFileNameWithoutExtension().substring (0, 120);
     next.dirty = false;

@@ -392,6 +392,10 @@ if(BUILD_TESTING)
     add_test(NAME StudioAcousticQuality COMMAND StudioAcousticComparison --verify)
     set_tests_properties(StudioAcousticQuality PROPERTIES TIMEOUT 90)
 
+    add_executable(StudioSamplerMappingTests tests/SamplerMappingTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerMappingTests PRIVATE cxx_std_20)
+    add_test(NAME StudioSamplerMapping COMMAND StudioSamplerMappingTests)
+
     add_executable(StudioSamplerEngineTests tests/SamplerEngineTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
