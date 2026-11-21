@@ -269,6 +269,8 @@ public:
         };
         articulationStrip.onManage = [this]
         {
+            if (auto* native = articulation.nativeGroupInstrument(); native != nullptr && showNativeInstrument (*native))
+            { if (auto* editor = instrumentWorkspace.getEditor()) editor->restoreView ("4"); return; }
             if (articulationWindow != nullptr) articulationWindow->toFront (true);
             else
             {
@@ -3810,6 +3812,10 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     for (const auto* n : phrase->getSequence().getNotes()) if (n->getNoteNumber() == 26) hasSwitch = true;
     if (! hasSwitch) return fail ("Piano Roll workflow inserts verified native keyswitch");
     if (! snapshot (articulationStrip, "sampler-violin-strip-closeup") || ! snapshot (*this, "sampler-violin-articulation-strip")) return fail ("capture native violin strip");
+    articulationStrip.onManage();
+    if (instrumentWorkspace.getPlugin() != sampler || instrumentWorkspace.getEditor()->viewState() != "4") return fail ("strip Mappings opens native group assignments");
+    if (! snapshot (*this, "sampler-native-group-editor")) return fail ("capture articulation assignments");
+    showWorkspace (Workspace::closed);
     edit->getTransport().setPosition (0_tp); edit->getTransport().play (false);
     float phrasePeak = 0; for (int i = 0; i < 120; ++i) phrasePeak = jmax (phrasePeak, period());
     edit->getTransport().stop (false, false);

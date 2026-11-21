@@ -24,6 +24,7 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void stopLiveNote();
+    tracktion::Plugin* nativeGroupInstrument() const;
     void writeForDrawnNote (tracktion::MidiClip&, tracktion::BeatPosition, int pitch);
 
    #if STUDIO_SPATIAL_TESTS

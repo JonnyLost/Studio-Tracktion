@@ -203,6 +203,12 @@ void ArticulationPalette::syncTrack()
     updateState();
 }
 
+te::Plugin* ArticulationPalette::nativeGroupInstrument() const
+{
+    auto* instrument = uniqueInstrument (target());
+    return nativeSampler && instrument != nullptr && instrument->itemID == loadedInstrument ? instrument : nullptr;
+}
+
 void ArticulationPalette::rebuildPads()
 {
     pads.clear();
