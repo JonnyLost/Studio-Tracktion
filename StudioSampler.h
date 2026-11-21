@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include "SamplerEngine.h"
 #include "StudioResources.h"
+#include "ArticulationMappings.h"
 
 namespace studio::sampler
 {
@@ -15,7 +16,11 @@ struct SampleZone
     int folder = 0; // Organizational group, independent of legacy round-robin IDs.
 };
 
-struct InstrumentGroup { int id = 0; juce::String name { "Main" }; };
+struct InstrumentGroup
+{
+    int id = 0; juce::String name { "Main" };
+    Group playback;
+};
 
 struct Instrument
 {
@@ -55,16 +60,22 @@ public:
     unsigned changeCount() const { return modelRevision; }
     juce::String stateError() const { return restoreError; }
     bool noteActive (int note) const { return renderer.noteActive (note); }
-    void preview (int source, int channel, int note, int velocity, int zone = -1);
+    void preview (int source, int channel, int note, int velocity, int zone = -1, int first = -1, int end = -1);
+    void previewRange (int zone, int first, int end);
     juce::Result loadSample (const juce::File&, int replace = -1);
     void removeZone (int);
     void duplicateZone (int);
     void editGroups (std::vector<InstrumentGroup>);
+    std::vector<studio::ArticulationMapping> articulations() const;
+    static juce::Result prepareImport (Instrument initial, const juce::Array<juce::File>& paths, bool automatic, Instrument&, juce::String& summary, std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     void moveZone (int, int folder);
     juce::Result proposeImport (const juce::Array<juce::File>&, bool automatic, Instrument&, juce::String& summary);
-    void commitImport (Instrument next) { change (std::move (next), true); }
+    void commitImport (Instrument next, bool dirty = true) { change (std::move (next), dirty); }
+    static juce::Result prepareSample (Instrument initial, const juce::File&, int replace, Instrument&, std::atomic<bool>* cancelled = nullptr);
+    static juce::Result preparePreset (const juce::File&, const Instrument& cache, Instrument&, std::atomic<bool>* cancelled = nullptr);
     void undoMapping (bool redo);
     void editZone (int, const Zone&);
+    juce::Result editZones (const std::vector<std::pair<int, Zone>>&);
     void editSettings (const Settings&);
     void rename (juce::String);
     juce::Result savePreset (const juce::File&);
@@ -98,7 +109,7 @@ private:
     std::unique_ptr<const Bank> retired;
     std::atomic<const Bank*> published { nullptr }, borrowed { nullptr };
 
-    struct Preview { int source, channel, note, velocity, zone; std::uint64_t revision; };
+    struct Preview { int source, channel, note, velocity, zone; std::uint64_t revision; int first = -1, end = -1; };
     static constexpr unsigned queueSize = 128;
     std::array<Preview, queueSize> queue {};
     std::atomic<unsigned> writeIndex { 0 }, readIndex { 0 };

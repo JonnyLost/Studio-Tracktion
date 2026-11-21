@@ -14,6 +14,9 @@ int main()
     check (! filenameNote ("take_C40.wav"));
     check (! filenameNote ("C4_D4.wav"));
     check (! filenameNote ("recording_01.wav"));
+    check (filenameVelocity ("Piano_C4_v1-63.wav") == std::pair { 1, 63 });
+    check (filenameVelocity ("Piano_G4_VEL64-127.aiff") == std::pair { 64, 127 });
+    check (! filenameVelocity ("Piano_v128-200.wav"));
     std::vector<Zone> z (3); z[0].root = 60; z[1].root = 67; z[2].root = 60;
     spreadMapping (z);
     check (z[0].low == 0 && z[0].high == 63 && z[1].low == 64 && z[1].high == 127);

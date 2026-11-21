@@ -16,6 +16,8 @@ constexpr std::size_t maxBankBytes = 256 * 1024 * 1024;
 struct Sample
 {
     double rate = 0;
+    std::int64_t sourceBytes = -1, sourceTime = 0;
+    int rootNote = -1; // Verified file metadata, not acoustic pitch analysis.
     std::vector<float> left, right;
     std::size_t bytes() const { return (left.size() + right.size()) * sizeof (float); }
 };
@@ -27,8 +29,22 @@ struct Zone
     bool oneShot = false, loop = false;
     int start = 0, end = 0; // Zero end means the complete sample (legacy presets).
     int loopStart = 0, loopEnd = 0, group = 0; // End is exclusive, group zero layers.
+    int folder = 0, loopCrossfade = -1; // -1 preserves legacy 64-frame smoothing.
+    int fadeIn = 0, fadeOut = 0; // Velocity steps inside the zone range.
     std::shared_ptr<const Sample> sample;
 };
+
+enum class GroupTrigger { normal, keyswitch, controller };
+struct Group
+{
+    int id = 0;
+    GroupTrigger trigger = GroupTrigger::normal;
+    int key = 24, controller = 20, ccLow = 0, ccHigh = 127;
+    int channel = 0; // Zero accepts any MIDI channel; otherwise 1-16.
+    bool mute = false, solo = false, releaseTrigger = false;
+};
+bool validGroup (const Group&) noexcept;
+float velocityWeight (const Zone&, int velocity) noexcept;
 
 struct Settings
 {
@@ -41,6 +57,7 @@ struct Bank
 {
     Settings settings;
     std::vector<Zone> zones;
+    std::vector<Group> groups;
     std::uint64_t sampleRevision = 0;
 };
 
@@ -54,7 +71,7 @@ public:
     void use (const Bank&) noexcept;
     void panic() noexcept;
     void midi (int status, int data1, int data2) noexcept;
-    void preview (int source, int channel, int note, int velocity, int zone = -1) noexcept;
+    void preview (int source, int channel, int note, int velocity, int zone = -1, int first = -1, int end = -1) noexcept;
     void render (float* left, float* right, int frames) noexcept;
     void publishMeters() noexcept;
     unsigned activeVoices() const noexcept { return active.load (std::memory_order_relaxed); }
@@ -65,6 +82,8 @@ private:
     {
         float volume = 1, expression = 1, bend = 0, modulation = 0, pressure = 0;
         bool pedal = false;
+        int selectedKey = -1;
+        std::array<unsigned char, 128> cc {};
     };
 
     struct Voice
@@ -75,10 +94,12 @@ private:
         double position = 0, baseStep = 0;
         std::uint64_t age = 0;
         bool down = false, oneShot = false, loop = false;
-        int end = 0, loopStart = 0, loopEnd = 0, previewFrames = 0;
+        int end = 0, loopStart = 0, loopEnd = 0, blend = 0, folder = 0, previewFrames = 0;
         enum Stage { attack, decay, sustain, release } stage = attack;
     };
 
+    struct Held { unsigned short mask = 0; unsigned char velocity = 0; bool pending = false; };
+    std::array<std::array<std::array<Held, 128>, 16>, 4> held {};
     std::array<Channel, 16> channels {};
     std::array<Voice, maxVoices> voices {};
     std::array<std::uint32_t, maxGroups + 1> roundRobin {};
@@ -90,9 +111,15 @@ private:
     float instrumentGain = 0;
     Settings settings;
 
+    const Group* groupFor (int id) const noexcept;
+    bool audible (int id) const noexcept;
+    bool groupMatches (const Group&, int channel) const noexcept;
+    bool controlNote (int channel, int note, bool on) noexcept;
+    void releaseSamples (int source, int channel, int note) noexcept;
+    void playZones (int source, int channel, int note, int velocity, bool releasing, unsigned short mask) noexcept;
     void start (int source, int channel, int note, int velocity) noexcept;
     void stop (int source, int channel, int note) noexcept;
     void release (Voice&) noexcept;
-    void trigger (const Zone&, int source, int channel, int note, int velocity) noexcept;
+    void trigger (const Zone&, int source, int channel, int note, int velocity, bool releasing = false, int first = -1, int end = -1, bool direct = false) noexcept;
 };
 }

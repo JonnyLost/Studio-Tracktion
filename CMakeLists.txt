@@ -396,6 +396,13 @@ if(BUILD_TESTING)
     target_compile_features(StudioSamplerMappingTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerMapping COMMAND StudioSamplerMappingTests)
 
+    add_executable(StudioSamplerBench tests/SamplerBench.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerBench PRIVATE cxx_std_20)
+
+    add_executable(StudioSamplerArticulationTests tests/SamplerArticulationTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerArticulationTests PRIVATE cxx_std_20)
+    add_test(NAME StudioSamplerArticulations COMMAND StudioSamplerArticulationTests)
+
     add_executable(StudioSamplerEngineTests tests/SamplerEngineTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)

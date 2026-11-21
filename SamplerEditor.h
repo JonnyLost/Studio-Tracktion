@@ -4,6 +4,7 @@
 #include "StudioSampler.h"
 #include "InstrumentWorkspace.h"
 #include <set>
+#include <thread>
 
 namespace studio::sampler
 {
@@ -85,7 +86,24 @@ private:
     bool updating = false;
     bool clearAudition = false;
     std::set<int> selectedZones;
-    double waveZoom = 1, waveOffset = 0;
+    double waveZoom = 1, waveOffset = 0, mapScale = 1, mapOffset = 0;
+    int mapSpan() const { return juce::roundToInt (128 / mapScale); }
+    int mapFirst() const { return juce::roundToInt ((128 - mapSpan()) * mapOffset); }
+    struct ImportTask
+    {
+        std::atomic<bool> cancelled { false }, done { false };
+        std::atomic<int> progress { 0 };
+        Instrument proposal; juce::String summary, error; unsigned revision = 0; int first = 0;
+        int replace = -1; bool preset = false;
+        std::thread worker;
+        ~ImportTask() { cancelled.store (true); if (worker.joinable()) worker.join(); }
+    };
+    std::unique_ptr<ImportTask> importTask;
+    void startImport (juce::Array<juce::File>, bool, int replace = -1, bool preset = false);
+    juce::Component::SafePointer<juce::DialogWindow> importReview;
+    void finishImport();
+    void editGroup (const std::function<void(Group&)>&);
+    void batchEdit (const std::function<void(Zone&, double)>&, double);
     juce::ListBox groupRows { "Instrument groups", this };
     int getNumRows() override;
     void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
@@ -98,7 +116,10 @@ private:
     juce::MidiKeyboardState keys;
     Keyboard keyboard { *this, keys };
     juce::Label name, preset, filename, status, meter;
-    juce::ComboBox samples, mode, groupList;
+    juce::ComboBox samples, mode, groupList, triggerMode, triggerChannel;
+    juce::Label triggerLabel, channelLabel;
+    juce::ToggleButton groupMute { "Mute" }, groupSolo { "Solo" }, releaseTrigger { "On note release" };
+    juce::TextButton editMapping { "Edit Mapping" }, cancelImport { "Cancel import" }, playView { "Play view" };
     juce::Label groupName;
     juce::TextButton groups { "Groups" }, addGroup { "New group" }, copyGroup { "Copy group" }, deleteGroup { "Delete group" }, moveGroup { "Move zone here" }, duplicate { "Duplicate zone" }, undo { "Undo" }, redo { "Redo" };
     juce::ToggleButton loopEnabled { "Enable loop" };
@@ -106,7 +127,7 @@ private:
     juce::TextButton basic { "Basic" }, mapping { "Mapping" }, loops { "Waveform" }, advanced { "Advanced" };
     juce::TextButton load { "Load Sample" }, locate { "Locate Sample" }, remove { "Remove Zone" }, audition { "Audition" };
     Control attack, decay, sustain, release, gain, tune, root, low, high, soft, hard, zoneGain, cents,
-            zoom, position, sampleStart, sampleEnd, loopStart, loopEnd, voices, bend, group;
+            mapZoom, mapPosition, keySwitch, ccNumber, ccLow, ccHigh, fadeIn, fadeOut, loopFade, zoom, position, sampleStart, sampleEnd, loopStart, loopEnd, voices, bend, group;
     juce::OwnedArray<juce::Component> owned;
     std::unique_ptr<juce::FileChooser> chooser;
 

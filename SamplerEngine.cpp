@@ -17,10 +17,62 @@ float interpolate (const std::vector<float>& samples, int first, int next, float
 }
 }
 
+bool validGroup (const Group& g) noexcept
+{
+    return g.id >= 0 && g.id < maxGroups && g.key >= 0 && g.key <= 127
+        && g.controller >= 0 && g.controller < 120 && g.ccLow >= 0 && g.ccHigh <= 127 && g.ccLow <= g.ccHigh
+        && g.channel >= 0 && g.channel <= 16 && static_cast<int> (g.trigger) >= 0 && static_cast<int> (g.trigger) <= 2;
+}
+float velocityWeight (const Zone& z, int v) noexcept
+{
+    if (v < z.soft || v > z.hard) return 0;
+    float weight = 1;
+    if (z.fadeIn > 0) weight = std::min (weight, float (v - z.soft + 1) / (z.fadeIn + 1));
+    if (z.fadeOut > 0) weight = std::min (weight, float (z.hard - v + 1) / (z.fadeOut + 1));
+    return weight;
+}
+const Group* Engine::groupFor (int id) const noexcept
+{
+    for (const auto& g : bank->groups) if (g.id == id) return &g;
+    return nullptr;
+}
+bool Engine::audible (int id) const noexcept
+{
+    bool solo = false;
+    for (const auto& g : bank->groups) solo |= g.solo;
+    const auto* g = groupFor (id);
+    return g ? ! g->mute && (! solo || g->solo) : ! solo;
+}
+bool Engine::groupMatches (const Group& g, int channel) const noexcept
+{
+    if (g.channel && g.channel != channel + 1) return false;
+    const auto& c = channels[static_cast<std::size_t> (channel)];
+    if (g.trigger == GroupTrigger::keyswitch)
+    {
+        int key = c.selectedKey;
+        if (key < 0) for (const auto& first : bank->groups)
+            if (first.trigger == GroupTrigger::keyswitch && (! first.channel || first.channel == channel + 1)) { key = first.key; break; }
+        return key == g.key;
+    }
+    return g.trigger != GroupTrigger::controller || (c.cc[static_cast<std::size_t> (g.controller)] >= g.ccLow && c.cc[static_cast<std::size_t> (g.controller)] <= g.ccHigh);
+}
+bool Engine::controlNote (int channel, int note, bool on) noexcept
+{
+    for (const auto& g : bank->groups)
+        if (g.trigger == GroupTrigger::keyswitch && g.key == note && (! g.channel || g.channel == channel + 1))
+        {
+            if (on) channels[static_cast<std::size_t> (channel)].selectedKey = note;
+            return true;
+        }
+    return false;
+}
+
 bool validMapping (const Zone& z) noexcept
 {
     return z.root >= 0 && z.root <= 127 && z.low >= 0 && z.low <= z.high && z.high <= 127
-        && z.soft >= 1 && z.soft <= z.hard && z.hard <= 127 && z.group >= 0 && z.group <= maxGroups;
+        && z.soft >= 1 && z.soft <= z.hard && z.hard <= 127 && z.group >= 0 && z.group <= maxGroups
+        && z.folder >= 0 && z.folder < maxGroups && z.loopCrossfade >= -1 && z.loopCrossfade <= 1000000
+        && z.fadeIn >= 0 && z.fadeIn <= 127 && z.fadeOut >= 0 && z.fadeOut <= 127;
 }
 
 bool validLoop (const Zone& z, int frames) noexcept
@@ -41,18 +93,23 @@ void Engine::use (const Bank& next) noexcept
     if (revision != next.sampleRevision)
     {
         for (auto& voice : voices) voice = {};
+        for (auto& source : held) for (auto& channel : source) channel.fill ({});
         roundRobin.fill (0);
         revision = next.sampleRevision;
     }
     bank = &next;
     settings = next.settings;
     instrumentGain = amplitude (settings.gainDb);
+    for (auto& voice : voices) if (voice.sample && controlNote (voice.channel, voice.note, false))
+    { voice.down = false; release (voice); held[static_cast<std::size_t> (voice.source)][static_cast<std::size_t> (voice.channel)][static_cast<std::size_t> (voice.note)] = {}; }
+    for (auto& voice : voices) if (voice.sample && voice.stage != Voice::release && ! audible (voice.folder)) { release (voice); voice.releaseStep = voice.level / 32; }
     for (int i = settings.polyphony; i < maxVoices; ++i)
         voices[static_cast<std::size_t> (i)] = {};
 }
 
 void Engine::panic() noexcept
 {
+    for (auto& source : held) for (auto& channel : source) channel.fill ({});
     voices.fill ({});
     channels.fill ({});
     roundRobin.fill (0);
@@ -66,7 +123,7 @@ void Engine::release (Voice& voice) noexcept
     voice.releaseStep = static_cast<float> (voice.level / std::max (1.0, settings.release * outputRate));
 }
 
-void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity) noexcept
+void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity, bool releasing, int firstOverride, int endOverride, bool direct) noexcept
 {
     if (! zone.sample || zone.sample->left.size() < 2 || zone.start < 0 || zone.start >= static_cast<int> (zone.sample->left.size())
         || zone.end < 0 || (zone.end && (zone.end <= zone.start || zone.end > static_cast<int> (zone.sample->left.size())))) return;
@@ -92,19 +149,24 @@ void Engine::trigger (const Zone& zone, int source, int channel, int note, int v
     voice->channel = channel;
     voice->note = note;
     voice->source = source;
-    voice->down = true;
+    voice->down = ! releasing;
     voice->age = ++age;
-    voice->velocityGain = amplitude (zone.gainDb) * static_cast<float> (velocity) / 127;
+    voice->velocityGain = amplitude (zone.gainDb) * static_cast<float> (velocity) / 127 * (direct ? 1.0f : velocityWeight (zone, velocity));
+    voice->folder = zone.folder;
     voice->baseStep = zone.sample->rate / outputRate * pitchRatio (note - zone.root + zone.cents * 0.01);
-    voice->oneShot = zone.oneShot;
-    voice->loop = ! zone.oneShot && zone.loop && validLoop (zone, static_cast<int> (zone.sample->left.size()));
+    voice->oneShot = zone.oneShot || releasing;
+    voice->loop = ! releasing && ! zone.oneShot && zone.loop && validLoop (zone, static_cast<int> (zone.sample->left.size()));
     voice->loopStart = zone.loopStart;
     voice->loopEnd = zone.loopEnd;
+    voice->blend = std::min (zone.loopCrossfade < 0 ? 64 : zone.loopCrossfade, (zone.loopEnd - zone.loopStart) / 4);
+    if (firstOverride >= 0 && endOverride > firstOverride && endOverride <= frames)
+    { voice->position = firstOverride; voice->end = endOverride; voice->loop = false; voice->oneShot = true; }
     if (source != 0) voice->previewFrames = static_cast<int> (outputRate * 0.045);
 }
 
 void Engine::start (int source, int channel, int note, int velocity) noexcept
 {
+    if (controlNote (channel, note, true)) return;
     // Retriggering a pitch releases the previous sustained strike on that source.
     for (auto& voice : voices)
         if (voice.sample && voice.source == source && voice.channel == channel && voice.note == note && ! voice.oneShot)
@@ -113,10 +175,22 @@ void Engine::start (int source, int channel, int note, int velocity) noexcept
             release (voice);
         }
 
+    auto& strike = held[static_cast<std::size_t> (source)][static_cast<std::size_t> (channel)][static_cast<std::size_t> (note)];
+    strike = {}; strike.velocity = static_cast<unsigned char> (velocity);
+    for (const auto& g : bank->groups)
+        if (groupMatches (g, channel) && audible (g.id)) strike.mask |= static_cast<unsigned short> (1u << g.id);
+    playZones (source, channel, note, velocity, false, strike.mask);
+}
+
+void Engine::playZones (int source, int channel, int note, int velocity, bool releasing, unsigned short mask) noexcept
+{
     std::array<unsigned, maxGroups + 1> count {}, index {};
-    const auto matches = [=] (const Zone& z)
+    const auto matches = [=, this] (const Zone& z)
     {
-        return z.sample && ! z.sample->left.empty() && validMapping (z)
+        const auto* g = groupFor (z.folder);
+        const bool enabled = g ? (releasing ? (mask & (1u << g->id)) != 0 : groupMatches (*g, channel)) : true;
+        return enabled && audible (z.folder) && (g && g->releaseTrigger) == releasing
+            && z.sample && ! z.sample->left.empty() && validMapping (z)
             && note >= z.low && note <= z.high && velocity >= z.soft && velocity <= z.hard;
     };
 
@@ -129,7 +203,9 @@ void Engine::start (int source, int channel, int note, int velocity) noexcept
         {
             auto group = static_cast<std::size_t> (z.group);
             if (group == 0 || index[group]++ == roundRobin[group] % count[group])
-                trigger (z, source, channel, note, velocity);
+            {
+                trigger (z, source, channel, note, velocity, releasing);
+            }
         }
 
     for (std::size_t group = 1; group < roundRobin.size(); ++group)
@@ -137,8 +213,20 @@ void Engine::start (int source, int channel, int note, int velocity) noexcept
             ++roundRobin[group];
 }
 
+void Engine::releaseSamples (int source, int channel, int note) noexcept
+{
+    auto& strike = held[static_cast<std::size_t> (source)][static_cast<std::size_t> (channel)][static_cast<std::size_t> (note)];
+    if (! strike.velocity) return;
+    const auto velocity = strike.velocity; const auto mask = strike.mask;
+    strike = {};
+    playZones (source, channel, note, velocity, true, mask);
+}
 void Engine::stop (int source, int channel, int note) noexcept
 {
+    if (controlNote (channel, note, false)) return;
+    auto& strike = held[static_cast<std::size_t> (source)][static_cast<std::size_t> (channel)][static_cast<std::size_t> (note)];
+    if (source == 0 && channels[static_cast<std::size_t> (channel)].pedal) strike.pending = true;
+    else releaseSamples (source, channel, note);
     for (auto& voice : voices)
         if (voice.sample && voice.source == source && voice.channel == channel && voice.note == note && ! voice.oneShot)
         {
@@ -148,10 +236,12 @@ void Engine::stop (int source, int channel, int note) noexcept
         }
 }
 
-void Engine::preview (int source, int channel, int note, int velocity, int zone) noexcept
+void Engine::preview (int source, int channel, int note, int velocity, int zone, int first, int end) noexcept
 {
+    if (! bank || source < 0 || source > 3 || channel < 0 || channel > 15 || note > 127 || velocity < 0 || velocity > 127) return;
     if (note < 0)
     {
+        for (auto& channelHeld : held[static_cast<std::size_t> (source)]) channelHeld.fill ({});
         for (auto& voice : voices)
             if (voice.source == source)
                 voice = {};
@@ -167,13 +257,14 @@ void Engine::preview (int source, int channel, int note, int velocity, int zone)
     else if (static_cast<std::size_t> (zone) < bank->zones.size())
     {
         const auto& selected = bank->zones[static_cast<std::size_t> (zone)];
-        if (selected.sample)
-            trigger (selected, source, channel, note, velocity);
+        if (selected.sample && audible (selected.folder))
+            trigger (selected, source, channel, note, velocity, false, first, end, true);
     }
 }
 
 void Engine::midi (int status, int data1, int data2) noexcept
 {
+    if (! bank || data1 < 0 || data1 > 127 || data2 < 0 || data2 > 127) return;
     const int channel = status & 15;
     auto& state = channels[static_cast<std::size_t> (channel)];
     switch (status & 0xf0)
@@ -187,11 +278,15 @@ void Engine::midi (int status, int data1, int data2) noexcept
         case 0xe0: state.bend = (static_cast<float> (data1 | (data2 << 7)) - 8192) / 8192; break;
         case 0xb0:
         {
+            state.cc[static_cast<std::size_t> (data1)] = static_cast<unsigned char> (data2);
             if (data1 == 1) state.modulation = static_cast<float> (data2) / 127.0f;
             if (data1 == 7) state.volume = static_cast<float> (data2) / 127.0f;
             if (data1 == 11) state.expression = static_cast<float> (data2) / 127.0f;
             if (data1 == 64) state.pedal = data2 >= 64;
             if (data1 == 121) state = {};
+            if ((data1 == 64 || data1 == 121) && ! state.pedal)
+                for (int n = 0; n < 128; ++n) if (held[0][static_cast<std::size_t> (channel)][static_cast<std::size_t> (n)].pending) releaseSamples (0, channel, n);
+            if (data1 == 120 || data1 == 123) held[0][static_cast<std::size_t> (channel)].fill ({});
             if (data1 == 64 || data1 >= 120)
                 for (auto& voice : voices)
                 {
@@ -227,7 +322,7 @@ void Engine::render (float* left, float* right, int frames) noexcept
         const float vibrato = 0.5f * std::max (channel.modulation, channel.pressure);
         const float gain = v.velocityGain * instrumentGain * channel.volume * channel.expression;
         const int length = v.end;
-        const int blend = std::min (64, (v.loopEnd - v.loopStart) / 4);
+        const int blend = v.blend;
         auto phase = basePhase;
 
         for (int i = 0; i < frames; ++i, phase += phaseStep)

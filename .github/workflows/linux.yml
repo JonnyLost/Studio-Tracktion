@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - feature/studio-sampler-builder-m10
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
@@ -43,7 +44,9 @@ jobs:
           cmake --build build --parallel 3
           xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure --output-junit "$RUNNER_TEMP/ctest-linux.xml"
       - name: Measure native synth block times
-        run: build/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-composer-bench.tsv"
+        run: |
+          build/StudioSamplerBench > "$RUNNER_TEMP/studio-sampler-bench.tsv"
+          build/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-composer-bench.tsv"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,4 +55,5 @@ jobs:
             ${{ runner.temp }}/studio-composer-images/
             ${{ runner.temp }}/studio-composer-audio/
             ${{ runner.temp }}/studio-composer-bench.tsv
+            ${{ runner.temp }}/studio-sampler-bench.tsv
             ${{ runner.temp }}/ctest-linux.xml
