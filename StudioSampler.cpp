@@ -93,6 +93,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
     s.semitones = bounded (*xml, "tune", s.semitones, -24, 24);
     s.bendRange = bounded (*xml, "bend", s.bendRange, 0, 24);
     s.polyphony = jlimit (1, maxVoices, xml->getIntAttribute ("voices", s.polyphony));
+    if (xml->getChildByName ("GROUP")) model.groups.clear();
     for (auto* child : xml->getChildIterator())
     {
         if (child->hasTagName ("GROUP"))
@@ -100,7 +101,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
             const int id = child->getIntAttribute ("id", -1);
             if (id < 0 || id >= maxGroups) return Result::fail ("Invalid instrument group.");
             auto found = std::find_if (model.groups.begin(), model.groups.end(), [id] (auto& g) { return g.id == id; });
-            if (found != model.groups.end()) found->name = child->getStringAttribute ("name").substring (0, 120);
+            if (found != model.groups.end()) return Result::fail ("Duplicate instrument group.");
             else model.groups.push_back ({ id, child->getStringAttribute ("name").substring (0, 120) });
             continue;
         }
@@ -140,6 +141,8 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
             return Result::fail ("A sample zone has an invalid key, velocity or loop range.");
         model.zones.push_back (std::move (entry));
     }
+    for (const auto& z : model.zones)
+        if (std::none_of (model.groups.begin(), model.groups.end(), [&] (auto& g) { return g.id == z.folder; })) return Result::fail ("Zone references a missing group.");
     return Result::ok();
 }
 
@@ -322,6 +325,7 @@ Result Plugin::loadSample (const File& file, int replace)
 
     auto next = model;
     SampleZone entry;
+    entry.folder = model.groups.front().id;
     entry.file = file;
     if (replace >= 0)
     {
@@ -340,6 +344,7 @@ Result Plugin::loadSample (const File& file, int replace)
         return result;
 
     const auto frames = static_cast<int> (entry.mapping.sample->left.size());
+    if (entry.mapping.start >= frames || entry.mapping.end > frames) return Result::fail ("Replacement is shorter than the saved sample boundaries. Reset the boundaries first.");
     if (entry.mapping.loopEnd == 0) entry.mapping.loopEnd = frames;
     if (! validLoop (entry.mapping, frames))
     {
@@ -388,7 +393,7 @@ Result Plugin::proposeImport (const Array<File>& files, bool automatic, Instrume
     {
         if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc")) { ++unsupported; continue; }
         if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
-        SampleZone entry; entry.file = file;
+        SampleZone entry; entry.folder = model.groups.front().id; entry.file = file;
         if (auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample); result.failed())
         { errors.add (file.getFileName() + ": " + result.getErrorMessage()); continue; }
         entry.mapping.loopEnd = static_cast<int> (entry.mapping.sample->left.size());
