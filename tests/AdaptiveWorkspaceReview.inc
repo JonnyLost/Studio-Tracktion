@@ -140,7 +140,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     auto hornClip = insert (*horn, "Horn response", 5, 13, 5);
     if (! violinClip || ! hornClip) return fail ("create articulation review regions");
     theme (*violinClip, 59);
-    theme (*hornClip, 49);
+    theme (*hornClip, 57);
     for (const auto& [track, name, offset, root] : std::initializer_list<std::tuple<te::AudioTrack*, const char*, double, int>> {
              { keys, "Opening chords", 0.0, 51 }, { mallets, "Counterline", 1.0, 72 }, { sample, "Pulse", 4.0, 62 } })
         for (int i = 0; i < 2; ++i)
@@ -238,10 +238,23 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     refresh();
     if (! articulation.reviewActiveName().isEmpty() || ! articulation.selectReviewMapping ("Marcato"))
         return fail ("active articulation is local to each instrument");
+    if (! articulation.selectReviewMapping ("Marcato") || ! articulation.reviewActiveName().isEmpty())
+        return fail ("the active pad can be cleared without deleting its mapping");
+    edit->undo();
+    refresh();
+    if (articulation.reviewActiveName() != "Marcato") return fail ("clearing the active pad is undoable");
     if (! snapshot (*this, "07-piano-horn")) return fail ("capture Piano Roll after switching to horn");
+    mode (PerformanceMode::hidden);
+    showWorkspace (Workspace::piano);
+    refresh();
+    const auto hornNotes = hornClip->getSequence().getNumNotes();
+    if (! piano.drawForReview (2.0) || hornClip->getSequence().getNumNotes() != hornNotes + 1)
+        return fail ("drawing with the articulation surfaces hidden writes only the requested note");
+    mode (PerformanceMode::articulations);
 
     selection.selectOnly (sample);
     refresh();
+    message.setText ({}, dontSendNotification);
     if (! showNativeInstrument (*sampler)) return fail ("open the production detailed editor");
     auto* original = instrumentWorkspace.getEditor();
     edit->getTransport().looping = false;
@@ -278,6 +291,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     sampler->preview (1, 1, 60, 0);
 
     mode (PerformanceMode::full);
+    if (synth->selectFactory (presetFor (Family::analog)).failed()) return fail ("restore the Analog Keys preset");
     selection.selectOnly (keys);
     refresh();
     setSize (1280, 800);

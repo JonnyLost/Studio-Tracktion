@@ -204,7 +204,9 @@ void ArticulationPalette::rebuildPads()
     {
         const auto& mapping = mappings[i];
         auto pad = std::make_unique<TextButton> (mapping.name);
-        pad->setTooltip (mapping.name + " | Ch " + String (mapping.channel)
+        pad->setToggleable (true);
+        pad->setColour (TextButton::buttonOnColourId, colours::selected.interpolatedWith (colours::focus, .26f));
+        pad->setTooltip ("Toggle " + mapping.name + " for composition | Ch " + String (mapping.channel)
             + (mapping.message == ArticulationMessage::keyswitch ? " | Note " : " | CC ")
             + String (mapping.number) + " / " + String (mapping.value)
             + (mapping.shortcut ? " | Ctrl+Cmd+" + String (mapping.shortcut) : String()));
@@ -373,16 +375,18 @@ void ArticulationPalette::selectMapping (size_t index)
         return;
     auto* t = target();
     const auto* instrument = uniqueInstrument (t);
-    if (instrument == nullptr || instrument->itemID != loadedInstrument || selectedId == mappings[index].id)
+    if (instrument == nullptr || instrument->itemID != loadedInstrument)
         return;
 
     auto root = documentFrom (serialized);
     if (root == nullptr) return;
     auto* profile = profileFor (*root, loadedInstrument);
     if (profile == nullptr) return;
-    profile->setAttribute ("active", mappings[index].id);
+    const bool clear = selectedId == mappings[index].id;
+    if (clear) profile->removeAttribute ("active");
+    else profile->setAttribute ("active", mappings[index].id);
     auto& history = t->edit.getUndoManager();
-    history.beginNewTransaction ("Select articulation");
+    history.beginNewTransaction (clear ? "Clear articulation" : "Select articulation");
     t->state.setProperty (property, root->toString (XmlElement::TextFormat().singleLine()), &history);
     history.beginNewTransaction();
     syncTrack();
@@ -550,8 +554,9 @@ bool ArticulationPalette::selectReviewMapping (const String& label)
     for (size_t i = 0; i < mappings.size(); ++i)
         if (mappings[i].name == label)
         {
+            const bool clearing = reviewActiveName() == label;
             selectMapping (i);
-            return reviewActiveName() == label;
+            return clearing ? reviewActiveName().isEmpty() : reviewActiveName() == label;
         }
     return false;
 }
@@ -673,6 +678,8 @@ ArticulationStrip::ArticulationStrip (ArticulationPalette& source) : palette (so
     insert.onClick = [this] { palette.insertMapping(); };
     for (size_t i = 0; i < pads.size(); ++i)
     {
+        pads[i].setToggleable (true);
+        pads[i].setColour (TextButton::buttonOnColourId, colours::selected.interpolatedWith (colours::focus, .26f));
         addChildComponent (pads[i]);
         pads[i].onClick = [this, i]
         {
@@ -728,7 +735,7 @@ void ArticulationStrip::refresh()
         if (! visible) continue;
         const auto& entry = palette.mappings[start + i];
         pad.setButtonText (entry.name);
-        pad.setTooltip ("Select " + entry.name + " for composition on MIDI channel " + String (entry.channel));
+        pad.setTooltip ("Toggle " + entry.name + " for composition on MIDI channel " + String (entry.channel));
         pad.setEnabled (palette.ready && palette.edit != nullptr && ! palette.edit->getTransport().isRecording());
         pad.setToggleState (entry.id == palette.selectedId, dontSendNotification);
     }

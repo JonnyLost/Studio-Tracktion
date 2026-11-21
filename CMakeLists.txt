@@ -193,6 +193,7 @@ string(REPLACE "${clip_fill}" [=[    const auto area = getLocalBounds().reduced 
         g.setColour (studio::colours::text);
         g.drawFittedText (clip->getName(), header, Justification::centredLeft, 1, 1.0f);
     }]=] editor "${editor}")
+string(REPLACE "g.setColour (Colours::red);" "g.setColour (studio::colours::focus.withAlpha (0.52f));" editor "${editor}")
 string(REPLACE "0, getWidth(), 0, getHeight(), 0);" "0, getWidth(), studio::appearance.line (11, 2), jmax (1, getHeight() - studio::appearance.line (11, 2)), 0);" editor "${editor}")
 string(REPLACE "Colours::black.withAlpha (0.5f)," "studio::colours::winds.withAlpha (0.76f)," editor "${editor}")
 string(REPLACE "double y = (1.0 - double (n->getNoteNumber()) / 127.0) * getHeight();" [=[const auto top = studio::appearance.line (11, 2);

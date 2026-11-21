@@ -16,10 +16,10 @@ Studio Synth offers family-specific Sound controls, an Output page, and a layer 
 
 The strip and palette use the same project mappings. Choose **Mappings** to add a name and MIDI message you have verified for the receiving patch and channel. The strip offers banks of six for larger profiles. **Pin** holds one track’s mapping profile. **Follow** returns to the selected track.
 
-- Clicking a pad selects the track’s active articulation. It changes no MIDI until you draw a note or explicitly use Insert. Studio saves the selection with the instrument’s mapping profile, and it participates in project undo.
+- Clicking a pad selects the track’s active articulation. Click the active pad again to clear it. Studio saves the selection with the instrument’s mapping profile, and it participates in project undo.
 - **Audition** sends the selected message to the enabled instrument through its existing live route. The palette’s Ctrl-Command-digit shortcuts still audition their assigned mappings.
 - **Insert** writes the selected mapping at the playhead inside an editable MIDI region on the matching track and channel.
-- With an active mapping, **Draw** in Piano Roll writes a needed switch alongside the new note, in the same Undo transaction. An already-effective switch is reused. A keyswitch needs a short lead-in inside the region. Leave space before the first musical note or place the switch manually with Insert.
+- With an active mapping and the strip or palette visible, **Draw** in Piano Roll writes a needed switch alongside the new note, in the same Undo transaction. An already-effective switch is reused. A keyswitch needs a short lead-in inside the region. Leave space before the first musical note or place the switch manually with Insert.
 
 Automatic articulation writing currently covers drawn notes in linear, unmuted MIDI clips without alternate takes, MPE, playback quantisation or groove. It skips hardware recording, paste, step input and looped clips. A patch’s MIDI map is supplied by the user, and Studio never advertises a guessed keyswitch for ARIA or another library. Changing a hosted patch may change its mapping, so verify the profile after a patch change.
 
@@ -35,4 +35,4 @@ Return to Start, Stop, Play, Record, Cycle and Metronome form the transport grou
 
 The [phone-friendly gallery](reviews/m9/README.md) uses image captures from the Intel macOS test application. The orchestral mappings and unavailable Audio Unit are labeled fixtures. Installed ARIA patch restoration, a live Core Audio and MIDI session, and physical MacBook accessibility remain hardware acceptance.
 
-[Build Studio on an Intel MacBook](composer-workflow-m8.md#build-on-an-intel-macbook)
+[Build Studio on an Intel MacBook](../README.md#build-and-launch-on-intel-macos)

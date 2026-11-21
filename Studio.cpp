@@ -467,6 +467,7 @@ public:
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
         piano.onNoteDrawn = [this] (te::MidiClip& clip, te::BeatPosition beat, int pitch)
         {
+            if (! articulation.isShowing() && ! articulationStrip.isShowing()) return;
             articulation.refresh (workflowTrack(), &clip, canEditRegions());
             articulation.writeForDrawnNote (clip, beat, pitch);
             articulationStrip.refresh();
