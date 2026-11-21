@@ -5,6 +5,33 @@
 
 namespace studio::spatial
 {
+// Every acoustic depth uses its own chord of the stage. This keeps the full
+// saved pan range available at the back as well as the front.
+struct StageSemicircle
+{
+    static constexpr float front = 0.07f, back = 0.91f, edge = 0.94f;
+
+    static float halfWidth (float d) { return std::sqrt (std::max (0.0f, 1.0f - d * d)); }
+
+    static std::array<float, 2> project (Position raw)
+    {
+        const auto p = validPosition (raw);
+        const auto d = std::lerp (front, back, p.depth);
+        return { p.x * edge * halfWidth (d), d };
+    }
+
+    static Position unproject (float x, float depth)
+    {
+        const auto d = bounded (depth, front, back, front);
+        return validPosition ({ x / (edge * halfWidth (d)), (d - front) / (back - front) });
+    }
+
+    static bool contains (float x, float depth)
+    {
+        return depth >= 0.0f && depth <= 1.0f && std::abs (x) <= halfWidth (depth);
+    }
+};
+
 struct StagePresentation
 {
     float frontWidth, rearWidth, curvature;

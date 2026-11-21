@@ -26,7 +26,7 @@ Appearance uses macOS logical points and native JUCE text layout. Retina backing
 
 ## Orchestral Stage, Rooms, and Microphones
 
-Open **Stage** from the rail. Drag a seat or nudge it with the arrow keys. Shift moves the section. The track selector lets you pick overlapping seats and duplicate instrument names. **Auto Arrange** uses the selected Concert, Chamber, or Scoring preset and applies to all tracks, the arrangement selection, or the selected section. Stage settings travel with each Tracktion track and participate in project undo.
+Open **Stage** from the rail. Drag a project track from the family-grouped roster onto the semicircle. Drag a seat or nudge it with the arrow keys. Shift moves the placed section. Select overlapping seats and duplicate instrument names from the Project Tracks list. **Auto Arrange** applies the selected Concert, Chamber, or Scoring layout to all tracks, the arrangement selection, or the selected section. Stage settings travel with each Tracktion track and participate in project undo. [Unified Stage guide](docs/unified-stage.md)
 
 **Enable stage audio** is explicit and requires the transport to be stopped. Studio adds a stage balance and a post-fader aux send to one shared stereo room return. Existing faders and the track's direct output remain in the signal path. At the same send trim, the front row sends 10 dB less than the rear row. **Disable stage audio** removes that track's Studio balance and send. The shared return can stay in the project for other tracks. Studio checks for existing aux sends and recognized insert reverbs before enabling. This first implementation supports top-level tracks using the default audio output.
 

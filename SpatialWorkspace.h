@@ -20,7 +20,7 @@ private:
     juce::Slider number { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
 };
 
-class SpatialMap final : public juce::Component
+class SpatialMap final : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     struct Marker
@@ -35,6 +35,12 @@ public:
     };
     std::function<void(const juce::String&)> onSelect;
     std::function<void(const juce::String&, Position, bool wholeSection)> onMove;
+    std::function<juce::String(const SourceDetails&)> trackFromDrag;
+    void setOverview (bool);
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override;
+    void itemDropped (const SourceDetails&) override;
     void display (std::vector<Marker>, juce::String selected, bool microphones, Seating);
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -48,11 +54,13 @@ private:
     std::vector<Marker> markers;
     juce::String selected, dragged;
     Position preview, dragOrigin;
-    bool micMode = false, moving = false;
+    bool micMode = false, moving = false, overview = false, dropTarget = false;
     Seating seating = Seating::concert;
     juce::Rectangle<float> plot() const;
     int legendHeight() const;
     void paintSeating (juce::Graphics&, juce::Rectangle<float>) const;
+    void paintSemicircle (juce::Graphics&, juce::Rectangle<float>) const;
+    bool containsStagePoint (juce::Point<float>) const;
     juce::Point<float> screen (Position) const;
     Position location (juce::Point<float>) const;
 };
@@ -68,57 +76,76 @@ private:
 
 class MicStrip;
 
-class SpatialWorkspace final : public juce::Component
+class SpatialWorkspace final : public juce::Component, private juce::ListBoxModel
 {
 public:
     enum class View { stage, rooms, microphones };
     SpatialWorkspace();
     ~SpatialWorkspace() override;
     std::function<void(tracktion::EditItemID)> onSelectTrack, onOpenRoomMixer;
-    std::function<void()> onLayoutChange;
+    std::function<void()> onLayoutChange, onExpandStage;
    #if JUCE_MAC
     std::function<void()> onOpenSeating;
    #endif
     void setEdit (tracktion::Edit*);
     void setView (View);
+    void setCompactStage (bool);
     void refresh (const juce::Array<tracktion::AudioTrack*>&, const juce::Array<tracktion::AudioTrack*>& selected,
                   bool canEdit, bool canRoute);
     void appearanceChanged();
     int minimumContentHeight (int width);
+    void paint (juce::Graphics&) override;
     void resized() override;
    #if STUDIO_SPATIAL_TESTS
     void arrangeForInterfaceReview (Seating);
     bool verifyMoveForInterfaceReview (tracktion::AudioTrack&);
+    bool verifyInspectorForInterfaceReview (tracktion::AudioTrack&);
+    bool verifyDropForInterfaceReview (tracktion::AudioTrack&, Position);
+    bool verifyDeletedTrackForInterfaceReview (tracktion::EditItemID);
    #endif
 
 private:
     tracktion::Edit* edit = nullptr;
     View view = View::stage;
-    bool editable = false, routable = false, mixer = false, roomDraftDirty = false;
+    bool editable = false, routable = false, mixer = false, roomDraftDirty = false, compactStage = false;
     tracktion::EditItemID selectedTrack, lastArrangementSelection;
     int appliedSeating = -1;
     juce::Array<tracktion::EditItemID> arrangementSelection;
     struct TrackRow
     {
         tracktion::EditItemID id;
-        juce::String name;
+        juce::String name, instrument;
         Seat seat;
         bool placed;
+        bool stageAudio;
         bool operator== (const TrackRow&) const = default;
     };
     std::vector<TrackRow> tracks;
+    struct TrackListRow { Section section; int trackIndex; };
+    std::vector<TrackListRow> trackListRows;
+    juce::String dragSession;
+    bool refreshingTrackList = false;
+    int getNumRows() override;
+    juce::String getNameForRow (int) override;
+    void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
+    void selectedRowsChanged (int) override;
+    void returnKeyPressed (int) override;
+    juce::var getDragSourceDescription (const juce::SparseSet<int>&) override;
     juce::String selectedMic, statusMessage, lastRoomStamp, lastMicStamp;
-    juce::Component stagePage, roomPage, micPage;
+    struct StagePage final : juce::Component, juce::DragAndDropContainer {} stagePage;
+    juce::Component roomPage, micPage, stageRoster, stageInspector, stageToolbar;
     juce::Label stageStatus, roomStatus, roomDraftStatus, micStatus, stageSignal, roomSignalLabel;
+    juce::Label rosterTitle, selectedName, stageSummary;
     SpatialMap stageMap, micMap;
     RoomGraphic roomGraphic;
 
-    juce::ComboBox seating, arrangeScope, trackList, sections;
+    juce::ComboBox seating, arrangeScope, sections;
+    juce::ListBox trackList { "Project tracks", this };
    #if JUCE_MAC
-    juce::TextButton seatingDesigner { "Seating Designer" };
+    juce::TextButton seatingDesigner { "Arrangement Reference" };
    #endif
     juce::TextButton arrange { "Auto Arrange" }, resetSeat { "Reset seat" }, toggleSend { "Enable stage audio" },
-                     stageCheck { "Room Check +12 dB" };
+                     stageCheck { "Room Check +12 dB" }, placeSelected { "Place on Stage" }, openStage { "Open Stage" };
     SpatialField pan { "Stage pan", -1, 1, 0.01 }, depth { "Stage depth", 0, 1, 0.01 },
                  trim { "Send trim", -60, 0, 1, " dB" };
 
@@ -162,8 +189,10 @@ private:
     void syncStage();
     void syncMaps();
     void moveTrack (const juce::String&, Position, bool);
+    void placeSelectedTrack();
     void setSeat (tracktion::AudioTrack&, Seat);
-    void editSeat();
+    enum class SeatField { family, pan, depth, trim };
+    void editSeat (SeatField);
     void arrangeTracks();
     void toggleTrackAudio();
     juce::ValueTree library() const;

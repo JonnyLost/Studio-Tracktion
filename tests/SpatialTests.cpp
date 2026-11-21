@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SpatialReverb.h"
 #include "../SpatialState.h"
+#include "../StagePresentation.h"
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -16,6 +17,16 @@ static void models()
     assert (seat (Seating::concert, Section::percussion, 0, 1).depth > seat (Seating::concert, Section::strings, 0, 1).depth);
     assert (seat (Seating::chamber, Section::brass, 0, 2).depth < seat (Seating::concert, Section::brass, 0, 2).depth);
     assert (sendDb ({ 0, 0 }, -12) == -22 && sendDb ({ 0, 1 }, -12) == -12);
+    for (float pan : { -1.0f, -0.45f, 0.0f, 0.53f, 1.0f })
+        for (float depth : { 0.0f, 0.38f, 0.75f, 1.0f })
+        {
+            const auto [x, d] = StageSemicircle::project ({ pan, depth });
+            assert (StageSemicircle::contains (x, d));
+            const auto restored = StageSemicircle::unproject (x, d);
+            assert (std::abs (restored.x - pan) < 0.00001f && std::abs (restored.depth - depth) < 0.00001f);
+        }
+    assert (! StageSemicircle::contains (0.9f, 0.9f));
+    assert (! StageSemicircle::contains (0.0f, -0.1f));
 
     Room r;
     r.width = -1;

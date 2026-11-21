@@ -44,12 +44,18 @@ constexpr std::array familyMarks { "S", "W", "B", "P", "K", "O" };
 int SpatialMap::legendHeight() const
 {
     const int columns = getWidth() >= appearance.span (590) ? 6 : 3;
-    return micMode ? 0 : (6 / columns) * appearance.line (11, 5) + appearance.px (5);
+    return micMode || overview ? 0 : (6 / columns) * appearance.line (11, 5) + appearance.px (5);
 }
 
 Rectangle<float> SpatialMap::plot() const
 {
     const auto& m = appearance;
+    if (! micMode)
+    {
+        if (overview) return getLocalBounds().toFloat().reduced (5.0f, 2.0f);
+        return getLocalBounds().toFloat().reduced ((float) m.px (21), (float) m.px (12))
+            .withTrimmedBottom ((float) (m.line (10, 10) + legendHeight()));
+    }
     return getLocalBounds().toFloat().reduced ((float) m.px (30), (float) m.px (10))
         .withTrimmedBottom ((float) (m.line (11, 12) + legendHeight()));
 }
@@ -57,6 +63,11 @@ Rectangle<float> SpatialMap::plot() const
 Point<float> SpatialMap::screen (Position p) const
 {
     const auto area = plot();
+    if (! micMode)
+    {
+        const auto [x, d] = StageSemicircle::project (p);
+        return { area.getCentreX() + x * area.getWidth() * 0.5f, area.getBottom() - d * area.getHeight() };
+    }
     const auto projected = stagePresentations[(size_t) seating].project (p);
     return { area.getX() + projected[0] * area.getWidth(), area.getY() + projected[1] * area.getHeight() };
 }
@@ -65,8 +76,51 @@ Position SpatialMap::location (Point<float> p) const
 {
     const auto area = plot();
     if (area.isEmpty()) return {};
+    if (! micMode)
+        return StageSemicircle::unproject ((p.x - area.getCentreX()) * 2.0f / area.getWidth(),
+                                           (area.getBottom() - p.y) / area.getHeight());
     return stagePresentations[(size_t) seating].unproject ((p.x - area.getX()) / area.getWidth(),
                                                           (p.y - area.getY()) / area.getHeight());
+}
+
+bool SpatialMap::containsStagePoint (Point<float> p) const
+{
+    const auto area = plot();
+    return ! area.isEmpty() && StageSemicircle::contains ((p.x - area.getCentreX()) * 2.0f / area.getWidth(),
+                                                         (area.getBottom() - p.y) / area.getHeight());
+}
+
+void SpatialMap::setOverview (bool value)
+{
+    if (overview == value) return;
+    overview = value;
+    setInterceptsMouseClicks (! value, ! value);
+    setWantsKeyboardFocus (! value);
+    dragged.clear();
+    moving = dropTarget = false;
+    repaint();
+}
+
+bool SpatialMap::isInterestedInDragSource (const SourceDetails& details)
+{
+    return ! micMode && ! overview && trackFromDrag && trackFromDrag (details).isNotEmpty();
+}
+
+void SpatialMap::itemDragMove (const SourceDetails& details)
+{
+    const bool next = containsStagePoint (details.localPosition.toFloat());
+    if (next != dropTarget) { dropTarget = next; repaint(); }
+}
+
+void SpatialMap::itemDragExit (const SourceDetails&) { dropTarget = false; repaint(); }
+
+void SpatialMap::itemDropped (const SourceDetails& details)
+{
+    itemDragExit (details);
+    if (! isInterestedInDragSource (details) || ! containsStagePoint (details.localPosition.toFloat())) return;
+    const auto key = trackFromDrag (details);
+    if (onMove) onMove (key, location (details.localPosition.toFloat()), false);
+    if (onSelect) onSelect (key);
 }
 
 void SpatialMap::display (std::vector<Marker> next, String key, bool microphones, Seating layout)
@@ -130,7 +184,40 @@ void SpatialMap::paintSeating (Graphics& g, Rectangle<float> area) const
     g.drawText ("Conductor", 0, roundToInt (centre.y + podium * 0.5f), getWidth(), m.line (11, 5),
                 Justification::centred);
 
-    if (! micMode)
+}
+
+void SpatialMap::paintSemicircle (Graphics& g, Rectangle<float> area) const
+{
+    const auto& m = appearance;
+    const auto arc = [&] (float scale)
+    {
+        Path path;
+        for (int i = 0; i <= 48; ++i)
+        {
+            const float a = (float) i * std::numbers::pi_v<float> / 48.0f;
+            const Point<float> p { area.getCentreX() + std::cos (a) * area.getWidth() * 0.5f * scale,
+                                   area.getBottom() - std::sin (a) * area.getHeight() * scale };
+            if (i == 0) path.startNewSubPath (p); else path.lineTo (p);
+        }
+        return path;
+    };
+    auto floor = arc (1);
+    floor.closeSubPath();
+    g.setGradientFill (ColourGradient (colours::control, area.getCentreX(), area.getBottom(),
+                                       colours::panel, area.getCentreX(), area.getY(), false));
+    g.fillPath (floor);
+    g.setColour (dropTarget ? colours::focus : colours::divider);
+    g.strokePath (floor, PathStrokeType (dropTarget ? 2.0f : 1.2f));
+    if (overview) return;
+    g.setColour (colours::divider.withAlpha (0.55f));
+    for (float radius : { 0.26f, 0.48f, 0.70f, 0.90f })
+        g.strokePath (arc (radius), PathStrokeType (0.8f));
+    g.drawVerticalLine ((int) area.getCentreX(), area.getY(), area.getBottom());
+    g.setColour (colours::focus);
+    g.fillEllipse (Rectangle<float> ((float) m.px (5), (float) m.px (5)).withCentre ({ area.getCentreX(), area.getBottom() + m.px (5) }));
+    g.setFont (uiFont (10.0f, Font::bold));
+    g.setColour (colours::secondary);
+    g.drawText ("Conductor", 0, roundToInt (area.getBottom()) + m.px (8), getWidth(), m.line (10, 2), Justification::centred);
     {
         auto legend = getLocalBounds().removeFromBottom (legendHeight()).reduced (m.px (8), 0);
         const int columns = getWidth() >= m.span (590) ? 6 : 3;
@@ -157,7 +244,22 @@ void SpatialMap::paint (Graphics& g)
     g.setColour (colours::timeline);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), (float) m.px (6));
     if (area.isEmpty()) return;
-    paintSeating (g, area);
+    if (micMode) paintSeating (g, area); else paintSemicircle (g, area);
+    if (overview)
+    {
+        for (const auto& marker : markers)
+        {
+            g.setColour (stageColours[(size_t) jlimit (0, 5, marker.section)]);
+            g.fillEllipse (Rectangle<float> (4.0f, 4.0f).withCentre (screen (marker.point)));
+        }
+        return;
+    }
+    if (! micMode && markers.empty())
+    {
+        g.setFont (uiFont (13.0f));
+        g.setColour (colours::secondary);
+        g.drawFittedText ("Drag a project track onto the stage", area.toNearestInt(), Justification::centred, 2);
+    }
     if (hasKeyboardFocus (false))
     {
         g.setColour (colours::focus);
@@ -200,16 +302,17 @@ void SpatialMap::paint (Graphics& g)
             const auto tile = Rectangle<float> (2 * radius, 2 * radius).withCentre (point);
             const auto accent = stageColours[family];
             g.setColour (accent.interpolatedWith (colours::well, micMode ? 0.83f : 0.68f));
-            g.fillRoundedRectangle (tile, (float) m.px (5));
+            if (micMode) g.fillRoundedRectangle (tile, (float) m.px (5)); else g.fillEllipse (tile);
             g.setColour (active ? colours::focus : accent.withAlpha (micMode ? 0.35f : 0.82f));
-            g.drawRoundedRectangle (tile, (float) m.px (5), active ? 2.0f : 1.0f);
+            if (micMode) g.drawRoundedRectangle (tile, (float) m.px (5), active ? 2.0f : 1.0f);
+            else g.drawEllipse (tile, active ? 2.0f : 1.0f);
             g.setFont (uiFont (10.0f, Font::bold));
             g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
             g.drawText (familyMarks[family], tile.toNearestInt(), Justification::centred);
         }
-        if (active)
+        if (active || (! micMode && markers.size() <= 24))
         {
-            const int labelWidth = m.span (125);
+            const int labelWidth = m.span (active ? 125 : 88);
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
             g.setFont (uiFont (10.5f, active ? Font::bold : Font::plain));
             g.setColour (active ? colours::focus : colours::text);
@@ -219,7 +322,7 @@ void SpatialMap::paint (Graphics& g)
                 labelY = roundToInt (point.y) - m.px (15) - labelHeight;
             const auto label = Rectangle<int> (left, labelY, labelWidth, labelHeight);
             g.setColour (colours::well);
-            g.fillRoundedRectangle (label.toFloat(), (float) m.px (3));
+            if (active) g.fillRoundedRectangle (label.toFloat(), (float) m.px (3));
             g.setColour (colours::text);
             g.drawFittedText (marker.name, label.reduced (m.px (4), 0), Justification::centred, 1, 1.0f);
         }

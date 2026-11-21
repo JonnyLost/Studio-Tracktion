@@ -12,6 +12,7 @@ on:
       - feature/studio-native-synth-m6
       - feature/studio-unified-integration-m6
       - feature/studio-unified-instruments-m65
+      - feature/studio-orchestral-seating-m1
 
 permissions:
   contents: read
@@ -57,6 +58,7 @@ jobs:
         env:
           STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
           STUDIO_SEATING_SCREENSHOTS: ${{ runner.temp }}/studio-seating-review
+          STUDIO_UNIFIED_STAGE_SCREENSHOTS: ${{ runner.temp }}/studio-unified-stage
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
@@ -85,6 +87,11 @@ jobs:
         with:
           name: Studio-Orchestral-Seating-macOS
           path: ${{ runner.temp }}/studio-seating-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M7-unified-stage-macOS
+          path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
       - name: Measure native synth block times
         run: build/Debug/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"
