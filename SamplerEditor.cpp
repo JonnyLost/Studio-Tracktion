@@ -875,6 +875,8 @@ void Editor::Display::paint (Graphics& g)
             g.fillRect (block);
             g.setColour (selected ? colours::focus : colours::divider);
             g.drawRect (block, selected ? 1.5f : 1.0f);
+            const auto rootX = plot().getX() + (z.root + 0.5f) * plot().getWidth() / 128;
+            if (rootX >= block.getX() && rootX <= block.getRight()) { g.setColour (colours::warning); g.drawVerticalLine (roundToInt (rootX), block.getY(), block.getBottom()); }
             g.setColour (colours::text);
             g.setFont (uiFont (12));
             g.drawFittedText (sample.file.getFileNameWithoutExtension(), block.toNearestInt().reduced (5, 1),
@@ -969,9 +971,9 @@ void Editor::Display::mouseDown (const MouseEvent& event)
         const auto& zones = owner.plugin.instrument().zones;
         const auto hit = [&] (const Zone& z) { return zoneBounds (z).expanded (4, 2).contains (event.position); };
         const auto* entry = owner.zone();
-        if (! entry || ! hit (entry->mapping))
+        if (event.mods.isCommandDown() || ! entry || ! hit (entry->mapping))
             for (int i = static_cast<int> (zones.size()); --i >= 0;)
-                if (hit (zones[static_cast<std::size_t> (i)].mapping))
+                if (hit (zones[static_cast<std::size_t> (i)].mapping) && (! event.mods.isCommandDown() || ! owner.selectedZones.count (i)))
                 {
                     if (event.mods.isCommandDown())
                     {
@@ -1020,7 +1022,11 @@ void Editor::Display::mouseDrag (const MouseEvent& event)
         else
         {
             const auto& original = owner.plugin.instrument().zones[static_cast<std::size_t> (dragSelection)].mapping;
-            const int delta = jlimit (-original.low, 127 - original.high, roundToInt (event.getDistanceFromDragStartX() * 128.0f / jmax (1, area.getWidth())));
+            int leftLimit = -original.low, rightLimit = 127 - original.high;
+            for (int i : owner.selectedZones)
+                if (isPositiveAndBelow (i, static_cast<int> (owner.plugin.instrument().zones.size())))
+                { const auto& z = owner.plugin.instrument().zones[static_cast<std::size_t> (i)].mapping; leftLimit = jmax (leftLimit, -z.low); rightLimit = jmin (rightLimit, 127 - z.high); }
+            const int delta = jlimit (leftLimit, rightLimit, roundToInt (event.getDistanceFromDragStartX() * 128.0f / jmax (1, area.getWidth())));
             dragZone.low = original.low + delta; dragZone.high = original.high + delta;
             dragZone.root = jlimit (0, 127, original.root + delta);
         }
@@ -1041,7 +1047,17 @@ void Editor::Display::mouseDrag (const MouseEvent& event)
 void Editor::Display::mouseUp (const MouseEvent& event)
 {
     if (marker != 0 && event.mouseWasDraggedSinceMouseDown() && dragRevision == owner.plugin.changeCount())
-        owner.plugin.editZone (dragSelection, dragZone);
+    {
+        if (marker == 3 && (owner.page == Page::mapping || owner.page == Page::groups) && owner.selectedZones.size() > 1)
+        {
+            auto next = owner.plugin.instrument();
+            const int delta = dragZone.low - next.zones[static_cast<std::size_t> (dragSelection)].mapping.low;
+            for (int i : owner.selectedZones) if (isPositiveAndBelow (i, static_cast<int> (next.zones.size())))
+            { auto& z = next.zones[static_cast<std::size_t> (i)].mapping; z.low += delta; z.high += delta; z.root = jlimit (0, 127, z.root + delta); }
+            owner.plugin.commitImport (std::move (next));
+        }
+        else owner.plugin.editZone (dragSelection, dragZone);
+    }
     marker = 0;
     dragZone = {};
     owner.refresh();

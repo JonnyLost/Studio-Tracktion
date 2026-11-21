@@ -68,6 +68,8 @@ void Engine::release (Voice& voice) noexcept
 
 void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity) noexcept
 {
+    if (! zone.sample || zone.sample->left.size() < 2 || zone.start < 0 || zone.start >= static_cast<int> (zone.sample->left.size())
+        || zone.end < 0 || (zone.end && (zone.end <= zone.start || zone.end > static_cast<int> (zone.sample->left.size())))) return;
     Voice* voice = nullptr;
     for (int i = 0; i < settings.polyphony; ++i)
     {
