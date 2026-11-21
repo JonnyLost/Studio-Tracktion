@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SamplerEditor.h"
+#include "SamplerReviewCapture.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +15,67 @@ bool sampleFile (const String& path)
 {
     return File (path).hasFileExtension ("wav;wave;aif;aiff;aifc");
 }
+
+class ImportProposal final : public Component
+{
+public:
+    ImportProposal (std::shared_ptr<Instrument> model, String summary, std::function<void()> commit)
+        : proposal (std::move (model))
+    {
+        setLookAndFeel (&look);
+        addAndMakeVisible (report); report.setMultiLine (true); report.setReadOnly (true); report.setText (summary);
+        addAndMakeVisible (zones);
+        for (std::size_t i = 0; i < proposal->zones.size(); ++i) zones.addItem (proposal->zones[i].file.getFileName(), static_cast<int> (i) + 1);
+        const StringArray names { "Root note (C4 = 60)", "Lowest key", "Highest key", "Minimum velocity", "Maximum velocity" };
+        for (int i = 0; i < 5; ++i)
+        {
+            addAndMakeVisible (labels[i]); labels[i].setText (names[i], dontSendNotification);
+            addAndMakeVisible (values[i]); values[i].setRange (i < 3 ? 0 : 1, 127, 1);
+            values[i].setSliderStyle (Slider::LinearHorizontal); values[i].setTextBoxStyle (Slider::TextBoxRight, false, 70, 24);
+            values[i].onValueChange = [this, i]
+            {
+                if (updating || zones.getSelectedItemIndex() < 0) return;
+                auto& z = proposal->zones[static_cast<std::size_t> (zones.getSelectedItemIndex())].mapping;
+                const int n = roundToInt (values[i].getValue());
+                if (i == 0) z.root = n;
+                if (i == 1) z.low = jmin (n, z.high);
+                if (i == 2) z.high = jmax (n, z.low);
+                if (i == 3) z.soft = jmin (n, z.hard);
+                if (i == 4) z.hard = jmax (n, z.soft);
+                update();
+            };
+        }
+        zones.onChange = [this] { update(); }; zones.setSelectedItemIndex (0, sendNotificationSync);
+        addAndMakeVisible (accept); addAndMakeVisible (cancel);
+        accept.onClick = [this, commit] { commit(); close(); };
+        cancel.onClick = [this] { close(); };
+        setSize (680, 520);
+    }
+    ~ImportProposal() override { setLookAndFeel (nullptr); }
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (16);
+        report.setBounds (area.removeFromTop (150)); area.removeFromTop (8);
+        zones.setBounds (area.removeFromTop (30)); area.removeFromTop (8);
+        for (int i = 0; i < 5; ++i)
+        { auto row = area.removeFromTop (43); labels[i].setBounds (row.removeFromLeft (180)); values[i].setBounds (row); }
+        auto row = area.removeFromBottom (32); accept.setBounds (row.removeFromRight (120)); row.removeFromRight (8); cancel.setBounds (row.removeFromRight (120));
+    }
+private:
+    StudioLookAndFeel look;
+    std::shared_ptr<Instrument> proposal;
+    TextEditor report; ComboBox zones; Label labels[5]; Slider values[5];
+    TextButton accept { "Import" }, cancel { "Cancel" }; bool updating = false;
+    void close() { if (auto* dialog = findParentComponentOfClass<DialogWindow>()) dialog->exitModalState (0); }
+    void update()
+    {
+        const ScopedValueSetter<bool> guard (updating, true);
+        if (zones.getSelectedItemIndex() < 0) return;
+        const auto& z = proposal->zones[static_cast<std::size_t> (zones.getSelectedItemIndex())].mapping;
+        const int data[] { z.root, z.low, z.high, z.soft, z.hard };
+        for (int i = 0; i < 5; ++i) values[i].setValue (data[i], dontSendNotification);
+    }
+};
 
 class EnvelopePlot final : public Component
 {
@@ -56,7 +118,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     setTitle ("Studio Sampler instrument");
     limits.setSizeLimits (460, 320, 1600, 1000);
     limits.setMinimumOnscreenAmounts (0x10000, 30, 28, 30);
-    for (Component* c : std::initializer_list<Component*> { &name, &preset, &loadPreset, &savePreset,
+    for (Component* c : std::initializer_list<Component*> { &name, &preset, &loadPreset, &savePreset, &audition,
              &basic, &mapping, &groups, &loops, &advanced, &keyboard, &viewport })
         addAndMakeVisible (*c);
 
@@ -64,7 +126,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
-             &loopEnabled, &display, &load, &locate, &remove, &audition, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo })
+             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo })
         body.addAndMakeVisible (*c);
 
     auto* plot = owned.add (new EnvelopePlot (p));
@@ -446,7 +508,7 @@ void Editor::refresh()
     locate.setTitle (locate.getButtonText());
     remove.setVisible (map);
     remove.setEnabled (entry != nullptr);
-    audition.setVisible (! (page == Page::advanced));
+    audition.setVisible (true);
     audition.setEnabled (playable);
     display.setVisible (main || map || loop);
     samples.setVisible (! main);
@@ -512,11 +574,12 @@ void Editor::resized()
         c.setBounds (row.removeFromLeft (jmin (width, row.getWidth())));
         row.removeFromLeft (gap);
     };
-    auto buttons = header.removeFromRight (jmin (header.getWidth() / 2, m.span (232)));
+    auto buttons = header.removeFromRight (jmin (header.getWidth() * 3 / 5, m.span (300)));
     auto buttonRow = buttons.withSizeKeepingCentre (buttons.getWidth(), button);
-    const auto half = (buttonRow.getWidth() - gap) / 2;
+    const auto half = (buttonRow.getWidth() - 2 * gap) / 3;
     put (buttonRow, loadPreset, half);
     put (buttonRow, savePreset, half);
+    put (buttonRow, audition, half);
     name.setBounds (header.removeFromTop (m.line (20, 1)));
     preset.setBounds (header.removeFromTop (line));
 
@@ -540,7 +603,7 @@ void Editor::resized()
     const int actionColumns = jlimit (1, 4, (width + gap) / (actionMinimum + gap));
     std::array<Component*, 4> actions {};
     int actionCount = 0;
-    for (auto* action : { &load, &locate, &audition, &remove })
+    for (auto* action : { &load, &locate, &remove })
         if (action->isVisible()) actions[static_cast<std::size_t> (actionCount++)] = action;
     const int actionRows = (actionCount + actionColumns - 1) / actionColumns;
     const bool sampleList = page != Page::basic;
@@ -726,13 +789,17 @@ void Editor::importFiles (const StringArray& paths)
         auto proposal = std::make_shared<Instrument>(); String summary;
         auto result = safe->plugin.proposeImport (files, choice == 1, *proposal, summary);
         if (result.failed()) { safe->setStatus (summary); return; }
-        AlertWindow::showAsync (MessageBoxOptions().withTitle ("Review proposed mapping").withMessage (summary + "\nImport to refine visually, or cancel to revise your import choice.")
-            .withButton ("Import", 1).withButton ("Cancel", 0), [safe, proposal, revision, summary] (int commit)
+        DialogWindow::LaunchOptions dialog;
+        dialog.dialogTitle = "Review and revise mapping — C4 = MIDI 60";
+        dialog.dialogBackgroundColour = colours::panel;
+        dialog.useNativeTitleBar = true; dialog.resizable = true; dialog.componentToCentreAround = safe.getComponent();
+        dialog.content.setOwned (new ImportProposal (proposal, summary, [safe, proposal, revision, summary]
         {
-            if (! safe || commit != 1) return;
+            if (! safe) return;
             if (safe->plugin.changeCount() != revision) { safe->setStatus ("Instrument changed. Import again to make a fresh proposal."); return; }
             safe->plugin.commitImport (std::move (*proposal)); safe->setPage (Page::mapping); safe->setStatus (summary);
-        });
+        }));
+        dialog.launchAsync();
     });
 }
 
@@ -760,7 +827,7 @@ void Editor::playAudition()
         auditionNote = z.root;
         plugin.preview (3, 1, auditionNote, 100, selection);
         clearAudition = false;
-        audition.setButtonText ("Stop Audition");
+        audition.setButtonText ("Stop");
     }
 }
 
@@ -1086,6 +1153,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     {
         if (output == File()) return true;
         if (output.createDirectory().failed()) return false;
+        captureNativeScreen (*this, output.getChildFile (String ("native-") + file));
         FileOutputStream stream (output.getChildFile (file));
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
@@ -1136,7 +1204,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if (plugin.noteActive (60)) return false;
 
     audition.onClick();
-    if (! auditionCheck() || audition.getButtonText() != "Stop Audition") return false;
+    if (! auditionCheck() || audition.getButtonText() != "Stop") return false;
     audition.onClick();
     auditionCheck();
     if (plugin.noteActive (60) || audition.getButtonText() != "Audition") return false;

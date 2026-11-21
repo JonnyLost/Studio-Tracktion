@@ -27,6 +27,7 @@ using namespace tracktion::literals;
 #include "SpatialRouting.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
+#include "SamplerReviewCapture.h"
 #include "StudioSynth.h"
 #include "InstrumentWorkspace.h"
 #include "InstrumentPerformance.h"
@@ -3672,6 +3673,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
             timerCallback();
         }
         if (output.createDirectory().failed()) return false;
+        if (name.startsWith ("sampler")) studio::sampler::captureNativeScreen (component, output.getChildFile ("native-" + name + ".png"));
         FileOutputStream file (output.getChildFile (name + ".png"));
         return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (component.createComponentSnapshot (component.getLocalBounds()), file);
@@ -3810,6 +3812,9 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         || ! instrumentWorkspace.isFloating() || dockMode != DockMode::expanded
         || instrumentWorkspace.getEditor()->viewState() != "2" || te::findPluginForID (*edit, synthId) == nullptr)
         return fail ("reopen with the selected editor, layout, page and both instruments intact");
+    setSize (1280, 800);
+    instrumentWorkspace.setFloating (false);
+    if (! snapshot (*this, "sampler-reopened-1280x800")) return fail ("capture reopened sampler");
     restored->deleteFromParent();
     instrumentWorkspace.updateSelection (selectedTrack(), te::getAudioTracks (*edit), true);
     if (instrumentWorkspace.getPlugin() != nullptr || instrumentWorkspace.isFloating())
