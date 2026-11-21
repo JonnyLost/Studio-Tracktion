@@ -127,6 +127,11 @@ Result verifyTracks (te::Engine& engine, const File& folder)
     auto edit = te::createEmptyEdit (engine, folder.getChildFile ("tracks.tracktionedit"));
     auto original = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
     original->setName ("Original");
+    auto& history = edit->getUndoManager();
+    if (! tracks::rename (*original, "Renamed") || original->getName() != "Renamed"
+        || ! history.undo() || original->getName() != "Original"
+        || ! history.redo() || original->getName() != "Renamed")
+        return Result::fail ("track rename, undo and redo");
     auto synth = edit->getPluginCache().createNewPlugin (studio::synth::Plugin::xmlTypeName, {});
     original->pluginList.insertPlugin (synth, 0, nullptr);
     auto seat = spatial::writeSeat (original->itemID.toString(), { { 0.6f, 0.2f }, spatial::Section::other, -12 });

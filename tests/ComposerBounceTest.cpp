@@ -66,6 +66,27 @@ Result verify (te::Engine& engine, const File& folder)
     // A muted native track should never be made audible to feed the room.
     auto muted = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
     muted->setMute (true);
+    const auto media = folder.getChildFile ("Fixture Source.wav");
+    {
+        WavAudioFormat format;
+        std::unique_ptr<OutputStream> stream = media.createOutputStream();
+        auto writer = format.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000)
+                                              .withNumChannels (1).withBitsPerSample (16));
+        AudioBuffer<float> signal (1, 4800);
+        for (int i = 0; i < signal.getNumSamples(); ++i)
+            signal.setSample (0, i, 0.1f * std::sin (i * 0.11f));
+        if (! writer || ! writer->writeFromAudioSampleBuffer (signal, 0, signal.getNumSamples()))
+            return Result::fail ("write synthetic audio fixture");
+    }
+    // Audio clips and relative media are resolved by the same offline graph.
+    if (! te::EditFileOperations (*edit).writeToFile (project, false)) return Result::fail ("save new project before importing");
+    auto wave = track->insertWaveClip ("Synthetic source", media, { { 0.50_tp, 0.60_tp }, {} }, false);
+    if (wave == nullptr || ! te::EditFileOperations (*edit).writeToFile (project, false))
+        return Result::fail ("save project with synthetic audio");
+    if (wave->getOriginalFile() != media || ! media.existsAsFile())
+        return Result::fail ("source fixture path " + wave->state[te::IDs::source].toString()
+            + " resolves to " + wave->getOriginalFile().getFullPathName() + "; expected " + media.getFullPathName());
+    const auto savedProject = project.loadFileAsString();
     const auto originalSelection = clip->getMidiChannel();
     const auto originalMute = track->isMuted (false);
     const auto originalSolo = track->isSolo (false);
@@ -95,7 +116,7 @@ Result verify (te::Engine& engine, const File& folder)
     if (auto result = run (*edit, options); result.failed()) return result;
     if (auto result = readWave (folder.getChildFile ("01 - Theme.wav"), 2, 48000, 24, 1, dry); result.failed()) return result;
     if (auto result = readWave (folder.getChildFile ("Room Return.wav"), 2, 48000, 24, 1, wet); result.failed()) return result;
-    if (folder.findChildFiles (File::findFiles, false, "*.wav").size() != 4)
+    if (folder.findChildFiles (File::findFiles, false, "*.wav").size() != 5)
         return Result::fail ("stem selection generated an extra track");
     float error = 0;
     for (int channel = 0; channel < 2; ++channel)
@@ -115,8 +136,27 @@ Result verify (te::Engine& engine, const File& folder)
     if (run (*edit, options).wasOk()) return Result::fail ("reject bad directory");
     if (track->isMuted (false) != originalMute || track->isSolo (false) != originalSolo
         || ! muted->isMuted (false) || clip->getMidiChannel() != originalSelection
-        || spatial::roomReturnTrack (*edit) != room)
-        return Result::fail ("offline rendering changed the live project");
+        || spatial::roomReturnTrack (*edit) != room || project.loadFileAsString() != savedProject)
+        return Result::fail ("offline rendering changed the live project or saved edit");
+
+    options.destination = folder.getChildFile ("Missing.wav");
+    if (! media.deleteFile()) return Result::fail ("remove synthetic audio fixture");
+    const auto missing = run (*edit, options);
+    if (missing.wasOk() || ! missing.getErrorMessage().contains ("Audio source unavailable") || options.destination.exists())
+        return Result::fail ("report missing media before render");
+    wave->removeFromParent();
+    PluginDescription unavailable;
+    unavailable.name = "Studio test unavailable AU";
+    unavailable.pluginFormatName = "AudioUnit";
+    unavailable.fileOrIdentifier = "AudioUnit:MusicDevice/test,zzzz,abcd";
+    unavailable.isInstrument = true;
+    auto hosted = edit->getPluginCache().createNewPlugin (te::ExternalPlugin::xmlTypeName, unavailable);
+    if (hosted == nullptr) return Result::fail ("create unavailable AU fixture");
+    track->pluginList.insertPlugin (hosted, 0, nullptr);
+    const auto external = run (*edit, options);
+    if (external.wasOk() || ! external.getErrorMessage().contains ("hosted plug-in offline rendering")
+        || options.destination.exists())
+        return Result::fail ("report unsupported AU before rendering");
     return Result::ok();
 }
 }

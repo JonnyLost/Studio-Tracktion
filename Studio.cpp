@@ -1804,11 +1804,8 @@ private:
                 return;
             auto* current = safe->trackById (id);
             const auto name = window->getTextEditorContents ("name").trim();
-            if (current == nullptr || name.isEmpty())
-                return;
-            current->edit.getUndoManager().beginNewTransaction ("Rename track");
-            current->setName (name);
-            current->edit.getUndoManager().beginNewTransaction();
+            if (current != nullptr && ! studio::tracks::rename (*current, name))
+                safe->message.setText ("Enter a name for the track.", dontSendNotification);
         }), true);
     }
 
@@ -3885,6 +3882,13 @@ int StudioView::runInterfaceReview (const File& output)
     if (! capture ("studio-welcome-1024x640-largest-text.png")) return fail ("write scaled Welcome screenshot");
     environmentWelcome.dismiss();
 
+    {
+        const ScopedValueSetter<bool> reviewRequired (ariaReviewPending, true);
+        timerCallback();
+        chooseWavExport();
+        if (exportWav.isEnabled() || Component::getCurrentlyModalComponent() != nullptr)
+            return fail ("unconfirmed ARIA must block export before opening destination controls");
+    }
     const auto original = studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType));
     const auto beforeReopen = projectGeneration;
     save();

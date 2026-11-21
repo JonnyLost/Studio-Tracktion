@@ -151,7 +151,7 @@ void visitVisible (te::MidiClip& clip, Notes&& note, Controllers&& controller)
 {
     const auto [source, start, end] = visibleRange (clip);
     const auto offset = te::toDuration (source);
-    const auto& sequence = clip.getSequenceLooped();
+    const auto& sequence = clip.getSequence();
     for (const auto* n : sequence.getNotes())
     {
         const auto first = std::max (start, n->getStartBeat() + offset);
@@ -352,6 +352,8 @@ Result write (te::Edit& edit, const Array<te::MidiClip*>& clips, const File& des
     for (auto* track : te::getAudioTracks (edit))
     {
         MidiMessageSequence events;
+        struct NoteSpan { int key; double start, end; };
+        std::vector<NoteSpan> notes;
         for (auto* clip : track->getClips())
         {
             auto* midiClip = dynamic_cast<te::MidiClip*> (clip);
@@ -363,8 +365,10 @@ Result write (te::Edit& edit, const Array<te::MidiClip*>& clips, const File& des
                 [&] (const te::MidiNote& note, te::BeatPosition first, te::BeatPosition last)
                 {
                     const auto start = ticks (first);
+                    const auto end = std::max (start + 1, ticks (last));
+                    notes.push_back ({ channel * 128 + note.getNoteNumber(), start, end });
                     events.addEvent (MidiMessage::noteOn (channel, note.getNoteNumber(), (uint8) note.getVelocity()).withTimeStamp (start));
-                    events.addEvent (MidiMessage::noteOff (channel, note.getNoteNumber()).withTimeStamp (std::max (start + 1, ticks (last))));
+                    events.addEvent (MidiMessage::noteOff (channel, note.getNoteNumber()).withTimeStamp (end));
                 },
                 [&] (const te::MidiControllerEvent& event, te::BeatPosition beat)
                 {
@@ -372,6 +376,15 @@ Result write (te::Edit& edit, const Array<te::MidiClip*>& clips, const File& des
                         events.addEvent (controllerMessage (event, channel).withTimeStamp (ticks (beat)));
                 });
         }
+        std::stable_sort (notes.begin(), notes.end(), [] (const auto& a, const auto& b)
+        {
+            return std::pair (a.key, a.start) < std::pair (b.key, b.start);
+        });
+        if (std::adjacent_find (notes.begin(), notes.end(), [] (const auto& a, const auto& b)
+            {
+                return a.key == b.key && a.end > b.end;
+            }) != notes.end())
+            return Result::fail ("Nested notes on the same key and channel cannot retain their individual lengths in one MIDI track.");
         if (events.getNumEvents() > 0)
         {
             events.addEvent (MidiMessage::textMetaEvent (3, track->getName()));
@@ -410,6 +423,9 @@ Result join (const Array<te::MidiClip*>& clips, te::MidiClip::Ptr& result)
         if (clip->getClipTrack() != track || clip->getMidiChannel() != first->getMidiChannel()
             || clip->isMuted() || clip->hasAnyTakes() || ! supportedClip (*clip))
             return Result::fail ("Join requires unmuted linear regions on the same track and channel, without alternate takes, MPE or SysEx.");
+        if (clip->getQuantisation().isEnabled() || clip->getGrooveTemplate().isNotEmpty()
+            || clip->getLinkGroupID().isNotEmpty() || clip->getVolumeDb() != first->getVolumeDb())
+            return Result::fail ("Join requires unlinked regions with matching gain and no playback quantisation or groove.");
         range = range.getUnionWith (clip->getPosition().time);
     }
 
@@ -419,6 +435,7 @@ Result join (const Array<te::MidiClip*>& clips, te::MidiClip::Ptr& result)
     if (result == nullptr) return Result::fail ("Could not create the joined region.");
     result->setMidiChannel (first->getMidiChannel());
     result->setColour (first->getColour());
+    result->setVolumeDb (first->getVolumeDb());
     const auto origin = te::toDuration (edit.tempoSequence.toBeats (range.getStart()));
     auto& merged = result->getSequence();
     std::vector<te::MidiClip::Ptr> originals (clips.begin(), clips.end());

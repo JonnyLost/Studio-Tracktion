@@ -28,6 +28,18 @@ String restriction (te::AudioTrack& track, bool destructive)
     return {};
 }
 
+bool rename (te::AudioTrack& track, const String& requested)
+{
+    const auto name = requested.trim();
+    if (name.isEmpty() || restriction (track, false).isNotEmpty())
+        return false;
+    auto& undo = track.edit.getUndoManager();
+    undo.beginNewTransaction ("Rename track");
+    track.setName (name);
+    undo.beginNewTransaction();
+    return true;
+}
+
 static Array<te::AudioTrack*> siblingsOf (te::AudioTrack& track)
 {
     Array<te::AudioTrack*> siblings;
