@@ -14,6 +14,7 @@ using namespace tracktion::literals;
 #include "MidiMonitor.h"
 #include "PianoRoll.h"
 #include "MusicalRuler.h"
+#include "MusicalTransport.h"
 #include "StudioUI.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
@@ -249,6 +250,8 @@ public:
             addAndMakeVisible (*control);
         for (auto* button : { &rewind, &play, &stop, &record })
             addAndMakeVisible (*button);
+        addAndMakeVisible (music);
+        music.onTimelineChanged = [this] { repaint (rulerRow); };
         addAndMakeVisible (regionActions);
         regionActions.setTooltip ("Split, duplicate, copy or paste selected arrangement regions");
         regionActions.onClick = [this] { showRegionActions(); };
@@ -480,6 +483,7 @@ public:
         rewind.onClick = [this] { edit->getTransport().setPosition (0s); };
         play.onClick = [this]
         {
+            piano.silencePreview();
             if (edit != nullptr && ! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording())
                 EngineHelpers::togglePlay (*edit);
         };
@@ -490,7 +494,10 @@ public:
             if (edit->getTransport().isRecording())
                 toggleRecordKeepingTake();
             else if (edit->getTransport().isPlaying())
+            {
+                piano.silencePreview();
                 EngineHelpers::togglePlay (*edit);
+            }
         };
         record.onClick = [this] { toggleRecordKeepingTake(); };
         addMidi.onClick = [this]
@@ -624,6 +631,44 @@ public:
             return;
 
         auto& view = editor->getEditViewState();
+        auto cycleLane = area.removeFromTop (m.control (18));
+        graphics.setColour (timelineCycleColour);
+        graphics.fillRect (cycleLane);
+        graphics.saveState();
+        graphics.reduceClipRegion (cycleLane);
+        auto& transport = edit->getTransport();
+        const auto range = cycleAnchor.has_value() ? cyclePreview : transport.getLoopRange();
+        auto xAt = [&] (te::TimePosition time)
+        {
+            return cycleLane.getX() + view.timeToX (time, cycleLane.getWidth());
+        };
+        if (! range.isEmpty())
+        {
+            const int left = xAt (range.getStart()), right = xAt (range.getEnd());
+            graphics.setColour (action.withAlpha (transport.looping || cycleAnchor.has_value() ? 0.48f : 0.17f));
+            graphics.fillRect (cycleLane.withLeft (left).withRight (right));
+            graphics.setColour (action);
+            graphics.drawVerticalLine (left, (float) cycleLane.getY(), (float) cycleLane.getBottom());
+            graphics.drawVerticalLine (right, (float) cycleLane.getY(), (float) cycleLane.getBottom());
+        }
+        int markerLabelRight = cycleLane.getX();
+        for (const auto* cue : edit->getMarkerManager().getMarkers())
+        {
+            const int x = xAt (cue->getPosition().getStart());
+            if (x < cycleLane.getX() || x >= cycleLane.getRight())
+                continue;
+            graphics.setColour (warning);
+            graphics.fillRect (x, cycleLane.getY(), m.px (2), cycleLane.getHeight());
+            if (x >= markerLabelRight)
+            {
+                const auto label = cue->getName();
+                const int width = m.span (95);
+                graphics.drawText (label, x + m.px (4), cycleLane.getY(), width,
+                                   cycleLane.getHeight(), Justification::centredLeft, true);
+                markerLabelRight = x + width;
+            }
+        }
+        graphics.restoreState();
         int lastLabelRight = area.getX() - m.span (50);
         studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
             [&] (const studio::MusicalTick& tick)
@@ -667,13 +712,63 @@ public:
         g.restoreState();
     }
 
+    te::TimePosition rulerTime (int x, bool snap) const
+    {
+        auto& view = editor->getEditViewState();
+        const auto time = view.xToTime (jlimit (0, ruler.getWidth(), x - ruler.getX()), ruler.getWidth());
+        return snap ? studio::snapMusicalTime (edit->tempoSequence, time, 1.0) : time;
+    }
+
     void mouseDown (const MouseEvent& event) override
     {
-        if (editor == nullptr || busy || edit->getTransport().isRecording() || ! ruler.contains (event.getPosition()))
+        if (editor == nullptr || busy || ! studio::transportSettled (*edit) || ! ruler.contains (event.getPosition()))
+            return;
+        if (event.mods.isPopupMenu())
+        {
+            music.showTimelineMenu (rulerTime (event.x, false));
+            return;
+        }
+        if (! event.mods.isLeftButtonDown())
             return;
 
-        auto& view = editor->getEditViewState();
-        edit->getTransport().setPosition (view.xToTime (event.x - ruler.getX(), ruler.getWidth()));
+        if (event.y < ruler.getY() + studio::appearance.control (18))
+        {
+            const auto range = edit->getTransport().getLoopRange();
+            auto& view = editor->getEditViewState();
+            const auto near = [&] (te::TimePosition time)
+            {
+                return std::abs (event.x - ruler.getX() - view.timeToX (time, ruler.getWidth())) <= studio::appearance.px (6);
+            };
+            if (! range.isEmpty() && near (range.getStart()))
+                cycleAnchor = range.getEnd();
+            else if (! range.isEmpty() && near (range.getEnd()))
+                cycleAnchor = range.getStart();
+            else
+                cycleAnchor = rulerTime (event.x, ! event.mods.isAltDown());
+            cyclePreview = range;
+            return;
+        }
+        piano.silencePreview();
+        edit->getTransport().setPosition (rulerTime (event.x, false));
+    }
+
+    void mouseDrag (const MouseEvent& event) override
+    {
+        if (cycleAnchor && ! busy && studio::transportSettled (*edit))
+        {
+            cyclePreview = te::TimeRange::between (*cycleAnchor, rulerTime (event.x, ! event.mods.isAltDown()));
+            repaint (ruler);
+        }
+    }
+
+    void mouseUp (const MouseEvent& event) override
+    {
+        if (! cycleAnchor)
+            return;
+        cycleAnchor.reset();
+        if (event.mouseWasDraggedSinceMouseDown() && ! busy && ! studio::setCycle (*edit, cyclePreview))
+            message.setText ("Drag a cycle at least 0.12 seconds long.", dontSendNotification);
+        repaint (ruler);
     }
 
     bool keyPressed (const KeyPress& key) override
@@ -694,6 +789,7 @@ public:
                 edit->redo();
             else
                 edit->undo();
+            repaint (rulerRow);
             return true;
         }
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'S' || key.getKeyCode() == 's')
@@ -721,7 +817,7 @@ public:
         position.setVisible (showElapsed);
         const auto transport = { studio::ToolbarItem { &rewind, 0, key }, { &stop, 0, key },
             { &play, 0, key }, { &record, 0, key }, { &bars, 92 },
-            { &tempo, 73 }, { &meter, 60 }, { &position, showElapsed ? 102 : 0 } };
+            { &tempo, 73 }, { &meter, 60 }, { &music, 100 }, { &position, showElapsed ? 102 : 0 } };
         const auto indicators = { studio::ToolbarItem { &resources.audio, m.resourceCPUWidth },
             studio::ToolbarItem { &resources.ram, m.resourceRAMWidth },
             studio::ToolbarItem { &resources.dropouts, m.resourceXRWidth } };
@@ -795,7 +891,7 @@ public:
         }
         trackDetails.setBounds (tools);
 
-        rulerRow = area.removeFromTop (m.control (26));
+        rulerRow = area.removeFromTop (m.control (26) + m.control (18));
         timeline.setBounds (area);
         sizeEditor();
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (m.trackFooter() + timeline.getScrollBarThickness());
@@ -984,6 +1080,12 @@ private:
 
     Label title, message, trackDetails, workspaceTitle,
           workspaceSummary, ariaReviewNotice;
+    studio::MusicalTransport music;
+    const Colour timelineCycleColour { 0xff242c36 };
+    std::optional<te::TimePosition> cycleAnchor;
+    te::TimeRange cyclePreview, displayedCycle;
+    bool displayedLooping = false;
+    std::size_t displayedTempoHash = 0;
     studio::TransportReadout bars { "Bars / Beats" }, position { "Time" }, tempo { "BPM" }, meter { "Meter" };
     ComboBox zoom, trackPicker;
     StringArray trackNames;
@@ -1612,6 +1714,7 @@ private:
                                     safe->edit->redo();
                                 else
                                     safe->performRegionAction (choice);
+                                safe->repaint (safe->rulerRow);
                             });
     }
 
@@ -1636,6 +1739,7 @@ private:
         completePendingPlugin();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
+        music.refresh (ready);
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
         regionActions.setEnabled (ready && ! recording);
@@ -1652,7 +1756,8 @@ private:
         play.setEnabled (ready);
         play.setToggleState (playing && ! recording, dontSendNotification);
         stop.setEnabled (ready && (playing || recording));
-        record.setEnabled (ready);
+        record.setEnabled (ready && (recording || (studio::transportSettled (*edit)
+                                                 && ! edit->getTransport().looping)));
         record.setToggleState (recording, dontSendNotification);
         zoom.setEnabled (ready);
         arrangementZoomOut.setEnabled (ready);
@@ -1662,7 +1767,9 @@ private:
         if (edit != nullptr)
         {
             auto& transport = edit->getTransport();
-            record.setTooltip (recording ? "Stop recording and keep the take" : "Start recording");
+            record.setTooltip (recording ? "Stop recording and keep the take"
+                                         : transport.looping ? "Disable cycle playback to record a linear take"
+                                         : "Start recording");
             const auto now = transport.getPosition();
             piano.setTransportPosition (now);
             const auto centiseconds = static_cast<int64> (juce::jmax (0.0, now.inSeconds()) * 100.0);
@@ -1670,6 +1777,17 @@ private:
                                + String (centiseconds / 100 % 60).paddedLeft ('0', 2) + "."
                                + String (centiseconds % 100).paddedLeft ('0', 2));
             const auto& sequence = edit->tempoSequence;
+            const auto tempoHash = sequence.getInternalSequence().hash();
+            if (displayedCycle != transport.getLoopRange() || displayedLooping != transport.looping.get()
+                || displayedTempoHash != tempoHash)
+            {
+                displayedCycle = transport.getLoopRange();
+                displayedLooping = transport.looping.get();
+                displayedTempoHash = tempoHash;
+                repaint (rulerRow);
+                repaint (timeline.getBounds());
+                piano.repaint();
+            }
             const auto musical = sequence.toBarsAndBeats (now);
             const auto& signature = sequence.getTimeSigAt (now);
             bars.setValue (String (musical.bars + 1) + "." + String (musical.getWholeBeats() + 1));
@@ -1942,7 +2060,9 @@ private:
             lastRecordingStopRequestedAt = Time::getMillisecondCounter();
             transport.stop (false, false); // false: retain the take
         }
-        else
+        else if (transport.looping)
+            message.setText ("Disable cycle playback to record a linear take.", dontSendNotification);
+        else if (studio::transportSettled (*edit))
             transport.record (false);
     }
 
@@ -2175,7 +2295,9 @@ private:
         seatingWorkspace.setEdit (nullptr);
        #endif
         ++projectGeneration;
+        cycleAnchor.reset();
         edit = std::move (next);
+        music.setEdit (edit.get());
         studio::spatial::prepareRoomPlayback (*edit);
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
@@ -3399,6 +3521,7 @@ int StudioView::runInterfaceReview (const File& output)
 }
 
 namespace studio::spatial { int runSpatialRoutingTest(); }
+namespace studio { int runComposerTransportTest(); }
 #endif
 
 class StudioApplication final : public JUCEApplication
@@ -3448,6 +3571,12 @@ public:
            #endif
             const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SEATING_SCREENSHOTS", {});
             setApplicationReturnValue (view.runSeatingProjectReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-composer-transport")
+        {
+            setApplicationReturnValue (studio::runComposerTransportTest());
             quit();
             return;
         }

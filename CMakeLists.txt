@@ -309,7 +309,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
@@ -382,7 +382,9 @@ if(BUILD_TESTING)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
 
-    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp)
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp)
+    add_test(NAME StudioComposerTransport COMMAND $<TARGET_FILE:Studio> --studio-test-composer-transport)
+    set_tests_properties(StudioComposerTransport PROPERTIES TIMEOUT 90)
     add_test(NAME StudioSynthIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-synth)
     set_tests_properties(StudioSynthIntegration PROPERTIES TIMEOUT 120)
     add_test(NAME StudioSamplerIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-sampler)

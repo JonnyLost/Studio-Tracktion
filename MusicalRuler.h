@@ -54,6 +54,20 @@ void forEachMusicalTick (const tracktion::TempoSequence& sequence,
     }
 }
 
+inline tracktion::TimePosition snapMusicalTime (const tracktion::TempoSequence& sequence,
+                                               tracktion::TimePosition time, double step)
+{
+    if (step <= 0)
+        return time;
+    const auto bar = sequence.toBarsAndBeats (time).bars;
+    const double start = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar, {} }).inBeats();
+    const double end = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar + 1, {} }).inBeats();
+    const double beat = sequence.toBeats (time).inBeats();
+    const double previous = start + std::floor ((beat - start) / step) * step;
+    const double next = std::min (end, previous + step);
+    return sequence.toTime (tracktion::BeatPosition::fromBeats (beat - previous < next - beat ? previous : next));
+}
+
 // Snap subdivisions are measured *from each actual bar boundary*, not from
 // the MIDI source's beat zero. That keeps a clip with a source offset aligned
 // with the bar lines shown in both rulers.
