@@ -90,7 +90,7 @@ te::MarkerClip::Ptr addCueMarker (te::Edit& edit, te::TimePosition time, const S
     return marker;
 }
 
-MusicalTransport::MusicalTransport() : TextButton ("Music...")
+MusicalTransport::MusicalTransport() : TextButton ("Timeline")
 {
     setTitle ("Musical transport and timeline");
     setTooltip ("Cycle, metronome, count-in, tempo, meter and cue markers");
@@ -111,10 +111,45 @@ void MusicalTransport::setEdit (te::Edit* next)
 void MusicalTransport::refresh (bool available)
 {
     setEnabled (available && edit != nullptr && transportSettled (*edit));
-    const auto label = edit != nullptr && edit->getTransport().looping ? "Cycle on..."
-                     : edit != nullptr && edit->clickTrackEnabled ? "Click on..." : "Music...";
-    if (getButtonText() != label)
-        setButtonText (label);
+}
+
+void MusicalTransport::toggleCycle()
+{
+    if (! isEnabled() || edit == nullptr || ! transportSettled (*edit)) return;
+    auto& transport = edit->getTransport();
+    if (transport.looping)
+        transport.looping = false;
+    else if (transport.getLoopRange().getLength().inSeconds() >= .12)
+        transport.looping = true;
+    else
+    {
+        auto& tempo = edit->tempoSequence;
+        const auto bar = tempo.toBarsAndBeats (transport.getPosition()).bars;
+        setCycle (*edit, { tempo.toTime (te::tempo::BarsAndBeats { bar, {} }),
+                           tempo.toTime (te::tempo::BarsAndBeats { bar + 1, {} }) });
+    }
+}
+
+void MusicalTransport::toggleClick()
+{
+    if (isEnabled() && edit != nullptr && transportSettled (*edit))
+        edit->clickTrackEnabled = ! edit->clickTrackEnabled.get();
+}
+
+void MusicalTransport::promptTempoAtPlayhead()
+{
+    if (isEnabled() && edit != nullptr && ! edit->getTransport().isPlaying() && transportSettled (*edit))
+        editTempo (te::roundToNearestBeat (edit->tempoSequence.toBeats (edit->getTransport().getPosition())), false);
+}
+
+void MusicalTransport::promptMeterAtPlayhead()
+{
+    if (isEnabled() && edit != nullptr && ! edit->getTransport().isPlaying() && transportSettled (*edit))
+    {
+        auto& sequence = edit->tempoSequence;
+        const auto bar = sequence.toBarsAndBeats (edit->getTransport().getPosition()).bars;
+        editMeter (sequence.toBeats (te::tempo::BarsAndBeats { bar, {} }), false);
+    }
 }
 
 void MusicalTransport::showTimelineMenu (te::TimePosition time)
@@ -148,25 +183,8 @@ void MusicalTransport::showMenu (te::TimePosition time, bool includeTransport)
 
     if (includeTransport)
     {
-        menu.addItem ("Cycle playback", true, transport.looping, withEdit ([] (auto&, auto& project)
-        {
-            auto& t = project.getTransport();
-            if (t.looping)
-                t.looping = false;
-            else if (t.getLoopRange().getLength().inSeconds() >= 0.12)
-                t.looping = true;
-            else
-            {
-                auto& tempo = project.tempoSequence;
-                const auto currentBar = tempo.toBarsAndBeats (t.getPosition()).bars;
-                setCycle (project, { tempo.toTime (te::tempo::BarsAndBeats { currentBar, {} }),
-                                     tempo.toTime (te::tempo::BarsAndBeats { currentBar + 1, {} }) });
-            }
-        }));
-        menu.addItem ("Metronome", true, edit->clickTrackEnabled, withEdit ([] (auto&, auto& project)
-        {
-            project.clickTrackEnabled = ! project.clickTrackEnabled.get();
-        }));
+        menu.addItem ("Cycle playback", true, transport.looping, withEdit ([] (auto& self, auto&) { self.toggleCycle(); }));
+        menu.addItem ("Metronome", true, edit->clickTrackEnabled, withEdit ([] (auto& self, auto&) { self.toggleClick(); }));
 
         menu.addItem ("Accent bar starts", true, edit->clickTrackEmphasiseBars,
                       withEdit ([] (auto&, auto& project)

@@ -112,7 +112,8 @@ bool isInstrumentPlugin (te::Plugin& plugin)
 {
     if (plugin.isSynth()) return true;
     if (auto* external = dynamic_cast<te::ExternalPlugin*> (&plugin))
-        return external->isAU() && external->getName().containsIgnoreCase ("ARIA Player");
+        return external->desc.fileOrIdentifier.startsWithIgnoreCase ("AudioUnit:MusicDevice/")
+            || (external->isAU() && external->getName().containsIgnoreCase ("ARIA Player"));
     return false;
 }
 

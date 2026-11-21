@@ -238,7 +238,7 @@ private:
     }
 };
 
-enum class TransportIcon { start, play, stop, record };
+enum class TransportIcon { start, play, stop, record, cycle, click };
 
 class TransportButton final : public juce::TextButton
 {
@@ -252,8 +252,7 @@ public:
     void paintButton (juce::Graphics& g, bool hovered, bool down) override
     {
         const bool recording = icon == TransportIcon::record;
-        const auto tint = recording ? colours::record : icon == TransportIcon::play && getToggleState()
-            ? colours::signal : colours::action;
+        const auto tint = recording ? colours::record : getToggleState() ? colours::signal : colours::action;
         const auto colour = getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
         getLookAndFeel().drawButtonBackground (g, *this, colour, hovered, down);
         const auto side = (float) appearance.px (17);
@@ -280,6 +279,23 @@ public:
                 g.drawEllipse (1.8f, 1.8f, 12.4f, 12.4f, 1.25f);
                 g.fillEllipse (4.5f, 4.5f, 7.0f, 7.0f);
                 break;
+            case TransportIcon::cycle:
+                g.drawLine (2.0f, 5.2f, 13.4f, 5.2f, 1.35f);
+                g.drawLine (13.3f, 5.2f, 10.1f, 2.0f, 1.35f);
+                g.drawLine (13.3f, 5.2f, 10.1f, 8.4f, 1.35f);
+                g.drawLine (13.6f, 10.8f, 2.2f, 10.8f, 1.35f);
+                g.drawLine (2.3f, 10.8f, 5.5f, 7.6f, 1.35f);
+                g.drawLine (2.3f, 10.8f, 5.5f, 14.0f, 1.35f);
+                break;
+            case TransportIcon::click:
+                path.startNewSubPath (5.8f, 2.2f);
+                path.lineTo (10.2f, 2.2f);
+                path.lineTo (13.5f, 13.7f);
+                path.lineTo (2.5f, 13.7f);
+                path.closeSubPath();
+                g.strokePath (path, juce::PathStrokeType (1.25f));
+                g.drawLine (8.0f, 11.0f, 13.8f, 3.0f, 1.2f);
+                break;
         }
     }
 
@@ -287,42 +303,51 @@ private:
     TransportIcon icon;
 };
 
-class TransportReadout final : public juce::Component
+class TransportReadout final : public juce::TextButton
 {
 public:
-    explicit TransportReadout (const juce::String& name)
+    explicit TransportReadout (const juce::String& name, bool adjustable = false)
+        : juce::TextButton (name), label (name), canEdit (adjustable)
     {
-        caption.setText (name.toUpperCase(), juce::dontSendNotification);
-        caption.setJustificationType (juce::Justification::centred);
-        caption.setFont (juce::FontOptions (9.0f, juce::Font::bold));
-        caption.setColour (juce::Label::textColourId, colours::secondary);
-        value.setTitle (name);
-        value.setJustificationType (juce::Justification::centred);
-        value.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 15.0f, juce::Font::bold));
-        addAndMakeVisible (caption);
-        addAndMakeVisible (value);
+        setTitle (name);
+        setWantsKeyboardFocus (adjustable);
+        setMouseCursor (adjustable ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
 
-    void setValue (const juce::String& content) { value.setText (content, juce::dontSendNotification); }
-
-    void paint (juce::Graphics& g) override
+    void setValue (const juce::String& content)
     {
-        const auto bounds = getLocalBounds().toFloat().reduced (0.75f);
-        g.setColour (colours::well);
-        g.fillRoundedRectangle (bounds, (float) appearance.px (4));
-        g.setColour (colours::divider);
-        g.drawRoundedRectangle (bounds, (float) appearance.px (4), 0.75f);
+        if (value == content) return;
+        value = content;
+        setTitle (label + " " + value);
+        repaint();
     }
 
-    void resized() override
+    void paintButton (juce::Graphics& g, bool hovered, bool down) override
     {
         auto bounds = getLocalBounds().reduced (appearance.px (2), appearance.px (1));
-        caption.setBounds (bounds.removeFromTop (appearance.line (9, 1)));
-        value.setBounds (bounds);
+        if (canEdit && (hovered || hasKeyboardFocus (true)) && isEnabled())
+        {
+            g.setColour (colours::selected.withAlpha (down ? .75f : .45f));
+            g.fillRoundedRectangle (bounds.toFloat(), (float) appearance.px (4));
+        }
+        if (hasKeyboardFocus (true))
+        {
+            g.setColour (colours::focus);
+            g.drawRoundedRectangle (bounds.toFloat().reduced (.5f), (float) appearance.px (4), 1);
+        }
+        g.setColour (colours::secondary);
+        g.setFont (uiFont (9.5f, juce::Font::bold));
+        const auto caption = bounds.removeFromTop (appearance.line (10, 1));
+        g.drawFittedText (label.toUpperCase() + (canEdit ? "  ›" : ""), caption, juce::Justification::centred, 1, .88f);
+        const float size = label == "Bars / Beats" ? 20.0f : 15.5f;
+        g.setColour (label == "Bars / Beats" ? colours::signal : colours::text);
+        g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), appearance.fontSize (size), juce::Font::bold));
+        g.drawFittedText (value, bounds, juce::Justification::centred, 1, .9f);
     }
 
 private:
-    juce::Label caption, value;
+    juce::String label, value;
+    const bool canEdit;
 };
 
 enum class RailIcon { instruments, channel, stage, articulations, piano, mixer, more };

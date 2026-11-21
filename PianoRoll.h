@@ -25,6 +25,10 @@ public:
     void setTransportPosition (tracktion::TimePosition);
     void silencePreview();
     std::function<void()> onMidiChanged, onControllerLayout;
+    std::function<void (tracktion::MidiClip&, tracktion::BeatPosition, int)> onNoteDrawn;
+   #if STUDIO_SPATIAL_TESTS
+    bool drawForReview (double sourceBeat);
+   #endif
 
     void paint (juce::Graphics&) override;
     void appearanceChanged();

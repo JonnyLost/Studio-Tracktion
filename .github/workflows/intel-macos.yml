@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
       - development
       - feature/studio-orchestral-stage-m4
@@ -63,8 +64,15 @@ jobs:
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
+          STUDIO_M9_SCREENSHOTS: ${{ runner.temp }}/studio-m9-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
         run: ctest --test-dir build -C Debug --verbose --output-on-failure --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-M9-macOS-gallery
+          path: ${{ runner.temp }}/studio-m9-review/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:

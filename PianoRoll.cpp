@@ -864,6 +864,27 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
     repaint();
 }
 
+#if STUDIO_SPATIAL_TESTS
+bool StudioPianoRoll::drawForReview (double sourceBeat)
+{
+    if (clip == nullptr || notesArea.isEmpty()) return false;
+    tool.setSelectedId (2, dontSendNotification);
+    const auto point = juce::Point<int> (xAt (sourceBeat), notesArea.getCentreY()).toFloat();
+    if (! notesArea.contains (point.toInt())) return false;
+    const auto source = Desktop::getInstance().getMainMouseSource();
+    const auto time = Time::getCurrentTime();
+    const auto event = [&] (int modifiers)
+    {
+        return MouseEvent (source, point, ModifierKeys (modifiers), 0, 0, 0, 0, 0,
+                           this, this, time, point, time, 1, false);
+    };
+    const auto count = clip->getSequence().getNumNotes();
+    mouseDown (event (ModifierKeys::leftButtonModifier));
+    mouseUp (event (0));
+    return clip->getSequence().getNumNotes() > count;
+}
+#endif
+
 void StudioPianoRoll::mouseMove (const MouseEvent& event)
 {
     if (! editingEnabled || clip == nullptr)
@@ -1025,7 +1046,10 @@ void StudioPianoRoll::mouseUp (const MouseEvent& event)
         if (auto* note = clip->getSequence().addNote (previewPitch,
                 te::BeatPosition::fromBeats (previewBeat),
                 te::BeatDuration::fromBeats (previewLength), 100, 0, um))
+        {
             selectOnlyNote (note->state);
+            if (onNoteDrawn) onNoteDrawn (*clip, note->getStartBeat(), note->getNoteNumber());
+        }
     }
     else if (auto* note = clip->getSequence().getNoteFor (draggedNote))
     {

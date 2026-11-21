@@ -193,6 +193,7 @@ string(REPLACE "${clip_fill}" [=[    const auto area = getLocalBounds().reduced 
         g.setColour (studio::colours::text);
         g.drawFittedText (clip->getName(), header, Justification::centredLeft, 1, 1.0f);
     }]=] editor "${editor}")
+string(REPLACE "g.setColour (Colours::red);" "g.setColour (studio::colours::focus.withAlpha (0.52f));" editor "${editor}")
 string(REPLACE "0, getWidth(), 0, getHeight(), 0);" "0, getWidth(), studio::appearance.line (11, 2), jmax (1, getHeight() - studio::appearance.line (11, 2)), 0);" editor "${editor}")
 string(REPLACE "Colours::black.withAlpha (0.5f)," "studio::colours::winds.withAlpha (0.76f)," editor "${editor}")
 string(REPLACE "double y = (1.0 - double (n->getNoteNumber()) / 127.0) * getHeight();" [=[const auto top = studio::appearance.line (11, 2);
@@ -324,7 +325,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
-    StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp
+    StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h)
@@ -409,6 +410,8 @@ if(BUILD_TESTING)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
     add_test(NAME StudioSpatialRouting COMMAND $<TARGET_FILE:Studio> --studio-test-spatial-routing)
     set_tests_properties(StudioSpatialRouting PROPERTIES TIMEOUT 45)
+    add_test(NAME StudioAdaptiveWorkspace COMMAND $<TARGET_FILE:Studio> --studio-adaptive-workspace-review)
+    set_tests_properties(StudioAdaptiveWorkspace PROPERTIES TIMEOUT 150)
     add_test(NAME StudioInstrumentWorkspace COMMAND $<TARGET_FILE:Studio> --studio-instrument-workspace-review)
     set_tests_properties(StudioInstrumentWorkspace PROPERTIES TIMEOUT 120)
     add_test(NAME StudioInterfaceReview COMMAND $<TARGET_FILE:Studio> --studio-interface-review)
