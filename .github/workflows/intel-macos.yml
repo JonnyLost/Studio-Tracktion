@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - integration/studio-0.2-m7-baseline
       - development
       - feature/studio-orchestral-stage-m4
       - feature/studio-acoustic-engine-m4r
@@ -93,8 +94,10 @@ jobs:
           name: Studio-M7-unified-stage-macOS
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
-      - name: Measure native synth block times
-        run: build/Debug/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"
+      - name: Measure optimized native synth block times
+        run: |
+          cmake --build build --config Release --target StudioSynthBench --parallel 4
+          build/Release/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"
       - uses: actions/upload-artifact@v4
         with:
           name: Studio-M6-synth-bench
