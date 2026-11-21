@@ -15,10 +15,11 @@ inline void captureNativeScreen (juce::Component& component, const juce::File& d
     // application shell. Put that live view in a real native review window.
     if (window->getPeer() == nullptr)
     {
+        const int viewWidth = window->getWidth(), viewHeight = window->getHeight();
         reviewWindow = std::make_unique<juce::DocumentWindow> ("Studio", juce::Colour (0xff1c2530), 0);
         reviewWindow->setUsingNativeTitleBar (true);
-        reviewWindow->setContentNonOwned (window, false);
-        reviewWindow->centreWithSize (window->getWidth(), window->getHeight() + 28);
+        reviewWindow->setContentNonOwned (window, true);
+        reviewWindow->centreWithSize (viewWidth, viewHeight + 28);
         window = reviewWindow.get();
     }
     window->setVisible (true);
