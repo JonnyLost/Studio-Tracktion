@@ -5,6 +5,7 @@
 #include <cctype>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace studio::sampler
 {

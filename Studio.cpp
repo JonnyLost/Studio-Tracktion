@@ -3802,7 +3802,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (! phrase) return fail ("create violin phrase");
     phrase->setMidiChannel (te::MidiChannel (1));
     showWorkspace (Workspace::closed); selection.selectOnly (violinTrack);
-    articulation.refresh (violinTrack, phrase, true);
+    articulation.refresh (violinTrack, phrase.get(), true);
     if (! articulation.selectReviewMapping ("Pizzicato")) return fail ("native violin mappings follow selected track");
     articulation.writeForDrawnNote (*phrase, te::BeatPosition::fromBeats (.5), 60);
     phrase->getSequence().addNote (60, te::BeatPosition::fromBeats (.5), te::BeatDuration::fromBeats (.25), 100, 0, nullptr);
@@ -3820,7 +3820,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     period(); hornSampler->preview (1, 1, 60, 100);
     if (period() < .001f) return fail ("horn articulation must audition");
     hornSampler->preview (1, 1, 60, 0); hornSampler->reset(); period();
-    selection.selectOnly (violinTrack); articulation.refresh (violinTrack, phrase, true);
+    selection.selectOnly (violinTrack); articulation.refresh (violinTrack, phrase.get(), true);
     if (articulation.reviewActiveName() != "Pizzicato") return fail ("violin articulation retained after following horn");
     showWorkspace (Workspace::instrumentEditor); instrumentWorkspace.updateSelection (violinTrack, te::getAudioTracks (*edit), true);
     instrumentWorkspace.getEditor()->restoreView ("2");
