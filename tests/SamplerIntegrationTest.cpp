@@ -242,7 +242,10 @@ Result run (const File& screenshots)
     auto groups = other->instrument().groups;
     groups[0].playback.trigger = GroupTrigger::keyswitch; groups[0].playback.key = 24;
     groups[1].playback.trigger = GroupTrigger::controller; groups[1].playback.controller = 20; groups[1].playback.ccLow = 64;
+    groups[0].playback.mute = true;
     other->editGroups (groups);
+    if (other->articulations().size() != 2) return Result::fail ("muting preserves verified articulation assignments");
+    groups[0].playback.mute = false; other->editGroups (groups);
     other->moveZone (1, 1);
     other->undoMapping (false);
     if (other->instrument().zones[1].folder != 0) return Result::fail ("undo group assignment");

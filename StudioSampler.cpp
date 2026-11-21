@@ -413,7 +413,7 @@ std::vector<studio::ArticulationMapping> Plugin::articulations() const
     for (const auto& group : model.groups)
     {
         const auto& g = group.playback;
-        if (g.trigger == GroupTrigger::normal || g.releaseTrigger || g.mute) continue;
+        if (g.trigger == GroupTrigger::normal || g.releaseTrigger) continue;
         studio::ArticulationMapping mapping { "sampler-group-" + String (group.id), group.name,
             g.trigger == GroupTrigger::keyswitch ? studio::ArticulationMessage::keyswitch : studio::ArticulationMessage::controller,
             g.channel ? g.channel : 1, g.trigger == GroupTrigger::keyswitch ? g.key : g.controller,
