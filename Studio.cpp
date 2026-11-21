@@ -3809,14 +3809,14 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     bool hasSwitch = false;
     for (const auto* n : phrase->getSequence().getNotes()) if (n->getNoteNumber() == 26) hasSwitch = true;
     if (! hasSwitch) return fail ("Piano Roll workflow inserts verified native keyswitch");
-    if (! snapshot (*this, "sampler-violin-articulation-strip")) return fail ("capture native violin strip");
+    if (! snapshot (articulationStrip, "sampler-violin-strip-closeup") || ! snapshot (*this, "sampler-violin-articulation-strip")) return fail ("capture native violin strip");
     edit->getTransport().setPosition (0_tp); edit->getTransport().play (false);
     float phrasePeak = 0; for (int i = 0; i < 120; ++i) phrasePeak = jmax (phrasePeak, period());
     edit->getTransport().stop (false, false);
     if (phrasePeak < .001f) return fail ("native articulation MIDI phrase must sound");
     selection.selectOnly (hornTrack.get()); articulation.refresh (hornTrack.get(), nullptr, true);
     if (! articulation.selectReviewMapping ("Marcato") || articulation.reviewActiveName() != "Marcato"
-        || ! snapshot (*this, "sampler-horn-articulation-strip")) return fail ("horn strip follows actual horn instrument");
+        || ! snapshot (articulationStrip, "sampler-horn-strip-closeup") || ! snapshot (*this, "sampler-horn-articulation-strip")) return fail ("horn strip follows actual horn instrument");
     period(); hornSampler->preview (1, 1, 60, 100);
     if (period() < .001f) return fail ("horn articulation must audition");
     hornSampler->preview (1, 1, 60, 0); hornSampler->reset(); period();

@@ -178,12 +178,14 @@ Editor::Editor (Plugin& p) : plugin (p)
     playView.setTooltip ("Audition the visible waveform region once, without changing sample boundaries or loops.");
     playView.onClick = [this]
     {
+        if (auditionNote >= 0) { playAudition(); return; }
         if (const auto* z = zone(); z && z->mapping.sample)
         {
             const int frames = static_cast<int> (z->mapping.sample->left.size());
             const int visible = jmax (2, roundToInt (frames / waveZoom));
             const int first = roundToInt ((frames - visible) * waveOffset);
             plugin.previewRange (selection, first, first + visible);
+            auditionNote = z->mapping.root; clearAudition = false; audition.setButtonText ("Stop");
         }
     };
     load.setColour (TextButton::buttonColourId, colours::action);
@@ -339,7 +341,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     { z.end = jmax (z.start + 2, roundToInt (n)); }));
     setup (loopStart, "Loop start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopStart = jlimit (0, jmax (0, z.loopEnd - 2), roundToInt (n)); }));
     setup (loopEnd, "Loop end (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopEnd = jmax (z.loopStart + 2, roundToInt (n)); }));
-    for (auto* control : { &root, &low, &high })
+    for (auto* control : { &root, &low, &high, &keySwitch })
     {
         control->slider.textFromValueFunction = [] (double value) { return noteName (roundToInt (value)); };
         control->slider.valueFromTextFunction = [] (const String& text)
@@ -1123,14 +1125,15 @@ void Editor::Display::paint (Graphics& g)
             auto block = zoneBounds (z).getIntersection (area.toFloat());
             if (block.isEmpty()) return;
             const bool related = owner.page != Page::groups || sample.folder == owner.groupList.getSelectedId() - 1;
+            selected = selected && related;
             auto colour = Colour::fromHSV (0.54f + (z.soft / 127.0f) * 0.16f, 0.42f, selected ? 0.66f : 0.46f, related ? .85f : .20f);
             g.setColour (colour);
             g.fillRect (block);
-            g.setColour (selected ? colours::focus : colours::divider);
+            g.setColour (related ? (selected ? colours::focus : colours::divider) : colours::divider.withAlpha (.2f));
             g.drawRect (block, selected ? 1.5f : 1.0f);
             const auto rootX = plot().getX() + (z.root - owner.mapFirst() + 0.5f) * plot().getWidth() / owner.mapSpan();
-            if (rootX >= block.getX() && rootX <= block.getRight()) { g.setColour (colours::warning); g.drawVerticalLine (roundToInt (rootX), block.getY(), block.getBottom()); }
-            g.setColour (colours::text);
+            if (rootX >= block.getX() && rootX <= block.getRight()) { g.setColour (colours::warning.withAlpha (related ? 1.0f : .2f)); g.drawVerticalLine (roundToInt (rootX), block.getY(), block.getBottom()); }
+            g.setColour (colours::text.withAlpha (related ? 1.0f : .25f));
             g.setFont (uiFont (12));
             g.drawFittedText (sample.file.getFileNameWithoutExtension(), block.toNearestInt().reduced (5, 1),
                               Justification::centred, 1, 1.0f);
@@ -1227,9 +1230,10 @@ void Editor::Display::mouseDown (const MouseEvent& event)
         const auto& zones = owner.plugin.instrument().zones;
         const auto hit = [&] (const Zone& z) { return zoneBounds (z).expanded (4, 2).contains (event.position); };
         const auto* entry = owner.zone();
+        if (owner.page == Page::groups && entry && entry->folder != owner.groupList.getSelectedId() - 1) entry = nullptr;
         if (event.mods.isCommandDown() || ! entry || ! hit (entry->mapping))
             for (int i = static_cast<int> (zones.size()); --i >= 0;)
-                if (hit (zones[static_cast<std::size_t> (i)].mapping) && (! event.mods.isCommandDown() || ! owner.selectedZones.count (i)))
+                if ((owner.page != Page::groups || zones[static_cast<std::size_t> (i)].folder == owner.groupList.getSelectedId() - 1) && hit (zones[static_cast<std::size_t> (i)].mapping) && (! event.mods.isCommandDown() || ! owner.selectedZones.count (i)))
                 {
                     if (event.mods.isCommandDown())
                     {
@@ -1239,7 +1243,7 @@ void Editor::Display::mouseDown (const MouseEvent& event)
                     else owner.selectZone (i);
                     break;
                 }
-        if ((entry = owner.zone()) && hit (entry->mapping))
+        if ((entry = owner.zone()) && (owner.page != Page::groups || entry->folder == owner.groupList.getSelectedId() - 1) && hit (entry->mapping))
         {
             dragSelection = owner.selection;
             dragZone = entry->mapping;
@@ -1473,6 +1477,11 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         violin.zones.push_back (z);
     }
     plugin.commitImport (violin); selectZone (0); setSize (1000, 760); groups.onClick(); groupRows.selectRow (1);
+    const Point<float> groupPoint { display.getWidth() * .53f, display.getHeight() * .5f };
+    const MouseEvent groupClick (Desktop::getInstance().getMainMouseSource(), groupPoint, ModifierKeys (ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
+        &display, &display, Time::getCurrentTime(), groupPoint, Time::getCurrentTime(), 1, false);
+    display.mouseDown (groupClick); display.mouseUp (groupClick);
+    if (selection != 1) return false;
     if (triggerMode.getSelectedId() != 2 || keySwitch.slider.getValue() != 25 || ! capture ("sampler-articulation-groups.png")) return false;
     keySwitch.slider.setValue (30, sendNotificationSync);
     if (plugin.instrument().groups[1].playback.key != 30 || ! capture ("sampler-keyswitch.png")) return false;
