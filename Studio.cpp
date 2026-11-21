@@ -2859,9 +2859,8 @@ int StudioView::runSeatingProjectReview (const File& output)
     auto tracks = te::getAudioTracks (*edit);
     if (tracks.isEmpty()) return fail ("create an audio track for the isolation test");
     const auto originalTrack = tracks.getFirst()->state.createCopy();
-    const auto& project = edit->state;
     auto& undo = edit->getUndoManager();
-    if (studio::seating::write (project, "{\"version\":2,\"seats\":[]}", undo, "Invalid layout"))
+    if (studio::seating::write (*edit, "{\"version\":2,\"seats\":[]}", "Invalid layout"))
         return fail ("reject a future layout version on write");
 
    #if JUCE_MAC
@@ -2875,13 +2874,13 @@ int StudioView::runSeatingProjectReview (const File& output)
         return fail ("SwiftUI model uses project callbacks for preset, insertion, section and coordinate edits");
    #else
     ignoreUnused (output);
-    if (! studio::seating::write (project, "{\"version\":1,\"name\":\"Orchestra & Choir\",\"seats\":[]}", undo, "Change seating"))
+    if (! studio::seating::write (*edit, "{\"version\":1,\"name\":\"Orchestra & Choir\",\"seats\":[]}", "Change seating"))
         return fail ("commit seating data to the Tracktion edit");
    #endif
 
     const auto stored = studio::seating::read (edit->state);
-    if (stored.isEmpty() || ! edit->hasChangedSinceSaved() || ! tracks.getFirst()->state.isEquivalentTo (originalTrack))
-        return fail ("seating changes mark the project dirty and leave track and routing properties intact");
+    if (stored.isEmpty() || ! edit->hasChangedSinceSaved()) return fail ("seating changes mark the project dirty");
+    if (! tracks.getFirst()->state.isEquivalentTo (originalTrack)) return fail ("seating leaves track and routing properties intact");
     if (! undo.undo() || studio::seating::read (edit->state) == stored || ! undo.redo() || studio::seating::read (edit->state) != stored)
         return fail ("seating actions participate in project undo and redo");
     const auto generation = projectGeneration;

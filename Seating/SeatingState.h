@@ -12,8 +12,9 @@ inline juce::String read (const juce::ValueTree& project)
     return project.getProperty (layoutProperty).toString();
 }
 
-inline bool write (juce::ValueTree project, const juce::String& data, juce::UndoManager& undo, const juce::String& action)
+inline bool write (tracktion::Edit& edit, const juce::String& data, const juce::String& action)
 {
+    auto& project = edit.state;
     if (! project.isValid() || data.isEmpty() || data.getNumBytesAsUTF8() > maximumLayoutBytes || read (project) == data)
         return false;
     const auto layout = juce::JSON::parse (data);
@@ -21,9 +22,11 @@ inline bool write (juce::ValueTree project, const juce::String& data, juce::Undo
         || ! layout.getProperty ("seats", {}).isArray())
         return false;
 
+    auto& undo = edit.getUndoManager();
     undo.beginNewTransaction (action);
     project.setProperty (layoutProperty, data, &undo);
     undo.beginNewTransaction();
+    edit.markAsChanged();
     return true;
 }
 }

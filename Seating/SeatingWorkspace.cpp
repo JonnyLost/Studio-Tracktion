@@ -75,7 +75,7 @@ void Workspace::store (const juce::String& data, const juce::String& action)
 {
     if (edit == nullptr) return;
     loaded = data;
-    if (! write (project, data, edit->getUndoManager(), action)) refresh();
+    if (! write (*edit, data, action)) refresh();
 }
 
 #if STUDIO_SPATIAL_TESTS
