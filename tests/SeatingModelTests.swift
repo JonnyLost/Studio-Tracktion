@@ -17,6 +17,7 @@ private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(SeatingCatalog.byID["v1-clarinet"]?.matches("b-flat vol 1") == true, "Search aliases and volume")
         require(SeatingCatalog.byID["v1-bosendorfer"]?.matches("bosendorfer") == true, "Diacritic-insensitive search")
         require(SeatingCatalog.byID["v1-bosendorfer"]?.matches("v2") == false, "Search excludes other volumes")
+        require(SeatingCatalog.byID["v1-violin-2"]?.matches("volume 2") == false, "Volume search ignores numbers in a name")
 
         let point = SeatingPoint.limited(x: 0.32, depth: 0.50)
         for (width, height) in [(610.0, 380.0), (920.0, 740.0), (285.0, 200.0)] {
@@ -25,7 +26,8 @@ private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
             let roundTrip = projection.model(at: screen)
             require(abs(roundTrip.x - point.x) < 1e-9 && abs(roundTrip.depth - point.depth) < 1e-9,
                     "Stage coordinates survive resize and the view transform")
-            require(projection.contains(screen) && !projection.contains(.zero), "Drop hit-testing must follow the stage outline")
+            require(projection.contains(screen) && !projection.contains(projection.location(x: 0, depth: 2)),
+                    "Drop hit-testing must follow the stage outline")
             require(projection.location(x: 0, depth: 0.70).y < projection.location(x: 0, depth: 0.25).y,
                     "Increasing depth moves a seat away from the conductor")
         }

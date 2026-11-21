@@ -3305,7 +3305,12 @@ public:
        #if STUDIO_SPATIAL_TESTS
         if (commandLine == "--studio-test-seating-project")
         {
+           #if JUCE_MAC
+            Window reviewWindow;
+            auto& view = *static_cast<StudioView*> (reviewWindow.getContentComponent());
+           #else
             StudioView view;
+           #endif
             const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SEATING_SCREENSHOTS", {});
             setApplicationReturnValue (view.runSeatingProjectReview (path.isEmpty() ? File() : File (path)));
             quit();

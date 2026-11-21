@@ -76,6 +76,7 @@ enum SeatingCatalog {
         guitar|Concert Guitar
         electric-guitar|Overdrive Electric Guitar|distorted
         upright-bass|Upright Bass
+        appassionata|Appassionata Strings (Bonus)
         """),
         entries(2, .winds, """
         flute|Flute 2

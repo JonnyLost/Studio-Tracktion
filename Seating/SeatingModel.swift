@@ -15,10 +15,24 @@ struct SeatingInstrument: Identifiable {
     let aliases: String
 
     func matches(_ query: String) -> Bool {
-        let searchable = "\(name) \(family.rawValue) volume \(volume) vol \(volume) v\(volume) \(aliases)"
-        return query.split(whereSeparator: \.isWhitespace).allSatisfy {
-            searchable.range(of: String($0), options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        let searchable = "\(name) \(family.rawValue) \(aliases)"
+        let terms = query.lowercased().split(whereSeparator: \.isWhitespace)
+        var index = 0
+        while index < terms.count {
+            let term = terms[index]
+            if ["vol", "vol.", "volume"].contains(term), index + 1 < terms.count, let number = Int(terms[index + 1]) {
+                if number != volume { return false }
+                index += 2
+                continue
+            }
+            if term.first == "v", let number = Int(term.dropFirst()) {
+                if number != volume { return false }
+            } else if searchable.range(of: String(term), options: [.caseInsensitive, .diacriticInsensitive]) == nil {
+                return false
+            }
+            index += 1
         }
+        return true
     }
 }
 

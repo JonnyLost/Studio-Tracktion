@@ -17,7 +17,6 @@ typealias SeatingCommit = @convention(c) (UnsafeMutableRawPointer?, UnsafePointe
             json.withCString { data in name.withCString { action in commit?(context, data, action) } }
         }
     }
-
 }
 
 private func host(_ handle: UnsafeMutableRawPointer) -> SeatingHost {
@@ -56,13 +55,14 @@ func studioSeatingAppearance(_ handle: UnsafeMutableRawPointer, _ scale: Double,
 @MainActor @_cdecl("studioSeatingExercise")
 func studioSeatingExercise(_ handle: UnsafeMutableRawPointer, _ step: Int32,
                            _ screenshot: UnsafePointer<CChar>?) -> Int32 {
-    let state = host(handle).state
+    let seating = host(handle)
+    let state = seating.state
     guard state.available else { return 0 }
     if step == 0 {
         guard state.layout.seats.isEmpty else { return 0 }
         state.change("Load Modern Symphony") { $0 = SeatingCatalog.modernSymphony() }
         state.selection = state.layout.seats.first?.id
-        return state.layout.seats.count == 24 && capture(state, screenshot) ? 1 : 0
+        return state.layout.seats.count == 24 && capture(seating.view, screenshot) ? 1 : 0
     }
     if step == 1 {
         guard let instrument = SeatingCatalog.byID["v4-soprano-solo"] else { return 0 }
@@ -76,16 +76,16 @@ func studioSeatingExercise(_ handle: UnsafeMutableRawPointer, _ step: Int32,
           state.layout.seats.count == 25, seat.instrumentID == "v4-soprano-solo", seat.section == "Guest Soloists",
           seat.position == SeatingPoint(x: 0.58, depth: 0.46) else { return 0 }
     state.selection = seat.id
-    return capture(state, screenshot) ? 1 : 0
+    return capture(seating.view, screenshot) ? 1 : 0
 }
 
-@MainActor private func capture(_ state: SeatingEditorState, _ path: UnsafePointer<CChar>?) -> Bool {
+@MainActor private func capture(_ view: NSView, _ path: UnsafePointer<CChar>?) -> Bool {
     guard let path else { return true }
-    // Render the production SwiftUI view at a predictable size for CI review.
-    let image = ImageRenderer(content: SeatingEditor(state: state).frame(width: 1180, height: 560))
-    image.scale = 1
-    guard let cgImage = image.cgImage,
-          let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else { return false }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.075))
+    view.layoutSubtreeIfNeeded()
+    guard view.window != nil, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let png = bitmap.representation(using: .png, properties: [:]) else { return false }
     return (try? png.write(to: URL(fileURLWithPath: String(cString: path)), options: .atomic)) != nil
 }
 #endif
