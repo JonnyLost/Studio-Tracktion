@@ -338,9 +338,16 @@ void Plugin::publish (Instrument next)
         return a.mapping.sample == b.mapping.sample;
     });
     if (! sameSamples) ++sampleRevision;
+    const bool sameSwitches = std::ranges::equal (model.groups, next.groups, [] (const auto& a, const auto& b)
+    {
+        const auto& x = a.playback; const auto& y = b.playback;
+        return a.id == b.id && x.trigger == y.trigger && x.key == y.key && x.controller == y.controller
+            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger;
+    });
+    if (! sameSwitches) ++switchRevision;
     auto bank = std::make_unique<Bank>();
     bank->settings = next.settings;
-    bank->sampleRevision = sampleRevision;
+    bank->sampleRevision = sampleRevision; bank->switchRevision = switchRevision;
     for (const auto& group : next.groups) { auto g = group.playback; g.id = group.id; bank->groups.push_back (g); }
     for (const auto& entry : next.zones) { auto z = entry.mapping; z.folder = entry.folder; bank->zones.push_back (std::move (z)); }
 
@@ -630,6 +637,21 @@ void Plugin::deinitialise()
 
 void Plugin::reset() { needsReset.store (true, std::memory_order_relaxed); }
 
+bool Plugin::sendArticulation (const studio::ArticulationMapping& mapping)
+{
+    const auto verified = articulations();
+    if (std::find (verified.begin(), verified.end(), mapping) == verified.end()) return false;
+    const auto write = writeIndex.load (std::memory_order_relaxed);
+    const unsigned needed = mapping.message == studio::ArticulationMessage::keyswitch ? 2 : 1;
+    if (write - readIndex.load (std::memory_order_acquire) + needed > queueSize) return false;
+    const bool key = mapping.message == studio::ArticulationMessage::keyswitch;
+    queue[write % queueSize] = { 2, mapping.channel - 1, mapping.number, mapping.value, -1, sampleRevision, -1, -1,
+        (key ? 0x90 : 0xb0) | (mapping.channel - 1), switchRevision };
+    if (key) queue[(write + 1) % queueSize] = { 2, mapping.channel - 1, mapping.number, 0, -1, sampleRevision, -1, -1, 0x80 | (mapping.channel - 1), switchRevision };
+    writeIndex.store (write + needed, std::memory_order_release);
+    return true;
+}
+
 void Plugin::preview (int source, int channel, int note, int velocity, int zone, int first, int end)
 {
     const auto write = writeIndex.load (std::memory_order_relaxed);
@@ -666,18 +688,32 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
         renderer.panic();
     wasPlaying = context.isPlaying;
 
-    if (previewOverflow.exchange (false, std::memory_order_acquire) || stopped)
+    const bool overflow = previewOverflow.exchange (false, std::memory_order_acquire);
+    if (overflow || stopped)
     {
         renderer.preview (1, 0, -1, 0);
         renderer.preview (2, 0, -1, 0);
         renderer.preview (3, 0, -1, 0);
-        read = write = writeIndex.load (std::memory_order_acquire);
+        const auto latest = writeIndex.load (std::memory_order_acquire);
+        // A switch selected after Stop is a valid control command. Preserve it
+        // while flushing queued musical auditions from the previous transport.
+        if (stopped && ! overflow && ! context.isRendering)
+            for (auto i = read; i != latest; ++i)
+            {
+                const auto& event = queue[i % queueSize];
+                if (event.status && event.bindingRevision == bank->switchRevision) renderer.midi (event.status, event.note, event.velocity);
+            }
+        read = write = latest;
     }
     if (! context.isRendering)
         for (; read != write; ++read)
         {
             const auto& event = queue[read % queueSize];
-            if (event.zone < 0 || event.revision == bank->sampleRevision)
+            if (event.status)
+            {
+                if (event.bindingRevision == bank->switchRevision) renderer.midi (event.status, event.note, event.velocity);
+            }
+            else if (event.zone < 0 || event.revision == bank->sampleRevision)
                 renderer.preview (event.source, event.channel, event.note, event.velocity, event.zone, event.first, event.end);
         }
     readIndex.store (read, std::memory_order_release);

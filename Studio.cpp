@@ -3806,6 +3806,8 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     showWorkspace (Workspace::closed); selection.selectOnly (violinTrack);
     articulation.refresh (violinTrack, phrase.get(), true);
     if (! articulation.selectReviewMapping ("Pizzicato")) return fail ("native violin mappings follow selected track");
+    period();
+    if (sampler->activeKeyswitch (1) != 26) return fail ("strip must deliver the verified violin keyswitch to the audio engine");
     articulation.writeForDrawnNote (*phrase, te::BeatPosition::fromBeats (.5), 60);
     phrase->getSequence().addNote (60, te::BeatPosition::fromBeats (.5), te::BeatDuration::fromBeats (.25), 100, 0, nullptr);
     bool hasSwitch = false;
@@ -3827,7 +3829,9 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     selection.selectOnly (hornTrack.get()); articulation.refresh (hornTrack.get(), nullptr, true);
     if (! articulation.selectReviewMapping ("Marcato") || articulation.reviewActiveName() != "Marcato"
         || ! snapshot (articulationStrip, "sampler-horn-strip-closeup") || ! snapshot (*this, "sampler-horn-articulation-strip")) return fail ("horn strip follows actual horn instrument");
-    period(); hornSampler->preview (1, 1, 60, 100);
+    period();
+    if (hornSampler->activeKeyswitch (1) != 37) return fail ("strip must deliver the verified horn keyswitch to the audio engine");
+    hornSampler->preview (1, 1, 60, 100);
     if (period() < .001f) return fail ("horn articulation must audition");
     hornSampler->preview (1, 1, 60, 0); hornSampler->reset(); period();
     selection.selectOnly (violinTrack); articulation.refresh (violinTrack, phrase.get(), true);

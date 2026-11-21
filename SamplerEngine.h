@@ -58,7 +58,7 @@ struct Bank
     Settings settings;
     std::vector<Zone> zones;
     std::vector<Group> groups;
-    std::uint64_t sampleRevision = 0;
+    std::uint64_t sampleRevision = 0, switchRevision = 0;
 };
 
 bool validMapping (const Zone&) noexcept;
@@ -76,6 +76,7 @@ public:
     void publishMeters() noexcept;
     unsigned activeVoices() const noexcept { return active.load (std::memory_order_relaxed); }
     bool noteActive (int note) const noexcept;
+    int activeKeyswitch (int channel) const noexcept { return channel >= 1 && channel <= 16 ? keyMeters[static_cast<std::size_t> (channel - 1)].load (std::memory_order_relaxed) : -1; }
 
 private:
     struct Channel
@@ -104,6 +105,7 @@ private:
     std::array<Voice, maxVoices> voices {};
     std::array<std::uint32_t, maxGroups + 1> roundRobin {};
     std::array<std::atomic<std::uint64_t>, 2> notes {};
+    std::array<std::atomic<int>, 16> keyMeters {};
     std::atomic<unsigned> active { 0 };
     const Bank* bank = nullptr; // Borrowed only during the current render call.
     std::uint64_t age = 0, revision = 0;

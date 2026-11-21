@@ -392,6 +392,7 @@ void Engine::publishMeters() noexcept
         }
 
     for (std::size_t i = 0; i < notes.size(); ++i) notes[i].store (keys[i], std::memory_order_relaxed);
+    for (std::size_t i = 0; i < channels.size(); ++i) keyMeters[i].store (channels[i].selectedKey, std::memory_order_relaxed);
     active.store (count, std::memory_order_relaxed);
     bank = nullptr;
 }

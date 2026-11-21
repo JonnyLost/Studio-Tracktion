@@ -418,6 +418,13 @@ void ArticulationPalette::auditionMapping (const ArticulationMapping& mapping)
     auto* t = target();
     actionStatus.clear();
     stopLiveNote();
+    if (nativeSampler)
+        if (auto* native = dynamic_cast<sampler::Plugin*> (uniqueInstrument (t)))
+        {
+            if (! native->sendArticulation (mapping)) setStatus ("Sampler switch changed or the preview queue is full. Refresh the assignment and try again.");
+            else updateState();
+            return;
+        }
     if (mapping.message == ArticulationMessage::keyswitch)
     {
         t->injectLiveMidiMessage (MidiMessage::noteOn (mapping.channel, mapping.number, (uint8) mapping.value), {});

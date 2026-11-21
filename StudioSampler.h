@@ -59,6 +59,8 @@ public:
     const Instrument& instrument() const { return model; }
     unsigned changeCount() const { return modelRevision; }
     juce::String stateError() const { return restoreError; }
+    bool sendArticulation (const studio::ArticulationMapping&);
+    int activeKeyswitch (int channel) const { return renderer.activeKeyswitch (channel); }
     bool noteActive (int note) const { return renderer.noteActive (note); }
     void preview (int source, int channel, int note, int velocity, int zone = -1, int first = -1, int end = -1);
     void previewRange (int zone, int first, int end);
@@ -93,7 +95,7 @@ private:
     Instrument model;
     juce::String restoreError;
     unsigned modelRevision = 0;
-    std::uint64_t sampleRevision = 0;
+    std::uint64_t sampleRevision = 0, switchRevision = 0;
     bool writing = false;
     std::size_t loadedBytes = 0;
     unsigned loadedSamples = 0;
@@ -109,7 +111,7 @@ private:
     std::unique_ptr<const Bank> retired;
     std::atomic<const Bank*> published { nullptr }, borrowed { nullptr };
 
-    struct Preview { int source, channel, note, velocity, zone; std::uint64_t revision; int first = -1, end = -1; };
+    struct Preview { int source, channel, note, velocity, zone; std::uint64_t revision; int first = -1, end = -1, status = 0; std::uint64_t bindingRevision = 0; };
     static constexpr unsigned queueSize = 128;
     std::array<Preview, queueSize> queue {};
     std::atomic<unsigned> writeIndex { 0 }, readIndex { 0 };
