@@ -37,7 +37,7 @@ Section inferSection (te::AudioTrack& track)
         return std::any_of (words.begin(), words.end(), [&] (auto* word) { return name.contains (word); });
     };
     if (contains ({ "violin", "viola", "cello", "contrabass", "strings", "harp" })) return Section::strings;
-    if (contains ({ "flute", "oboe", "clarinet", "bassoon", "woodwind", "piccolo" })) return Section::woodwinds;
+    if (contains ({ "flute", "oboe", "clarinet", "bassoon", "woodwind", "piccolo", "english horn", "basset horn", "saxophone" })) return Section::woodwinds;
     if (contains ({ "horn", "trumpet", "trombone", "tuba", "brass" })) return Section::brass;
     if (contains ({ "perc", "timpani", "drum", "mallet" })) return Section::percussion;
     if (contains ({ "piano", "keys", "organ", "celesta" })) return Section::keys;
@@ -146,13 +146,20 @@ SpatialWorkspace::SpatialWorkspace()
               SpatialField (bandNames[4], 0.25, 2, 0.05, " x"), SpatialField (bandNames[5], 0.25, 2, 0.05, " x") }
 {
     add (*this, stagePage, roomPage, micPage);
+    add (stagePage, stageToolbar, stageRoster, stageInspector, stageMap);
+    stagePage.addChildComponent (stageSummary);
+    stagePage.addChildComponent (openStage);
+    openStage.onClick = [this] { if (onExpandStage) onExpandStage(); };
    #if JUCE_MAC
-    stagePage.addAndMakeVisible (seatingDesigner);
-    seatingDesigner.setTooltip ("Design the physical seating plan for this project");
+    stageToolbar.addAndMakeVisible (seatingDesigner);
+    seatingDesigner.setTooltip ("Browse the VSL catalog and reference seating without changing acoustic positions");
     seatingDesigner.onClick = [this] { if (onOpenSeating) onOpenSeating(); };
    #endif
-    add (stagePage, stageStatus, stageSignal, stageCheck, stageMap, seating, arrangeScope, trackList, sections,
-         arrange, resetSeat, toggleSend, pan, depth, trim);
+    add (stageToolbar, stageCheck, seating, arrangeScope, arrange);
+    add (stageRoster, rosterTitle, trackList);
+    add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, stageStatus, stageSignal);
+    rosterTitle.setText ("Project Tracks", dontSendNotification);
+    trackList.setColour (ListBox::backgroundColourId, colours::canvas);
     add (roomPage, roomStatus, roomDraftStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
          wall, floor, ceiling, applyRoom, saveRoom,
          renameRoom, deleteRoom, bypassRoom, resetRoom, widthField, lengthField, heightField, treatment,
@@ -163,7 +170,7 @@ SpatialWorkspace::SpatialWorkspace()
          micX, micDepth, micHeight, azimuth, elevation, spacing, pairAngle, micBankViewport);
     micBankViewport.setViewedComponent (&micBank, false);
     micBankViewport.setScrollBarsShown (false, true);
-    for (auto* status : { &stageStatus, &roomStatus, &roomDraftStatus, &micStatus, &stageSignal, &roomSignalLabel })
+    for (auto* status : { &stageStatus, &roomStatus, &roomDraftStatus, &micStatus, &stageSignal, &roomSignalLabel, &stageSummary })
     {
         status->setFont (FontOptions (12.0f));
         status->setColour (Label::textColourId, colours::secondary);
@@ -185,7 +192,7 @@ SpatialWorkspace::SpatialWorkspace()
     arrange.setTooltip ("Place instruments in the chosen layout and scope. Undo restores the previous placement.");
     applyRoom.setTooltip ("Use the draft room for the shared Stage return");
     arrangeScope.setTitle ("Auto Arrange scope");
-    trackList.setTitle ("Stage track");
+    trackList.setTitle ("Project tracks by instrument family");
     sections.setTitle ("Track instrument section");
     roomList.setTitle ("Room Library");
     wall.setTitle ("Wall material");
@@ -214,16 +221,23 @@ SpatialWorkspace::SpatialWorkspace()
         syncMaps();
     };
     stageMap.onMove = [this] (const String& key, Position p, bool section) { moveTrack (key, p, section); };
-    trackList.onChange = [this]
+    stageMap.trackFromDrag = [this] (const DragAndDropTarget::SourceDetails& details) -> String
     {
-        const int i = trackList.getSelectedItemIndex();
-        if (isPositiveAndBelow (i, (int) tracks.size())) stageMap.onSelect (tracks[(size_t) i].id.toString());
+        const auto payload = details.description.toString();
+        if (! editable || dragSession.isEmpty() || ! payload.startsWith (dragSession + "|")
+            || details.sourceComponent == nullptr || ! stagePage.isParentOf (details.sourceComponent.get())) return {};
+        const auto key = payload.fromFirstOccurrenceOf ("|", false, false);
+        const auto found = std::find_if (tracks.begin(), tracks.end(), [&] (const auto& row) { return row.id.toString() == key; });
+        if (found != tracks.end())
+            if (auto* track = lookup (found->id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze)) return key;
+        return {};
     };
+    placeSelected.onClick = [this] { placeSelectedTrack(); };
     arrange.onClick = [this] { arrangeTracks(); };
-    stageMap.setDescription ("Drag a seat or use arrow keys. Shift moves its section. Right-click overlapping seats to choose one.");
+    stageMap.setDescription ("Drag a project track here to place it. Move a seat by dragging or using the arrow keys. Shift moves its section.");
     resetSeat.onClick = [this]
     {
-        if (auto* track = lookup (selectedTrack); editable && track != nullptr)
+        if (auto* track = lookup (selectedTrack); editable && track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
         {
             auto value = readSeat (track->state.getChildWithName (seatType), inferSection (*track));
             value.position = {};
@@ -233,7 +247,10 @@ SpatialWorkspace::SpatialWorkspace()
         }
     };
     toggleSend.onClick = [this] { toggleTrackAudio(); };
-    pan.onChange = depth.onChange = trim.onChange = sections.onChange = [this] { editSeat(); };
+    sections.onChange = [this] { editSeat (SeatField::family); };
+    pan.onChange = [this] { editSeat (SeatField::pan); };
+    depth.onChange = [this] { editSeat (SeatField::depth); };
+    trim.onChange = [this] { editSeat (SeatField::trim); };
 
     roomList.onChange = [this]
     {
@@ -330,7 +347,11 @@ SpatialWorkspace::SpatialWorkspace()
     setView (View::stage);
 }
 
-SpatialWorkspace::~SpatialWorkspace() { micBankViewport.setViewedComponent (nullptr); }
+SpatialWorkspace::~SpatialWorkspace()
+{
+    trackList.setModel (nullptr);
+    micBankViewport.setViewedComponent (nullptr);
+}
 
 void SpatialWorkspace::setEdit (te::Edit* next)
 {
@@ -343,8 +364,13 @@ void SpatialWorkspace::setEdit (te::Edit* next)
     statusMessage.clear();
     lastRoomStamp.clear(); lastMicStamp.clear();
     tracks.clear();
+    trackListRows.clear();
+    dragSession = next == nullptr ? String() : Uuid().toString();
     appliedSeating = -1;
-    trackList.clear (dontSendNotification);
+    {
+        const ScopedValueSetter<bool> refreshing (refreshingTrackList, true);
+        trackList.updateContent();
+    }
     roomDraftDirty = false;
     setDraft (readRoom (activeRoom()), activeRoom().isValid() ? nameOf (activeRoom()) : String ("Chamber Hall"));
     syncRooms();
@@ -360,6 +386,17 @@ void SpatialWorkspace::setView (View next)
     stagePage.setVisible (view == View::stage);
     roomPage.setVisible (view == View::rooms);
     micPage.setVisible (view == View::microphones);
+    resized();
+}
+
+void SpatialWorkspace::setCompactStage (bool value)
+{
+    if (compactStage == value) return;
+    compactStage = value;
+    stageMap.setOverview (value);
+    for (auto* item : { &stageToolbar, &stageRoster, &stageInspector }) item->setVisible (! value);
+    stageSummary.setVisible (value);
+    openStage.setVisible (value);
     resized();
 }
 
@@ -445,7 +482,9 @@ void SpatialWorkspace::updateTracks (const Array<te::AudioTrack*>& items)
             auto v = track->state.getChildWithName (seatType);
             auto data = readSeat (v, inferSection (*track));
             ++totals[(size_t) data.section];
-            next.push_back ({ track->itemID, track->getName(), data, v.isValid() });
+            auto* instrument = studio::findInstrument (*track);
+            next.push_back ({ track->itemID, track->getName(), instrument != nullptr ? instrument->getName() : String(),
+                              data, v.isValid(), hasRoomSend (*track) });
         }
 
     const auto style = (Seating) jlimit (0, 2, (int) scene().getProperty ("seating", 0));
@@ -462,16 +501,86 @@ void SpatialWorkspace::updateTracks (const Array<te::AudioTrack*>& items)
     }
     const bool listChanged = next.size() != tracks.size()
         || ! std::equal (next.begin(), next.end(), tracks.begin(), [] (const auto& a, const auto& b)
-            { return a.id == b.id && a.name == b.name; });
+        {
+            return a.id == b.id && a.name == b.name && a.instrument == b.instrument && a.placed == b.placed
+                && a.stageAudio == b.stageAudio && a.seat.section == b.seat.section;
+        });
+    tracks = std::move (next);
     if (listChanged)
     {
-        trackList.clear (dontSendNotification);
-        int id = 1;
-        for (const auto& row : next) trackList.addItem (row.name, id++);
+        trackListRows.clear();
+        for (size_t group = 0; group < totals.size(); ++group)
+            if (totals[group] > 0)
+            {
+                const auto section = static_cast<Section> (group);
+                trackListRows.push_back ({ section, -1 });
+                for (int i = 0; i < (int) tracks.size(); ++i)
+                    if (tracks[(size_t) i].seat.section == section) trackListRows.push_back ({ section, i });
+            }
+        const ScopedValueSetter<bool> refreshing (refreshingTrackList, true);
+        trackList.updateContent();
+        trackList.repaint();
     }
-    tracks = std::move (next);
     if (std::none_of (tracks.begin(), tracks.end(), [this] (const auto& row) { return row.id == selectedTrack; }))
         selectedTrack = tracks.empty() ? te::EditItemID() : tracks.front().id;
+}
+
+int SpatialWorkspace::getNumRows() { return (int) trackListRows.size(); }
+
+String SpatialWorkspace::getNameForRow (int index)
+{
+    if (! isPositiveAndBelow (index, getNumRows())) return {};
+    const auto group = trackListRows[(size_t) index];
+    if (group.trackIndex < 0) return sectionNames[(size_t) group.section];
+    const auto& row = tracks[(size_t) group.trackIndex];
+    return row.name + (row.placed ? ", on stage" : ", unplaced");
+}
+
+void SpatialWorkspace::paintListBoxItem (int index, Graphics& g, int width, int height, bool selected)
+{
+    if (refreshingTrackList || ! isPositiveAndBelow (index, getNumRows())) return;
+    const auto group = trackListRows[(size_t) index];
+    auto area = Rectangle<int> (width, height).reduced (appearance.px (8), 0);
+    if (group.trackIndex < 0)
+    {
+        g.setColour (colours::secondary);
+        g.setFont (uiFont (11.0f, Font::bold));
+        g.drawText (sectionNames[(size_t) group.section], area, Justification::centredLeft);
+        return;
+    }
+    const auto& row = tracks[(size_t) group.trackIndex];
+    if (selected) { g.setColour (colours::selected); g.fillRect (0, 0, width, height); }
+    g.setColour (colours::text);
+    g.setFont (uiFont (12.0f, Font::bold));
+    g.drawFittedText (row.name, area.removeFromTop (height / 2 + appearance.px (2)), Justification::centredLeft, 1);
+    g.setColour (colours::secondary);
+    g.setFont (uiFont (10.0f));
+    const auto status = ! row.placed ? "Unplaced" : row.stageAudio ? "Stage audio on" : "On stage";
+    const auto instrument = row.instrument == row.name ? String() : row.instrument;
+    g.drawFittedText (instrument.isEmpty() ? String (status) : instrument + "  |  " + status, area, Justification::centredLeft, 1);
+}
+
+void SpatialWorkspace::selectedRowsChanged (int index)
+{
+    if (refreshingTrackList || ! isPositiveAndBelow (index, getNumRows())) return;
+    const auto row = trackListRows[(size_t) index];
+    if (row.trackIndex >= 0) stageMap.onSelect (tracks[(size_t) row.trackIndex].id.toString());
+    else syncStage();
+}
+
+void SpatialWorkspace::returnKeyPressed (int index)
+{
+    if (! isPositiveAndBelow (index, getNumRows()) || trackListRows[(size_t) index].trackIndex < 0) return;
+    selectedRowsChanged (index);
+    placeSelectedTrack();
+}
+
+var SpatialWorkspace::getDragSourceDescription (const SparseSet<int>& rows)
+{
+    if (rows.size() != 1 || ! isPositiveAndBelow (rows[0], getNumRows())) return {};
+    const auto row = trackListRows[(size_t) rows[0]];
+    if (row.trackIndex < 0 || ! editable) return {};
+    return dragSession + "|" + tracks[(size_t) row.trackIndex].id.toString();
 }
 
 void SpatialWorkspace::syncStage()
@@ -479,10 +588,20 @@ void SpatialWorkspace::syncStage()
     auto found = std::find_if (tracks.begin(), tracks.end(), [this] (const auto& row) { return row.id == selectedTrack; });
     auto* track = lookup (selectedTrack);
     const bool hasTrack = found != tracks.end() && track != nullptr;
-    const bool enabled = hasTrack && hasRoomSend (*track);
-    trackList.setSelectedItemIndex (hasTrack ? (int) (found - tracks.begin()) : -1, dontSendNotification);
+    const bool enabled = hasTrack && found->stageAudio;
+    const bool canChangeSeat = editable && hasTrack && ! track->isFrozen (te::Track::anyFreeze);
+    SparseSet<int> selectedRows;
+    if (hasTrack)
+        for (int i = 0; i < getNumRows(); ++i)
+            if (trackListRows[(size_t) i].trackIndex == (int) (found - tracks.begin())) selectedRows.addRange ({ i, i + 1 });
+    if (trackList.getSelectedRows() != selectedRows) trackList.setSelectedRows (selectedRows, dontSendNotification);
     for (Component* component : std::initializer_list<Component*> { &sections, &pan, &depth, &trim, &resetSeat })
-        component->setEnabled (editable && hasTrack);
+        component->setEnabled (canChangeSeat);
+    resetSeat.setEnabled (canChangeSeat && found->placed);
+    placeSelected.setEnabled (canChangeSeat && ! found->placed);
+    selectedName.setText (! hasTrack ? String ("Select a project track") : found->name
+        + (found->instrument.isEmpty() || found->instrument == found->name ? String() : "  |  " + found->instrument), dontSendNotification);
+    selectedName.setTooltip (selectedName.getText());
     seating.setEnabled (editable); arrangeScope.setEnabled (editable);
     arrange.setEnabled (editable && ! tracks.empty());
     toggleSend.setButtonText (enabled ? "Disable stage audio" : "Enable stage audio");
@@ -496,12 +615,15 @@ void SpatialWorkspace::syncStage()
             : "Explicitly add Studio stage balance and a shared room send to this track.");
     }
     const auto liveGain = enabled ? activeRoomSendDb (*track) : std::nullopt;
-    const auto signal = liveGain ? "Stage audio | Effective send " + String (*liveGain, 1) + " dB"
+    const auto signal = liveGain ? "Stage audio on | Room send " + String (*liveGain, 1) + " dB"
         : enabled ? String ("Stage audio | Room send bypassed")
-                  : String ("Placement only | Enable stage audio to hear pan and room send");
+                  : hasTrack && ! found->placed ? String ("Unplaced | Drag this track onto the stage") : String ("Stage audio off");
     stageStatus.setText (edit == nullptr ? "Create or open a project to place instruments." : ! supported()
         ? "This project uses a newer spatial state version." : statusMessage.isNotEmpty() ? statusMessage : signal, dontSendNotification);
     stageStatus.setTooltip (stageStatus.getText());
+    const auto placed = (int) std::count_if (tracks.begin(), tracks.end(), [] (const auto& row) { return row.placed; });
+    stageSummary.setText (tracks.empty() ? String ("Stage | Open a project to place tracks")
+        : String (placed) + " placed  |  " + String ((int) tracks.size() - placed) + " unplaced", dontSendNotification);
     syncRoomAudioControls();
 }
 
@@ -510,12 +632,14 @@ void SpatialWorkspace::syncMaps()
     std::vector<SpatialMap::Marker> markers;
     markers.reserve (tracks.size() + (size_t) microphones().getNumChildren());
     for (const auto& row : tracks)
-        markers.push_back ({ row.id.toString(), row.name, row.seat.position, (int) row.seat.section, false, 0, Pattern::omni });
-    for (auto mic : microphones())
-    {
-        const auto value = readMic (mic);
-        markers.push_back ({ keyOf (mic), nameOf (mic), value.position, 0, true, value.azimuth, value.pattern });
-    }
+        if (row.placed || view == View::microphones)
+            markers.push_back ({ row.id.toString(), row.name, row.seat.position, (int) row.seat.section, false, 0, Pattern::omni });
+    if (view == View::microphones)
+        for (auto mic : microphones())
+        {
+            const auto value = readMic (mic);
+            markers.push_back ({ keyOf (mic), nameOf (mic), value.position, 0, true, value.azimuth, value.pattern });
+        }
     const auto seatingLayout = (Seating) jlimit (0, 2, (int) scene().getProperty ("seating", 0));
     if (view == View::microphones) micMap.display (std::move (markers), selectedMic, true, seatingLayout);
     else stageMap.display (std::move (markers), selectedTrack.toString(), false, seatingLayout);
@@ -523,8 +647,16 @@ void SpatialWorkspace::syncMaps()
 
 void SpatialWorkspace::setSeat (te::AudioTrack& track, Seat value)
 {
-    replaceChild (track.state, track.state.getChildWithName (seatType),
-        writeSeat (track.itemID.toString(), value), edit->getUndoManager());
+    auto& undo = edit->getUndoManager();
+    const auto properties = writeSeat (track.itemID.toString(), value);
+    auto existing = track.state.getChildWithName (seatType);
+    if (! existing.isValid()) track.state.addChild (properties, -1, &undo);
+    else
+        for (int i = 0; i < properties.getNumProperties(); ++i)
+        {
+            const auto key = properties.getPropertyName (i);
+            existing.setProperty (key, properties.getProperty (key), &undo);
+        }
     updateRoomSend (track, value.position, value.sendTrim);
 }
 
@@ -533,12 +665,16 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
     if (! editable) return;
     const auto found = std::find_if (tracks.begin(), tracks.end(), [&] (const auto& row) { return row.id.toString() == key; });
     if (found == tracks.end()) return;
+    auto* selected = lookup (found->id);
+    if (selected == nullptr || selected->isFrozen (te::Track::anyFreeze)) return;
+    point = validPosition (point);
+    group = group && found->placed;
     auto delta = Position { point.x - found->seat.position.x, point.depth - found->seat.position.depth };
     if (group)
     {
         float left = -2, right = 2, front = -1, back = 1;
         for (const auto& row : tracks)
-            if (row.seat.section == found->seat.section)
+            if (row.placed && row.seat.section == found->seat.section)
             {
                 const auto p = row.seat.position;
                 left = jmax (left, -1.0f - p.x); right = jmin (right, 1.0f - p.x);
@@ -546,11 +682,11 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
             }
         delta = { jlimit (left, right, delta.x), jlimit (front, back, delta.depth) };
     }
-    if (delta.x == 0.0f && delta.depth == 0.0f) return;
-    begin (group ? "Move stage section" : "Move stage seat");
+    if (found->placed && delta.x == 0.0f && delta.depth == 0.0f) return;
+    begin (! found->placed ? "Place stage track" : group ? "Move stage section" : "Move stage seat");
     for (const auto& row : tracks)
-        if (row.id == found->id || (group && row.seat.section == found->seat.section))
-            if (auto* track = lookup (row.id))
+        if (row.id == found->id || (group && row.placed && row.seat.section == found->seat.section))
+            if (auto* track = lookup (row.id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
             {
                 auto value = row.seat;
                 value.position = validPosition ({ value.position.x + delta.x, value.position.depth + delta.depth });
@@ -560,12 +696,27 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
     finish();
 }
 
-void SpatialWorkspace::editSeat()
+void SpatialWorkspace::placeSelectedTrack()
+{
+    const auto found = std::find_if (tracks.begin(), tracks.end(), [this] (const auto& row) { return row.id == selectedTrack; });
+    if (found != tracks.end() && ! found->placed) moveTrack (found->id.toString(), found->seat.position, false);
+}
+
+void SpatialWorkspace::editSeat (SeatField field)
 {
     auto* track = lookup (selectedTrack);
-    if (! editable || track == nullptr || sections.getSelectedId() <= 0) return;
+    const auto found = std::find_if (tracks.begin(), tracks.end(), [this] (const auto& row) { return row.id == selectedTrack; });
+    if (! editable || track == nullptr || track->isFrozen (te::Track::anyFreeze) || found == tracks.end()) return;
+    auto value = found->seat;
+    switch (field)
+    {
+        case SeatField::family: value.section = (Section) jlimit (0, (int) sectionNames.size() - 1, sections.getSelectedId() - 1); break;
+        case SeatField::pan: value.position.x = pan.get(); break;
+        case SeatField::depth: value.position.depth = depth.get(); break;
+        case SeatField::trim: value.sendTrim = trim.get(); break;
+    }
     begin ("Edit stage seat");
-    setSeat (*track, { { pan.get(), depth.get() }, (Section) (sections.getSelectedId() - 1), trim.get() });
+    setSeat (*track, value);
     statusMessage.clear();
     finish();
 }
@@ -593,7 +744,7 @@ void SpatialWorkspace::arrangeTracks()
     requireScene().setProperty ("seating", (int) style, &edit->getUndoManager());
     for (const auto& row : tracks)
         if (included (row))
-            if (auto* track = lookup (row.id))
+            if (auto* track = lookup (row.id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
             {
                 auto value = row.seat;
                 const auto index = (size_t) value.section;
@@ -623,10 +774,56 @@ void SpatialWorkspace::arrangeForInterfaceReview (Seating layout)
     arrangeTracks();
 }
 
+bool SpatialWorkspace::verifyDropForInterfaceReview (te::AudioTrack& track, Position position)
+{
+    const auto index = std::find_if (trackListRows.begin(), trackListRows.end(), [&] (const auto& row)
+    {
+        return row.trackIndex >= 0 && tracks[(size_t) row.trackIndex].id == track.itemID;
+    });
+    if (index == trackListRows.end()) return false;
+    const int row = (int) (index - trackListRows.begin());
+    if (! getNameForRow (row).contains ("unplaced")) return false;
+    SparseSet<int> selectedRows;
+    selectedRows.addRange ({ row, row + 1 });
+    const auto data = getDragSourceDescription (selectedRows);
+    stageMap.itemDropped ({ data, &trackList, { 0, 0 } });
+    if (track.state.getChildWithName (seatType).isValid()) return false;
+    const DragAndDropTarget::SourceDetails details { data, &trackList, stageMap.screen (position).roundToInt() };
+    if (! stageMap.isInterestedInDragSource (details)) return false;
+    stageMap.itemDropped (details);
+    const auto stored = track.state.getChildWithName (seatType);
+    const auto placed = readSeat (stored).position;
+    return stored.isValid() && stored["trackKey"].toString() == track.itemID.toString() && ! hasRoomSend (track)
+        && selectedTrack == track.itemID && std::abs (placed.x - position.x) < 0.015f
+        && std::abs (placed.depth - position.depth) < 0.015f;
+}
+
+bool SpatialWorkspace::verifyDeletedTrackForInterfaceReview (te::EditItemID id)
+{
+    const auto key = id.toString();
+    const DragAndDropTarget::SourceDetails stale { dragSession + "|" + key, &trackList, stageMap.screen ({}).roundToInt() };
+    return selectedTrack != id && ! stageMap.isInterestedInDragSource (stale)
+        && std::none_of (tracks.begin(), tracks.end(), [&] (const auto& row) { return row.id == id; })
+        && std::none_of (stageMap.markers.begin(), stageMap.markers.end(), [&] (const auto& marker) { return marker.key == key; });
+}
+
+bool SpatialWorkspace::verifyInspectorForInterfaceReview (te::AudioTrack& track)
+{
+    const auto before = readSeat (track.state.getChildWithName (seatType));
+    stageMap.onSelect (track.itemID.toString());
+    trim.set (-21.0f);
+    trim.onChange();
+    const auto after = readSeat (track.state.getChildWithName (seatType));
+    const auto send = activeRoomSendDb (track);
+    return before.position == after.position && before.section == after.section && after.sendTrim == -21.0f
+        && send && std::abs (*send - sendDb (after.position, after.sendTrim)) < 0.0001f;
+}
+
 bool SpatialWorkspace::verifyMoveForInterfaceReview (te::AudioTrack& track)
 {
     const auto read = [&] { return readSeat (track.state.getChildWithName (seatType)); };
     const auto before = read();
+    const auto beforeSend = activeRoomSendDb (track);
     const auto target = validPosition ({ before.position.x + 0.13f, before.position.depth + 0.09f });
     const auto start = stageMap.screen (before.position);
     const auto end = stageMap.screen (target);
@@ -641,10 +838,21 @@ bool SpatialWorkspace::verifyMoveForInterfaceReview (te::AudioTrack& track)
     stageMap.mouseDrag (event (end, ModifierKeys::leftButtonModifier, true));
     stageMap.mouseUp (event (end, 0, true));
     const auto after = read();
+    const auto routed = [&] (Seat value)
+    {
+        if (! beforeSend) return ! hasRoomSend (track);
+        const auto send = activeRoomSendDb (track);
+        const auto panner = std::find_if (track.pluginList.begin(), track.pluginList.end(), [] (auto* plugin)
+        {
+            return plugin->state.hasProperty ("studioStagePan");
+        });
+        return send && std::abs (*send - sendDb (value.position, value.sendTrim)) < 0.0001f
+            && panner != track.pluginList.end() && std::abs ((float) (*panner)->state["studioStagePan"] - value.position.x) < 0.0001f;
+    };
     const auto moved = std::abs (after.position.x - target.x) < 0.0001f
-        && std::abs (after.position.depth - target.depth) < 0.0001f && before != after;
-    const bool undone = edit->getUndoManager().undo() && read() == before;
-    const bool redone = edit->getUndoManager().redo() && read() == after;
+        && std::abs (after.position.depth - target.depth) < 0.0001f && before != after && routed (after);
+    const bool undone = edit->getUndoManager().undo() && read() == before && routed (before);
+    const bool redone = edit->getUndoManager().redo() && read() == after && routed (after);
     if (! (moved && undone && redone))
         std::fprintf (stderr, "Stage drag expected %.4f, %.4f and reached %.4f, %.4f (undo %d, redo %d).\n",
                       (double) target.x, (double) target.depth, (double) after.position.x, (double) after.position.depth,
@@ -998,6 +1206,9 @@ void SpatialWorkspace::layoutChanged()
 
 void SpatialWorkspace::appearanceChanged()
 {
+    trackList.setRowHeight (appearance.line (12, 3) + appearance.line (10, 3));
+    rosterTitle.setFont (FontOptions (13.0f, Font::bold));
+    selectedName.setFont (FontOptions (13.0f, Font::bold));
     for (auto* editBox : { &roomName, &micName, &setupName })
     {
         editBox->setFont (uiFont (13.0f));
@@ -1013,10 +1224,23 @@ int SpatialWorkspace::minimumContentHeight (int width)
     return layoutWorkspace (width, false, 0);
 }
 
+void SpatialWorkspace::paint (Graphics& g)
+{
+    if (view != View::stage || compactStage) return;
+    for (auto* panel : { &stageRoster, &stageInspector })
+    {
+        const auto bounds = panel->getBounds().toFloat();
+        g.setColour (colours::canvas);
+        g.fillRoundedRectangle (bounds, (float) appearance.px (6));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (bounds.reduced (0.5f), (float) appearance.px (6), 1.0f);
+    }
+}
+
 void SpatialWorkspace::resized()
 {
     const auto bounds = getLocalBounds();
-    for (auto* page : { &stagePage, &roomPage, &micPage }) page->setBounds (bounds);
+    for (auto* page : std::array<Component*, 3> { &stagePage, &roomPage, &micPage }) page->setBounds (bounds);
     const int extra = jmax (0, bounds.getHeight() - minimumContentHeight (bounds.getWidth()));
     layoutWorkspace (bounds.getWidth(), true, extra);
 }
@@ -1063,22 +1287,95 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
     };
     if (view == View::stage)
     {
-        toolbar (area, { { &seating, 180 }, { &arrangeScope, 155 }, { &arrange, 120 }, { &stageCheck, 161 }
-                       #if JUCE_MAC
-                         , { &seatingDesigner, 146 }
-                       #endif
-                       });
-        place (area, stageStatus, 2 * m.line (12, 1));
-        place (area, stageSignal, 2 * m.line (12, 1));
-        mapAndInspector (stageMap, [&] (Rectangle<int>& region, bool assign)
+        if (compactStage)
         {
-            const auto items = { ToolbarItem { &trackList, 147 }, ToolbarItem { &sections, 130 },
-                                 ToolbarItem { &resetSeat, 96 }, ToolbarItem { &toggleSend, 171 } };
-            if (assign) layoutToolbar (region, items);
-            else region.removeFromTop (toolbarHeight (region.getWidth(), items));
-            if (assign) layoutFields (region, { &pan, &depth, &trim });
-            else region.removeFromTop (fieldRows (region.getWidth(), 3) * fieldHeight());
-        });
+            if (bounds)
+            {
+                auto row = getLocalBounds().reduced (m.px (8), 1);
+                stageMap.setBounds (row.removeFromLeft (jmin (row.getWidth() / 4, m.px (130))));
+                openStage.setBounds (row.removeFromRight (m.span (116)).reduced (m.px (2), 0));
+                stageSummary.setBounds (row.withTrimmedLeft (m.px (7)));
+            }
+            return 1;
+        }
+        const auto controls = { ToolbarItem { &seating, 163 }, ToolbarItem { &arrangeScope, 137 },
+                                ToolbarItem { &arrange, 110 }, ToolbarItem { &stageCheck, 150 }
+                               #if JUCE_MAC
+                                , ToolbarItem { &seatingDesigner, 174 }
+                               #endif
+                              };
+        const auto top = area.removeFromTop (toolbarHeight (area.getWidth(), controls));
+        if (bounds)
+        {
+            stageToolbar.setBounds (top);
+            auto row = stageToolbar.getLocalBounds();
+            layoutToolbar (row, controls);
+        }
+        const int gap = m.px (6);
+        area.removeFromTop (gap);
+        const int inspectorWidth = m.span (246);
+        const int rosterWidth = m.span (196);
+        const bool columns = area.getWidth() >= m.span (804);
+        const bool withRoster = columns || area.getWidth() >= m.span (510);
+        const auto layoutInspector = [&] (Rectangle<int> region, bool assign)
+        {
+            const int startY = region.getY();
+            region = region.withTrimmedTop (gap).reduced (gap, 0);
+            const auto put = [&] (Component& item, int h)
+            {
+                auto field = region.removeFromTop (h);
+                if (assign) item.setBounds (field);
+            };
+            put (selectedName, m.line (13, 6));
+            put (sections, m.control (26));
+            region.removeFromTop (gap);
+            auto axes = region.removeFromTop (fieldHeight());
+            if (assign)
+            {
+                pan.setBounds (axes.removeFromLeft (axes.getWidth() / 2));
+                depth.setBounds (axes);
+            }
+            put (trim, fieldHeight());
+            auto buttons = region.removeFromTop (m.control (26));
+            if (assign)
+            {
+                placeSelected.setBounds (buttons.removeFromLeft (buttons.getWidth() * 57 / 100).withTrimmedRight (m.px (2)));
+                resetSeat.setBounds (buttons);
+            }
+            region.removeFromTop (m.px (3));
+            put (toggleSend, m.control (26));
+            put (stageStatus, 2 * m.line (11, 1));
+            put (stageSignal, 2 * m.line (11, 1));
+            return region.getY() - startY + gap;
+        };
+        const int inspectionHeight = layoutInspector (area.withWidth (columns ? inspectorWidth : area.getWidth()), false);
+        auto row = area.removeFromTop ((columns ? jmax (mapHeight(), inspectionHeight) : mapHeight()) + extra);
+        const auto layoutRoster = [&] (Rectangle<int> sidebar)
+        {
+            if (! bounds) return;
+            stageRoster.setBounds (sidebar);
+            auto inside = stageRoster.getLocalBounds().reduced (gap);
+            rosterTitle.setBounds (inside.removeFromTop (m.line (13, 5)));
+            trackList.setBounds (inside);
+        };
+        if (withRoster) layoutRoster (row.removeFromLeft (rosterWidth + gap).withTrimmedRight (gap));
+        if (columns)
+        {
+            const auto sidebar = row.removeFromRight (inspectorWidth + gap).withTrimmedLeft (gap);
+            if (bounds) { stageInspector.setBounds (sidebar); layoutInspector (stageInspector.getLocalBounds(), true); }
+        }
+        if (bounds) stageMap.setBounds (row);
+        if (! withRoster)
+        {
+            area.removeFromTop (gap);
+            layoutRoster (area.removeFromTop (m.px (132)));
+        }
+        if (! columns)
+        {
+            area.removeFromTop (gap);
+            auto sidebar = area.removeFromTop (inspectionHeight);
+            if (bounds) { stageInspector.setBounds (sidebar); layoutInspector (stageInspector.getLocalBounds(), true); }
+        }
     }
     else if (view == View::rooms)
     {

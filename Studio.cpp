@@ -201,6 +201,7 @@ public:
     int runInterfaceReview (const File& output);
     int runInstrumentWorkspaceReview (const File& output);
     int runSeatingProjectReview (const File& output);
+    int runUnifiedStageReview (const File& output);
    #endif
 
     StudioView()
@@ -278,6 +279,7 @@ public:
         instrumentWorkspace.onPreferenceChange = [this] { rememberInstrumentWorkspace(); };
         workspaceBody.addChildComponent (articulation);
         workspaceBody.addChildComponent (spatialWorkspace);
+        spatialWorkspace.onExpandStage = [this] { setDockMode (DockMode::split); };
        #if JUCE_MAC
         addChildComponent (seatingWorkspace);
         spatialWorkspace.onOpenSeating = [this]
@@ -1059,7 +1061,7 @@ private:
         { Workspace::midi, "MIDI Monitor" }, { Workspace::resources, "Resource Inspector" },
         { Workspace::instrumentEditor, "Instrument Editor" },
        #if JUCE_MAC
-        { Workspace::orchestraSeating, "Seating Designer" },
+        { Workspace::orchestraSeating, "Arrangement Reference" },
        #endif
     };
 
@@ -1071,7 +1073,7 @@ private:
             case Workspace::rooms:       return {{ { Workspace::stage, "Stage" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::microphones: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Channel" } }};
-            case Workspace::orchestraSeating: return {{ { Workspace::stage, "Audio Stage" }, { Workspace::rooms, "Rooms" } }};
+            case Workspace::orchestraSeating: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::channel:     return {{ { Workspace::instruments, "Instruments" }, { Workspace::stage, "Stage" } }};
             default:                    return {{ { Workspace::closed, "" }, { Workspace::closed, "" } }};
         }
@@ -1247,12 +1249,13 @@ private:
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
-        spatialWorkspace.setVisible (showingSpatial && ! compact);
+        spatialWorkspace.setVisible (showingSpatial && (! compact || workspace == Workspace::stage));
         if (showingSpatial)
         {
             using View = studio::spatial::SpatialWorkspace::View;
             const auto view = workspace == Workspace::stage ? View::stage : workspace == Workspace::rooms ? View::rooms : View::microphones;
             spatialWorkspace.setView (view);
+            spatialWorkspace.setCompactStage (compact && view == View::stage);
         }
         articulation.setVisible (articulationWindow != nullptr || (showingArticulation && ! compact));
         mixer.setVisible (mixing && ! compact);
@@ -1273,7 +1276,7 @@ private:
         workspaceTitle.setVisible (open);
         workspaceDivider.setVisible (open);
         workspaceTitle.setText (name, dontSendNotification);
-        workspaceSummary.setVisible (open && compact);
+        workspaceSummary.setVisible (open && compact && workspace != Workspace::stage);
         workspaceSummary.setText ("Choose Split or Expanded to show controls.", dontSendNotification);
         if (! editingMidi || compact)
             piano.silencePreview();
@@ -2842,6 +2845,130 @@ private:
 };
 
 #if STUDIO_SPATIAL_TESTS
+int StudioView::runUnifiedStageReview (const File& output)
+{
+    using namespace studio::spatial;
+    stopTimer();
+    environmentWelcome.dismiss();
+    applyAppearance (100, 100, false);
+    setSize (1280, 800);
+    const auto fail = [] (const char* reason)
+    {
+        std::fprintf (stderr, "Unified Stage review failed: %s\n", reason);
+        return 1;
+    };
+    const auto folder = File::getSpecialLocation (File::tempDirectory).getNonexistentChildFile ("Studio Stage Review", {}, false);
+    if (folder.createDirectory().failed()) return fail ("create fixture directory");
+    const ScopeGuard removeFixtures { [folder] { folder.deleteRecursively(); } };
+    const auto fixture = folder.getChildFile ("Chamber Session.tracktionedit");
+    loadProject (fixture, true);
+    if (! edit || ! browser.loadSynth || ! browser.loadSampler) return fail ("prepare instrument project");
+    browser.loadSynth ("analog", true);
+    auto* synth = dynamic_cast<studio::synth::Plugin*> (instrumentWorkspace.getPlugin());
+    auto* legacy = synth != nullptr ? dynamic_cast<te::AudioTrack*> (synth->getOwnerTrack()) : nullptr;
+    browser.loadSampler (true);
+    auto* sampler = dynamic_cast<studio::sampler::Plugin*> (instrumentWorkspace.getPlugin());
+    auto* unplaced = sampler != nullptr ? dynamic_cast<te::AudioTrack*> (sampler->getOwnerTrack()) : nullptr;
+    if (! legacy || ! unplaced || legacy == unplaced) return fail ("create distinct Synth and Sampler tracks");
+    legacy->setName ("Flute");
+    unplaced->setName ("Flute");
+    const auto legacyID = legacy->itemID, unplacedID = unplaced->itemID;
+    const auto archived = String (R"({"version":1,"name":"Legacy Reference","seats":[]})");
+    if (! studio::seating::write (*edit, archived, "Save reference")) return fail ("prepare reference data");
+    const Seat savedSeat { { -0.639f, 0.389f }, Section::woodwinds, -18 };
+    legacy->state.addChild (writeSeat (legacyID.toString(), savedSeat), -1, nullptr);
+    legacy->getOutput().setOutputToDefaultDevice (false);
+    if (setRoomSend (*legacy, true, savedSeat.position, savedSeat.sendTrim, factoryRooms[0].room).failed())
+        return fail ("prepare legacy room send");
+    const auto saveToDisk = [&] { return te::EditFileOperations (*edit).writeToFile (fixture, false); };
+    if (! saveToDisk()) return fail ("save legacy fixture");
+    loadProject (fixture, false);
+    legacy = trackById (legacyID);
+    unplaced = trackById (unplacedID);
+    const auto read = [] (te::AudioTrack& track) { return readSeat (track.state.getChildWithName (seatType)); };
+    if (! legacy || ! unplaced || read (*legacy) != savedSeat || ! hasRoomSend (*legacy)
+        || unplaced->state.getChildWithName (seatType).isValid() || studio::seating::read (edit->state) != archived)
+        return fail ("reopen legacy placements, routing and reference without automatic conversion");
+
+    setDockMode (DockMode::expanded);
+    showWorkspace (Workspace::stage);
+    const auto refresh = [&] (te::AudioTrack* selection)
+    {
+        spatialWorkspace.refresh (te::getAudioTracks (*edit), selection != nullptr ? Array<te::AudioTrack*> { selection } : Array<te::AudioTrack*>(), true, true);
+    };
+    refresh (legacy);
+    if (! spatialWorkspace.verifyMoveForInterfaceReview (*legacy)) return fail ("drag updates pan and existing send, including Undo and Redo");
+    if (! spatialWorkspace.verifyInspectorForInterfaceReview (*legacy)) return fail ("trim updates the send without rounding the saved pan or depth");
+    const auto moved = read (*legacy);
+    if (! spatialWorkspace.verifyDropForInterfaceReview (*unplaced, { 0.48f, 0.50f }) || read (*legacy) != moved)
+        return fail ("roster drop places the selected duplicate-named track without enabling audio");
+    const auto placed = read (*unplaced);
+    if (! edit->getUndoManager().undo() || unplaced->state.getChildWithName (seatType).isValid()
+        || ! edit->getUndoManager().redo() || read (*unplaced) != placed)
+        return fail ("undo and redo initial placement");
+    if (selectedTrack() != unplaced) return fail ("Stage selection reaches the arrangement");
+    unplaced->setName ("Clarinet");
+    if (auto clip = legacy->insertMIDIClip ("Opening phrase", { {}, te::TimePosition::fromSeconds (4) }, nullptr))
+        clip->getSequence().addNote (69, te::BeatPosition(), te::BeatDuration::fromBeats (2.0), 90, 0, nullptr);
+
+    // Add other orchestral families through the same roster drop path for review.
+    for (const auto& [name, position] : { std::pair { "Violin I", Position { -0.73f, 0.14f } },
+                                        std::pair { "Violin II", Position { -0.32f, 0.15f } },
+                                        std::pair { "Cellos", Position { 0.51f, 0.15f } },
+                                        std::pair { "Horns", Position { -0.34f, 0.66f } },
+                                        std::pair { "Timpani", Position { 0.13f, 0.83f } } })
+    {
+        auto* track = addTrack ("Instrument");
+        if (! track) return fail ("create review track");
+        track->setName (name);
+        refresh (track);
+        if (! spatialWorkspace.verifyDropForInterfaceReview (*track, position)) return fail ("place review track");
+    }
+    auto* waiting = addTrack ("Instrument");
+    if (! waiting) return fail ("create an unplaced review track");
+    waiting->setName ("Concert Piano");
+    selection.selectOnly (legacy);
+    edit->dispatchPendingUpdatesSynchronously();
+    for (int i = 0; i < 12 && editor->getVisibleTrackCount() < te::getAudioTracks (*edit).size(); ++i)
+        MessageManager::getInstance()->runDispatchLoopUntil (50);
+    timerCallback();
+    refresh (legacy);
+    if (output != File() && output.createDirectory().failed()) return fail ("create screenshot directory");
+    const auto capture = [&] (const char* name)
+    {
+        if (output == File()) return true;
+        FileOutputStream file (output.getChildFile (name));
+        return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
+            && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), file);
+    };
+    for (const auto& [mode, filename] : { std::pair { DockMode::compact, "stage-compact.png" },
+                                         std::pair { DockMode::split, "stage-split.png" },
+                                         std::pair { DockMode::expanded, "stage-expanded.png" } })
+    {
+        workspaceHeight = 410;
+        setDockMode (mode);
+        if (! spatialWorkspace.isVisible() || ! workspaceViewport.isVisible() || ! workspaceDivider.isVisible() || ! capture (filename))
+            return fail ("present the same acoustic Stage in all three workspace modes");
+    }
+
+    if (! saveToDisk()) return fail ("save updated project");
+    loadProject (fixture, false);
+    legacy = trackById (legacyID);
+    unplaced = trackById (unplacedID);
+    if (! legacy || ! unplaced || read (*legacy) != moved || read (*unplaced) != placed || ! hasRoomSend (*legacy)
+        || hasRoomSend (*unplaced) || studio::seating::read (edit->state) != archived || roomReturnTrack (*edit) == nullptr)
+        return fail ("restore positions, acoustic send and the unmodified reference");
+    showWorkspace (Workspace::stage);
+    refresh (unplaced);
+    selection.deselectAll();
+    edit->deleteTrack (unplaced);
+    refresh (legacy);
+    if (! spatialWorkspace.verifyDeletedTrackForInterfaceReview (unplacedID) || read (*legacy) != moved)
+        return fail ("track deletion removes its marker and rejects stale drops");
+    std::puts ("Unified Stage placement, routing, Undo/Redo, deletion, and project compatibility passed.");
+    return 0;
+}
+
 int StudioView::runSeatingProjectReview (const File& output)
 {
     stopTimer();
@@ -3303,6 +3430,14 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-unified-stage")
+        {
+            StudioView view;
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_UNIFIED_STAGE_SCREENSHOTS", {});
+            setApplicationReturnValue (view.runUnifiedStageReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-seating-project")
         {
            #if JUCE_MAC

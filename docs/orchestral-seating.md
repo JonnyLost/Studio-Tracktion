@@ -1,6 +1,6 @@
 # Orchestral Seating Designer
 
-On macOS, open **Stage → Seating Designer** or find **Seating Designer** under **More**. Open or create a project first. Search by instrument name, family, or volume, such as `muted trumpet v2`. Drag a result onto the stage or use its **+** button for a suggested position. Choose **Modern Symphony** to load a 24-placement modern orchestra, with first and second violins together on the conductor’s left.
+On macOS, open **Stage → Arrangement Reference** or find **Arrangement Reference** under **More**. Open or create a project first. Search by instrument name, family, or volume, such as `muted trumpet v2`. Drag a result onto the reference plan or use its **+** button for a suggested position. Choose **Load Modern Symphony** to load a 24-placement modern orchestra, with first and second violins together on the conductor’s left.
 
 Click a placement to select it and drag it to move it. The inspector edits the label, section, left/right position, and depth. Use **Use Existing Section** to group a seat with other placements. Use **Remove Seat** in the inspector or the seat’s context menu. On narrow windows, **Inspector** and **Library** switch the side panel. Use Studio’s workspace divider or **Expanded** for more room. Studio’s project Undo and Redo include seating actions.
 
@@ -26,7 +26,7 @@ The [official Special Editions legacy manual](https://odl.vsl.co.at/cms-vsl/lega
 
 Studio’s current app uses JUCE and Tracktion, with an AppKit bridge hosting a native SwiftUI view inside the existing lower workspace. The editor is created on demand on the main thread and uses Studio’s navy/slate colors, section colors, appearance settings, and workspace navigation. It uses SF Symbols for recognized instrument types and a note or initial where an instrument-specific symbol is unavailable.
 
-Studio saves a versioned seating layout in the edit’s `studioPhysicalSeating` property. It stores independent seat IDs, catalog references, display names, labels, sections, and normalized positions. Legacy projects open with an empty seating design until the first edit. An unrecognized layout version is preserved on disk. A drag commits once to the existing project undo history. The physical layout has no track, audio graph, microphone, panner, or reverb bindings. Use **Audio Stage** to return to Studio’s existing acoustic placement.
+Studio saves a versioned seating layout in the edit’s `studioPhysicalSeating` property. It stores independent seat IDs, catalog references, display names, labels, sections, and normalized positions. Legacy projects open with an empty seating design until the first edit. An unrecognized layout version is preserved on disk. A drag commits once to the existing project undo history. The reference layout has no track, audio graph, microphone, panner, or reverb bindings. Use **Stage** to return to [track placement](unified-stage.md).
 
 ## Verification
 

@@ -136,6 +136,7 @@ struct SeatingEditor: View {
             HStack(spacing: sized(8)) {
                 Text(state.layout.name.isEmpty ? "Orchestra" : state.layout.name)
                     .font(font(16, weight: .semibold)).lineLimit(1)
+                Text("Reference only").font(font(11)).foregroundStyle(quiet)
                 Spacer(minLength: 4)
                 if !wide {
                     Button(showInspector ? "Library" : "Inspector") { showInspector.toggle() }
