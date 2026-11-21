@@ -17,6 +17,7 @@ using namespace tracktion::literals;
 #include "MusicalTransport.h"
 #include "ComposerMidi.h"
 #include "ComposerTracks.h"
+#include "ComposerBounceUI.h"
 #include "StudioUI.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
@@ -232,7 +233,7 @@ public:
         projectMenu.onClick = [this]
         {
             showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
-                                           &audioSettings, &plugins, &monitorButton, &importMidi, &exportMidi });
+                                           &audioSettings, &plugins, &monitorButton, &importMidi, &exportMidi, &exportWav });
         };
         trackMenu.onClick = [this]
         {
@@ -525,6 +526,7 @@ public:
         importAudio.onClick = [this] { chooseAudio(); };
         importMidi.onClick = [this] { chooseMidiImport(); };
         exportMidi.onClick = [this] { chooseMidiExport(); };
+        exportWav.onClick = [this] { chooseWavExport(); };
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
         addChildComponent (environmentWelcome);
@@ -550,6 +552,9 @@ public:
         piano.setClip (nullptr);
         timeline.setViewedComponent (nullptr);
         stopTimer();
+        if (bounceWindow != nullptr)
+            bounceWindow.deleteAndZero();
+        bounce.reset();
         pendingPlugin.reset();
         rememberInstrumentWorkspace();
         instrumentWorkspace.clear();
@@ -1089,7 +1094,10 @@ private:
 
     Label title, message, trackDetails, workspaceTitle,
           workspaceSummary, ariaReviewNotice;
-    TextButton importMidi { "Import MIDI..." }, exportMidi { "Export MIDI..." };
+    TextButton importMidi { "Import MIDI..." }, exportMidi { "Export MIDI..." }, exportWav { "Export WAV..." };
+    std::unique_ptr<studio::bounce::Job> bounce;
+    double bounceProgress = 0;
+    SafePointer<AlertWindow> bounceWindow;
     studio::MusicalTransport music;
     const Colour timelineCycleColour { 0xff242c36 };
     std::optional<te::TimePosition> cycleAnchor;
@@ -1846,6 +1854,7 @@ private:
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
         completePendingPlugin();
+        updateWavExport();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         music.refresh (ready);
@@ -1863,6 +1872,7 @@ private:
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
         importMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
         exportMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
+        exportWav.setEnabled (ready && ! playing && studio::transportSettled (*edit) && ! ariaReviewPending);
         rewind.setEnabled (ready && ! recording);
         play.setEnabled (ready);
         play.setToggleState (playing && ! recording, dontSendNotification);
@@ -2585,6 +2595,88 @@ private:
                 const auto result = studio::midi::write (*safe->edit, sources, dialog.getResult().withFileExtension (".mid"));
                 safe->message.setText (result.wasOk() ? "Exported selected MIDI." : result.getErrorMessage(), dontSendNotification);
             });
+    }
+
+    void chooseWavExport()
+    {
+        if (! canTransferMidi() || ariaReviewPending) return;
+        Array<te::EditItemID> ids;
+        for (const auto* track : selection.getItemsOfType<te::AudioTrack>())
+            ids.add (track->itemID);
+        for (const auto* clip : selection.getItemsOfType<te::Clip>())
+            if (const auto* track = clip->getClipTrack())
+                ids.addIfNotAlreadyThere (track->itemID);
+        const SafePointer<StudioView> safe (this);
+        const auto generation = projectGeneration;
+        studio::bounce::showOptions (*this, *edit, ids, [safe, generation] (Result result, studio::bounce::Options options)
+        {
+            if (safe == nullptr || generation != safe->projectGeneration || ! safe->canTransferMidi()
+                || safe->ariaReviewPending)
+                return;
+            if (result.failed())
+                safe->message.setText (result.getErrorMessage(), dontSendNotification);
+            else
+                safe->chooseWavDestination (std::move (options));
+        });
+    }
+
+    void chooseWavDestination (studio::bounce::Options options)
+    {
+        const auto generation = projectGeneration;
+        const SafePointer<StudioView> safe (this);
+        chooser = std::make_unique<FileChooser> (options.stems ? "Choose a folder for WAV stems" : "Export WAV mix",
+            options.stems ? projectFile.getParentDirectory() : projectFile.withFileExtension (".wav"),
+            options.stems ? "*" : "*.wav");
+        const auto flags = options.stems ? FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories
+                                         : FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles;
+        chooser->launchAsync (flags, [safe, generation, options = std::move (options)] (const FileChooser& dialog) mutable
+        {
+            if (safe == nullptr || safe->projectGeneration != generation || dialog.getResult() == File()
+                || ! safe->canTransferMidi() || safe->ariaReviewPending)
+                return;
+            options.destination = options.stems ? dialog.getResult() : dialog.getResult().withFileExtension (".wav");
+            safe->startWavExport (options);
+        });
+    }
+
+    void startWavExport (const studio::bounce::Options& options)
+    {
+        piano.silencePreview();
+        busy = true;
+        if (auto result = studio::bounce::Job::create (*edit, options, bounce); result.failed())
+        {
+            busy = false;
+            message.setText (result.getErrorMessage(), dontSendNotification);
+            return;
+        }
+        bounceProgress = 0;
+        auto* window = new AlertWindow ("Exporting WAV", "Rendering " + String (bounce->fileCount()) + " file(s).",
+                                        MessageBoxIconType::NoIcon, this);
+        bounceWindow = window;
+        window->addProgressBarComponent (bounceProgress);
+        window->addButton ("Cancel", 1, KeyPress (KeyPress::escapeKey));
+        const SafePointer<StudioView> safe (this);
+        window->enterModalState (true, ModalCallbackFunction::create ([safe] (int answer)
+        {
+            if (answer == 1 && safe != nullptr && safe->bounce != nullptr)
+                safe->bounce->cancel();
+        }), true);
+        bounce->start();
+    }
+
+    void updateWavExport()
+    {
+        if (bounce == nullptr) return;
+        busy = true;
+        bounceProgress = bounce->progress();
+        if (! bounce->isFinished()) return;
+        const auto result = bounce->publish();
+        message.setText (result.wasOk() ? "Exported " + String (bounce->fileCount()) + " WAV file(s)." : result.getErrorMessage(),
+                         dontSendNotification);
+        if (bounceWindow != nullptr)
+            bounceWindow->exitModalState (0);
+        bounce.reset();
+        busy = false;
     }
 
     void chooseAudio()
@@ -3727,7 +3819,7 @@ int StudioView::runInterfaceReview (const File& output)
 }
 
 namespace studio::spatial { int runSpatialRoutingTest(); }
-namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); }
+namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
 
 class StudioApplication final : public JUCEApplication
@@ -3777,6 +3869,13 @@ public:
            #endif
             const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SEATING_SCREENSHOTS", {});
             setApplicationReturnValue (view.runSeatingProjectReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-composer-bounce")
+        {
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_COMPOSER_AUDIO", {});
+            setApplicationReturnValue (studio::runComposerBounceTest (path.isEmpty() ? File() : File (path)));
             quit();
             return;
         }
