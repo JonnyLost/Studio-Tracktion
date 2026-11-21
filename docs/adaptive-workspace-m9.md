@@ -12,6 +12,8 @@ Compact, Split, Expanded and the divider still control the larger editor above t
 
 Studio Synth offers family-specific Sound controls, an Output page, and a layer selector for hybrid patches. Native edits go through the existing instrument setting and preset APIs. Dials commit a native preset edit when released, so a drag makes one undoable change. The Synth automation parameters use their existing Tracktion bindings. Studio Sampler exposes envelope, tuning, bend range and level. Its mapping, loops and zones remain in Detailed Editor.
 
+Studio currently has no Ostinato engine. A future engine can supply its own bindings in `InstrumentPerformance` and reuse the panel's layout and controls.
+
 ## Articulations
 
 The strip and palette use the same project mappings. Choose **Mappings** to add a name and MIDI message you have verified for the receiving patch and channel. The strip offers banks of six for larger profiles. **Pin** holds one track’s mapping profile. **Follow** returns to the selected track.

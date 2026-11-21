@@ -3425,6 +3425,14 @@ private:
 };
 
 #if STUDIO_SPATIAL_TESTS
+static bool hasArrangementRegion (const Component& component)
+{
+    if (dynamic_cast<const ClipComponent*> (&component) != nullptr) return true;
+    for (const auto* child : component.getChildren())
+        if (hasArrangementRegion (*child)) return true;
+    return false;
+}
+
 #include "tests/AdaptiveWorkspaceReview.inc"
 
 int StudioView::runUnifiedStageReview (const File& output)
@@ -3848,14 +3856,7 @@ int StudioView::runInterfaceReview (const File& output)
     selection.selectOnly (tracks[0]);
     // The production editor builds its rows and regions on the message loop.
     // Wait for those updates so review images show the actual arrangement.
-    const auto hasRegion = [] (const auto& self, Component& root) -> bool
-    {
-        if (dynamic_cast<ClipComponent*> (&root) != nullptr) return true;
-        for (auto* child : root.getChildren())
-            if (self (self, *child)) return true;
-        return false;
-    };
-    const auto arrangementReady = [&] { return editor->getVisibleTrackCount() >= tracks.size() && hasRegion (hasRegion, *editor); };
+    const auto arrangementReady = [&] { return editor->getVisibleTrackCount() >= tracks.size() && hasArrangementRegion (*editor); };
     for (int attempt = 0; attempt < 12 && ! arrangementReady(); ++attempt)
         MessageManager::getInstance()->runDispatchLoopUntil (50);
     if (! arrangementReady()) return fail ("arrangement rows and regions did not load");

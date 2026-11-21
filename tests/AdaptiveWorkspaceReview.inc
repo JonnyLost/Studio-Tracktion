@@ -173,6 +173,14 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     mode (PerformanceMode::hidden);
     selection.selectOnly (keys);
     refresh();
+    // Tracktion populates the arrangement asynchronously after the edit changes.
+    const auto arrangementReady = [&]
+    {
+        return editor->getVisibleTrackCount() >= te::getAudioTracks (*edit).size() && hasArrangementRegion (*editor);
+    };
+    for (int attempt = 0; attempt < 25 && ! arrangementReady(); ++attempt)
+        MessageManager::getInstance()->runDispatchLoopUntil (50);
+    if (! arrangementReady()) return fail ("arrangement tracks and regions must be visible in the header capture");
     if (! snapshot (*this, "01-header")) return fail ("capture the header");
     if (! cycleButton.getToggleState() || ! clickButton.getToggleState()) return fail ("transport shows actual cycle and click state");
     cycleButton.onClick();
