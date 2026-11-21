@@ -793,8 +793,8 @@ void Editor::choose (bool presetFile, bool save, bool replace)
          revision = plugin.changeCount()] (const FileChooser& dialog)
         {
             if (safe == nullptr) return;
-            const auto file = dialog.getResult();
             const auto files = dialog.getResults();
+            const auto file = files.isEmpty() ? File() : files.getFirst();
             MessageManager::callAsync ([safe, file, files, presetFile, save, replace, index, revision]
             {
                 if (safe == nullptr) return;
