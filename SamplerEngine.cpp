@@ -25,7 +25,7 @@ bool validMapping (const Zone& z) noexcept
 
 bool validLoop (const Zone& z, int frames) noexcept
 {
-    return z.loopStart >= 0 && z.loopEnd >= 2 && z.loopEnd <= frames && z.loopStart <= z.loopEnd - 2;
+    return z.loopStart >= z.start && z.loopEnd >= 2 && z.loopEnd <= (z.end > 0 ? std::min (z.end, frames) : frames) && z.loopStart <= z.loopEnd - 2;
 }
 
 void Engine::prepare (double rate) noexcept
@@ -68,6 +68,8 @@ void Engine::release (Voice& voice) noexcept
 
 void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity) noexcept
 {
+    if (! zone.sample || zone.sample->left.size() < 2 || zone.start < 0 || zone.start >= static_cast<int> (zone.sample->left.size())
+        || zone.end < 0 || (zone.end && (zone.end <= zone.start || zone.end > static_cast<int> (zone.sample->left.size())))) return;
     Voice* voice = nullptr;
     for (int i = 0; i < settings.polyphony; ++i)
     {
@@ -84,6 +86,9 @@ void Engine::trigger (const Zone& zone, int source, int channel, int note, int v
 
     *voice = {};
     voice->sample = zone.sample.get();
+    const int frames = static_cast<int> (zone.sample->left.size());
+    voice->position = std::clamp (zone.start, 0, frames - 1);
+    voice->end = zone.end > 0 ? std::clamp (zone.end, zone.start + 1, frames) : frames;
     voice->channel = channel;
     voice->note = note;
     voice->source = source;
@@ -221,7 +226,7 @@ void Engine::render (float* left, float* right, int frames) noexcept
         const double step = v.baseStep * pitchRatio (settings.semitones + channel.bend * settings.bendRange);
         const float vibrato = 0.5f * std::max (channel.modulation, channel.pressure);
         const float gain = v.velocityGain * instrumentGain * channel.volume * channel.expression;
-        const int length = static_cast<int> (v.sample->left.size());
+        const int length = v.end;
         const int blend = std::min (64, (v.loopEnd - v.loopStart) / 4);
         auto phase = basePhase;
 

@@ -12,7 +12,10 @@ struct SampleZone
     juce::File file;
     Zone mapping;
     juce::String problem;
+    int folder = 0; // Organizational group, independent of legacy round-robin IDs.
 };
+
+struct InstrumentGroup { int id = 0; juce::String name { "Main" }; };
 
 struct Instrument
 {
@@ -20,6 +23,7 @@ struct Instrument
     bool dirty = false;
     Settings settings;
     std::vector<SampleZone> zones;
+    std::vector<InstrumentGroup> groups { {} };
 };
 
 class Plugin final : public tracktion::Plugin, public InstrumentDiagnostics, private juce::Timer
@@ -54,6 +58,12 @@ public:
     void preview (int source, int channel, int note, int velocity, int zone = -1);
     juce::Result loadSample (const juce::File&, int replace = -1);
     void removeZone (int);
+    void duplicateZone (int);
+    void editGroups (std::vector<InstrumentGroup>);
+    void moveZone (int, int folder);
+    juce::Result proposeImport (const juce::Array<juce::File>&, bool automatic, Instrument&, juce::String& summary);
+    void commitImport (Instrument next) { change (std::move (next), true); }
+    void undoMapping (bool redo);
     void editZone (int, const Zone&);
     void editSettings (const Settings&);
     void rename (juce::String);

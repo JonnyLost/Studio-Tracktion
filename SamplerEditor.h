@@ -3,6 +3,7 @@
 
 #include "StudioSampler.h"
 #include "InstrumentWorkspace.h"
+#include <set>
 
 namespace studio::sampler
 {
@@ -12,7 +13,8 @@ int runSamplerIntegrationTest (const juce::File& screenshots);
 
 class Editor final : public NativeInstrumentEditor,
                      private juce::Timer,
-                     private juce::MidiKeyboardState::Listener
+                     private juce::MidiKeyboardState::Listener,
+                     private juce::ListBoxModel
 {
 public:
     explicit Editor (Plugin&);
@@ -32,7 +34,7 @@ public:
 #endif
 
 private:
-    enum class Page { basic, mapping, loops, advanced };
+    enum class Page { basic, mapping, loops, advanced, groups };
     struct Control
     {
         juce::Label label;
@@ -82,6 +84,12 @@ private:
     unsigned seen = 0;
     bool updating = false;
     bool clearAudition = false;
+    std::set<int> selectedZones;
+    double waveZoom = 1, waveOffset = 0;
+    juce::ListBox groupRows { "Instrument groups", this };
+    int getNumRows() override;
+    void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
+    void selectedRowsChanged (int) override;
 
     juce::Viewport viewport;
     juce::Component body;
@@ -90,13 +98,15 @@ private:
     juce::MidiKeyboardState keys;
     Keyboard keyboard { *this, keys };
     juce::Label name, preset, filename, status, meter;
-    juce::ComboBox samples, mode;
+    juce::ComboBox samples, mode, groupList;
+    juce::Label groupName;
+    juce::TextButton groups { "Groups" }, addGroup { "New group" }, copyGroup { "Copy group" }, deleteGroup { "Delete group" }, moveGroup { "Move zone here" }, duplicate { "Duplicate zone" }, undo { "Undo" }, redo { "Redo" };
     juce::ToggleButton loopEnabled { "Enable loop" };
-    juce::TextButton loadPreset { "Load Preset" }, savePreset { "Save Preset" };
-    juce::TextButton basic { "Basic" }, mapping { "Mapping" }, loops { "Loops" }, advanced { "Advanced" };
+    juce::TextButton loadPreset { "Load" }, savePreset { "Save" };
+    juce::TextButton basic { "Basic" }, mapping { "Mapping" }, loops { "Waveform" }, advanced { "Advanced" };
     juce::TextButton load { "Load Sample" }, locate { "Locate Sample" }, remove { "Remove Zone" }, audition { "Audition" };
     Control attack, decay, sustain, release, gain, tune, root, low, high, soft, hard, zoneGain, cents,
-            loopStart, loopEnd, voices, bend, group;
+            zoom, position, sampleStart, sampleEnd, loopStart, loopEnd, voices, bend, group;
     juce::OwnedArray<juce::Component> owned;
     std::unique_ptr<juce::FileChooser> chooser;
 
@@ -105,6 +115,7 @@ private:
     void refresh();
     void choose (bool presetFile, bool save, bool replace);
     void import (const juce::File&, int replace);
+    void importFiles (const juce::StringArray&);
     void selectZone (int);
     int initialZone() const;
     void setStatus (const juce::String&);
