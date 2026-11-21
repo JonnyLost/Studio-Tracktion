@@ -326,7 +326,8 @@ target_link_libraries(Studio PRIVATE
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
-    target_compile_options(Studio PRIVATE -fno-aligned-allocation)
+    target_compile_options(Studio PRIVATE "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-aligned-allocation>")
+    set_target_properties(Studio PROPERTIES LINKER_LANGUAGE CXX)
     set(CMAKE_Swift_LANGUAGE_VERSION 5)
     enable_language(Swift)
     set(studio_seating_model Seating/SeatingModel.swift Seating/SeatingCatalog.swift)

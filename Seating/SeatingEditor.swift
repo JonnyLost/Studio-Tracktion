@@ -141,7 +141,7 @@ struct SeatingEditor: View {
                     Button(showInspector ? "Library" : "Inspector") { showInspector.toggle() }
                         .help("Switch between the instrument library and layout inspector")
                 }
-                Button("Modern Symphony") {
+                Button("Load Modern Symphony") {
                     if state.layout.seats.isEmpty { loadPreset() } else { confirmPreset = true }
                 }
                 .help("Load the standard modern symphony layout")
@@ -424,7 +424,7 @@ private struct SeatingStage: View {
         .simultaneousGesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("concertStage"))
             .onChanged { event in
                 dragged = seat.id
-                state.selection = seat.id
+                if state.selection != seat.id { state.selection = seat.id }
                 preview = translated(seat.position, by: event.translation, projection: projection)
             }
             .onEnded { event in
