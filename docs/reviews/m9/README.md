@@ -2,6 +2,8 @@
 
 Studio 0.2 running on the Intel macOS CI runner. Open any image to see the full PNG. The Chamber Sketch project uses factory Synth presets, a synthetic Sampler source, and labeled MIDI mapping and unavailable Audio Unit fixtures.
 
+Studio captured these views during its automated workspace review. [Intel macOS capture run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/44908802022)
+
 ## Header and arrangement
 
 ![Studio transport above the Chamber Sketch arrangement](01-header.png)
