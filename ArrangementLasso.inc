@@ -33,7 +33,7 @@ void TrackComponent::mouseUp (const MouseEvent& event)
     auto& selection = editViewState.selectionManager;
     if (lasso == nullptr)
     {
-        if (event.mods.isLeftButtonDown())
+        if (! event.mouseWasDraggedSinceMouseDown())
             selection.selectOnly (track.get());
         return;
     }

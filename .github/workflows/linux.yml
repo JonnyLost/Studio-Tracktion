@@ -1,0 +1,53 @@
+name: Linux Composer checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - integration/studio-0.2-m7-baseline
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install JUCE build and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ladspa-sdk libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libxi-dev libxcomposite-dev \
+            libxrender-dev libxkbcommon-dev libgl1-mesa-dev xvfb xauth
+      - name: Fetch pinned Tracktion Engine and JUCE
+        run: |
+          git init "$RUNNER_TEMP/tracktion-engine"
+          git -C "$RUNNER_TEMP/tracktion-engine" fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228
+          git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
+      - name: Build and test
+        env:
+          STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-composer-images
+          STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine"
+          cmake --build build --parallel 3
+          xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure --output-junit "$RUNNER_TEMP/ctest-linux.xml"
+      - name: Measure native synth block times
+        run: build/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-composer-bench.tsv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-composer-linux
+          path: |
+            ${{ runner.temp }}/studio-composer-images/
+            ${{ runner.temp }}/studio-composer-audio/
+            ${{ runner.temp }}/studio-composer-bench.tsv
+            ${{ runner.temp }}/ctest-linux.xml

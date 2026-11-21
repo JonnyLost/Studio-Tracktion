@@ -66,11 +66,11 @@ inline tracktion::TimePosition snapMusicalTime (const tracktion::TempoSequence& 
 {
     if (step <= 0)
         return time;
-    const auto bar = sequence.toBarsAndBeats (time).bars;
+    const auto bar = std::max (0, sequence.toBarsAndBeats (time).bars);
     const double start = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar, {} }).inBeats();
     const double end = sequence.toBeats (tracktion::tempo::BarsAndBeats { bar + 1, {} }).inBeats();
     const double beat = sequence.toBeats (time).inBeats();
-    const double previous = start + std::floor ((beat - start) / step) * step;
+    const double previous = start + std::max (0.0, std::floor ((beat - start) / step)) * step;
     const double next = std::min (end, previous + step);
     return sequence.toTime (tracktion::BeatPosition::fromBeats (beat - previous < next - beat ? previous : next));
 }

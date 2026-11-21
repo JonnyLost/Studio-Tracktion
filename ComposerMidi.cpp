@@ -189,15 +189,17 @@ bool supportedClip (te::MidiClip& clip)
         && clip.getSequence().getNumSysExEvents() == 0 && ! clip.getMPEMode();
 }
 
-MidiMessage trackNameMessage (const String& name)
+bool validTickSpacing (const MidiMessageSequence& sequence)
 {
-    const auto text = name.toUTF8();
-    MemoryOutputStream data;
-    data.writeByte (char (0xff));
-    data.writeByte (3);
-    data.writeByte (char (std::min (127, int (text.sizeInBytes() - 1))));
-    data.write (text.getAddress(), std::min<size_t> (127, text.sizeInBytes() - 1));
-    return MidiMessage (data.getData(), (int) data.getDataSize());
+    double prior = 0;
+    for (const auto* event : sequence)
+    {
+        const double tick = event->message.getTimeStamp();
+        if (tick < prior || tick > std::numeric_limits<int>::max() || tick - prior > 0x0fffffff)
+            return false;
+        prior = tick;
+    }
+    return true;
 }
 }
 
@@ -343,6 +345,8 @@ Result write (te::Edit& edit, const Array<te::MidiClip*>& clips, const File& des
     for (const auto* event : tempo.getTimeSigs())
         meta.addEvent (MidiMessage::timeSignatureMetaEvent (event->numerator, event->denominator)
                            .withTimeStamp (ticks (event->getStartBeat())));
+    if (! validTickSpacing (meta))
+        return Result::fail ("The tempo map exceeds Standard MIDI File tick limits.");
     file.addTrack (meta);
 
     for (auto* track : te::getAudioTracks (edit))
@@ -370,7 +374,9 @@ Result write (te::Edit& edit, const Array<te::MidiClip*>& clips, const File& des
         }
         if (events.getNumEvents() > 0)
         {
-            events.addEvent (trackNameMessage (track->getName()));
+            events.addEvent (MidiMessage::textMetaEvent (3, track->getName()));
+            if (! validTickSpacing (events))
+                return Result::fail ("The selected regions exceed Standard MIDI File tick limits.");
             file.addTrack (events);
         }
     }

@@ -53,13 +53,29 @@ bool setMeterEvent (te::Edit& edit, te::BeatPosition beat, int numerator, int de
         || (denominator != 2 && denominator != 4 && denominator != 8 && denominator != 16))
         return false;
     edit.getUndoManager().beginNewTransaction ("Set meter event");
-    if (auto signature = edit.tempoSequence.insertTimeSig (beat))
+    auto& sequence = edit.tempoSequence;
+    auto& current = sequence.getTimeSigAt (beat);
+    if (current.getStartBeat() == beat)
     {
-        signature->numerator = numerator;
-        signature->denominator = denominator;
+        current.numerator = numerator;
+        current.denominator = denominator;
         return true;
     }
-    return false;
+
+    // Tracktion's convenience insertion rounds to a whole engine beat.
+    // A bar following an imported meter event can have a fractional start.
+    const auto next = std::find_if (sequence.getTimeSigs().begin(), sequence.getTimeSigs().end(),
+        [beat] (auto* event) { return event->getStartBeat() > beat; });
+    if ((beat - current.getStartBeat()).inBeats() < 1.0
+        || (next != sequence.getTimeSigs().end() && ((*next)->getStartBeat() - beat).inBeats() < 1.0))
+        return false;
+    auto state = current.state.getParent();
+    auto signature = current.state.createCopy();
+    signature.setProperty (te::IDs::startBeat, beat.inBeats(), nullptr);
+    signature.setProperty (te::IDs::numerator, numerator, nullptr);
+    signature.setProperty (te::IDs::denominator, denominator, nullptr);
+    state.addChild (signature, state.indexOf (current.state) + 1, &edit.getUndoManager());
+    return true;
 }
 
 te::MarkerClip::Ptr addCueMarker (te::Edit& edit, te::TimePosition time, const String& name)
@@ -150,6 +166,12 @@ void MusicalTransport::showMenu (te::TimePosition time, bool includeTransport)
         menu.addItem ("Metronome", true, edit->clickTrackEnabled, withEdit ([] (auto&, auto& project)
         {
             project.clickTrackEnabled = ! project.clickTrackEnabled.get();
+        }));
+
+        menu.addItem ("Accent bar starts", true, edit->clickTrackEmphasiseBars,
+                      withEdit ([] (auto&, auto& project)
+        {
+            project.clickTrackEmphasiseBars = ! project.clickTrackEmphasiseBars.get();
         }));
 
         PopupMenu levels, counts;

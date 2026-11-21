@@ -3,6 +3,7 @@
 #include "../MusicalRuler.h"
 #include "../StudioSynth.h"
 #include <cstdio>
+#include <thread>
 
 namespace studio
 {
@@ -26,13 +27,17 @@ int runComposerTransportTest()
     audio.initialise ({ .sampleRate = rate, .blockSize = blockSize, .inputChannels = 0, .outputChannels = 2 });
     audio.prepareToPlay (rate, blockSize);
     devices.dispatchPendingUpdates();
+    // Let the hosted MIDI scan settle before holding an input instance or
+    // starting a take. A device rescan rebuilds playback input instances.
+    MessageManager::getInstance()->runDispatchLoopUntil (100);
     const ScopeGuard cleanup { [&] { devices.deviceManager.closeAudioDevice(); devices.removeHostedAudioDeviceInterface(); } };
 
     auto edit = te::createEmptyEdit (engine, fixture.getFile());
     if (edit == nullptr) return fail ("create project");
     for (int index = 0; index < 3; ++index)
     {
-        auto track = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+        te::AudioTrack::Ptr track = index == 0 ? te::AudioTrack::Ptr (te::getAudioTracks (*edit).getFirst())
+            : edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
         if (track == nullptr) return fail ("create track");
         track->setName ("Cue " + String (index + 1));
         auto synth = edit->getPluginCache().createNewPlugin (studio::synth::Plugin::xmlTypeName, {});
@@ -90,6 +95,82 @@ int runComposerTransportTest()
         return fail ("reopen project with transport settings and tempo map");
     auto markers = edit->getMarkerManager().getMarkers();
     if (markers.size() != 1 || markers.getFirst()->getName() != "Middle") return fail ("reopen cue marker");
+    auto& record = edit->getTransport();
+    record.looping = false;
+    record.ensureContextAllocated (true);
+    auto* target = te::getAudioTracks (*edit).getFirst();
+    bool armed = false;
+    for (auto* device : record.getCurrentPlaybackContext()->getAllInputs())
+        if (auto* midiInput = dynamic_cast<te::MidiInputDevice*> (&device->owner);
+            midiInput != nullptr && te::HostedAudioDeviceInterface::isHostedMidiInputDevice (*midiInput))
+        {
+            midiInput->mergeRecordings = false;
+            midiInput->replaceExistingClips = false;
+            if (auto result = device->setTarget (target->itemID, true, &edit->getUndoManager(), 0); result.has_value())
+            {
+                device->setRecordingEnabled (target->itemID, true);
+                armed = true;
+            }
+            break;
+        }
+    if (! armed) return fail ("arm hosted MIDI input");
+    edit->dispatchPendingUpdatesSynchronously();
+    edit->clickTrackEnabled = false;
+    edit->setCountInMode (te::Edit::CountIn::oneBeat);
+    record.setPosition (5_tp);
+    std::atomic<int> pending { 0 };
+    std::atomic<float> clickPeak { 0 };
+    {
+        std::jthread audioBlocks ([&] (std::stop_token stop)
+        {
+            AudioBuffer<float> block (2, blockSize);
+            block.clear();
+            MidiBuffer input;
+            while (! stop.stop_requested())
+            {
+                const auto message = pending.exchange (0);
+                if (message == 1) input.addEvent (MidiMessage::noteOn (1, 72, (uint8) 101), 0);
+                if (message == 2) input.addEvent (MidiMessage::noteOff (1, 72), 0);
+                audio.processBlock (block, input);
+                clickPeak.store (jmax (clickPeak.load(), block.getMagnitude (0, blockSize)));
+                block.clear();
+                input.clear();
+                std::this_thread::sleep_for (std::chrono::milliseconds (5));
+            }
+        });
+        record.record (false);
+        if (! record.isRecording()) return fail ("start recording with count-in");
+        auto* playback = record.getCurrentPlaybackContext();
+        const auto waitFor = [playback] (te::TimePosition position)
+        {
+            const auto deadline = Time::getMillisecondCounterHiRes() + 5000;
+            while (playback->getUnloopedPosition() < position && Time::getMillisecondCounterHiRes() < deadline)
+                MessageManager::getInstance()->runDispatchLoopUntil (5);
+            return playback->getUnloopedPosition() >= position;
+        };
+        if (! waitFor (5.05_tp) || clickPeak.load() < 0.001f)
+            return fail ("audible count-in with the regular metronome disabled");
+        pending = 1;
+        if (! waitFor (5.25_tp)) return fail ("advance MIDI recording");
+        pending = 2;
+        if (! waitFor (5.45_tp)) return fail ("release recorded note");
+        record.stop (false, false);
+    }
+    const auto deadline = Time::getMillisecondCounterHiRes() + 5000;
+    while (! transportSettled (*edit) && Time::getMillisecondCounterHiRes() < deadline)
+        MessageManager::getInstance()->runDispatchLoopUntil (10);
+    edit->dispatchPendingUpdatesSynchronously();
+    edit->setCountInMode (te::Edit::CountIn::none);
+    const auto clips = target->getClips();
+    const bool recorded = std::any_of (clips.begin(), clips.end(), [] (const auto* clip)
+    {
+        if (auto* midi = dynamic_cast<const te::MidiClip*> (clip))
+            for (const auto* note : midi->getSequence().getNotes())
+                if (note->getNoteNumber() == 72 && note->getVelocity() == 101)
+                    return true;
+        return false;
+    });
+    if (! transportSettled (*edit) || ! recorded) return fail ("Stop must finalize and retain the MIDI take");
     std::puts ("Composer musical transport, cycle, undo and persistence passed.");
     return 0;
 }

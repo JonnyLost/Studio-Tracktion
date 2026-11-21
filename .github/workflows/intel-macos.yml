@@ -62,8 +62,17 @@ jobs:
           STUDIO_UNIFIED_STAGE_SCREENSHOTS: ${{ runner.temp }}/studio-unified-stage
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
+          STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
-        run: ctest --test-dir build -C Debug --verbose --output-on-failure
+        run: ctest --test-dir build -C Debug --verbose --output-on-failure --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-composer-intel-macos
+          path: |
+            ${{ runner.temp }}/studio-interface-review/composer-*.png
+            ${{ runner.temp }}/studio-composer-audio/
+            ${{ runner.temp }}/ctest-intel-macos.xml
       - uses: actions/upload-artifact@v4
         with:
           name: Studio-M6-unified-interface-review

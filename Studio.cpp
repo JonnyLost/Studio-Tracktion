@@ -483,7 +483,14 @@ public:
         saveAsProject.onClick = [this] { chooseSaveAs(); };
         audioSettings.onClick = [this] { showAudioSettings(); };
         plugins.onClick = [this] { showPlugins(); };
-        rewind.onClick = [this] { edit->getTransport().setPosition (0s); };
+        rewind.onClick = [this]
+        {
+            if (edit != nullptr && ! busy && studio::transportSettled (*edit))
+            {
+                piano.silencePreview();
+                edit->getTransport().setPosition (0s);
+            }
+        };
         play.onClick = [this]
         {
             piano.silencePreview();
@@ -696,6 +703,31 @@ public:
                     lastLabelRight = x + m.span (42);
                 }
             });
+        graphics.saveState();
+        graphics.reduceClipRegion (area);
+        graphics.setColour (secondary);
+        for (const auto* event : edit->tempoSequence.getTempos())
+        {
+            const auto time = event->getStartTime();
+            if (time <= te::TimePosition() || time < view.viewX1.get() || time >= view.viewX2.get())
+                continue;
+            const int x = xAt (time);
+            graphics.drawVerticalLine (x, (float) area.getY(), (float) area.getY() + m.px (5));
+            graphics.drawText (String (event->getBpm(), 0) + " BPM", x + m.px (19), area.getY(),
+                               m.span (56), area.getHeight() - m.px (5), Justification::centredLeft, true);
+        }
+        for (const auto* event : edit->tempoSequence.getTimeSigs())
+        {
+            const auto time = event->getPosition().getStart();
+            if (time <= te::TimePosition() || time < view.viewX1.get() || time >= view.viewX2.get())
+                continue;
+            const int x = xAt (time);
+            const bool hasTempo = edit->tempoSequence.getTempoAt (event->getStartBeat()).getStartBeat() == event->getStartBeat();
+            graphics.drawVerticalLine (x, (float) area.getY(), (float) area.getY() + m.px (5));
+            graphics.drawText (event->getStringTimeSig(), x + m.px (hasTempo ? 75 : 19), area.getY(),
+                               m.span (42), area.getHeight() - m.px (5), Justification::centredLeft, true);
+        }
+        graphics.restoreState();
     }
 
     void paintOverChildren (Graphics& g) override
@@ -730,7 +762,7 @@ public:
 
     void mouseDown (const MouseEvent& event) override
     {
-        if (editor == nullptr || busy || ! studio::transportSettled (*edit) || ! ruler.contains (event.getPosition()))
+        if (editor == nullptr || ! canEditRegions() || ! ruler.contains (event.getPosition()))
             return;
         if (event.mods.isPopupMenu())
         {
@@ -758,7 +790,7 @@ public:
             return;
         }
         piano.silencePreview();
-        edit->getTransport().setPosition (rulerTime (event.x, false));
+        edit->getTransport().setPosition (rulerTime (event.x, ! event.mods.isAltDown()));
     }
 
     void mouseDrag (const MouseEvent& event) override
@@ -1837,7 +1869,7 @@ private:
 
     bool canEditRegions() const
     {
-        return edit != nullptr && ! busy && ! edit->getTransport().isRecording();
+        return edit != nullptr && ! busy && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
     }
 
     void timerCallback() override
@@ -1857,7 +1889,6 @@ private:
         updateWavExport();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
-        music.refresh (ready);
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
             button->setEnabled (! busy && ! recording);
         regionActions.setEnabled (ready && ! recording);
@@ -1870,15 +1901,16 @@ private:
         // A loaded project must remain editable while its ARIA slots are checked.
         piano.setEditingEnabled (ready && ! recording);
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
-        importMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
-        exportMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
-        exportWav.setEnabled (ready && ! playing && studio::transportSettled (*edit) && ! ariaReviewPending);
-        rewind.setEnabled (ready && ! recording);
-        play.setEnabled (ready);
+        const bool transportReady = ready && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
+        music.refresh (transportReady);
+        importMidi.setEnabled (transportReady && ! playing);
+        exportMidi.setEnabled (transportReady && ! playing);
+        exportWav.setEnabled (transportReady && ! playing && ! ariaReviewPending);
+        rewind.setEnabled (transportReady);
+        play.setEnabled (transportReady || (ready && recording));
         play.setToggleState (playing && ! recording, dontSendNotification);
         stop.setEnabled (ready && (playing || recording));
-        record.setEnabled (ready && (recording || (studio::transportSettled (*edit)
-                                                 && ! edit->getTransport().looping)));
+        record.setEnabled (ready && (recording || (transportReady && ! edit->getTransport().looping)));
         record.setToggleState (recording, dontSendNotification);
         zoom.setEnabled (ready);
         arrangementZoomOut.setEnabled (ready);
@@ -2183,8 +2215,31 @@ private:
         }
         else if (transport.looping)
             message.setText ("Disable cycle playback to record a linear take.", dontSendNotification);
-        else if (studio::transportSettled (*edit))
-            transport.record (false);
+        else if (canEditRegions())
+        {
+            const auto inputs = edit->getAllInputDevices();
+            const bool replaces = std::any_of (inputs.begin(), inputs.end(), [] (const auto* input)
+            {
+                const auto* midi = dynamic_cast<const te::MidiInputDevice*> (&input->owner);
+                return input->isRecordingActive() && midi != nullptr && midi->replaceExistingClips;
+            });
+            if (! replaces)
+            {
+                transport.record (false);
+                return;
+            }
+            const SafePointer<StudioView> safe (this);
+            const auto generation = projectGeneration;
+            AlertWindow::showOkCancelBox (MessageBoxIconType::WarningIcon, "Replace MIDI regions?",
+                "An armed MIDI input uses Replace mode. Recording can remove existing regions under the take.",
+                "Record in Replace mode", "Cancel", this,
+                ModalCallbackFunction::create ([safe, generation] (int result)
+                {
+                    if (result == 1 && safe != nullptr && safe->projectGeneration == generation
+                        && safe->canEditRegions() && ! safe->edit->getTransport().looping)
+                        safe->edit->getTransport().record (false);
+                }));
+        }
     }
 
     bool canWriteProject()
@@ -2204,6 +2259,12 @@ private:
         return false;
     }
 
+    bool recentlyStoppedRecording() const
+    {
+        return lastRecordingStopRequestedAt != 0
+            && Time::getMillisecondCounter() - lastRecordingStopRequestedAt < 400;
+    }
+
     // Tracktion's transport may still be finalising the take after Stop is
     // requested. Do not serialize the Edit until that work has finished.
     void writeWhenRecordingFinished (te::Edit* expectedEdit, int attempts,
@@ -2218,10 +2279,8 @@ private:
         }
 
         const auto& transport = edit->getTransport();
-        const bool recentlyStopped = lastRecordingStopRequestedAt != 0
-            && Time::getMillisecondCounter() - lastRecordingStopRequestedAt < 400;
         if (! transport.isRecording() && ! transport.isStopping()
-            && ! transport.isRecordingStopping() && ! recentlyStopped)
+            && ! transport.isRecordingStopping() && ! recentlyStoppedRecording())
         {
             write();
             return;
@@ -2504,7 +2563,7 @@ private:
 
     bool canTransferMidi() const
     {
-        return edit != nullptr && ! busy && ! edit->getTransport().isPlaying() && studio::transportSettled (*edit);
+        return canEditRegions() && ! edit->getTransport().isPlaying();
     }
 
     void chooseMidiImport()
@@ -3764,15 +3823,35 @@ int StudioView::runInterfaceReview (const File& output)
 
     const bool writeImages = output != File();
     if (writeImages && output.createDirectory().failed()) return fail ("create screenshot directory");
-    const auto capture = [&] (const char* name)
+    const auto capture = [&] (const char* name, Component* component = nullptr)
     {
         if (! writeImages) return true;
-        const auto image = createComponentSnapshot (getLocalBounds());
+        auto& content = component != nullptr ? *component : *this;
+        const auto image = content.createComponentSnapshot (content.getLocalBounds());
         FileOutputStream stream (output.getChildFile (name));
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (image, stream);
     };
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+
+    const auto seconds = [] (double value) { return te::TimePosition::fromSeconds (value); };
+    if (! studio::setTempoEvent (*edit, te::BeatPosition::fromBeats (8), 94)
+        || ! studio::setMeterEvent (*edit, te::BeatPosition::fromBeats (8), 3, 4)
+        || studio::addCueMarker (*edit, seconds (4), "Bridge") == nullptr
+        || ! studio::setCycle (*edit, { seconds (2), seconds (8) }))
+        return fail ("set up Composer timeline review");
+    showWorkspace (Workspace::closed);
+    zoom.setSelectedId (1, sendNotificationSync);
+    timerCallback();
+    if (! capture ("composer-arrangement-1280x800.png")) return fail ("write Composer arrangement screenshot");
+    if (writeImages)
+    {
+        studio::bounce::showOptions (*this, *edit, { tracks[1]->itemID }, [] (Result, studio::bounce::Options) {});
+        auto* dialog = Component::getCurrentlyModalComponent();
+        if (dialog == nullptr || ! capture ("composer-wav-options.png", dialog)) return fail ("write WAV options screenshot");
+        dialog->exitModalState (0);
+        MessageManager::getInstance()->runDispatchLoopUntil (20);
+    }
 
     environmentWelcome.selectForReview (1);
     environmentWelcome.open (false);

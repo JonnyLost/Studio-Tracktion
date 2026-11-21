@@ -21,8 +21,9 @@ String restriction (te::AudioTrack& track, bool destructive)
             return "Duplicate and delete are available for unfrozen top-level tracks.";
         for (auto* plugin : track.pluginList)
             if (dynamic_cast<te::ExternalPlugin*> (plugin) != nullptr
-                || dynamic_cast<te::RackInstance*> (plugin) != nullptr)
-                return "This track contains hosted or shared rack state.";
+                || dynamic_cast<te::RackInstance*> (plugin) != nullptr
+                || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr)
+                return "This track contains hosted, rack or shared return state.";
     }
     return {};
 }

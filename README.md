@@ -1,6 +1,10 @@
-# Studio 0.2 — Native Synth and Sampler
+# Studio 0.2 — Composer’s Core Workflow
 
 Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified Studio 0.2 arrangement and automatic ARIA restoration milestone.
+
+## Compose and export
+
+Use **Music** and the arrangement ruler for cycle playback, metronome and count-in, tempo and meter changes, and named cues. **Project** includes Standard MIDI File import/export and offline WAV export for full mixes, individual track stems, and one shared wet room stem. **Edit Regions** adds MIDI Join, track editing and configurable arrangement snap. The guide includes an 80-second cue recipe, Intel build steps, and current limits. [Composer workflow guide](docs/composer-workflow-m8.md)
 
 ## Studio workspace
 
@@ -79,10 +83,10 @@ When reopening a project containing ARIA, piano editing remains available. An **
 - In the arrangement, **Shift-click** other regions to extend or toggle the clip selection. The Tracktion example editor now passes these selections to Tracktion's native multi-selection manager.
 - **Drag from the body of a region** to move it earlier/later on its track, or vertically to another compatible, unfrozen track. A translucent region preview shows the proposed drop; a red preview indicates that track cannot accept the drop. A selection of multiple regions moves together in time. Cross-track group drops are supported when all selected regions originate on the same track; mixed-source multi-track selections remain on their original tracks unless you move them individually. The model changes only on mouse release, in one Undo transaction.
 - **Drag the first or last 8 pixels of a region** to trim its start or end without dragging its MIDI notes or audio source. The cursor becomes a horizontal resize indicator at either edge. The opposite edge remains in place. The trim uses Tracktion's native source-offset-preserving methods and enforces a small minimum region duration; double-check the contents of short clips after trimming.
-- Arrangement dragging and trimming snap to the nearest **quarter-note beat**, using the project tempo map. **Hold Option** while dragging for unsnapped positioning and fine edge edits. This initial arrangement gesture grid is independent of the piano-roll Snap dropdown; a shared user-configurable region grid is still planned. The translucent preview remains on the source track until the cursor enters another valid track.
+- Arrangement dragging and trimming use **Edit Regions → Arrangement snap** and the project tempo map. Hold Option for freehand positioning and fine edge edits. The Piano Roll has its own grid choice. The translucent preview remains on the source track until the cursor enters another valid track.
 - With multiple MIDI regions selected, the piano roll displays the earliest region as the **active, editable take** and other regions as translucent **read-only ghost notes** at their corresponding project times. The caption identifies the additional clips; click one region alone to make it the editable take. This preview is not simultaneous multi-clip editing.
 - **Edit Regions** in the arrangement toolbar opens **Split selected at playhead**, **Duplicate selected**, **Copy**, **Paste**, **Cut** and **Delete**. Split uses Tracktion's clip-splitting API so existing source offsets and take data are retained. Duplicate inserts a separate clip after each selected source. Copy retains multiple clips and their relative time and track offsets. Paste inserts them at the transport position; select a destination track before pasting to place the group at that track and subsequent tracks. The clipboard clears when you open or create another project. Missing destination tracks are not created automatically.
-- **Limitations:** Arrangement lasso selection, group resizing, simultaneous editing of ghosted MIDI clips, and MIDI or audio **Join** are not yet implemented. Joining MIDI must include CC/pedal/expression data, and joining audio requires a safe render/comp strategy. Dragging is limited to visible tracks (no automatic scroll while dragging), and audio clips cannot appear as notes in the piano roll. The new region operations must be tested on copies of projects before being treated as production-safe.
+- **Lasso and Join.** Drag on empty arrangement space to select clips. Shift extends the selection. Join same-track, same-channel linear MIDI regions from **Edit Regions** or with Command-J. Group resizing, audio joins and lasso auto-scroll are deferred.
 
 After stopping an Oxygen 25 recording, saving waits until the Tracktion transport completes its recording-stop transition, with a bounded timeout rather than writing a partially finalized take. If it cannot finish safely, Studio leaves the existing file untouched and reports the failure.
 
@@ -95,8 +99,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-unified-instruments-m65 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-Milestone65 &&
-cd Studio-Tracktion-Milestone65 &&
+git clone --branch feature/studio-composer-workflow-m8 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-M8 &&
+cd Studio-Tracktion-M8 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
