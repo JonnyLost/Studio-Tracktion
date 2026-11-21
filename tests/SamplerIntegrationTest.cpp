@@ -211,6 +211,34 @@ Result run (const File& screenshots)
             return Result::fail ("editor interactions or screenshots");
     }
 
+    // Bulk import proposals must not mutate live audio or undo history until accepted.
+    Instrument proposal; String summary;
+    const auto revision = other->changeCount();
+    if (other->proposeImport ({ wavFile, aiffFile, directory.getChildFile ("unsupported.txt") }, true, proposal, summary).failed()
+        || other->changeCount() != revision || proposal.zones.size() != 2
+        || proposal.zones[0].mapping.root != 60 || proposal.zones[0].mapping.high != 63
+        || proposal.zones[1].mapping.low != 64 || ! summary.contains ("1 unsupported"))
+        return Result::fail ("deterministic bulk import preview and cancellation");
+    other->commitImport (proposal);
+    other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
+    other->moveZone (1, 1);
+    other->undoMapping (false);
+    if (other->instrument().zones[1].folder != 0) return Result::fail ("undo group assignment");
+    other->undoMapping (true);
+    if (other->instrument().zones[1].folder != 1) return Result::fail ("redo group assignment");
+    const auto groupPreset = directory.getChildFile ("Groups.studiosampler");
+    if (other->savePreset (groupPreset).failed() || other->loadPreset (groupPreset).failed()
+        || other->instrument().groups.size() != 2 || other->instrument().groups[1].name != "Piano Loud"
+        || other->instrument().zones[1].folder != 1) return Result::fail ("named group persistence");
+    if (other->savePreset (wavFile).wasOk()) return Result::fail ("protect source recording");
+    auto legacy = XmlDocument::parse (groupPreset);
+    legacy->setAttribute ("version", 1);
+    legacy->deleteAllChildElementsWithTagName ("GROUP");
+    for (auto* child : legacy->getChildIterator()) { child->removeAttribute ("start"); child->removeAttribute ("end"); child->removeAttribute ("folder"); }
+    const auto legacyFile = directory.getChildFile ("Legacy.studiosampler");
+    if (! legacy->writeTo (legacyFile) || other->loadPreset (legacyFile).failed()
+        || other->instrument().groups.size() != 1 || other->instrument().zones[0].mapping.start != 0)
+        return Result::fail ("version one preset migration");
     if (sampler->instrument().zones.size() != 2 || sampler->savePreset (preset).failed()
         || other->loadPreset (preset).failed() || other->instrument().zones.size() != 2
         || other->instrument().settings.attack != sampler->instrument().settings.attack
