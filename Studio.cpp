@@ -3816,6 +3816,10 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (instrumentWorkspace.getPlugin() != sampler || instrumentWorkspace.getEditor()->viewState() != "4") return fail ("strip Mappings opens native group assignments");
     if (! snapshot (*this, "sampler-native-group-editor")) return fail ("capture articulation assignments");
     showWorkspace (Workspace::closed);
+    edit->dispatchPendingUpdatesSynchronously();
+    MessageManager::getInstance()->runDispatchLoopUntil (100);
+    edit->getTransport().ensureContextAllocated (true);
+    period();
     edit->getTransport().setPosition (0_tp); edit->getTransport().play (false);
     float phrasePeak = 0; for (int i = 0; i < 120; ++i) phrasePeak = jmax (phrasePeak, period());
     edit->getTransport().stop (false, false);

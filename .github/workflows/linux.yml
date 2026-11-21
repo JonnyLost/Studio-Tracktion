@@ -57,3 +57,4 @@ jobs:
             ${{ runner.temp }}/studio-composer-bench.tsv
             ${{ runner.temp }}/studio-sampler-bench.tsv
             ${{ runner.temp }}/ctest-linux.xml
+            build/Studio_artefacts/Release/Studio

@@ -1342,41 +1342,43 @@ void Editor::Display::filesDropped (const StringArray& files, int, int)
 bool Editor::runReview (const File& first, const File& second, const File& output,
                         const std::function<bool()>& auditionCheck)
 {
-    const auto capture = [this, &output] (const char* file)
+    const auto reviewFailure = [] (int line) { std::fprintf (stderr, "Sampler editor review failed at line %d\n", line); return false; };
+    const auto capture = [this, &output, &reviewFailure] (const char* file)
     {
         if (output == File()) return true;
-        if (output.createDirectory().failed()) return false;
+        if (output.createDirectory().failed()) return reviewFailure (__LINE__);
         captureNativeScreen (*this, output.getChildFile (String ("native-") + file));
         FileOutputStream stream (output.getChildFile (file));
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
-    if (page != Page::basic || zone() || audition.isEnabled() || ! capture ("sampler-empty.png")) return false;
+    if (page != Page::basic || zone() || audition.isEnabled() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
     startImport ({ first, second }, true);
     cancelImport.onClick();
     const auto importDeadline = Time::getMillisecondCounter() + 5000;
     while (importTask && Time::getMillisecondCounter() < importDeadline) { timerCallback(); MessageManager::getInstance()->runDispatchLoopUntil (10); }
-    if (importTask || ! plugin.instrument().zones.empty()) return false;
+    if (importTask || ! plugin.instrument().zones.empty()) return reviewFailure (__LINE__);
     startImport ({ first }, true);
     while (importTask && Time::getMillisecondCounter() < importDeadline + 5000) { timerCallback(); MessageManager::getInstance()->runDispatchLoopUntil (10); }
-    if (importTask || ! importReview) return false;
+    if (importTask || ! importReview) return reviewFailure (__LINE__);
     if (output != File())
     {
         captureNativeScreen (*importReview, output.getChildFile ("native-sampler-import-review.png"));
         FileOutputStream file (output.getChildFile ("sampler-import-review.png"));
-        if (! PNGImageFormat().writeImageToStream (importReview->createComponentSnapshot (importReview->getLocalBounds()), file)) return false;
+        if (! PNGImageFormat().writeImageToStream (importReview->createComponentSnapshot (importReview->getLocalBounds()), file)) return reviewFailure (__LINE__);
     }
     bool accepted = false;
     for (auto* child : importReview->getContentComponent()->getChildren())
         if (auto* button = dynamic_cast<TextButton*> (child); button && button->getButtonText() == "Import") { button->onClick(); accepted = true; break; }
     MessageManager::getInstance()->runDispatchLoopUntil (20);
-    if (! accepted) return false;
-    if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return false;
+    if (! accepted) return reviewFailure (__LINE__);
+    basic.onClick();
+    if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return reviewFailure (__LINE__);
     attack.slider.setValue (23, sendNotificationSync);
     if (std::abs (plugin.instrument().settings.attack - .023f) > .0001f)
     {
         std::fprintf (stderr, "Sampler Attack control did not change the instrument\n");
-        return false;
+        return reviewFailure (__LINE__);
     }
 
     const auto rect = keyboard.getRectangleForKey (60);
@@ -1409,35 +1411,35 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     {
         std::fprintf (stderr, "Sampler keyboard did not sound and release (%u voices, key %d,%d).\n",
                       plugin.resourceSnapshot().activeVoices.value_or (0), roundToInt (key.x), roundToInt (key.y));
-        return false;
+        return reviewFailure (__LINE__);
     }
     auditionCheck(); // Pump the queued release before checking the active key meter.
-    if (plugin.noteActive (60)) return false;
+    if (plugin.noteActive (60)) return reviewFailure (__LINE__);
 
     audition.onClick();
-    if (! auditionCheck() || audition.getButtonText() != "Stop") return false;
+    if (! auditionCheck() || audition.getButtonText() != "Stop") return reviewFailure (__LINE__);
     audition.onClick();
     auditionCheck();
-    if (plugin.noteActive (60) || audition.getButtonText() != "Audition") return false;
+    if (plugin.noteActive (60) || audition.getButtonText() != "Audition") return reviewFailure (__LINE__);
 
     mapping.onClick();
-    if (page != Page::mapping || ! samples.isVisible()) return false;
+    if (page != Page::mapping || ! samples.isVisible()) return reviewFailure (__LINE__);
     import (second, -1);
-    if (samples.getNumItems() != 2 || selection != 1 || ! zone() || ! zone()->mapping.sample) return false;
+    if (samples.getNumItems() != 2 || selection != 1 || ! zone() || ! zone()->mapping.sample) return reviewFailure (__LINE__);
     root.slider.setValue (67, sendNotificationSync);
     low.slider.setValue (65, sendNotificationSync);
     samples.setSelectedItemIndex (0, sendNotificationSync);
-    if (selection != 0 || ! zone()) return false;
+    if (selection != 0 || ! zone()) return reviewFailure (__LINE__);
     high.slider.setValue (64, sendNotificationSync);
-    if (zone()->mapping.high != 64 || ! capture ("sampler-mapping.png")) return false;
+    if (zone()->mapping.high != 64 || ! capture ("sampler-mapping.png")) return reviewFailure (__LINE__);
 
     loops.onClick();
-    if (page != Page::loops || ! loopEnabled.isEnabled()) return false;
+    if (page != Page::loops || ! loopEnabled.isEnabled()) return reviewFailure (__LINE__);
     loopStart.slider.setValue (12000, sendNotificationSync);
     loopEnd.slider.setValue (48000, sendNotificationSync);
     loopEnabled.setToggleState (true, sendNotificationSync);
     if (! zone()->mapping.loop || zone()->mapping.loopStart != 12000 || zone()->mapping.loopEnd != 48000
-        || ! capture ("sampler-loops.png")) return false;
+        || ! capture ("sampler-loops.png")) return reviewFailure (__LINE__);
     const auto preserved = plugin.instrument();
     auto layered = preserved;
     layered.name = "Synthetic Studio Keys";
@@ -1445,28 +1447,28 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     for (auto& entry : layered.zones) { entry.mapping.hard = 63; entry.folder = 0; }
     for (auto entry : preserved.zones) { entry.mapping.soft = 64; entry.folder = 1; layered.zones.push_back (entry); }
     plugin.commitImport (layered); setSize (960, 700); mapping.onClick();
-    if (! capture ("sampler-velocity-layers.png")) return false;
+    if (! capture ("sampler-velocity-layers.png")) return reviewFailure (__LINE__);
     groups.onClick();
-    if (! capture ("sampler-groups.png")) return false;
+    if (! capture ("sampler-groups.png")) return reviewFailure (__LINE__);
     loops.onClick(); sampleStart.slider.setValue (100, sendNotificationSync); sampleEnd.slider.setValue (60000, sendNotificationSync);
-    if (zone()->mapping.start != 100 || zone()->mapping.end != 60000 || ! capture ("sampler-waveform.png")) return false;
-    basic.onClick(); if (! capture ("sampler-builder-basic.png")) return false;
+    if (zone()->mapping.start != 100 || zone()->mapping.end != 60000 || ! capture ("sampler-waveform.png")) return reviewFailure (__LINE__);
+    basic.onClick(); if (! capture ("sampler-builder-basic.png")) return reviewFailure (__LINE__);
     const auto reopened = output == File() ? first.getSiblingFile ("Builder.studiosampler") : output.getChildFile ("Builder.studiosampler");
-    if (plugin.savePreset (reopened).failed() || plugin.loadPreset (reopened).failed()) return false;
-    mapping.onClick(); if (! capture ("sampler-reopened.png")) return false;
+    if (plugin.savePreset (reopened).failed() || plugin.loadPreset (reopened).failed()) return reviewFailure (__LINE__);
+    mapping.onClick(); if (! capture ("sampler-reopened.png")) return reviewFailure (__LINE__);
     auto crossfaded = layered;
     for (auto& z : crossfaded.zones)
         if (z.folder == 0) { z.mapping.hard = 95; z.mapping.fadeOut = 32; }
         else { z.mapping.soft = 64; z.mapping.fadeIn = 32; }
     plugin.commitImport (crossfaded); selectZone (0); mapping.onClick();
-    if (! capture ("sampler-velocity-crossfade.png")) return false;
+    if (! capture ("sampler-velocity-crossfade.png")) return reviewFailure (__LINE__);
     selectedZones = { 0, 1 }; soft.slider.setValue (2, sendNotificationSync);
-    if (plugin.instrument().zones[0].mapping.soft != 2 || plugin.instrument().zones[1].mapping.soft != 2) return false;
+    if (plugin.instrument().zones[0].mapping.soft != 2 || plugin.instrument().zones[1].mapping.soft != 2) return reviewFailure (__LINE__);
     plugin.undoMapping (false); refresh();
-    if (plugin.instrument().zones[0].mapping.soft != 1 || plugin.instrument().zones[1].mapping.soft != 1) return false;
+    if (plugin.instrument().zones[0].mapping.soft != 1 || plugin.instrument().zones[1].mapping.soft != 1) return reviewFailure (__LINE__);
     selectedZones = { 0 }; setSize (1100, 800); loops.onClick(); loopFade.slider.setValue (256, sendNotificationSync);
     zoom.slider.setValue (8, sendNotificationSync); position.slider.setValue (69, sendNotificationSync);
-    if (plugin.instrument().zones[0].mapping.loopCrossfade != 256 || ! capture ("sampler-loop-crossfade.png")) return false;
+    if (plugin.instrument().zones[0].mapping.loopCrossfade != 256 || ! capture ("sampler-loop-crossfade.png")) return reviewFailure (__LINE__);
     zoom.slider.setValue (1, sendNotificationSync); position.slider.setValue (0, sendNotificationSync);
     auto violin = preserved; violin.name = "Synthetic Violin"; violin.groups.clear(); violin.zones.clear();
     const StringArray names { "Sustain", "Staccato", "Pizzicato" };
@@ -1483,21 +1485,21 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     const MouseEvent groupClick (Desktop::getInstance().getMainMouseSource(), groupPoint, ModifierKeys (ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
         &display, &display, Time::getCurrentTime(), groupPoint, Time::getCurrentTime(), 1, false);
     display.mouseDown (groupClick); display.mouseUp (groupClick);
-    if (selection != 1) return false;
-    if (triggerMode.getSelectedId() != 2 || keySwitch.slider.getValue() != 25 || ! capture ("sampler-articulation-groups.png")) return false;
+    if (selection != 1) return reviewFailure (__LINE__);
+    if (triggerMode.getSelectedId() != 2 || keySwitch.slider.getValue() != 25 || ! capture ("sampler-articulation-groups.png")) return reviewFailure (__LINE__);
     keySwitch.slider.setValue (30, sendNotificationSync);
-    if (plugin.instrument().groups[1].playback.key != 30 || ! capture ("sampler-keyswitch.png")) return false;
+    if (plugin.instrument().groups[1].playback.key != 30 || ! capture ("sampler-keyswitch.png")) return reviewFailure (__LINE__);
     triggerMode.setSelectedId (3, sendNotificationSync); ccNumber.slider.setValue (20, sendNotificationSync); ccLow.slider.setValue (64, sendNotificationSync);
-    if (plugin.instrument().groups[1].playback.trigger != GroupTrigger::controller || ! capture ("sampler-cc-range.png")) return false;
+    if (plugin.instrument().groups[1].playback.trigger != GroupTrigger::controller || ! capture ("sampler-cc-range.png")) return reviewFailure (__LINE__);
     plugin.commitImport (violin); groupRows.selectRow (0); groups.onClick();
     const auto violinFile = first.getSiblingFile ("Violin.studiosampler");
     if (plugin.savePreset (violinFile).failed() || plugin.loadPreset (violinFile).failed()
-        || plugin.instrument().groups[2].playback.key != 26 || plugin.articulations().size() != 3) return false;
+        || plugin.instrument().groups[2].playback.key != 26 || plugin.articulations().size() != 3) return reviewFailure (__LINE__);
     plugin.commitImport (preserved); selectZone (0);
     advanced.onClick();
-    if (page != Page::advanced || ! voices.slider.isVisible()) return false;
+    if (page != Page::advanced || ! voices.slider.isVisible()) return reviewFailure (__LINE__);
     voices.slider.setValue (16, sendNotificationSync);
-    if (plugin.instrument().settings.polyphony != 16) return false;
+    if (plugin.instrument().settings.polyphony != 16) return reviewFailure (__LINE__);
     const ScopedValueSetter<AppearanceMetrics> appearanceScope (appearance, appearance);
     appearance.set (175, 130);
     appearanceChanged();
@@ -1506,7 +1508,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if (! getLocalBounds().contains (keyboard.getBounds()) || viewport.getHeight() <= 0
         || ! body.getLocalBounds().contains (gain.slider.getBounds())
         || ! getLocalBounds().contains (loadPreset.getBounds()) || loadPreset.getBounds().intersects (savePreset.getBounds()))
-        return false;
+        return reviewFailure (__LINE__);
     return std::abs (plugin.instrument().settings.attack - .023f) < .0001f;
 }
 #endif
