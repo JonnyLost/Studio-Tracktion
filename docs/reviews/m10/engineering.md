@@ -21,4 +21,4 @@ File enumeration and decoding currently run on the message thread. This can brie
 - Application integration: generated WAV/AIFF decoding, proposal cancellation, accepted mapping, named groups, undo/redo, group persistence, version 1 migration, prevention of source overwrite, keyboard dispatch, preset/project reopen, missing-file recovery and hosted MIDI recording.
 - Existing workspace suite: playback through opening, floating, docking, editor closure, track switching and restoration. Extended with reopened 1280 × 800 capture.
 
-Full acceptance requires inspecting Intel macOS results and actual images. Passing standalone DSP tests alone does not establish a usable MacBook application.
+The full Linux and Intel macOS suites passed, and the native captures were inspected. See [CI and performance results](ci-results.md) and the [gallery](README.md). Physical MacBook/hardware MIDI and owner acceptance remain outside the CI validation.
