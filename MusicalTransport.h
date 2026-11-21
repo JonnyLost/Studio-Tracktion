@@ -18,6 +18,10 @@ public:
     void setEdit (tracktion::Edit*);
     void refresh (bool available);
     void showTimelineMenu (tracktion::TimePosition);
+    void toggleCycle();
+    void toggleClick();
+    void promptTempoAtPlayhead();
+    void promptMeterAtPlayhead();
     std::function<void()> onTimelineChanged;
 
 private:
