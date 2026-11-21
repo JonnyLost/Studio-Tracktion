@@ -13,6 +13,7 @@ struct ArticulationMapping
     juce::String id, name;
     ArticulationMessage message = ArticulationMessage::keyswitch;
     int channel = 1, number = 0, value = 100, shortcut = 0;
+    bool operator== (const ArticulationMapping&) const = default;
 };
 
 inline bool validArticulation (const ArticulationMapping& mapping)

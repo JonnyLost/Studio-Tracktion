@@ -55,7 +55,7 @@ ArticulationPalette::ArticulationPalette (PropertiesFile& preferences) : prefs (
     subject.setFont (FontOptions (14.0f, Font::bold));
     explanation.setColour (Label::textColourId, colours::secondary);
     for (Component* item : std::initializer_list<Component*> { &subject, &explanation, &orientation,
-          &pin, &dock, &insert, &newMapping, &editMapping, &padViewport, &name, &number, &value,
+          &pin, &dock, &insert, &audition, &newMapping, &editMapping, &padViewport, &name, &number, &value,
           &kind, &channel, &shortcut, &apply, &remove, &cancel })
         addAndMakeVisible (*item);
     padViewport.setViewedComponent (&padBank, false);
@@ -80,6 +80,8 @@ ArticulationPalette::ArticulationPalette (PropertiesFile& preferences) : prefs (
     dock.onClick = [this] { if (onToggleDock) onToggleDock(); };
     insert.setTooltip ("Explicitly insert the selected mapping at the playhead of the selected MIDI clip.");
     insert.onClick = [this] { insertMapping(); };
+    audition.setTooltip ("Send the selected articulation to the instrument for live audition.");
+    audition.onClick = [this] { if (auto* mapping = selected()) auditionMapping (*mapping); };
     newMapping.onClick = [this] { startMapping (false); };
     editMapping.onClick = [this] { startMapping (true); };
     apply.onClick = [this] { saveMapping (false); };
@@ -127,7 +129,6 @@ void ArticulationPalette::setContext (te::Edit* next)
     serialized.clear();
     actionStatus.clear();
     selectedId.clear();
-    lastSentId.clear();
     mappings.clear();
     rebuildPads();
     syncTrack();
@@ -166,21 +167,28 @@ void ArticulationPalette::syncTrack()
         {
             stopLiveNote();
             selectedId.clear();
-            lastSentId.clear();
             panelOpen = false;
         }
         loadedTrack = trackId;
         loadedInstrument = instrumentId;
         serialized = data;
-        lastSentId.clear();
         actionStatus.clear();
-        mappings.clear();
+        std::vector<ArticulationMapping> refreshed;
+        selectedId.clear();
         auto root = documentFrom (data);
         mappingWritable = root != nullptr;
         if (root != nullptr)
-            if (auto* profile = profileFor (*root, loadedInstrument)) mappings = readArticulations (*profile);
-        rebuildPads();
-        layoutChanged();
+            if (auto* profile = profileFor (*root, loadedInstrument))
+            {
+                refreshed = readArticulations (*profile);
+                selectedId = profile->getStringAttribute ("active");
+            }
+        if (targetChanged || refreshed != mappings || refreshed.size() != pads.size())
+        {
+            mappings = std::move (refreshed);
+            rebuildPads();
+            layoutChanged();
+        }
     }
     subject.setText (t == nullptr ? "Select an instrument track"
         : t->getName() + "  |  " + (instrument != nullptr ? instrument->getName() : String ("Requires one instrument on the track")),
@@ -200,7 +208,7 @@ void ArticulationPalette::rebuildPads()
             + (mapping.message == ArticulationMessage::keyswitch ? " | Note " : " | CC ")
             + String (mapping.number) + " / " + String (mapping.value)
             + (mapping.shortcut ? " | Ctrl+Cmd+" + String (mapping.shortcut) : String()));
-        pad->onClick = [this, i] { activate (i); };
+        pad->onClick = [this, i] { selectMapping (i); };
         padBank.addAndMakeVisible (*pad);
         pads.push_back (std::move (pad));
     }
@@ -213,17 +221,33 @@ const ArticulationMapping* ArticulationPalette::selected() const
     return it == mappings.end() ? nullptr : &*it;
 }
 
-bool ArticulationPalette::canInsert() const
+bool ArticulationPalette::canWriteTo (const te::MidiClip& clip) const
 {
     const auto* mapping = selected();
     auto* t = target();
     const auto* instrument = uniqueInstrument (t);
     return ready && t != nullptr && instrument != nullptr && instrument->itemID == loadedInstrument
-        && mapping != nullptr && selectedClip != nullptr
-        && selectedClip->hasValidSequence() && ! selectedClip->getMPEMode()
-        && selectedClip->getAudioTrack() == t && ! t->isFrozen (te::Track::anyFreeze)
+        && instrument->isEnabled() && mapping != nullptr && clip.hasValidSequence() && ! clip.getMPEMode()
+        && clip.getAudioTrack() == t && ! t->isFrozen (te::Track::anyFreeze)
         && ! t->edit.getTransport().isRecording()
-        && matchingClipChannel (mapping->channel, selectedClip->getMidiChannel().getChannelNumber());
+        && matchingClipChannel (mapping->channel, clip.getMidiChannel().getChannelNumber());
+}
+
+bool ArticulationPalette::canInsert() const
+{
+    return selectedClip != nullptr && canWriteTo (*selectedClip);
+}
+
+bool ArticulationPalette::canAudition() const
+{
+    auto* t = target();
+    const auto* instrument = uniqueInstrument (t);
+    if (! ready || instrument == nullptr || instrument->itemID != loadedInstrument
+        || ! instrument->isEnabled() || t->isFrozen (te::Track::anyFreeze)
+        || t->edit.getTransport().isRecording() || t->edit.getCurrentPlaybackContext() == nullptr)
+        return false;
+    const auto* hosted = dynamic_cast<const te::ExternalPlugin*> (instrument);
+    return hosted == nullptr || hosted->getAudioPluginInstance() != nullptr;
 }
 
 void ArticulationPalette::updateState()
@@ -236,6 +260,7 @@ void ArticulationPalette::updateState()
     newMapping.setEnabled (canMap);
     editMapping.setEnabled (canMap && selected() != nullptr);
     insert.setEnabled (canInsert());
+    audition.setEnabled (selected() != nullptr && canAudition());
     apply.setEnabled (canMap);
     remove.setEnabled (canMap && editingId.isNotEmpty());
     for (auto* field : std::initializer_list<Component*> { &name, &number, &value, &kind, &channel,
@@ -243,14 +268,14 @@ void ArticulationPalette::updateState()
         field->setVisible (panelOpen);
     for (size_t i = 0; i < pads.size(); ++i)
     {
-        pads[i]->setEnabled (ready);
-        pads[i]->setToggleState (mappings[i].id == lastSentId, dontSendNotification);
+        pads[i]->setEnabled (ready && edit != nullptr && ! edit->getTransport().isRecording());
+        pads[i]->setToggleState (mappings[i].id == selectedId, dontSendNotification);
     }
     if (panelOpen)
         return;
     const auto* mapping = selected();
     explanation.setText (actionStatus.isNotEmpty() ? actionStatus : mappings.empty() ? "Unmapped. Add verified messages for this instrument patch."
-        : mapping == nullptr ? "Click a pad to audition. Insert explicitly to change a clip."
+        : mapping == nullptr ? "Choose an active articulation. Audition and Insert are separate actions."
         : "Selected: " + mapping->name + "  |  Target channel " + String (mapping->channel)
             + (canInsert() ? "  |  Click Insert to write to the clip." : "  |  Insert requires a matching clip and channel."),
         dontSendNotification);
@@ -261,6 +286,7 @@ void ArticulationPalette::setStatus (const String& status)
 {
     actionStatus = status;
     updateState();
+    if (onStatus) onStatus (status);
 }
 
 void ArticulationPalette::startMapping (bool modify)
@@ -293,7 +319,6 @@ void ArticulationPalette::saveMapping (bool removeMapping)
         if (old == mappings.end()) return;
         mappings.erase (old);
         if (selectedId == editingId) selectedId.clear();
-        if (lastSentId == editingId) lastSentId.clear();
     }
     else
     {
@@ -332,43 +357,56 @@ void ArticulationPalette::persistMappings()
         profile->setAttribute ("instance", loadedInstrument.toString());
     }
     writeArticulations (*profile, mappings);
+    profile->setAttribute ("active", selectedId);
     auto& history = t->edit.getUndoManager();
     history.beginNewTransaction ("Edit articulation mappings");
     t->state.setProperty (property, root->toString (XmlElement::TextFormat().singleLine()), &history);
     history.beginNewTransaction();
     syncTrack();
+    rebuildPads();
+    layoutChanged();
 }
 
-void ArticulationPalette::activate (size_t index)
+void ArticulationPalette::selectMapping (size_t index)
 {
-    if (index >= mappings.size()) return;
+    if (! ready || index >= mappings.size() || edit == nullptr || edit->getTransport().isRecording())
+        return;
     auto* t = target();
-    if (! ready || t == nullptr) return;
     const auto* instrument = uniqueInstrument (t);
-    if (instrument == nullptr || instrument->itemID != loadedInstrument) return;
-    const auto& mapping = mappings[index];
-    selectedId = mapping.id;
+    if (instrument == nullptr || instrument->itemID != loadedInstrument || selectedId == mappings[index].id)
+        return;
+
+    auto root = documentFrom (serialized);
+    if (root == nullptr) return;
+    auto* profile = profileFor (*root, loadedInstrument);
+    if (profile == nullptr) return;
+    profile->setAttribute ("active", mappings[index].id);
+    auto& history = t->edit.getUndoManager();
+    history.beginNewTransaction ("Select articulation");
+    t->state.setProperty (property, root->toString (XmlElement::TextFormat().singleLine()), &history);
+    history.beginNewTransaction();
+    syncTrack();
+}
+
+void ArticulationPalette::auditionMapping (const ArticulationMapping& mapping)
+{
+    if (! canAudition())
+    {
+        setStatus ("Audition requires a loaded, enabled instrument and an active audio context, outside recording.");
+        return;
+    }
+    auto* t = target();
     actionStatus.clear();
     stopLiveNote();
-    if (instrument->isEnabled() && ! t->isFrozen (te::Track::anyFreeze)
-        && t->edit.getCurrentPlaybackContext() != nullptr)
+    if (mapping.message == ArticulationMessage::keyswitch)
     {
-        if (mapping.message == ArticulationMessage::keyswitch)
-        {
-            t->injectLiveMidiMessage (MidiMessage::noteOn (mapping.channel, mapping.number, (uint8) mapping.value), {});
-            held = HeldNote { t->itemID, mapping.channel, mapping.number };
-            startTimer (100);
-        }
-        else
-            t->injectLiveMidiMessage (MidiMessage::controllerEvent (mapping.channel, mapping.number, mapping.value), {});
-        lastSentId = mapping.id;
-        updateState();
+        t->injectLiveMidiMessage (MidiMessage::noteOn (mapping.channel, mapping.number, (uint8) mapping.value), {});
+        held = HeldNote { t->itemID, mapping.channel, mapping.number };
+        startTimer (100);
     }
     else
-    {
-        updateState();
-        setStatus ("Live audition requires an active audio context and an enabled instrument on an unfrozen track.");
-    }
+        t->injectLiveMidiMessage (MidiMessage::controllerEvent (mapping.channel, mapping.number, mapping.value), {});
+    updateState();
 }
 
 void ArticulationPalette::stopLiveNote()
@@ -416,17 +454,126 @@ void ArticulationPalette::insertMapping()
     setStatus ("Inserted " + mapping.name + " on channel " + String (mapping.channel));
 }
 
+void ArticulationPalette::writeForDrawnNote (te::MidiClip& clip, te::BeatPosition musicalNote, int pitch)
+{
+    if (! canWriteTo (clip) || clip.isLooping() || clip.isMuted() || clip.hasAnyTakes()
+        || clip.getQuantisation().isEnabled() || clip.getGrooveTemplate().isNotEmpty())
+        return;
+    const auto& mapping = *selected();
+    const auto bounds = clip.getPosition();
+    const auto start = clip.getContentBeatAtTime (bounds.getStart());
+    const auto end = clip.getContentBeatAtTime (bounds.getEnd());
+    if (musicalNote < start || musicalNote >= end)
+        return;
+    const auto isMappedNote = [this, &mapping] (int note)
+    {
+        return std::any_of (mappings.begin(), mappings.end(), [&] (const auto& entry)
+        {
+            return entry.channel == mapping.channel && entry.message == ArticulationMessage::keyswitch && entry.number == note;
+        });
+    };
+    if (isMappedNote (pitch))
+        return; // A manually drawn keyswitch is already a deliberate articulation event.
+
+    auto& sequence = clip.getSequence();
+    const auto lead = te::BeatDuration::fromBeats (.0625);
+    const auto writeAt = mapping.message == ArticulationMessage::keyswitch ? musicalNote - lead : musicalNote;
+    if (writeAt < start)
+    {
+        setStatus ("Keyswitch needs room before the first note. Add a lead-in or use Insert.");
+        return;
+    }
+
+    te::BeatPosition last = start;
+    bool known = false, alreadyActive = false;
+    const auto remember = [&] (te::BeatPosition beat, bool active)
+    {
+        if (beat >= start && beat <= musicalNote && (! known || beat >= last))
+        {
+            known = true;
+            alreadyActive = active;
+            last = beat;
+        }
+    };
+    for (const auto* event : sequence.getControllerEvents())
+    {
+        const auto type = event->getType();
+        const auto value = event->getControllerValue() >> 7;
+        const bool isSelectedType = mapping.message == ArticulationMessage::controller && mapping.number == type;
+        if (isSelectedType || std::any_of (mappings.begin(), mappings.end(), [&] (const auto& entry)
+            {
+                return entry.channel == mapping.channel && entry.message == ArticulationMessage::controller
+                    && entry.number == type && entry.value == value;
+            }))
+            remember (event->getBeatPosition(), isSelectedType && value == mapping.value);
+    }
+    for (const auto* note : sequence.getNotes())
+        if (isMappedNote (note->getNoteNumber()))
+            remember (note->getStartBeat(), mapping.message == ArticulationMessage::keyswitch
+                      && note->getNoteNumber() == mapping.number);
+    if (alreadyActive)
+        return;
+
+    // The preceding keyswitch must sound before the musical note. Avoid
+    // inserting behind a manual change placed inside that lead-in.
+    if (known && last > writeAt)
+    {
+        setStatus ("Move the existing articulation earlier before drawing this note.");
+        return;
+    }
+    auto* undo = clip.getUndoManager();
+    if (mapping.message == ArticulationMessage::controller)
+    {
+        if (auto* existing = sequence.getControllerEventAt (writeAt, mapping.number);
+            existing != nullptr && existing->getBeatPosition() == writeAt)
+            existing->setControllerValue (mapping.value << 7, undo);
+        else
+            sequence.addControllerEvent (writeAt, mapping.number, mapping.value << 7, undo);
+    }
+    else
+        sequence.addNote (mapping.number, writeAt, lead * .75, mapping.value, 0, undo);
+    setStatus ("Wrote " + mapping.name + " with the note.");
+}
+
+#if STUDIO_SPATIAL_TESTS
+bool ArticulationPalette::addReviewMappings (te::AudioTrack& targetTrack, const std::vector<ArticulationMapping>& entries)
+{
+    refresh (&targetTrack, nullptr, true);
+    if (! loadedInstrument.isValid() || ! mappingWritable) return false;
+    mappings = entries;
+    persistMappings();
+    return true;
+}
+
+bool ArticulationPalette::selectReviewMapping (const String& label)
+{
+    for (size_t i = 0; i < mappings.size(); ++i)
+        if (mappings[i].name == label)
+        {
+            selectMapping (i);
+            return reviewActiveName() == label;
+        }
+    return false;
+}
+
+String ArticulationPalette::reviewActiveName() const
+{
+    if (const auto* mapping = selected()) return mapping->name;
+    return {};
+}
+#endif
+
 bool ArticulationPalette::keyPressed (const KeyPress& key)
 {
     const auto mods = key.getModifiers();
-    if (! isShowing() || ! ready || ! mods.isCtrlDown() || ! mods.isCommandDown() || mods.isShiftDown() || mods.isAltDown())
+    if (! ready || ! mods.isCtrlDown() || ! mods.isCommandDown() || mods.isShiftDown() || mods.isAltDown())
         return false;
     const int numberKey = key.getKeyCode() - '0';
     if (numberKey < 1 || numberKey > 9) return false;
     for (size_t i = 0; i < mappings.size(); ++i)
         if (mappings[i].shortcut == numberKey)
         {
-            activate (i);
+            auditionMapping (mappings[i]);
             return true;
         }
     return false;
@@ -472,7 +619,7 @@ int ArticulationPalette::minimumContentHeight (int width)
     const int inner = jmax (1, width - m.px (14));
     int height = m.line (14, 4) + 2 * m.line (13, 1) + m.px (14);
     height += toolbarHeight (inner, { { &orientation, 112 }, { &pin, 128 }, { &dock, 55 },
-        { &newMapping, 114 }, { &editMapping, 112 }, { &insert, 140 } });
+        { &newMapping, 114 }, { &editMapping, 112 }, { &audition, 84 }, { &insert, 140 } });
     if (panelOpen) height += toolbarHeight (inner, { { &name, 164 }, { &kind, 129 }, { &channel, 127 },
         { &number, 98 }, { &value, 110 }, { &shortcut, 131 }, { &apply, 110 }, { &remove, 75 }, { &cancel, 75 } });
     return height + preferredPadRows (inner) * (m.control (34) + m.px (3)) + m.scrollbar();
@@ -484,7 +631,7 @@ void ArticulationPalette::resized()
     auto area = getLocalBounds().reduced (m.px (7));
     subject.setBounds (area.removeFromTop (m.line (14, 4)));
     layoutToolbar (area, { { &orientation, 112 }, { &pin, 128 }, { &dock, 55 },
-        { &newMapping, 114 }, { &editMapping, 112 }, { &insert, 140 } });
+        { &newMapping, 114 }, { &editMapping, 112 }, { &audition, 84 }, { &insert, 140 } });
     explanation.setBounds (area.removeFromTop (2 * m.line (13, 1)));
     if (panelOpen) layoutToolbar (area, { { &name, 164 }, { &kind, 129 }, { &channel, 127 },
         { &number, 98 }, { &value, 110 }, { &shortcut, 131 }, { &apply, 110 }, { &remove, 75 }, { &cancel, 75 } });
@@ -505,5 +652,112 @@ void ArticulationPalette::resized()
     for (int i = 0; i < (int) pads.size(); ++i)
         pads[(size_t) i]->setBounds (Rectangle<int> (i % columns * cellWidth, i / columns * height,
                                                       cellWidth, height).reduced (m.px (2)));
+}
+
+ArticulationStrip::ArticulationStrip (ArticulationPalette& source) : palette (source)
+{
+    subject.setFont (FontOptions (13.0f, Font::bold));
+    empty.setText ("No verified articulation mappings", dontSendNotification);
+    empty.setColour (Label::textColourId, colours::secondary);
+    for (auto* item : std::initializer_list<Component*> { &subject, &empty, &bank, &follow, &audition, &insert, &manage })
+        addAndMakeVisible (*item);
+    bank.setTitle ("Articulation bank");
+    bank.onChange = [this] { refresh(); };
+    manage.setTooltip ("Open the full articulation palette to add or edit verified mappings.");
+    manage.onClick = [this] { if (onManage) onManage(); };
+    follow.setTooltip ("Pin these mappings or follow the selected track.");
+    follow.onClick = [this] { if (palette.pin.onClick) palette.pin.onClick(); refresh(); };
+    audition.setTooltip ("Send the selected articulation to the instrument for audition.");
+    audition.onClick = [this] { if (auto* mapping = palette.selected()) palette.auditionMapping (*mapping); };
+    insert.setTooltip ("Write the selected articulation at the playhead in an editable matching MIDI clip.");
+    insert.onClick = [this] { palette.insertMapping(); };
+    for (size_t i = 0; i < pads.size(); ++i)
+    {
+        addChildComponent (pads[i]);
+        pads[i].onClick = [this, i]
+        {
+            palette.selectMapping ((size_t) jmax (0, bank.getSelectedItemIndex()) * pads.size() + i);
+            refresh();
+        };
+    }
+}
+
+int ArticulationStrip::height()
+{
+    return 2 * appearance.control (26, 12) + appearance.px (6);
+}
+
+void ArticulationStrip::refresh()
+{
+    const auto bankCount = static_cast<int> ((palette.mappings.size() + pads.size() - 1) / pads.size());
+    const bool changedTrack = displayedTrack != palette.loadedTrack || displayedInstrument != palette.loadedInstrument;
+    if (changedTrack || bankCount != bank.getNumItems())
+    {
+        int next = changedTrack ? 0 : jmax (0, bank.getSelectedItemIndex());
+        const auto active = std::find_if (palette.mappings.begin(), palette.mappings.end(),
+            [this] (const auto& mapping) { return mapping.id == palette.selectedId; });
+        if (changedTrack && active != palette.mappings.end())
+            next = (int) (std::distance (palette.mappings.begin(), active) / pads.size());
+        displayedTrack = palette.loadedTrack;
+        displayedInstrument = palette.loadedInstrument;
+        bank.clear (dontSendNotification);
+        for (int i = 0; i < bankCount; ++i) bank.addItem ("Bank " + String (i + 1), i + 1);
+        bank.setSelectedItemIndex (jmin (bankCount - 1, next), dontSendNotification);
+    }
+    const bool showBank = bankCount > 1;
+    const bool bankChanged = bank.isVisible() != showBank;
+    bank.setVisible (showBank);
+    auto subjectText = palette.loadedTrack.isValid() ? palette.subject.getText() : "Articulations";
+    subject.setText (subjectText, dontSendNotification);
+    subject.setTooltip (palette.actionStatus.isNotEmpty() ? palette.actionStatus : subjectText);
+    follow.setButtonText (palette.pinnedTrack.isValid() ? "Follow" : "Pin");
+    follow.setEnabled (palette.pin.isEnabled());
+    follow.setToggleState (palette.pinnedTrack.isValid(), dontSendNotification);
+    audition.setEnabled (palette.selected() != nullptr && palette.canAudition());
+    insert.setEnabled (palette.canInsert());
+    empty.setVisible (bankCount == 0);
+
+    const auto start = (size_t) jmax (0, bank.getSelectedItemIndex()) * pads.size();
+    bool needsLayout = bankChanged;
+    for (size_t i = 0; i < pads.size(); ++i)
+    {
+        auto& pad = pads[i];
+        const bool visible = start + i < palette.mappings.size();
+        needsLayout |= pad.isVisible() != visible;
+        pad.setVisible (visible);
+        if (! visible) continue;
+        const auto& entry = palette.mappings[start + i];
+        pad.setButtonText (entry.name);
+        pad.setTooltip ("Select " + entry.name + " for composition on MIDI channel " + String (entry.channel));
+        pad.setEnabled (palette.ready && palette.edit != nullptr && ! palette.edit->getTransport().isRecording());
+        pad.setToggleState (entry.id == palette.selectedId, dontSendNotification);
+    }
+    if (needsLayout) resized();
+}
+
+void ArticulationStrip::resized()
+{
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (9), m.px (3));
+    auto header = area.removeFromTop (m.control (26, 12));
+    for (const auto item : { ToolbarItem { &manage, 88 }, { &insert, 65 }, { &audition, 80 }, { &follow, 64 } })
+        item.component->setBounds (header.removeFromRight (item.width()).reduced (m.px (2), m.px (1)));
+    subject.setBounds (header);
+    auto choices = area.withHeight (m.control (26, 12));
+    if (bank.isVisible())
+        bank.setBounds (choices.removeFromRight (m.span (88)).reduced (m.px (2), m.px (1)));
+    empty.setBounds (choices);
+    const int visible = (int) std::count_if (pads.begin(), pads.end(), [] (const auto& pad) { return pad.isVisible(); });
+    if (visible == 0) return;
+    const int cell = jmin (m.span (142), choices.getWidth() / visible);
+    for (auto& pad : pads)
+        if (pad.isVisible()) pad.setBounds (choices.removeFromLeft (cell).reduced (m.px (2), m.px (1)));
+}
+
+void ArticulationStrip::paint (Graphics& g)
+{
+    g.fillAll (colours::well);
+    g.setColour (colours::divider);
+    g.fillRect (getLocalBounds().removeFromTop (appearance.px (1)));
 }
 }
