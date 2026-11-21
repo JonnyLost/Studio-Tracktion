@@ -2,9 +2,13 @@
 
 Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified Studio 0.2 arrangement and automatic ARIA restoration milestone.
 
+## Adaptive instrument workspace
+
+Choose **Performance**, **Articulations only**, or **Workspace hidden** at the top right. The performance controls follow the selected instrument. **Detailed Editor** preserves the native Float and Dock workflow. The compact articulation strip can stay beneath the Piano Roll. [Workspace guide](docs/adaptive-workspace-m9.md) · [Intel macOS screenshot gallery](docs/reviews/m9/README.md)
+
 ## Compose and export
 
-Use **Music** and the arrangement ruler for cycle playback, metronome and count-in, tempo and meter changes, and named cues. **Project** includes Standard MIDI File import/export and offline WAV export for full mixes, individual track stems, and one shared wet room stem. **Edit Regions** adds MIDI Join, track editing and configurable arrangement snap. The guide includes an 80-second cue recipe, Intel build steps, and current limits. [Composer workflow guide](docs/composer-workflow-m8.md)
+Use **Timeline** and the arrangement ruler for cycle playback, metronome and count-in, tempo and meter changes, and named cues. **Project** includes Standard MIDI File import/export and offline WAV export for full mixes, individual track stems, and one shared wet room stem. **Edit Regions** adds MIDI Join, track editing and configurable arrangement snap. The guide includes an 80-second cue recipe, Intel build steps, and current limits. [Composer workflow guide](docs/composer-workflow-m8.md)
 
 ## Studio workspace
 
@@ -25,8 +29,8 @@ Appearance uses macOS logical points and native JUCE text layout. Retina backing
 ## MIDI expression, Articulations, and resources
 
 - In **Piano Roll → Expression...**, enable any combination of CC1, CC11, CC7, CC64, Pitch Bend, and Channel Aftertouch. Lanes share the note timeline and snap grid. **Draw** writes stepped MIDI messages along the gesture. Sustain sends explicit off/on values with a single point per gesture. Pitch bend shows the signed offset from center and stores the full 14-bit value. Select a point to see its value, drag it to edit, or Shift-click to add points to the selected lane's selection. With a controller lane focused, use Command-A, Command-C, Command-V, and Delete. Paste uses the last lane click or the playhead if there is no lane cursor. It preserves events' relative timing and requires a matching destination clip channel. Undo and redo use project history. MPE data is read-only in these lanes.
-- **Articulations** follows the selected track. **Pin track** keeps it on that track within the open project, across dock and float. Use a verified message and receiving channel from the instrument's patch documentation to add each mapping. The palette saves mappings with their instrument instance in the project and restores its layout and floating-window geometry from Studio preferences. Unknown patches start unmapped. Check existing mappings after changing a patch within the same plug-in instance. A pad or assigned Control-Command-digit auditions through the track's live route. **Insert at playhead** writes a controller event or short keyswitch note only to a selected clip with the matching track and channel. The optional shortcut is available while the palette is visible. Incoming MIDI triggers and recording live pad gestures to a take are deferred.
-- **Resource Inspector** opens from **View...** or the transport CPU, RAM or XR readouts. The audio percentage is Tracktion callback utilization, while process CPU uses 100% per core. Peak fields are the highest sampled values since launch or reset. Studio footprint comes from macOS task information, total physical RAM from the system, and pressure from macOS memory-pressure notifications. XR is the device's native overload counter when supported. The instrument table is sortable and reports Unavailable for hosted instruments without attributable diagnostics. The app takes system samples at 2 Hz on the message thread and installs no additional audio callback. Device overload detection can vary by driver.
+- **Articulations** follows the selected track. **Pin track** keeps it on that track within the open project, across dock and float. Use a verified message and receiving channel from the instrument's patch documentation to add each mapping. The palette saves mappings with their instrument instance in the project and restores its layout and floating-window geometry from Studio preferences. Unknown patches start unmapped. Check existing mappings after changing a patch within the same plug-in instance. A pad selects the active articulation for Piano Roll Draw. **Audition** and assigned Control-Command-digit shortcuts use the track's live route. **Insert at playhead** writes a controller event or short keyswitch note to a selected clip with the matching track and channel. Automatic writing during live recording is deferred.
+- **Resource Inspector** opens from **View...** or the header CPU indicator. The audio percentage is Tracktion callback utilization, while process CPU uses 100% per core. Peak fields are the highest sampled values since launch or reset. Studio footprint comes from macOS task information, total physical RAM from the system, and pressure from macOS memory-pressure notifications. XR is the device's native overload counter when supported. The instrument table is sortable and reports Unavailable for hosted instruments without attributable diagnostics. The app takes system samples at 2 Hz on the message thread and installs no additional audio callback. Device overload detection can vary by driver.
 
 ## Orchestral Stage, Rooms, and Microphones
 
@@ -99,8 +103,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-composer-workflow-m8 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-M8 &&
-cd Studio-Tracktion-M8 &&
+git clone --branch feature/studio-adaptive-workspace-m9 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-M9 &&
+cd Studio-Tracktion-M9 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&
