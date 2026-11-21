@@ -112,6 +112,13 @@ jobs:
           name: Studio-M7-unified-stage-macOS
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
+      - name: Package Intel Studio application
+        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M10-Intel.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M10-Intel-app
+          path: ${{ runner.temp }}/Studio-M10-Intel.zip
+          if-no-files-found: error
       - name: Measure optimized native synth block times
         run: |
           cmake --build build --config Release --target StudioSynthBench --parallel 4

@@ -3815,6 +3815,8 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     setSize (1280, 800);
     instrumentWorkspace.setFloating (false);
     if (! snapshot (*this, "sampler-reopened-1280x800")) return fail ("capture reopened sampler");
+    showWorkspace (Workspace::closed);
+    if (! performance.isVisible() || ! snapshot (*this, "sampler-performance-1280x800")) return fail ("compact Performance without detailed editor");
     restored->deleteFromParent();
     instrumentWorkspace.updateSelection (selectedTrack(), te::getAudioTracks (*edit), true);
     if (instrumentWorkspace.getPlugin() != nullptr || instrumentWorkspace.isFloating())

@@ -410,7 +410,7 @@ Result Plugin::proposeImport (const juce::Array<File>& files, bool automatic, In
     {
         next.zones[offset + i].mapping = mapping[i];
         summary += next.zones[offset + i].file.getFileName() + ": root " + String (mapping[i].root)
-            + ", keys " + String (mapping[i].low) + "–" + String (mapping[i].high) + "\n";
+            + ", keys " + String (mapping[i].low) + "-" + String (mapping[i].high) + "\n";
     }
     summary += errors.joinIntoString ("\n");
     return accepted ? Result::ok() : Result::fail (summary);
