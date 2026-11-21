@@ -742,7 +742,7 @@ void Editor::resized()
     const int waveform = m.px (page == Page::basic ? 125 : 230);
     const int dialHeight = m.px (74) + line;
     const int gridColumns = page == Page::mapping ? (width < m.span (495) ? 3 : 4)
-        : page == Page::loops ? 2 : (width < m.span (500) ? 2 : 3);
+        : page == Page::loops ? (width >= m.span (720) ? 3 : 2) : (width < m.span (500) ? 2 : 3);
     const int cells = page == Page::mapping || page == Page::groups ? 8 : page == Page::loops ? 7 : page == Page::basic ? 2 : 5;
     const int rows = (cells + gridColumns - 1) / gridColumns;
     const int actionMinimum = m.span (132);
@@ -1464,8 +1464,10 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if (plugin.instrument().zones[0].mapping.soft != 2 || plugin.instrument().zones[1].mapping.soft != 2) return false;
     plugin.undoMapping (false); refresh();
     if (plugin.instrument().zones[0].mapping.soft != 1 || plugin.instrument().zones[1].mapping.soft != 1) return false;
-    selectedZones = { 0 }; loops.onClick(); loopFade.slider.setValue (256, sendNotificationSync);
+    selectedZones = { 0 }; setSize (1100, 800); loops.onClick(); loopFade.slider.setValue (256, sendNotificationSync);
+    zoom.slider.setValue (8, sendNotificationSync); position.slider.setValue (69, sendNotificationSync);
     if (plugin.instrument().zones[0].mapping.loopCrossfade != 256 || ! capture ("sampler-loop-crossfade.png")) return false;
+    zoom.slider.setValue (1, sendNotificationSync); position.slider.setValue (0, sendNotificationSync);
     auto violin = preserved; violin.name = "Synthetic Violin"; violin.groups.clear(); violin.zones.clear();
     const StringArray names { "Sustain", "Staccato", "Pizzicato" };
     for (int i = 0; i < 3; ++i)
