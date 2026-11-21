@@ -327,6 +327,7 @@ target_link_libraries(Studio PRIVATE
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
     target_compile_options(Studio PRIVATE -fno-aligned-allocation)
+    set(CMAKE_Swift_LANGUAGE_VERSION 5)
     enable_language(Swift)
     set(studio_seating_model Seating/SeatingModel.swift Seating/SeatingCatalog.swift)
     add_library(StudioSeatingUI STATIC ${studio_seating_model} Seating/SeatingEditor.swift Seating/SeatingBridge.swift)
