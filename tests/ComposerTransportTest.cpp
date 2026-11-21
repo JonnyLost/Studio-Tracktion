@@ -121,12 +121,13 @@ int runComposerTransportTest()
     std::atomic<int> pending { 0 };
     std::atomic<float> clickPeak { 0 };
     {
-        std::jthread audioBlocks ([&] (std::stop_token stop)
+        std::atomic<bool> stopAudio { false };
+        std::thread audioBlocks ([&]
         {
             AudioBuffer<float> block (2, blockSize);
             block.clear();
             MidiBuffer input;
-            while (! stop.stop_requested())
+            while (! stopAudio.load())
             {
                 const auto message = pending.exchange (0);
                 if (message == 1) input.addEvent (MidiMessage::noteOn (1, 72, (uint8) 101), 0);
@@ -138,6 +139,11 @@ int runComposerTransportTest()
                 std::this_thread::sleep_for (std::chrono::milliseconds (5));
             }
         });
+        const ScopeGuard joinAudio { [&]
+        {
+            stopAudio.store (true);
+            audioBlocks.join();
+        } };
         record.record (false);
         if (! record.isRecording()) return fail ("start recording with count-in");
         auto* playback = record.getCurrentPlaybackContext();
