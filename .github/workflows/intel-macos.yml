@@ -1,0 +1,108 @@
+name: Intel macOS build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - development
+      - feature/studio-orchestral-stage-m4
+      - feature/studio-acoustic-engine-m4r
+      - feature/studio-professional-interface-m45
+      - feature/studio-native-sampler-m5
+      - feature/studio-native-synth-m6
+      - feature/studio-unified-integration-m6
+      - feature/studio-unified-instruments-m65
+      - feature/studio-orchestral-seating-m1
+
+permissions:
+  contents: read
+
+jobs:
+  seating-swift:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check native seating views and run the model tests
+        run: |
+          xcrun swiftc -swift-version 5 -target x86_64-apple-macosx14.0 -typecheck -D STUDIO_SEATING_TESTS Seating/*.swift
+          xcrun swiftc -swift-version 5 -target x86_64-apple-macosx14.0 Seating/SeatingModel.swift Seating/SeatingCatalog.swift tests/SeatingModelTests.swift -o "$RUNNER_TEMP/studio-seating-tests"
+          "$RUNNER_TEMP/studio-seating-tests"
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test Studio appearance metrics
+        run: |
+          c++ -std=c++20 -Wall -Wextra -pedantic tests/AppearanceMetricsTests.cpp -o "$RUNNER_TEMP/studio-appearance-tests"
+          "$RUNNER_TEMP/studio-appearance-tests"
+      - name: Fetch pinned Tracktion Engine and JUCE
+        run: |
+          git init "$RUNNER_TEMP/tracktion-engine"
+          git -C "$RUNNER_TEMP/tracktion-engine" remote add origin https://github.com/Tracktion/tracktion_engine.git
+          git -C "$RUNNER_TEMP/tracktion-engine" fetch --depth 1 origin c6293127cdc0a8488aea2ae0907f4709ee89c228
+          git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
+      - name: Configure and build Studio
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSynthValidation StudioSeatingModelTests --parallel 4
+          test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
+      - name: Test Studio and render interface review
+        env:
+          STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
+          STUDIO_SEATING_SCREENSHOTS: ${{ runner.temp }}/studio-seating-review
+          STUDIO_UNIFIED_STAGE_SCREENSHOTS: ${{ runner.temp }}/studio-unified-stage
+          STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
+          STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
+          STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
+        run: ctest --test-dir build -C Debug --verbose --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M6-unified-interface-review
+          path: ${{ runner.temp }}/studio-interface-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M5-sampler-review
+          path: ${{ runner.temp }}/studio-sampler-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M6-synth-review
+          path: ${{ runner.temp }}/studio-synth-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M65-instrument-workspace
+          path: ${{ runner.temp }}/studio-instrument-workspace/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-Orchestral-Seating-macOS
+          path: ${{ runner.temp }}/studio-seating-review/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M7-unified-stage-macOS
+          path: ${{ runner.temp }}/studio-unified-stage/
+          if-no-files-found: error
+      - name: Measure native synth block times
+        run: build/Debug/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M6-synth-bench
+          path: ${{ runner.temp }}/studio-synth-bench.tsv
+          if-no-files-found: error
+      - name: Compare acoustic engines
+        run: tools/compare-acoustics.sh "$RUNNER_TEMP/studio-acoustic-comparison"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Studio-M4R-acoustic-comparison
+          path: ${{ runner.temp }}/studio-acoustic-comparison/
