@@ -15,6 +15,8 @@ using namespace tracktion::literals;
 #include "PianoRoll.h"
 #include "MusicalRuler.h"
 #include "MusicalTransport.h"
+#include "ComposerMidi.h"
+#include "ComposerTracks.h"
 #include "StudioUI.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
@@ -230,7 +232,7 @@ public:
         projectMenu.onClick = [this]
         {
             showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
-                                           &audioSettings, &plugins, &monitorButton });
+                                           &audioSettings, &plugins, &monitorButton, &importMidi, &exportMidi });
         };
         trackMenu.onClick = [this]
         {
@@ -521,6 +523,8 @@ public:
         addMidiClip.onClick = [this] { createMidiClip(); };
         addAudio.onClick = [this] { addTrack ("Audio"); };
         importAudio.onClick = [this] { chooseAudio(); };
+        importMidi.onClick = [this] { chooseMidiImport(); };
+        exportMidi.onClick = [this] { chooseMidiExport(); };
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
         addChildComponent (environmentWelcome);
@@ -716,7 +720,7 @@ public:
     {
         auto& view = editor->getEditViewState();
         const auto time = view.xToTime (jlimit (0, ruler.getWidth(), x - ruler.getX()), ruler.getWidth());
-        return snap ? studio::snapMusicalTime (edit->tempoSequence, time, 1.0) : time;
+        return snap ? studio::snapMusicalTime (edit->tempoSequence, time, studio::regionSnapStep (*edit)) : time;
     }
 
     void mouseDown (const MouseEvent& event) override
@@ -782,6 +786,12 @@ public:
             else play.onClick();
             return true;
         }
+        if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'J' || key.getKeyCode() == 'j')
+            && canEditRegions())
+        {
+            joinSelectedMidi();
+            return true;
+        }
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'Z' || key.getKeyCode() == 'z')
             && canEditRegions())
         {
@@ -834,10 +844,9 @@ public:
             if (visible)
                 item.component->setBounds (files.removeFromRight (m.span (item.baseWidth)).reduced (m.px (1), 0));
         }
-        const bool fullFileRow = files.getWidth() >= m.span (735);
-        projectMenu.setVisible (! fullFileRow || ! showMonitor);
-        if (projectMenu.isVisible())
-            projectMenu.setBounds (files.removeFromRight (m.span (m.projectMenuWidth)).reduced (m.px (2), 0));
+        const bool fullFileRow = files.getWidth() >= m.span (735 + m.projectMenuWidth);
+        projectMenu.setVisible (true);
+        projectMenu.setBounds (files.removeFromRight (m.span (m.projectMenuWidth)).reduced (m.px (2), 0));
         for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &openProject, &newProject })
         {
             button->setVisible (fullFileRow);
@@ -1080,6 +1089,7 @@ private:
 
     Label title, message, trackDetails, workspaceTitle,
           workspaceSummary, ariaReviewNotice;
+    TextButton importMidi { "Import MIDI..." }, exportMidi { "Export MIDI..." };
     studio::MusicalTransport music;
     const Colour timelineCycleColour { 0xff242c36 };
     std::optional<te::TimePosition> cycleAnchor;
@@ -1688,10 +1698,104 @@ private:
                          dontSendNotification);
     }
 
+    void joinSelectedMidi()
+    {
+        const auto midi = selection.getItemsOfType<te::MidiClip>();
+        if (midi.size() != selection.getItemsOfType<te::Clip>().size())
+        {
+            message.setText ("Select MIDI regions only to join them.", dontSendNotification);
+            return;
+        }
+        te::MidiClip::Ptr merged;
+        const auto result = studio::midi::join (midi, merged);
+        if (result.wasOk()) selection.selectOnly (merged.get());
+        message.setText (result.wasOk() ? "Joined MIDI regions." : result.getErrorMessage(), dontSendNotification);
+    }
+
+    void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track)
+    {
+        const auto id = track.itemID;
+        PopupMenu tracks;
+        const auto general = studio::tracks::restriction (track, false);
+        const auto destructive = studio::tracks::restriction (track, true);
+        tracks.addItem ("Rename...", general.isEmpty(), false, trackMenuAction (id,
+            [] (StudioView& view, te::AudioTrack& target) { view.renameTrack (target); }));
+        for (const auto direction : { -1, 1 })
+            tracks.addItem (direction < 0 ? "Move up" : "Move down", studio::tracks::canMove (track, direction),
+                false, trackMenuAction (id, [direction] (StudioView&, te::AudioTrack& target)
+                {
+                    studio::tracks::move (target, direction);
+                }));
+        tracks.addItem ("Duplicate (muted)", destructive.isEmpty(), false, trackMenuAction (id,
+            [] (StudioView& view, te::AudioTrack& target)
+            {
+                if (auto copy = studio::tracks::duplicate (target))
+                {
+                    view.selection.selectOnly (copy.get());
+                    view.message.setText ("Duplicated track. Unmute the copy when ready.", dontSendNotification);
+                }
+                else
+                    view.message.setText ("Could not duplicate the track.", dontSendNotification);
+            }));
+        tracks.addItem ("Delete track", destructive.isEmpty(), false, trackMenuAction (id,
+            [] (StudioView& view, te::AudioTrack& target)
+            {
+                view.piano.setClip (nullptr);
+                studio::tracks::remove (target);
+                view.message.setText ("Deleted track. Use Undo to restore it.", dontSendNotification);
+            }));
+        if (destructive.isNotEmpty())
+            tracks.addSectionHeader (destructive);
+        parent.addSubMenu ("Track · " + track.getName(), tracks);
+    }
+
+    void renameTrack (te::AudioTrack& track)
+    {
+        auto* window = new AlertWindow ("Rename track", {}, MessageBoxIconType::NoIcon, this);
+        window->addTextEditor ("name", track.getName(), "Track name");
+        window->addButton ("Rename", 1, KeyPress (KeyPress::returnKey));
+        window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+        const SafePointer<StudioView> safe (this);
+        const auto generation = projectGeneration;
+        const auto id = track.itemID;
+        window->enterModalState (true, ModalCallbackFunction::create ([safe, generation, id, window] (int result)
+        {
+            if (result != 1 || safe == nullptr || safe->projectGeneration != generation || ! safe->canTransferMidi())
+                return;
+            auto* current = safe->trackById (id);
+            const auto name = window->getTextEditorContents ("name").trim();
+            if (current == nullptr || name.isEmpty())
+                return;
+            current->edit.getUndoManager().beginNewTransaction ("Rename track");
+            current->setName (name);
+            current->edit.getUndoManager().beginNewTransaction();
+        }), true);
+    }
+
     void showRegionActions()
     {
         PopupMenu menu;
         const bool selected = selection.getItemsOfType<te::Clip>().size() > 0;
+        if (auto* track = workflowTrack())
+            populateTrackEditMenu (menu, *track);
+        if (edit != nullptr)
+        {
+            PopupMenu snap;
+            const auto division = studio::regionSnapStep (*edit);
+            for (const auto& [label, step] : std::initializer_list<std::pair<const char*, double>> {
+                   { "Off", 0 }, { "Beat", 1 }, { "Half beat", 0.5 },
+                   { "Quarter beat", 0.25 }, { "Beat triplet", 1.0 / 3.0 } })
+            {
+                const SafePointer<StudioView> safe (this);
+                const auto generation = projectGeneration;
+                snap.addItem (label, true, step == division, [safe, generation, step]
+                {
+                    if (safe != nullptr && safe->projectGeneration == generation && safe->canEditRegions())
+                        safe->edit->state.setProperty (studio::regionSnapProperty, step, nullptr);
+                });
+            }
+            menu.addSubMenu ("Arrangement snap", snap);
+        }
         menu.addItem (1, "Split selected at playhead", selected);
         menu.addItem (2, "Duplicate selected", selected);
         menu.addSeparator();
@@ -1699,6 +1803,9 @@ private:
         menu.addItem (4, "Paste at playhead", ! regionClipboard.empty());
         menu.addItem (5, "Cut selected regions", selected);
         menu.addItem (6, "Delete selected regions", selected);
+        menu.addItem (9, "Join selected MIDI regions", selection.getItemsOfType<te::MidiClip>().size() >= 2
+                      && selection.getItemsOfType<te::MidiClip>().size() == selection.getItemsOfType<te::Clip>().size()
+                      && edit != nullptr && ! edit->getTransport().isPlaying());
         menu.addSeparator();
         menu.addItem (7, "Undo", edit != nullptr && edit->getUndoManager().canUndo());
         menu.addItem (8, "Redo", edit != nullptr && edit->getUndoManager().canRedo());
@@ -1712,6 +1819,8 @@ private:
                                     safe->edit->undo();
                                 else if (choice == 8)
                                     safe->edit->redo();
+                                else if (choice == 9)
+                                    safe->joinSelectedMidi();
                                 else
                                     safe->performRegionAction (choice);
                                 safe->repaint (safe->rulerRow);
@@ -1752,6 +1861,8 @@ private:
         // A loaded project must remain editable while its ARIA slots are checked.
         piano.setEditingEnabled (ready && ! recording);
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
+        importMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
+        exportMidi.setEnabled (ready && ! playing && studio::transportSettled (*edit));
         rewind.setEnabled (ready && ! recording);
         play.setEnabled (ready);
         play.setToggleState (playing && ! recording, dontSendNotification);
@@ -2381,6 +2492,101 @@ private:
         return nullptr;
     }
 
+    bool canTransferMidi() const
+    {
+        return edit != nullptr && ! busy && ! edit->getTransport().isPlaying() && studio::transportSettled (*edit);
+    }
+
+    void chooseMidiImport()
+    {
+        if (! canTransferMidi()) return;
+        const auto generation = projectGeneration;
+        const auto destination = workflowTrack() != nullptr ? workflowTrack()->itemID : te::EditItemID();
+        chooser = std::make_unique<FileChooser> ("Import Standard MIDI File", projectFile.getParentDirectory(), "*.mid;*.midi");
+        const SafePointer<StudioView> safe (this);
+        chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
+            [safe, generation, destination] (const FileChooser& dialog)
+            {
+                if (safe == nullptr || safe->projectGeneration != generation || ! safe->canTransferMidi()
+                    || dialog.getResult() == File())
+                    return;
+                auto smf = std::make_shared<studio::midi::Smf>();
+                if (auto result = studio::midi::read (dialog.getResult(), *smf); result.failed())
+                {
+                    safe->message.setText (result.getErrorMessage(), dontSendNotification);
+                    return;
+                }
+                safe->showMidiImportOptions (std::move (smf), destination);
+            });
+    }
+
+    void showMidiImportOptions (std::shared_ptr<const studio::midi::Smf> smf, te::EditItemID selected)
+    {
+        auto* window = new AlertWindow ("Import MIDI", "Choose where the MIDI parts and tempo map go.",
+                                        MessageBoxIconType::NoIcon, this);
+        StringArray destinations { "New tracks in this project" };
+        if (auto* track = trackById (selected); track != nullptr && ! studio::spatial::isRoomReturn (*track))
+            destinations.add ("Selected track: " + track->getName());
+        window->addComboBox ("tracks", destinations, "Track placement");
+        window->addComboBox ("tempo", { "Keep project tempo and meter (at playhead)",
+                                          "Replace tempo and meter from file (at project start)" }, "Tempo map");
+        window->addButton ("Import", 1, KeyPress (KeyPress::returnKey));
+        window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+        const SafePointer<StudioView> safe (this);
+        const auto generation = projectGeneration;
+        window->enterModalState (true, ModalCallbackFunction::create ([safe, generation, window, smf, selected] (int answer)
+        {
+            if (answer != 1 || safe == nullptr || safe->projectGeneration != generation || ! safe->canTransferMidi())
+                return;
+            const bool intoTrack = window->getComboBoxComponent ("tracks")->getSelectedId() == 2;
+            auto* track = intoTrack ? safe->trackById (selected) : nullptr;
+            if (intoTrack && track == nullptr)
+            {
+                safe->message.setText ("The selected destination is no longer available.", dontSendNotification);
+                return;
+            }
+            const bool useFileTempo = window->getComboBoxComponent ("tempo")->getSelectedId() == 2;
+            auto& project = *safe->edit;
+            const auto result = studio::midi::import (project, *smf, project.getTransport().getPosition(), track, useFileTempo);
+            safe->message.setText (result.wasOk() ? "Imported MIDI. Load instruments on any new tracks to hear them."
+                                                 : result.getErrorMessage(), dontSendNotification);
+            safe->repaint();
+        }), true);
+    }
+
+    void chooseMidiExport()
+    {
+        if (! canTransferMidi()) return;
+        auto clips = selection.getItemsOfType<te::MidiClip>();
+        if (clips.isEmpty())
+            for (auto* track : selection.getItemsOfType<te::AudioTrack>())
+                for (auto* clip : track->getClips())
+                    if (auto* midi = dynamic_cast<te::MidiClip*> (clip))
+                        clips.add (midi);
+        if (clips.isEmpty())
+        {
+            message.setText ("Select MIDI regions or tracks containing MIDI regions.", dontSendNotification);
+            return;
+        }
+        Array<te::EditItemID> ids;
+        for (const auto* clip : clips) ids.add (clip->itemID);
+        const auto generation = projectGeneration;
+        chooser = std::make_unique<FileChooser> ("Export selected MIDI", projectFile.withFileExtension (".mid"), "*.mid");
+        const SafePointer<StudioView> safe (this);
+        chooser->launchAsync (FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles,
+            [safe, generation, ids] (const FileChooser& dialog)
+            {
+                if (safe == nullptr || safe->projectGeneration != generation || ! safe->canTransferMidi()
+                    || dialog.getResult() == File()) return;
+                Array<te::MidiClip*> sources;
+                for (const auto id : ids)
+                    if (auto* clip = dynamic_cast<te::MidiClip*> (te::findClipForID (*safe->edit, id)))
+                        sources.add (clip);
+                const auto result = studio::midi::write (*safe->edit, sources, dialog.getResult().withFileExtension (".mid"));
+                safe->message.setText (result.wasOk() ? "Exported selected MIDI." : result.getErrorMessage(), dontSendNotification);
+            });
+    }
+
     void chooseAudio()
     {
         chooser = std::make_unique<FileChooser> ("Import audio",
@@ -2759,7 +2965,7 @@ private:
     }
 
     // Menu callbacks re-resolve the original track and project after the popup closes.
-    auto trackMenuAction (te::EditItemID id, std::function<void(StudioView&, te::AudioTrack&)> action)
+    std::function<void()> trackMenuAction (te::EditItemID id, std::function<void(StudioView&, te::AudioTrack&)> action)
     {
         return [safe = Component::SafePointer<StudioView> (this), id, generation = projectGeneration,
                 action = std::move (action)]
@@ -3521,7 +3727,7 @@ int StudioView::runInterfaceReview (const File& output)
 }
 
 namespace studio::spatial { int runSpatialRoutingTest(); }
-namespace studio { int runComposerTransportTest(); }
+namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); }
 #endif
 
 class StudioApplication final : public JUCEApplication
@@ -3571,6 +3777,12 @@ public:
            #endif
             const auto path = SystemStats::getEnvironmentVariable ("STUDIO_SEATING_SCREENSHOTS", {});
             setApplicationReturnValue (view.runSeatingProjectReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-composer-midi")
+        {
+            setApplicationReturnValue (studio::runComposerMidiTest());
             quit();
             return;
         }

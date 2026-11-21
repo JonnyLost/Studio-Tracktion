@@ -54,6 +54,13 @@ void forEachMusicalTick (const tracktion::TempoSequence& sequence,
     }
 }
 
+inline const juce::Identifier regionSnapProperty { "studioRegionSnap" };
+
+inline double regionSnapStep (const tracktion::Edit& edit)
+{
+    return juce::jlimit (0.0, 1.0, (double) edit.state.getProperty (regionSnapProperty, 1.0));
+}
+
 inline tracktion::TimePosition snapMusicalTime (const tracktion::TempoSequence& sequence,
                                                tracktion::TimePosition time, double step)
 {
