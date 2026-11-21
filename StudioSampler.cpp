@@ -383,7 +383,7 @@ void Plugin::moveZone (int index, int folder)
     if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size()))) return;
     auto next = model; next.zones[static_cast<std::size_t> (index)].folder = folder; change (std::move (next), true);
 }
-Result Plugin::proposeImport (const Array<File>& files, bool automatic, Instrument& next, String& summary)
+Result Plugin::proposeImport (const juce::Array<File>& files, bool automatic, Instrument& next, String& summary)
 {
     next = model;
     int accepted = 0, unsupported = 0, provisional = 0;
