@@ -102,7 +102,7 @@ void Engine::use (const Bank& next) noexcept
     instrumentGain = amplitude (settings.gainDb);
     for (auto& voice : voices) if (voice.sample && controlNote (voice.channel, voice.note, false))
     { voice.down = false; release (voice); held[static_cast<std::size_t> (voice.source)][static_cast<std::size_t> (voice.channel)][static_cast<std::size_t> (voice.note)] = {}; }
-    for (auto& voice : voices) if (voice.sample && voice.stage != Voice::release && ! audible (voice.folder)) { release (voice); voice.releaseStep = voice.level / 32; }
+    for (auto& voice : voices) if (voice.sample && ! voice.muted && ! audible (voice.folder)) { voice.muted = true; release (voice); voice.releaseStep = voice.level / 32; }
     for (int i = settings.polyphony; i < maxVoices; ++i)
         voices[static_cast<std::size_t> (i)] = {};
 }
@@ -178,7 +178,7 @@ void Engine::start (int source, int channel, int note, int velocity) noexcept
     auto& strike = held[static_cast<std::size_t> (source)][static_cast<std::size_t> (channel)][static_cast<std::size_t> (note)];
     strike = {}; strike.velocity = static_cast<unsigned char> (velocity);
     for (const auto& g : bank->groups)
-        if (groupMatches (g, channel) && audible (g.id)) strike.mask |= static_cast<unsigned short> (1u << g.id);
+        if (g.releaseTrigger && groupMatches (g, channel) && audible (g.id)) strike.mask |= static_cast<unsigned short> (1u << g.id);
     playZones (source, channel, note, velocity, false, strike.mask);
 }
 

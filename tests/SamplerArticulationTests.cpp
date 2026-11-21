@@ -28,6 +28,11 @@ struct Rig
 int main()
 {
     static_assert (std::atomic<std::uint64_t>::is_always_lock_free);
+    {
+        Rig tail; tail.b.groups.push_back ({}); Zone z; z.sample = sample (1); tail.b.zones = { z }; tail.b.settings.release = 1;
+        tail.use(); tail.on(); tail.render(); tail.off(); check (tail.render() > .9f, "long release is audible");
+        tail.b.groups[0].mute = true; tail.use(); check (tail.render() == 0, "mute fades voices already in release");
+    }
     Rig r;
     for (int i = 0; i < 3; ++i)
     {

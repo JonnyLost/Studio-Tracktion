@@ -745,7 +745,7 @@ void ArticulationStrip::refresh()
         if (! visible) continue;
         const auto& entry = palette.mappings[start + i];
         pad.setButtonText (entry.name);
-        pad.setTooltip ("Toggle " + entry.name + " for composition on MIDI channel " + String (entry.channel));
+        pad.setTooltip ((palette.nativeSampler ? "Select and send " : "Toggle ") + entry.name + " for composition on MIDI channel " + String (entry.channel));
         pad.setEnabled (palette.ready && palette.edit != nullptr && ! palette.edit->getTransport().isRecording());
         pad.setToggleState (entry.id == palette.selectedId, dontSendNotification);
     }

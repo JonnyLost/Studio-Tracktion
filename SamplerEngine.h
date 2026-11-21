@@ -93,7 +93,7 @@ private:
         float velocityGain = 0, level = 0, releaseStep = 0;
         double position = 0, baseStep = 0;
         std::uint64_t age = 0;
-        bool down = false, oneShot = false, loop = false;
+        bool down = false, oneShot = false, loop = false, muted = false;
         int end = 0, loopStart = 0, loopEnd = 0, blend = 0, folder = 0, previewFrames = 0;
         enum Stage { attack, decay, sustain, release } stage = attack;
     };
