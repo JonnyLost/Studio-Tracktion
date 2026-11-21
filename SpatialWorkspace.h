@@ -76,6 +76,9 @@ public:
     ~SpatialWorkspace() override;
     std::function<void(tracktion::EditItemID)> onSelectTrack, onOpenRoomMixer;
     std::function<void()> onLayoutChange;
+   #if JUCE_MAC
+    std::function<void()> onOpenSeating;
+   #endif
     void setEdit (tracktion::Edit*);
     void setView (View);
     void refresh (const juce::Array<tracktion::AudioTrack*>&, const juce::Array<tracktion::AudioTrack*>& selected,
@@ -111,6 +114,9 @@ private:
     RoomGraphic roomGraphic;
 
     juce::ComboBox seating, arrangeScope, trackList, sections;
+   #if JUCE_MAC
+    juce::TextButton seatingDesigner { "Seating Designer" };
+   #endif
     juce::TextButton arrange { "Auto Arrange" }, resetSeat { "Reset seat" }, toggleSend { "Enable stage audio" },
                      stageCheck { "Room Check +12 dB" };
     SpatialField pan { "Stage pan", -1, 1, 0.01 }, depth { "Stage depth", 0, 1, 0.01 },

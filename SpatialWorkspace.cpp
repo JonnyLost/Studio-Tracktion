@@ -146,6 +146,11 @@ SpatialWorkspace::SpatialWorkspace()
               SpatialField (bandNames[4], 0.25, 2, 0.05, " x"), SpatialField (bandNames[5], 0.25, 2, 0.05, " x") }
 {
     add (*this, stagePage, roomPage, micPage);
+   #if JUCE_MAC
+    stagePage.addAndMakeVisible (seatingDesigner);
+    seatingDesigner.setTooltip ("Design the physical seating plan for this project");
+    seatingDesigner.onClick = [this] { if (onOpenSeating) onOpenSeating(); };
+   #endif
     add (stagePage, stageStatus, stageSignal, stageCheck, stageMap, seating, arrangeScope, trackList, sections,
          arrange, resetSeat, toggleSend, pan, depth, trim);
     add (roomPage, roomStatus, roomDraftStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
@@ -1058,7 +1063,11 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
     };
     if (view == View::stage)
     {
-        toolbar (area, { { &seating, 180 }, { &arrangeScope, 155 }, { &arrange, 120 }, { &stageCheck, 161 } });
+        toolbar (area, { { &seating, 180 }, { &arrangeScope, 155 }, { &arrange, 120 }, { &stageCheck, 161 }
+                       #if JUCE_MAC
+                         , { &seatingDesigner, 146 }
+                       #endif
+                       });
         place (area, stageStatus, 2 * m.line (12, 1));
         place (area, stageSignal, 2 * m.line (12, 1));
         mapAndInspector (stageMap, [&] (Rectangle<int>& region, bool assign)
