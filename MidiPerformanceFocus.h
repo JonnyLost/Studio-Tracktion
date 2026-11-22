@@ -67,7 +67,14 @@ public:
             auto* existing = findInput (edit, deviceID);
             const bool unchanged = existing != nullptr && existing->getTargets().size() == 1
                                    && existing->getTargets()[0] == target;
-            if (! unchanged || (input != nullptr && input != existing))
+            if (unchanged && input != nullptr && input != existing)
+            {
+                if (hasHeldInput()) return "Release notes/pedal before changing MIDI keyboard";
+                // Device selection changed. Restore our previous device before
+                // allowing Studio to manage the new physical keyboard.
+                release (&edit);
+            }
+            else if (! unchanged)
             {
                 // A changed assignment belongs to the user; don't restore old
                 // routing over it. Only restore the prior monitor mode.
@@ -133,10 +140,13 @@ public:
             attachListener (devices, deviceID);
         }
 
-        if (auto result = input->setTarget (desired->itemID, true, nullptr, 0); ! result)
+        if (targets.size() != 1 || targets[0] != desired->itemID)
         {
-            release (&edit);
-            return "Could not focus MIDI keyboard: " + result.error();
+            if (auto result = input->setTarget (desired->itemID, true, nullptr, 0); ! result)
+            {
+                release (&edit);
+                return "Could not focus MIDI keyboard: " + result.error();
+            }
         }
         target = desired->itemID;
         // 'on' enables live monitoring even though record-arm stays off.
