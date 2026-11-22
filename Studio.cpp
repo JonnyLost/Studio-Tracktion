@@ -1794,7 +1794,8 @@ private:
     studio::MidiPerformanceFocus midiFocus;
     bool followSelectedMidi = true;
     juce::String midiFocusStatus;
-    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
+    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList,
+                                        &engine.getPropertyStorage().getPropertiesFile() };
     studio::ChannelInspector channelInspector { trackActions };
     studio::InspectorDrawer inspectorDrawer { trackActions };
     studio::StudioMixer mixer { trackActions };
