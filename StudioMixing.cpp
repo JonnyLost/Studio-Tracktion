@@ -335,7 +335,8 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
 int ChannelInspector::minimumContentHeight (int width) const
 {
     const auto& m = appearance;
-    int height = m.line (14, 5) + 2 * m.control (25) + 3 * m.line (12, 4) + m.px (4);
+    int height = m.line (14, 5) + (showMixControls ? 2 * m.control (25) : 0)
+               + 3 * m.line (12, 4) + m.px (4);
     const int count = channelColumns (width);
     for (int i = 0; i < 5; i += count)
         height += cardRowHeight (i, count) + m.px (3);
@@ -361,8 +362,12 @@ void ChannelInspector::resized()
         for (int i = 0; i < count && start + i < 5; ++i)
             columns[(size_t) (start + i)] = row.removeFromLeft (row.getWidth() / (count - i)).reduced (m.px (2), 0);
     }
-    auto bottom = area.removeFromTop (2 * m.control (25));
-    mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
+    if (showMixControls)
+    {
+        auto bottom = area.removeFromTop (2 * m.control (25));
+        mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
+    }
+    else mix.setBounds ({});
     midiStatus.setBounds (area.removeFromTop (2 * m.line (12, 4)));
     ariaStatus.setBounds (area.removeFromTop (m.line (12, 4)));
     const auto heading = m.line (12, 4);
@@ -546,8 +551,17 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     close.onClick = [this] { if (onClose) onClose(); };
     scroll.setScrollBarsShown (true, false);
     scroll.setScrollBarThickness (appearance.scrollbar());
+    inspector.setShowMixControls (false);
     scroll.setViewedComponent (&inspector, false);
     addAndMakeVisible (scroll);
+    addAndMakeVisible (*channelStrip);
+    addAndMakeVisible (details);
+    details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
+    details.onClick = [this]
+    {
+        detailsOpen = ! detailsOpen;
+        resized();
+    };
 }
 
 InspectorDrawer::~InspectorDrawer()
@@ -558,6 +572,7 @@ InspectorDrawer::~InspectorDrawer()
 void InspectorDrawer::setEdit (te::Edit* next)
 {
     inspector.setEdit (next);
+    channelStrip->setEdit (next);
     scroll.setViewPosition (0, 0);
 }
 
@@ -565,7 +580,10 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
     inspector.refresh (track, ready, canRoute, recovery, selectedClip);
-    title.setText (track != nullptr ? "Inspector · " + track->getName() : "Inspector", dontSendNotification);
+    channelStrip->refresh (track, ready, selectedClip);
+    // Avoid encoded separators that can render as stray characters with
+    // some Intel macOS font/fallback combinations.
+    title.setText (track != nullptr ? track->getName() + " Inspector" : "Inspector", dontSendNotification);
     title.setTooltip (title.getText());
 }
 
@@ -590,11 +608,21 @@ void InspectorDrawer::resized()
     close.setBounds (header.removeFromRight (m.span (60)).reduced (m.px (2), 0));
     title.setBounds (header);
     area.removeFromTop (m.px (5));
-    scroll.setBounds (area);
-    const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (2));
-    const int height = jmax (area.getHeight(),
-                             inspector.minimumContentHeight (width) + m.px (30));
-    inspector.setSize (width, height);
+    const int channelHeight = jmin (m.span (278), jmax (m.span (223), area.getHeight() * 61 / 100));
+    channelStrip->setBounds (area.removeFromTop (jmin (channelHeight, area.getHeight())));
+    area.removeFromTop (m.px (4));
+    details.setBounds (area.removeFromTop (m.control (26, 11)));
+    details.setButtonText (detailsOpen ? "Track Settings  v" : "Track Settings  >");
+    area.removeFromTop (m.px (3));
+    scroll.setVisible (detailsOpen);
+    scroll.setBounds (detailsOpen ? area : Rectangle<int>());
+    if (detailsOpen)
+    {
+        const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (2));
+        const int height = jmax (area.getHeight(),
+                                 inspector.minimumContentHeight (width) + m.px (18));
+        inspector.setSize (width, height);
+    }
 }
 
 void InspectorDrawer::paint (Graphics& g)
