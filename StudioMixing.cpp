@@ -564,8 +564,8 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     quickFx.setTooltip ("Open, edit or safely remove the selected track's instrument and effects");
     quickFx.onClick = [this]
     {
-        if (inspector.inspectedTrack().isValid() && actions.showMenu)
-            actions.showMenu (inspector.inspectedTrack(), TrackMenu::inserts, quickFx);
+        if (inspector.inspectedTrack().isValid() && this->actions.showMenu)
+            this->actions.showMenu (inspector.inspectedTrack(), TrackMenu::inserts, quickFx);
     };
     details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
     details.onClick = [this]
