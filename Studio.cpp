@@ -4221,6 +4221,8 @@ int StudioView::runInterfaceReview (const File& output)
                 setDockMode (DockMode::split);
                 if (! workspaceViewport.isVisible() || ! mixer.isVisible() || ruler.getWidth() < 200)
                     return fail ("split arrangement and Mixer");
+                if (performance.isVisible() || articulationStrip.isVisible())
+                    return fail ("Mixer cannot share lower space with instrument or articulation panels");
                 // Exercise actual pointer and keyboard resizing. Merely
                 // selecting Split does not catch a divider that stops moving
                 // once Split is already the active mode.
@@ -4275,6 +4277,8 @@ int StudioView::runInterfaceReview (const File& output)
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (image, stream);
     };
+    if (performance.isVisible() || articulationStrip.isVisible())
+        return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
     // Visual-regression capture for the small projects that previously left a
     // distracting empty gulf between the last channel and pinned Master.
@@ -4285,6 +4289,11 @@ int StudioView::runInterfaceReview (const File& output)
     setDockMode (DockMode::split);
     mixer.refresh (tracks, selectedTrack(), true, true);
     if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
+    if (workspacePanel.getHeight() < mixer.minimumContentHeight()
+        || performance.isVisible() || articulationStrip.isVisible())
+        return fail ("Mixer-focused Split must leave the console fully usable");
+    if (! capture ("mixer-focused-1280x800.png"))
+        return fail ("write Mixer-first arrangement screenshot");
     setDockMode (DockMode::expanded);
     // The Inspector follows the selected track while leaving the arrangement
     // geometry untouched; closing it must restore a full-width work surface.
@@ -4296,6 +4305,12 @@ int StudioView::runInterfaceReview (const File& output)
         || inspectorDrawer.inspectedTrack() != tracks[1]->itemID || ruler != unclippedRuler)
         return fail ("right Inspector follows selected channel without changing ruler");
     if (! capture ("right-inspector-1280x800.png")) return fail ("write right Inspector screenshot");
+    inspectorDrawer.setDetailsExpanded (true);
+    if (! inspectorDrawer.areDetailsExpanded())
+        return fail ("Inspector advanced track settings expand");
+    if (! capture ("right-inspector-track-settings-1280x800.png"))
+        return fail ("write expanded Inspector settings screenshot");
+    inspectorDrawer.setDetailsExpanded (false);
     selection.selectOnly (tracks[2]);
     timerCallback();
     timerCallback();
