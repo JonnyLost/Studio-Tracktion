@@ -784,14 +784,15 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
     if (event.mods.isPopupMenu())
     {
         PopupMenu menu;
+        const Component::SafePointer<StudioPianoRoll> safe (this);
         menu.addSectionHeader ("Piano Roll");
-        menu.addItem ("Select Tool", true, tool.getSelectedId() == 1, [this]
+        menu.addItem ("Select Tool", true, tool.getSelectedId() == 1, [safe]
         {
-            tool.setSelectedId (1, sendNotification);
+            if (safe != nullptr) safe->tool.setSelectedId (1, sendNotification);
         });
-        menu.addItem ("Draw Tool", true, tool.getSelectedId() == 2, [this]
+        menu.addItem ("Draw Tool", true, tool.getSelectedId() == 2, [safe]
         {
-            tool.setSelectedId (2, sendNotification);
+            if (safe != nullptr) safe->tool.setSelectedId (2, sendNotification);
         });
         menu.addSeparator();
         PopupMenu snap;
@@ -802,15 +803,15 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
                  { "Sixteenth", 4 }, { "Sixteenth triplet", 7 },
                  { "Thirty-second", 5 }, { "Thirty-second triplet", 8 } })
             snap.addItem (item.first, true, selectedGrid == item.second,
-                [this, id = item.second] { grid.setSelectedId (id, sendNotification); });
+                [safe, id = item.second] { if (safe != nullptr) safe->grid.setSelectedId (id, sendNotification); });
         menu.addSubMenu ("Snap Grid", snap);
         menu.addSeparator();
         menu.addItem ("Quantize Notes", editingEnabled, false,
-            [this] { if (editingEnabled && clip != nullptr) quantizeNotes(); });
+            [safe] { if (safe != nullptr && safe->editingEnabled && safe->clip != nullptr) safe->quantizeNotes(); });
         menu.addItem ("Delete Selected Notes", editingEnabled && ! selectedNotes.isEmpty(), false,
-            [this] { if (editingEnabled && clip != nullptr) deleteSelected(); });
+            [safe] { if (safe != nullptr && safe->editingEnabled && safe->clip != nullptr) safe->deleteSelected(); });
         menu.addSeparator();
-        menu.addItem ("Controller Lanes...", [this] { controllers.showMenu (expression); });
+        menu.addItem ("Controller Lanes...", [safe] { if (safe != nullptr) safe->controllers.showMenu (safe->expression); });
         menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (
             Rectangle<int> (event.getScreenPosition().x, event.getScreenPosition().y, 1, 1)));
         return;
