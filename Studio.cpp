@@ -201,6 +201,64 @@ private:
     AudioDeviceSelectorComponent selector;
 };
 
+// Searchable reference for controls already implemented in Studio.
+// This is display-only: it does not register or alter keyboard commands.
+class StudioCommandReference final : public Component
+{
+public:
+    StudioCommandReference()
+    {
+        addAndMakeVisible (search);
+        addAndMakeVisible (results);
+        search.setTextToShowWhenEmpty ("Search commands and shortcuts", studio::colours::secondary);
+        search.setColour (TextEditor::backgroundColourId, studio::colours::panel);
+        search.onTextChange = [this] { refreshList(); };
+        results.setMultiLine (true);
+        results.setReadOnly (true);
+        results.setScrollbarsShown (true);
+        results.setColour (TextEditor::backgroundColourId, studio::colours::canvas);
+        refreshList();
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (12);
+        search.setBounds (area.removeFromTop (34));
+        area.removeFromTop (10);
+        results.setBounds (area);
+    }
+
+private:
+    TextEditor search, results;
+    void refreshList()
+    {
+        const auto query = search.getText().trim();
+        StringArray lines;
+        // Only claim shortcuts implemented in StudioView::keyPressed or
+        // enabled by the Piano Roll. Other commands are listed without keys.
+        for (const auto& item : std::initializer_list<const char*> {
+            "Transport  |  Space  |  Play / Stop",
+            "File  |  Command-S  |  Save Project",
+            "File  |  Shift-Command-S  |  Save As",
+            "Edit  |  Command-Z  |  Undo",
+            "Edit  |  Shift-Command-Z  |  Redo",
+            "MIDI  |  Command-J  |  Join Selected MIDI Regions",
+            "Piano Roll  |  Delete  |  Delete Selected Notes",
+            "Piano Roll  |  Escape  |  Clear Note Selection",
+            "Transport  |  Return to Start",
+            "Record  |  Capture Recent MIDI",
+            "Track  |  Add Instrument / Synth / Sampler / Audio",
+            "Mix  |  Selected Track Inspector",
+            "View  |  Transport Layout and Interface Scale",
+            "Window  |  Mixer / Stage / Piano Roll"
+        })
+            if (query.isEmpty() || String (item).containsIgnoreCase (query))
+                lines.add (item);
+        results.setText (lines.isEmpty() ? "No matching commands." : lines.joinIntoString ("\n\n"),
+                         dontSendNotification);
+    }
+};
+
 class StudioView final : public Component, private Timer
 {
 public:
@@ -1530,12 +1588,18 @@ public:
                     "Orchestral Stage, native instruments, MIDI sequencing and mixing.", "OK");
                 break;
             case mKeyboardHelp:
-                AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon,
-                    "Keyboard Shortcuts",
-                    "Space: Play / Stop\nCommand-S: Save\nShift-Command-S: Save As\n"
-                    "Command-Z: Undo\nShift-Command-Z: Redo\n"
-                    "Click a transport LCD value to edit tempo or time signature.", "OK");
+            {
+                DialogWindow::LaunchOptions options;
+                options.dialogTitle = "Studio Commands and Shortcuts";
+                options.dialogBackgroundColour = studio::colours::canvas;
+                options.escapeKeyTriggersCloseButton = true;
+                options.useNativeTitleBar = true;
+                options.resizable = true;
+                options.content.setOwned (new StudioCommandReference());
+                options.content->setSize (jmin (getWidth() - 30, 600), jmin (getHeight() - 60, 460));
+                options.launchAsync();
                 break;
+            }
             case mScaleUp: applyAppearance (studio::appearance.adjacentInterfacePercent (1), studio::appearance.textPercent(), true); break;
             case mScaleDown: applyAppearance (studio::appearance.adjacentInterfacePercent (-1), studio::appearance.textPercent(), true); break;
             case mScaleReset: applyAppearance (100, 100, true); break;
