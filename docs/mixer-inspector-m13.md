@@ -119,3 +119,13 @@ View includes checked transport-visibility preferences and layout reset, so the 
 **Required Intel macOS acceptance:** Confirm the Apple menu bar is present with Studio focused, menus appear without orphaned header duplicates, all File actions and disabled state work, Window and View choices work, transport LCD preferences persist after restart, and the header stays unclipped at 1024×640 and 1280×800. Also validate project save and no behavior regressions in stereo playback. Keep PR #32 unmerged until CI and screenshots are reviewed.
 
 **Still outstanding:** Full Flashback acceptance with physical MIDI, Ostinato engine integration from historical branch, Picture Scoring, expressive sampler controls; ARIA-specific Stage remains parked.
+
+### Milestone 14 interface polish — Mixer and Stage seating
+
+**Mixer (visual/readability only):** Narrow mixer strips retain fader, meter, pan, FX and Stage controls. FX now shows a compact count of visible user instrument/effect insert plug-ins (for example, `FX 2`); native gain/pan, meters, aux send/return and Stage panner are excluded from this count. The button's tooltip explains the count and opens the existing safe insert/Remove menu. No inserts are moved and no audio processing changes.
+
+**Stage (presentation only):** On the interactive Stage map (not the microphone seating map), right-click to toggle **Show track labels**. The default presentation is unchanged, selected instrument labels always display, and when labels are hidden the stage markers/sections remain visible. The current automatic label density limit for large ensembles remains in force. The underlying seat positions, sends, Stage pan, room acoustics, or ARIA behavior are not changed.
+
+**Screenshots:** Actual M13 Intel/macOS baseline images are available in CI artifact `Studio-M13-mixer-inspector-macOS` and `Studio-M7-unified-stage-macOS`; they predate these M14 changes. New M14 macOS screenshots and CI are required before marking the visual polish verified. The development branch is unmerged.
+
+**MacBook checks after M14 build:** For a track with one native synth and one inserted effect verify `FX 2`, the Insert menu still opens and removes safely, and hidden Stage DSP isn't counted. On Stage, right-click empty map area, hide labels, verify conductor/section/selected instrument are still shown, toggle back, reopen project, and confirm instrument seating and audio unchanged.
