@@ -325,6 +325,9 @@ public:
         meter.setTooltip ("Edit the time signature at the current bar while stopped");
         addAndMakeVisible (music);
         addAndMakeVisible (transportOptions);
+        addAndMakeVisible (flashbackButton);
+        flashbackButton.setTooltip ("Capture recently played MIDI from the selected track's assigned input, even if Record wasn't pressed");
+        flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
         transportOptions.onClick = [this] { showTransportOptions(); };
         music.onTimelineChanged = [this] { repaint (rulerRow); };
@@ -987,11 +990,11 @@ public:
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
         const int gap = m.px (6);
         const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
-        const int menuW = m.span (76), customizeW = m.span (95), elapsedW = m.span (97);
+        const int menuW = m.span (76), customizeW = m.span (95), flashbackW = m.span (98), elapsedW = m.span (97);
         const int optionalButtons = (showTransportCycle ? 1 : 0) + (showTransportClick ? 1 : 0);
         const int readoutBase = barW + (showTransportTempo ? bpmW : 0)
             + (showTransportMeter ? meterW : 0);
-        const int fixed = readoutBase + menuW + customizeW + 3 * gap;
+        const int fixed = readoutBase + menuW + customizeW + flashbackW + 4 * gap;
         const int buttonCount = 4 + optionalButtons;
         const int key = jlimit (m.px (20), m.px (38),
             (strip.getWidth() - fixed - gap - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
@@ -1021,6 +1024,8 @@ public:
         meter.setBounds (showTransportMeter ? lcd : Rectangle<int>());
         row.removeFromLeft (gap);
         music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
+        row.removeFromLeft (gap);
+        flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
         transportOptions.setBounds (row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5)));
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
@@ -1172,6 +1177,70 @@ public:
             prefs.saveIfNeeded();
         }
         resized();
+    }
+
+    void captureFlashbackMidi()
+    {
+        if (edit == nullptr || busy || ariaReviewPending || ! studio::transportSettled (*edit))
+            return;
+        if (edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+        {
+            message.setText ("Stop playback before using Capture MIDI.", dontSendNotification);
+            return;
+        }
+        auto* target = workflowTrack();
+        if (target == nullptr || target->isFrozen (te::Track::anyFreeze))
+        {
+            message.setText ("Select an unfrozen instrument track before Capture MIDI.", dontSendNotification);
+            return;
+        }
+        auto* context = edit->getTransport().getCurrentPlaybackContext();
+        if (context == nullptr)
+        {
+            message.setText ("Audio/MIDI playback context isn't ready.", dontSendNotification);
+            return;
+        }
+
+        // Use the input device's existing bounded retrospective MIDI buffer.
+        // Do not open a competing CoreMIDI port or capture unrelated tracks.
+        int assigned = 0;
+        Array<te::Clip*> created;
+        for (auto* input : edit->getAllInputDevices())
+        {
+            if (! input->getTargets().contains (target->itemID)
+                || input->getInputDevice().getDeviceType() != te::InputDevice::physicalMidiDevice)
+                continue;
+            if (input->getTargets().size() != 1)
+            {
+                message.setText ("Capture MIDI requires an input assigned only to the selected track.",
+                                 dontSendNotification);
+                return;
+            }
+            ++assigned;
+        }
+        if (assigned == 0)
+        {
+            message.setText ("Assign a physical MIDI input to this track using its I button first.",
+                             dontSendNotification);
+            return;
+        }
+        edit->getUndoManager().beginNewTransaction ("Capture MIDI");
+        for (auto* input : edit->getAllInputDevices())
+            if (input->getTargets().contains (target->itemID)
+                && input->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice)
+                created.addArray (input->applyRetrospectiveRecord (false));
+
+        if (created.isEmpty())
+        {
+            message.setText ("No recent MIDI notes were captured. Play the keyboard and try again.",
+                             dontSendNotification);
+            return;
+        }
+        selection.selectOnly (created.getFirst());
+        sizeEditor();
+        message.setText ("Captured " + String (created.size()) + " MIDI clip(s) on "
+                            + target->getName() + ". Save your project or Undo to remove them.",
+                         dontSendNotification);
     }
 
     void showTransportOptions()
@@ -1419,7 +1488,7 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
-    TextButton transportOptions { "Customize..." };
+    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" },
