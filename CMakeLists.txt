@@ -366,8 +366,7 @@ string(REPLACE "${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisibl
     addAndMakeVisible (miniLevel);
     miniLevel.setJustificationType (Justification::centred);
     miniLevel.setTooltip ("Track audio level activity");
-    updateMiniControls();
-    startTimerHz (10);]=] editor "${editor}")
+    updateMiniControls();]=] editor "${editor}")
 
 set(studio_track_mouse_anchor [=[void TrackHeaderComponent::mouseDown (const MouseEvent&)
 {
@@ -389,6 +388,8 @@ void TrackHeaderComponent::updateMiniControls()
     miniVolume.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false));
     miniPan.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderPan"), false));
     miniLevel.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false));
+    if (miniVolume.isVisible() || miniPan.isVisible() || miniLevel.isVisible()) startTimerHz (10);
+    else stopTimer();
     resized();
 }
 
