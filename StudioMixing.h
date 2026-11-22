@@ -87,6 +87,7 @@ public:
     explicit InspectorDrawer (TrackActions&);
     ~InspectorDrawer() override;
     std::function<void()> onClose;
+    std::function<void(int)> onWidthChanged;
     void setEdit (tracktion::Edit*);
     void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
                   const tracktion::MidiClip* selectedClip = nullptr);
@@ -96,8 +97,15 @@ public:
     bool areDetailsExpanded() const noexcept { return detailsOpen; }
     void resized() override;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override;
 
 private:
+    juce::ComponentDragger resizeDragger; // Drag grip uses a width callback, not component movement.
+    int resizeStartX = 0, resizeStartWidth = 0;
+    bool resizingWidth = false;
     ChannelInspector inspector;
     std::unique_ptr<InspectorChannelStrip> channelStrip;
     juce::Viewport scroll;
