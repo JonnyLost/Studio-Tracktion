@@ -140,7 +140,9 @@ MixControls::MixControls (bool fader) : vertical (fader)
     for (auto* control : { &volume, &pan })
     {
         addAndMakeVisible (*control);
-        control->setSliderStyle (control == &volume && vertical ? Slider::LinearVertical : Slider::LinearHorizontal);
+        control->setSliderStyle (control == &volume && vertical ? Slider::LinearVertical
+                                : control == &pan && vertical ? Slider::RotaryHorizontalVerticalDrag
+                                : Slider::LinearHorizontal);
         control->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight, false, 66, 18);
     }
     for (auto* label : { &volumeLabel, &panLabel })
@@ -200,13 +202,15 @@ void MixControls::resized()
     const auto valueWidth = m.span (74);
     const auto valueHeight = m.line (13, 2);
     auto area = getLocalBounds();
-    for (auto* slider : { &volume, &pan })
-        slider->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
-                                 false, valueWidth, valueHeight);
+    volume.setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
+                            false, vertical ? m.span (64) : valueWidth, valueHeight);
+    pan.setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
+                         false, vertical ? m.span (56) : valueWidth, valueHeight);
     if (vertical)
     {
         panLabel.setBounds (area.removeFromTop (m.line (11, 1)));
-        pan.setBounds (area.removeFromTop (m.line (13, 2) + m.px (15)));
+        // Rotary pan provides precise centring without consuming strip width.
+        pan.setBounds (area.removeFromTop (m.control (47, 11) + m.px (5)));
         volumeLabel.setBounds (area.removeFromTop (m.line (11, 1)));
         volume.setBounds (area);
     }
@@ -613,9 +617,9 @@ public:
         area.removeFromTop (m.px (3));
         if (! masterStrip)
         {
-            auto chain = area.removeFromTop (m.control (23));
-            inserts.setBounds (chain.removeFromLeft (chain.getWidth() / 2).reduced (m.px (1)));
-            room.setBounds (chain.reduced (m.px (1)));
+            // Stack insert and room-send controls: wider buttons, narrower strip.
+            inserts.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
+            room.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
         }
         else
         {
@@ -734,9 +738,11 @@ void StudioMixer::appearanceChanged()
 int StudioMixer::minimumContentHeight() const
 {
     const auto& m = appearance;
-    // Reserve meaningful vertical fader travel in Split mode.
-    return m.px (20) + 4 * m.control (23) + m.line (11, 3) + 2 * m.line (11, 1)
-        + m.line (13, 2) + m.px (100) + m.scrollbar();
+    // Include a full-size rotary pan, stacked FX/Stage and usable fader.
+    // The Mixer-focused split mode requests enough height to avoid clipping.
+    return m.px (20) + 2 * m.control (19, 10) + 3 * m.control (23)
+        + m.line (11, 3) + 2 * m.line (11, 1) + m.control (47, 11)
+        + m.px (125) + m.scrollbar();
 }
 
 void StudioMixer::resized()
