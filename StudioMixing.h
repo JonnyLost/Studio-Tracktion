@@ -48,6 +48,7 @@ public:
     void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
                   const tracktion::MidiClip* selectedClip = nullptr);
     int minimumContentHeight (int width) const;
+    tracktion::EditItemID inspectedTrack() const { return id; }
     void appearanceChanged();
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -63,6 +64,30 @@ private:
                      routing { "Output..." }, stage { "Open Stage" };
     MixControls mix { false };
     std::array<juce::Rectangle<int>, 5> columns;
+};
+
+// A lightweight, non-modal right-side drawer. It reuses the existing
+// ChannelInspector controls and selected-track model, avoiding a second set
+// of audio/MIDI routing implementations.
+class InspectorDrawer final : public juce::Component
+{
+public:
+    explicit InspectorDrawer (TrackActions&);
+    ~InspectorDrawer() override;
+    std::function<void()> onClose;
+    void setEdit (tracktion::Edit*);
+    void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
+                  const tracktion::MidiClip* selectedClip = nullptr);
+    void appearanceChanged();
+    tracktion::EditItemID inspectedTrack() const;
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+private:
+    ChannelInspector inspector;
+    juce::Viewport scroll;
+    juce::Label title;
+    juce::TextButton close { "Close" };
 };
 
 class StudioMixer final : public juce::Component
