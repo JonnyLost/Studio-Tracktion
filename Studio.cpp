@@ -938,6 +938,7 @@ public:
         topBar = area.removeFromTop (projectHeight + transportHeight + m.px (8));
         auto commands = topBar.withHeight (projectHeight).reduced (m.px (10), m.px (2));
         performanceMode.setBounds (commands.removeFromRight (m.span (163)).reduced (m.px (2), 0));
+        inspectorButton.setBounds (commands.removeFromRight (m.span (88)).reduced (m.px (2), 0));
         viewButton.setBounds (commands.removeFromRight (m.span (63)).reduced (m.px (2), 0));
         const bool showCPU = commands.getWidth() > m.span (325);
         resources.audio.setVisible (showCPU);
@@ -1002,6 +1003,9 @@ public:
         for (const auto& item : railItems())
             item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
+        // On a MacBook, the right Inspector is an overlay: hiding it always
+        // returns the complete arrangement and lower editor width.
+        const auto inspectorRegion = area;
         layoutPerformance (area);
         layoutDock (area);
         arrangementTools = area.removeFromTop (m.control (29));
@@ -1032,6 +1036,13 @@ public:
             ? m.trackFooter() : 0;
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
+        const int inspectorWidth = jmin (m.span (332), jmax (m.span (235), inspectorRegion.getWidth() * 38 / 100));
+        inspectorDrawer.setBounds (inspectorOpen
+            ? Rectangle<int> (inspectorRegion.getRight() - inspectorWidth, inspectorRegion.getY(),
+                              inspectorWidth, inspectorRegion.getHeight())
+            : Rectangle<int>());
+        inspectorDrawer.setVisible (inspectorOpen);
+        if (inspectorOpen) inspectorDrawer.toFront (false);
         environmentWelcome.setBounds (getLocalBounds());
         repaint();
     }
@@ -1101,6 +1112,20 @@ public:
         return true;
     }
 
+    void setInspectorOpen (bool value, bool persist = true)
+    {
+        inspectorOpen = value;
+        inspectorButton.setToggleState (value, dontSendNotification);
+        inspectorButton.setTooltip (value ? "Hide the selected-track Inspector" : "Show the selected-track Inspector");
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.inspectorOpen", value);
+            prefs.saveIfNeeded();
+        }
+        resized();
+    }
+
     void showViewOptions()
     {
         PopupMenu scale, textSize;
@@ -1120,6 +1145,15 @@ public:
         menu.addItem ("Studio Environments...", [safe]
         {
             if (safe != nullptr) safe->environmentWelcome.open (false);
+        });
+        menu.addSeparator();
+        menu.addItem ("Show Selected Track Inspector", true, inspectorOpen, [safe]
+        {
+            if (safe != nullptr) safe->setInspectorOpen (! safe->inspectorOpen);
+        });
+        menu.addItem ("Classic Channel Workspace (temporary)", [safe]
+        {
+            if (safe != nullptr) safe->showWorkspace (Workspace::channel);
         });
         menu.addSeparator();
         PopupMenu diagnostics;
