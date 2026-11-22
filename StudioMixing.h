@@ -106,11 +106,12 @@ private:
     juce::ComponentDragger resizeDragger; // Drag grip uses a width callback, not component movement.
     int resizeStartX = 0, resizeStartWidth = 0;
     bool resizingWidth = false;
+    TrackActions& actions;
     ChannelInspector inspector;
     std::unique_ptr<InspectorChannelStrip> channelStrip;
     juce::Viewport scroll;
     juce::Label title;
-    juce::TextButton close { "Close" }, details { "Track Settings" };
+    juce::TextButton close { "Close" }, details { "Track Settings" }, quickFx { "FX..." };
     bool detailsOpen = false;
 };
 
