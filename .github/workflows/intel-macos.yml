@@ -9,6 +9,7 @@ on:
       - feature/studio-composer-ui-m12-quickwins
       - feature/studio-midi-focus-m12
       - feature/studio-unified-track-headers-m12
+      - feature/studio-simplified-navigation-m12
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
