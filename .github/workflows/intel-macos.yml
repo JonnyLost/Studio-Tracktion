@@ -6,6 +6,7 @@ on:
     branches:
       - feature/studio-sampler-builder-m10
       - feature/studio-sampler-articulations-m11
+      - feature/studio-composer-ui-m12-quickwins
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
@@ -57,7 +58,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests --parallel 4
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:

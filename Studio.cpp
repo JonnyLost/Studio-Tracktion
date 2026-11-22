@@ -19,6 +19,7 @@ using namespace tracktion::literals;
 #include "ComposerTracks.h"
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
+#include "MidiPerformanceFocus.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
 #include "StudioResources.h"
@@ -221,6 +222,7 @@ public:
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
+        followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -621,6 +623,7 @@ public:
             bounceWindow.deleteAndZero();
         bounce.reset();
         pendingPlugin.reset();
+        if (edit != nullptr) midiFocus.release (edit.get());
         rememberInstrumentWorkspace();
         performance.clear();
         instrumentWorkspace.clear();
@@ -1106,6 +1109,16 @@ public:
         menu.addSeparator();
         menu.addItem ("Resource Inspector", [safe] { if (safe != nullptr) safe->resources.onOpen(); });
         menu.addItem ("MIDI Monitor", [safe] { if (safe != nullptr) safe->monitorButton.onClick(); });
+        menu.addItem ("MIDI Keyboard Follows Selected Track", true, followSelectedMidi, [safe]
+        {
+            if (safe == nullptr) return;
+            safe->followSelectedMidi = ! safe->followSelectedMidi;
+            auto& properties = safe->engine.getPropertyStorage().getPropertiesFile();
+            properties.setValue ("studio.midiFollowSelection", safe->followSelectedMidi);
+            properties.saveIfNeeded();
+            // The normal focus timer releases routing only after held notes
+            // and sustain pedal have ended; don't cut off a note here.
+        });
         menu.addSeparator();
         menu.addSubMenu ("Interface Scale", scale);
         menu.addSubMenu ("Text Size", textSize);
@@ -1222,6 +1235,9 @@ private:
                expandedButton { "Expanded" }, closeWorkspace { "Hide" };
     std::array<TextButton, 2> workspaceLinks;
     studio::TrackActions trackActions;
+    studio::MidiPerformanceFocus midiFocus;
+    bool followSelectedMidi = true;
+    juce::String midiFocusStatus;
     studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
     studio::ChannelInspector channelInspector { trackActions };
     studio::StudioMixer mixer { trackActions };
@@ -2086,15 +2102,27 @@ private:
         StringArray names;
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
         if (edit != nullptr)
+        {
+            midiFocusStatus = midiFocus.follow (*edit, workflowTrack(), followSelectedMidi,
+                ready && ! recording && ! recentlyStoppedRecording(), engine.getDeviceManager());
             for (auto* item : tracks)
                 names.add (item->getName());
+        }
+        else
+            midiFocusStatus.clear();
         if (names != trackNames)
             trackNames = std::move (names);
         trackOptions.setEnabled (ready && workflowTrack() != nullptr);
         trackDetails.setColour (Label::textColourId, recording ? studio::colours::record : studio::colours::secondary);
-        trackDetails.setText (recording ? String ("Recording") : track == nullptr ? String (trackNames.size()) + " tracks"
+        const bool focusNeedsAttention = midiFocusStatus.contains ("record-armed")
+            || midiFocusStatus.contains ("multi-track") || midiFocusStatus.contains ("Release ");
+        trackDetails.setText (recording ? String ("Recording")
+            : focusNeedsAttention ? midiFocusStatus
+            : workflowTrack() != nullptr && midiFocus.isFollowing (workflowTrack()->itemID) ? midiFocusStatus
+            : track == nullptr ? String (trackNames.size()) + " tracks"
             : EngineHelpers::isTrackArmed (*track) ? "Record armed"
             : EngineHelpers::trackHasInput (*track) ? "Input assigned" : "No input assigned", dontSendNotification);
+        trackDetails.setTooltip (midiFocusStatus);
 
         if ((++workspaceTicks & 1u) == 0)
         {
@@ -2561,7 +2589,10 @@ private:
             return;
 
         if (edit != nullptr)
+        {
             edit->getTransport().stop (false, false);
+            midiFocus.release (edit.get());
+        }
         piano.setClip (nullptr);
         regionClipboard.clear();
         rememberInstrumentWorkspace();
@@ -2632,7 +2663,7 @@ private:
         zoom.onChange();
         sizeEditor();
         title.setText ("Studio 0.2  /  " + file.getFileNameWithoutExtension(), dontSendNotification);
-        message.setText ("I selects input. A arms recording. + at right adds an instrument or effect.", dontSendNotification);
+        message.setText ("Select an instrument track to play your MIDI keyboard. A only arms recording.", dontSendNotification);
         const auto lastInstrument = instrumentWorkspace.rememberedInstrument();
         if (! create && lastInstrument.isValid())
             if (auto savedPlugin = te::findPluginForID (*edit, lastInstrument); savedPlugin != nullptr)
