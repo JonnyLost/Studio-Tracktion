@@ -15,7 +15,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${common}/Components.h")
 file(READ "${common}/Components.h" editor_header)
-string(REPLACE "#pragma once" "#pragma once\n#include <utility>\n#include <vector>"
+string(REPLACE "#pragma once" "#pragma once\n#include <functional>\n#include <utility>\n#include <vector>"
                editor_header "${editor_header}")
 # The upstream example uses four spaces on some visually empty lines.
 # Normalize those in the generated copy to keep the anchor legible.
