@@ -3821,14 +3821,21 @@ private:
                 if (! studio.canInsertPlugin()) return;
                 studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
             }));
+        PopupMenu appleEffects;
         for (const auto& description : engine.getPluginManager().knownPluginList.getTypes())
             if (description.pluginFormatName == "AudioUnit" && ! description.isInstrument
                 && ! description.name.containsIgnoreCase ("ARIA Player"))
-                effects.addItem (description.name, trackMenuAction (id,
+            {
+                auto& destination = description.manufacturerName.containsIgnoreCase ("Apple")
+                    ? appleEffects : effects;
+                destination.addItem (description.name, trackMenuAction (id,
                     [description] (StudioView& studio, te::AudioTrack& target)
                     {
                         studio.startExternalPlugin (description, target.itemID, false, false);
                     }));
+            }
+        if (appleEffects.getNumItems() > 0)
+            effects.addSubMenu ("Apple Audio Unit Effects", appleEffects);
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
     }
 
