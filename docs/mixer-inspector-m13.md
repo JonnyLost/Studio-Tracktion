@@ -129,3 +129,9 @@ View includes checked transport-visibility preferences and layout reset, so the 
 **Screenshots:** Actual M13 Intel/macOS baseline images are available in CI artifact `Studio-M13-mixer-inspector-macOS` and `Studio-M7-unified-stage-macOS`; they predate these M14 changes. New M14 macOS screenshots and CI are required before marking the visual polish verified. The development branch is unmerged.
 
 **MacBook checks after M14 build:** For a track with one native synth and one inserted effect verify `FX 2`, the Insert menu still opens and removes safely, and hidden Stage DSP isn't counted. On Stage, right-click empty map area, hide labels, verify conductor/section/selected instrument are still shown, toggle back, reopen project, and confirm instrument seating and audio unchanged.
+
+### Stage usability follow-up
+
+Hover any stage marker to see its full track name and orchestral section even when non-selected labels are hidden. This is implemented with JUCE's UI tooltip client and performs no position or routing mutation. The context-menu label visibility setting is intentionally session-local until the UX is hardware-verified. Actual baseline Stage images are available from Intel CI artifact `Studio-M7-unified-stage-macOS` (stage-expanded.png, stage-split.png, stage-compact.png); do not represent them as captures of this newer M14 branch.
+
+For a future native screenshot pass, capture at minimum: the macOS menu bar with File and View menus open; mixer with instrument + FX count; Inspector quick FX menu; Stage overview with labels shown, labels hidden, and selected/hovered instrument label. Compare 1024×640 and 1280×800 and avoid changing audio/MIDI engine code merely to satisfy a screenshot.
