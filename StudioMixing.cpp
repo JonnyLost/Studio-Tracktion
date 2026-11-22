@@ -744,10 +744,19 @@ void StudioMixer::resized()
     const auto& m = appearance;
     auto area = getLocalBounds().reduced (m.px (7), m.px (2));
     const int stripWidth = m.mixerStripWidth (getWidth());
-    master->setBounds (area.removeFromRight (stripWidth + m.px (4)).withTrimmedBottom (viewport.getScrollBarThickness()));
-    viewport.setBounds (area);
-    const auto height = jmax (0, area.getHeight() - viewport.getScrollBarThickness());
-    stripBank.setSize (jmax (area.getWidth(), (int) strips.size() * stripWidth), height);
+    const int masterSpace = jmin (area.getWidth(), stripWidth + m.px (4));
+    const int bankCapacity = jmax (0, area.getWidth() - masterSpace);
+    // Small sessions should look like a single coherent mixer bank, not
+    // a few tracks on the left and a disconnected Master at the far right.
+    // Once the tracks exceed the bank's available width, the Master stays
+    // pinned while the channels scroll beneath the viewport.
+    const int bankWidth = strips.empty() ? bankCapacity
+        : jmin (bankCapacity, (int) strips.size() * stripWidth + m.px (4));
+    auto bankBounds = area.removeFromLeft (bankWidth);
+    master->setBounds (area.removeFromLeft (masterSpace).withTrimmedBottom (viewport.getScrollBarThickness()));
+    viewport.setBounds (bankBounds);
+    const auto height = jmax (0, bankBounds.getHeight() - viewport.getScrollBarThickness());
+    stripBank.setSize (jmax (bankBounds.getWidth(), (int) strips.size() * stripWidth), height);
     for (size_t i = 0; i < strips.size(); ++i)
         strips[i]->setBounds ((int) i * stripWidth, 0, stripWidth, height);
 }
