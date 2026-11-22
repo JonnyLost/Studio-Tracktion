@@ -71,11 +71,12 @@ private:
     AudioBuffer<float> audio { 2, blockSize };
 };
 
-bool testSample (const File& file, AudioFormat& format, double frequency, int channels)
+bool testSample (const File& file, AudioFormat& format, double frequency, int channels, int metadataRoot = -1)
 {
     std::unique_ptr<OutputStream> stream = file.createOutputStream();
     if (! stream) return false;
-    const auto options = AudioFormatWriterOptions().withSampleRate (rate / 2).withNumChannels (channels).withBitsPerSample (24);
+    auto options = AudioFormatWriterOptions().withSampleRate (rate / 2).withNumChannels (channels).withBitsPerSample (24);
+    if (metadataRoot >= 0) options = options.withMetadata ("MidiUnityNote", String (metadataRoot));
     auto writer = format.createWriterFor (stream, options);
     if (! writer) return false;
     AudioBuffer<float> data (channels, rate / 2 * 3);
@@ -211,6 +212,23 @@ Result run (const File& screenshots)
             return Result::fail ("editor interactions or screenshots");
     }
 
+    const auto metadataFile = directory.getChildFile ("Metadata.wav");
+    if (! testSample (metadataFile, wav, 523.251, 1, 72)) return Result::fail ("write root-note metadata fixture");
+    Instrument metadataProposal; String metadataSummary;
+    if (Plugin::prepareImport ({}, { metadataFile }, true, metadataProposal, metadataSummary).failed()
+        || metadataProposal.zones[0].mapping.root != 72) return Result::fail ("embedded WAV root metadata mapping");
+    Instrument cancelledProposal; String cancelledSummary; std::atomic<bool> cancelled { true }; std::atomic<int> progress { 0 };
+    if (Plugin::prepareImport ({}, { directory }, true, cancelledProposal, cancelledSummary, &cancelled, &progress).wasOk())
+        return Result::fail ("cancel folder import before enumeration");
+    const auto layeredFile = directory.getChildFile ("Layer_C4_v64-127.wav");
+    if (! wavFile.copyFileTo (layeredFile)) return Result::fail ("create velocity filename fixture");
+    Instrument layeredProposal; String layeredSummary;
+    if (Plugin::prepareImport ({}, { layeredFile }, true, layeredProposal, layeredSummary).failed()
+        || layeredProposal.zones[0].mapping.soft != 64 || layeredProposal.zones[0].mapping.hard != 127)
+        return Result::fail ("velocity filename ranges in import proposal");
+    auto cached = layeredProposal.zones[0].mapping.sample;
+    if (Plugin::prepareImport (layeredProposal, { layeredFile }, true, cancelledProposal, cancelledSummary).failed()
+        || cancelledProposal.zones[1].mapping.sample != cached) return Result::fail ("decoded sample cache reuse");
     // Bulk import proposals must not mutate live audio or undo history until accepted.
     Instrument proposal; String summary;
     const auto revision = other->changeCount();
@@ -221,6 +239,13 @@ Result run (const File& screenshots)
         return Result::fail ("deterministic bulk import preview and cancellation");
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
+    auto groups = other->instrument().groups;
+    groups[0].playback.trigger = GroupTrigger::keyswitch; groups[0].playback.key = 24;
+    groups[1].playback.trigger = GroupTrigger::controller; groups[1].playback.controller = 20; groups[1].playback.ccLow = 64;
+    groups[0].playback.mute = true;
+    other->editGroups (groups);
+    if (other->articulations().size() != 2) return Result::fail ("muting preserves verified articulation assignments");
+    groups[0].playback.mute = false; other->editGroups (groups);
     other->moveZone (1, 1);
     other->undoMapping (false);
     if (other->instrument().zones[1].folder != 0) return Result::fail ("undo group assignment");
@@ -229,7 +254,8 @@ Result run (const File& screenshots)
     const auto groupPreset = directory.getChildFile ("Groups.studiosampler");
     if (other->savePreset (groupPreset).failed() || other->loadPreset (groupPreset).failed()
         || other->instrument().groups.size() != 2 || other->instrument().groups[1].name != "Piano Loud"
-        || other->instrument().zones[1].folder != 1) return Result::fail ("named group persistence");
+        || other->instrument().zones[1].folder != 1 || other->articulations().size() != 2
+        || other->instrument().groups[1].playback.ccLow != 64) return Result::fail ("named group and articulation persistence");
     if (other->savePreset (wavFile).wasOk()) return Result::fail ("protect source recording");
     auto legacy = XmlDocument::parse (groupPreset);
     legacy->setAttribute ("version", 1);

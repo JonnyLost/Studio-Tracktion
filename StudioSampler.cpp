@@ -12,7 +12,7 @@ namespace
 {
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
-constexpr int version = 2;
+constexpr int version = 3;
 constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
@@ -42,6 +42,11 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         auto* child = xml.createNewChildElement ("GROUP");
         child->setAttribute ("id", group.id);
         child->setAttribute ("name", group.name);
+        const auto& g = group.playback;
+        child->setAttribute ("trigger", static_cast<int> (g.trigger)); child->setAttribute ("key", g.key);
+        child->setAttribute ("cc", g.controller); child->setAttribute ("ccLow", g.ccLow); child->setAttribute ("ccHigh", g.ccHigh);
+        child->setAttribute ("channel", g.channel); child->setAttribute ("mute", g.mute); child->setAttribute ("solo", g.solo);
+        child->setAttribute ("releaseTrigger", g.releaseTrigger);
     }
     for (const auto& entry : model.zones)
     {
@@ -70,6 +75,8 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         node.setAttribute ("loopStart", z.loopStart);
         node.setAttribute ("loopEnd", z.loopEnd);
         node.setAttribute ("group", z.group);
+        node.setAttribute ("loopCrossfade", z.loopCrossfade);
+        node.setAttribute ("fadeIn", z.fadeIn); node.setAttribute ("fadeOut", z.fadeOut);
     }
     return xml;
 }
@@ -102,7 +109,18 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
             if (id < 0 || id >= maxGroups) return Result::fail ("Invalid instrument group.");
             auto found = std::find_if (model.groups.begin(), model.groups.end(), [id] (auto& g) { return g.id == id; });
             if (found != model.groups.end()) return Result::fail ("Duplicate instrument group.");
-            else model.groups.push_back ({ id, child->getStringAttribute ("name").substring (0, 120) });
+            else
+            {
+                InstrumentGroup g { id, child->getStringAttribute ("name").substring (0, 120) };
+                auto& p = g.playback; p.id = id;
+                p.trigger = static_cast<GroupTrigger> (child->getIntAttribute ("trigger"));
+                p.key = child->getIntAttribute ("key", 24); p.controller = child->getIntAttribute ("cc", 20);
+                p.ccLow = child->getIntAttribute ("ccLow", 0); p.ccHigh = child->getIntAttribute ("ccHigh", 127);
+                p.channel = child->getIntAttribute ("channel"); p.mute = child->getBoolAttribute ("mute"); p.solo = child->getBoolAttribute ("solo");
+                p.releaseTrigger = child->getBoolAttribute ("releaseTrigger");
+                if (! validGroup (p)) return Result::fail ("Invalid group trigger configuration.");
+                model.groups.push_back (std::move (g));
+            }
             continue;
         }
         if (model.zones.size() >= maxZones) return Result::fail ("Too many sample zones.");
@@ -136,6 +154,8 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
         z.loopStart = child->getIntAttribute ("loopStart");
         z.loopEnd = child->getIntAttribute ("loopEnd");
         z.group = child->getIntAttribute ("group");
+        z.loopCrossfade = child->getIntAttribute ("loopCrossfade", -1);
+        z.fadeIn = child->getIntAttribute ("fadeIn"); z.fadeOut = child->getIntAttribute ("fadeOut");
         if (! validMapping (z) || z.loopStart < 0 || z.loopEnd < z.loopStart
             || (z.loop && ! validLoop (z, static_cast<int> (maxSampleBytes / sizeof (float)))))
             return Result::fail ("A sample zone has an invalid key, velocity or loop range.");
@@ -162,7 +182,7 @@ std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullpt
     return bytes;
 }
 
-Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output)
+Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
 {
     if (! file.existsAsFile()) return Result::fail ("Missing sample");
     AudioFormatManager formats;
@@ -179,28 +199,46 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
 
     auto sample = std::make_shared<Sample>();
     sample->rate = reader->sampleRate;
+    sample->sourceBytes = file.getSize(); sample->sourceTime = file.getLastModificationTime().toMilliseconds();
+    for (const auto& key : { String ("MidiUnityNote"), String (AiffAudioFormat::appleRootNote) })
+        if (reader->metadataValues.containsKey (key))
+        {
+            const auto text = reader->metadataValues.getValue (key, {});
+            if (text.isNotEmpty() && text.containsOnly ("0123456789") && text.getIntValue() <= 127) { sample->rootNote = text.getIntValue(); break; }
+        }
     const auto frames = static_cast<int> (reader->lengthInSamples);
     sample->left.resize (static_cast<std::size_t> (frames));
     if (reader->numChannels == 2) sample->right.resize (static_cast<std::size_t> (frames));
-    float* channels[] { sample->left.data(), sample->right.data() };
-    AudioBuffer<float> buffer (channels, static_cast<int> (reader->numChannels), frames);
-    if (! reader->read (&buffer, 0, frames, 0, true, reader->numChannels == 2))
-        return Result::fail ("Could not decode the sample.");
-
-    for (auto* channel : { &sample->left, &sample->right })
-        for (auto& frame : *channel)
-            frame = std::isfinite (frame) ? jlimit (-1.0f, 1.0f, frame) : 0.0f;
+    for (int offset = 0; offset < frames; offset += 4096)
+    {
+        if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+        const int count = jmin (4096, frames - offset);
+        float* channels[] { sample->left.data() + offset, sample->right.empty() ? nullptr : sample->right.data() + offset };
+        AudioBuffer<float> buffer (channels, static_cast<int> (reader->numChannels), count);
+        if (! reader->read (&buffer, 0, count, offset, true, reader->numChannels == 2)) return Result::fail ("Could not decode the sample.");
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            for (int frame = 0; frame < count; ++frame)
+            { auto& value = channels[ch][frame]; value = std::isfinite (value) ? jlimit (-1.0f, 1.0f, value) : 0.0f; }
+    }
 
     output = std::move (sample);
     return Result::ok();
 }
 
-void prepareSamples (Instrument& next, const Instrument& current)
+bool currentSample (const SampleZone& z, const File& file)
+{
+    return z.file == file && z.mapping.sample && file.existsAsFile()
+        && z.mapping.sample->sourceBytes == file.getSize()
+        && z.mapping.sample->sourceTime == file.getLastModificationTime().toMilliseconds();
+}
+
+void prepareSamples (Instrument& next, const Instrument& current, std::atomic<bool>* cancelled = nullptr)
 {
     for (auto& entry : next.zones)
     {
+        if (cancelled && cancelled->load()) return;
         auto& sample = entry.mapping.sample;
-        const auto reuse = [&] (const auto& zone) { return zone.file == entry.file && zone.mapping.sample != nullptr; };
+        const auto reuse = [&] (const auto& zone) { return currentSample (zone, entry.file); };
         if (auto loaded = std::find_if (next.zones.begin(), next.zones.end(), reuse); loaded != next.zones.end())
             sample = loaded->mapping.sample;
         else if (auto previous = std::find_if (current.zones.begin(), current.zones.end(), reuse);
@@ -208,7 +246,7 @@ void prepareSamples (Instrument& next, const Instrument& current)
                     && previous->mapping.sample->bytes() <= maxBankBytes - sampleBytes (next))
             sample = previous->mapping.sample;
         else
-            entry.problem = readSample (entry.file, maxBankBytes - sampleBytes (next), sample).getErrorMessage();
+            entry.problem = readSample (entry.file, maxBankBytes - sampleBytes (next), sample, cancelled).getErrorMessage();
 
         if (! sample) continue;
         if (entry.mapping.start >= static_cast<int> (sample->left.size()) || entry.mapping.end > static_cast<int> (sample->left.size()))
@@ -300,10 +338,18 @@ void Plugin::publish (Instrument next)
         return a.mapping.sample == b.mapping.sample;
     });
     if (! sameSamples) ++sampleRevision;
+    const bool sameSwitches = std::ranges::equal (model.groups, next.groups, [] (const auto& a, const auto& b)
+    {
+        const auto& x = a.playback; const auto& y = b.playback;
+        return a.id == b.id && x.trigger == y.trigger && x.key == y.key && x.controller == y.controller
+            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger;
+    });
+    if (! sameSwitches) ++switchRevision;
     auto bank = std::make_unique<Bank>();
     bank->settings = next.settings;
-    bank->sampleRevision = sampleRevision;
-    for (const auto& entry : next.zones) bank->zones.push_back (entry.mapping);
+    bank->sampleRevision = sampleRevision; bank->switchRevision = switchRevision;
+    for (const auto& group : next.groups) { auto g = group.playback; g.id = group.id; bank->groups.push_back (g); }
+    for (const auto& entry : next.zones) { auto z = entry.mapping; z.folder = entry.folder; bank->zones.push_back (std::move (z)); }
 
     published.store (bank.get());
     auto previous = std::move (current);
@@ -318,12 +364,20 @@ void Plugin::publish (Instrument next)
 
 Result Plugin::loadSample (const File& file, int replace)
 {
+    Instrument next; auto result = prepareSample (model, file, replace, next);
+    if (result.wasOk()) change (std::move (next), true);
+    return result;
+}
+Result Plugin::prepareSample (Instrument initial, const File& file, int replace, Instrument& next, std::atomic<bool>* cancelled)
+{
+    if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+    const auto& model = initial;
     if (replace < -1 || replace >= static_cast<int> (model.zones.size()))
         return Result::fail ("Select a sample zone.");
     if (replace == -1 && model.zones.size() >= maxZones)
         return Result::fail ("This instrument has reached its zone limit.");
 
-    auto next = model;
+    next = model;
     SampleZone entry;
     entry.folder = model.groups.front().id;
     entry.file = file;
@@ -336,11 +390,11 @@ Result Plugin::loadSample (const File& file, int replace)
 
     auto existing = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z)
     {
-        return z.file == file && z.mapping.sample != nullptr;
+        return currentSample (z, file);
     });
     if (existing != next.zones.end())
         entry.mapping.sample = existing->mapping.sample;
-    else if (const auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample); result.failed())
+    else if (const auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample, cancelled); result.failed())
         return result;
 
     const auto frames = static_cast<int> (entry.mapping.sample->left.size());
@@ -357,8 +411,23 @@ Result Plugin::loadSample (const File& file, int replace)
     else
         next.zones.push_back (std::move (entry));
 
-    change (std::move (next), true);
     return Result::ok();
+}
+
+std::vector<studio::ArticulationMapping> Plugin::articulations() const
+{
+    std::vector<studio::ArticulationMapping> result;
+    for (const auto& group : model.groups)
+    {
+        const auto& g = group.playback;
+        if (g.trigger == GroupTrigger::normal || g.releaseTrigger) continue;
+        studio::ArticulationMapping mapping { "sampler-group-" + String (group.id), group.name,
+            g.trigger == GroupTrigger::keyswitch ? studio::ArticulationMessage::keyswitch : studio::ArticulationMessage::controller,
+            g.channel ? g.channel : 1, g.trigger == GroupTrigger::keyswitch ? g.key : g.controller,
+            g.trigger == GroupTrigger::keyswitch ? 100 : g.ccLow, 0 };
+        if (studio::validArticulation (mapping)) result.push_back (std::move (mapping));
+    }
+    return result;
 }
 
 void Plugin::undoMapping (bool redo)
@@ -373,6 +442,14 @@ void Plugin::duplicateZone (int index)
 void Plugin::editGroups (std::vector<InstrumentGroup> groups)
 {
     if (groups.empty() || groups.size() > maxGroups) return;
+    std::array<bool, maxGroups> used {};
+    for (auto& g : groups)
+    {
+        g.playback.id = g.id;
+        if (! validGroup (g.playback) || used[static_cast<std::size_t> (g.id)]) return;
+        used[static_cast<std::size_t> (g.id)] = true;
+        if (g.name.trim().isEmpty()) g.name = "Group";
+    }
     auto next = model; next.groups = std::move (groups);
     for (auto& z : next.zones)
         if (std::none_of (next.groups.begin(), next.groups.end(), [&] (auto& g) { return g.id == z.folder; })) z.folder = next.groups.front().id;
@@ -385,20 +462,42 @@ void Plugin::moveZone (int index, int folder)
 }
 Result Plugin::proposeImport (const juce::Array<File>& files, bool automatic, Instrument& next, String& summary)
 {
-    next = model;
+    return prepareImport (model, files, automatic, next, summary);
+}
+Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths, bool automatic, Instrument& next, String& summary, std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    next = std::move (initial);
+    juce::Array<File> files;
+    const auto aborted = [&] { return cancelled && cancelled->load(); };
+    for (const auto& f : paths)
+    {
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (f.isDirectory())
+            for (const auto& item : RangedDirectoryIterator (f, true, "*", File::findFiles, File::FollowSymlinks::no))
+            { if (aborted()) return Result::fail ("Import cancelled."); files.add (item.getFile()); }
+        else files.add (f);
+    }
+    std::sort (files.begin(), files.end(), [] (const File& a, const File& b) { return a.getFullPathName() < b.getFullPathName(); });
+    int completed = 0;
     int accepted = 0, unsupported = 0, provisional = 0;
     StringArray errors;
     std::vector<Zone> mapping;
     for (const auto& file : files)
     {
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
         if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc")) { ++unsupported; continue; }
         if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
-        SampleZone entry; entry.folder = model.groups.front().id; entry.file = file;
-        if (auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample); result.failed())
+        SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
+        auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
+        if (cached != next.zones.end()) entry.mapping.sample = cached->mapping.sample;
+        else if (auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample, cancelled); result.failed())
         { errors.add (file.getFileName() + ": " + result.getErrorMessage()); continue; }
         entry.mapping.loopEnd = static_cast<int> (entry.mapping.sample->left.size());
         if (auto note = filenameNote (file.getFileName().toStdString())) entry.mapping.root = *note;
+        else if (entry.mapping.sample->rootNote >= 0) entry.mapping.root = entry.mapping.sample->rootNote;
         else { entry.mapping.root = jlimit (0, 127, 48 + accepted); ++provisional; }
+        if (auto velocity = filenameVelocity (file.getFileName().toStdString())) { entry.mapping.soft = velocity->first; entry.mapping.hard = velocity->second; }
         if (! automatic) entry.mapping.low = entry.mapping.high = entry.mapping.root;
         mapping.push_back (entry.mapping); next.zones.push_back (std::move (entry)); ++accepted;
     }
@@ -422,6 +521,29 @@ void Plugin::removeZone (int index)
     auto next = model;
     next.zones.erase (next.zones.begin() + index);
     change (std::move (next), true);
+}
+
+Result Plugin::editZones (const std::vector<std::pair<int, Zone>>& edits)
+{
+    if (edits.empty()) return Result::fail ("Select one or more sample zones.");
+    auto next = model;
+    for (const auto& [i, z] : edits)
+    {
+        if (! isPositiveAndBelow (i, static_cast<int> (next.zones.size())) || ! validMapping (z)) return Result::fail ("Invalid note or velocity boundaries.");
+        auto& entry = next.zones[static_cast<std::size_t> (i)];
+        if (z.sample != entry.mapping.sample || z.start < 0 || z.end < 0 || (z.end && z.end <= z.start)
+            || z.loopStart < 0 || z.loopEnd < z.loopStart
+            || (z.sample && (z.start >= static_cast<int> (z.sample->left.size()) || z.end > static_cast<int> (z.sample->left.size())))
+            || (z.loop && z.sample && ! validLoop (z, static_cast<int> (z.sample->left.size()))))
+            return Result::fail ("Keep loops inside sample boundaries with at least two frames. Disable Loop before trimming past it. No selected zones were changed.");
+        entry.mapping = z; entry.problem.clear();
+    }
+    change (std::move (next), true); return Result::ok();
+}
+void Plugin::previewRange (int index, int first, int end)
+{
+    if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size()))) return;
+    preview (3, 1, model.zones[static_cast<std::size_t> (index)].mapping.root, 100, index, first, end);
 }
 
 void Plugin::editZone (int index, const Zone& z)
@@ -472,14 +594,18 @@ Result Plugin::savePreset (const File& file)
 
 Result Plugin::loadPreset (const File& file)
 {
-    Instrument next;
+    Instrument next; auto result = preparePreset (file, model, next);
+    if (result.wasOk()) change (std::move (next), false);
+    return result;
+}
+Result Plugin::preparePreset (const File& file, const Instrument& cache, Instrument& next, std::atomic<bool>* cancelled)
+{
     const auto xml = file.getSize() <= maxPresetBytes ? XmlDocument::parse (file) : nullptr;
-    if (auto result = decode (xml.get(), file.getParentDirectory(), next); result.failed())
-        return result;
-    prepareSamples (next, model);
+    if (auto result = decode (xml.get(), file.getParentDirectory(), next); result.failed()) return result;
+    prepareSamples (next, cache, cancelled);
+    if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
     if (next.preset.isEmpty()) next.preset = file.getFileNameWithoutExtension().substring (0, 120);
     next.dirty = false;
-    change (std::move (next), false);
     return Result::ok();
 }
 
@@ -511,7 +637,22 @@ void Plugin::deinitialise()
 
 void Plugin::reset() { needsReset.store (true, std::memory_order_relaxed); }
 
-void Plugin::preview (int source, int channel, int note, int velocity, int zone)
+bool Plugin::sendArticulation (const studio::ArticulationMapping& mapping)
+{
+    const auto verified = articulations();
+    if (std::find (verified.begin(), verified.end(), mapping) == verified.end()) return false;
+    const auto write = writeIndex.load (std::memory_order_relaxed);
+    const unsigned needed = mapping.message == studio::ArticulationMessage::keyswitch ? 2 : 1;
+    if (write - readIndex.load (std::memory_order_acquire) + needed > queueSize) return false;
+    const bool key = mapping.message == studio::ArticulationMessage::keyswitch;
+    queue[write % queueSize] = { 2, mapping.channel - 1, mapping.number, mapping.value, -1, sampleRevision, -1, -1,
+        (key ? 0x90 : 0xb0) | (mapping.channel - 1), switchRevision };
+    if (key) queue[(write + 1) % queueSize] = { 2, mapping.channel - 1, mapping.number, 0, -1, sampleRevision, -1, -1, 0x80 | (mapping.channel - 1), switchRevision };
+    writeIndex.store (write + needed, std::memory_order_release);
+    return true;
+}
+
+void Plugin::preview (int source, int channel, int note, int velocity, int zone, int first, int end)
 {
     const auto write = writeIndex.load (std::memory_order_relaxed);
     if (write - readIndex.load (std::memory_order_acquire) >= queueSize)
@@ -519,7 +660,7 @@ void Plugin::preview (int source, int channel, int note, int velocity, int zone)
         previewOverflow.store (true, std::memory_order_release);
         return;
     }
-    queue[write % queueSize] = { source, channel - 1, note, velocity, zone, sampleRevision };
+    queue[write % queueSize] = { source, channel - 1, note, velocity, zone, sampleRevision, first, end };
     writeIndex.store (write + 1, std::memory_order_release);
 }
 
@@ -547,19 +688,33 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
         renderer.panic();
     wasPlaying = context.isPlaying;
 
-    if (previewOverflow.exchange (false, std::memory_order_acquire) || stopped)
+    const bool overflow = previewOverflow.exchange (false, std::memory_order_acquire);
+    if (overflow || stopped)
     {
         renderer.preview (1, 0, -1, 0);
         renderer.preview (2, 0, -1, 0);
         renderer.preview (3, 0, -1, 0);
-        read = write = writeIndex.load (std::memory_order_acquire);
+        const auto latest = writeIndex.load (std::memory_order_acquire);
+        // A switch selected after Stop is a valid control command. Preserve it
+        // while flushing queued musical auditions from the previous transport.
+        if (stopped && ! overflow && ! context.isRendering)
+            for (auto i = read; i != latest; ++i)
+            {
+                const auto& event = queue[i % queueSize];
+                if (event.status && event.bindingRevision == bank->switchRevision) renderer.midi (event.status, event.note, event.velocity);
+            }
+        read = write = latest;
     }
     if (! context.isRendering)
         for (; read != write; ++read)
         {
             const auto& event = queue[read % queueSize];
-            if (event.zone < 0 || event.revision == bank->sampleRevision)
-                renderer.preview (event.source, event.channel, event.note, event.velocity, event.zone);
+            if (event.status)
+            {
+                if (event.bindingRevision == bank->switchRevision) renderer.midi (event.status, event.note, event.velocity);
+            }
+            else if (event.zone < 0 || event.revision == bank->sampleRevision)
+                renderer.preview (event.source, event.channel, event.note, event.velocity, event.zone, event.first, event.end);
         }
     readIndex.store (read, std::memory_order_release);
 

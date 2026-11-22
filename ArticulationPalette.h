@@ -24,6 +24,7 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void stopLiveNote();
+    tracktion::Plugin* nativeGroupInstrument() const;
     void writeForDrawnNote (tracktion::MidiClip&, tracktion::BeatPosition, int pitch);
 
    #if STUDIO_SPATIAL_TESTS
@@ -40,6 +41,8 @@ private:
     tracktion::EditItemID followedTrack, pinnedTrack, loadedTrack, loadedInstrument;
     tracktion::MidiClip::Ptr selectedClip;
     bool ready = false, mappingWritable = false, panelOpen = false;
+    unsigned nativeRevision = 0;
+    bool nativeSampler = false;
     juce::String serialized, selectedId, actionStatus;
     std::vector<ArticulationMapping> mappings;
     std::vector<std::unique_ptr<juce::TextButton>> pads;

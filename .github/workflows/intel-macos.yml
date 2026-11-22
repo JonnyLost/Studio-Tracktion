@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - feature/studio-sampler-builder-m10
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
@@ -55,7 +56,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests --parallel 4
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
@@ -89,7 +90,7 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Studio-M5-sampler-review
+          name: Studio-M11-sampler-review
           path: ${{ runner.temp }}/studio-sampler-review/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -99,7 +100,7 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Studio-M65-instrument-workspace
+          name: Studio-M11-workspace
           path: ${{ runner.temp }}/studio-instrument-workspace/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
@@ -113,20 +114,23 @@ jobs:
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
       - name: Package Intel Studio application
-        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M10-Intel.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M11-Intel.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: Studio-M10-Intel-app
-          path: ${{ runner.temp }}/Studio-M10-Intel.zip
+          name: Studio-M11-Intel-app
+          path: ${{ runner.temp }}/Studio-M11-Intel.zip
           if-no-files-found: error
       - name: Measure optimized native synth block times
         run: |
-          cmake --build build --config Release --target StudioSynthBench --parallel 4
+          cmake --build build --config Release --target StudioSynthBench StudioSamplerBench --parallel 4
+          build/Release/StudioSamplerBench > "$RUNNER_TEMP/studio-sampler-bench.tsv"
           build/Release/StudioSynthBench --matrix > "$RUNNER_TEMP/studio-synth-bench.tsv"
       - uses: actions/upload-artifact@v4
         with:
-          name: Studio-M6-synth-bench
-          path: ${{ runner.temp }}/studio-synth-bench.tsv
+          name: Studio-M11-sampler-bench
+          path: |
+            ${{ runner.temp }}/studio-synth-bench.tsv
+            ${{ runner.temp }}/studio-sampler-bench.tsv
           if-no-files-found: error
       - name: Compare acoustic engines
         run: tools/compare-acoustics.sh "$RUNNER_TEMP/studio-acoustic-comparison"

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace studio::sampler
 {
@@ -34,6 +35,27 @@ inline std::optional<int> filenameNote (std::string name)
         result = note;
     }
     return result;
+}
+// Explicit velocity suffixes, e.g. Piano_C4_v1-63.wav or C4_vel64-127.aiff.
+inline std::optional<std::pair<int, int>> filenameVelocity (std::string name)
+{
+    for (auto& c : name) c = static_cast<char> (std::tolower (static_cast<unsigned char> (c)));
+    for (std::size_t i = 0; i < name.size(); ++i)
+    {
+        if ((i && std::isalnum (static_cast<unsigned char> (name[i - 1]))) || name[i] != 'v') continue;
+        auto j = i + (name.compare (i, 3, "vel") == 0 ? 3 : 1);
+        const auto number = [&] (std::size_t& at)
+        {
+            int value = 0, digits = 0;
+            while (at < name.size() && std::isdigit (static_cast<unsigned char> (name[at]))) { value = value * 10 + name[at++] - '0'; if (++digits > 3) return -1; }
+            return digits ? value : -1;
+        };
+        const int low = number (j);
+        if (j >= name.size() || name[j++] != '-') continue;
+        const int high = number (j);
+        if (low >= 1 && high >= low && high <= 127 && (j == name.size() || ! std::isalnum (static_cast<unsigned char> (name[j])))) return std::pair { low, high };
+    }
+    return {};
 }
 inline void spreadMapping (std::vector<Zone>& zones)
 {

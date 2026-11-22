@@ -70,7 +70,7 @@ Choose **Add Synth** from the instrument track menu, or choose a family in **Ins
 
 ## Studio Sampler
 
-Choose **Studio Sampler** in Instruments and click **Add as New Track**. Drop a WAV or AIFF onto the waveform, then play the onscreen keyboard or a connected MIDI controller. Use **Basic** to shape the sound, **Mapping** to build key and velocity zones, and **Loops** to edit sustained playback. **Save Preset** creates a reusable `.studiosampler` file. Saving the Studio project also stores your current instrument settings. [Workflow and sampler architecture](docs/native-sampler.md)
+Choose **Studio Sampler** in Instruments and click **Add as New Track**. Use **Mapping** for key and velocity zones, **Groups** for articulation triggers, and **Waveform** for trim, loops and crossfades. **Save** in the instrument editor creates a reusable `.studiosampler` file. Saving the Studio project also stores the current instrument. [Illustrated sampler exercises](docs/build-your-first-studio-instrument.md) · [Intel macOS review gallery](docs/reviews/m11/README.md)
 
 ## MIDI Piano Roll
 
@@ -103,8 +103,8 @@ Quit any running Studio instance. Run these commands once on macOS 14 or later w
 ```bash
 mkdir -p "$HOME/Developer" &&
 cd "$HOME/Developer" &&
-git clone --branch feature/studio-adaptive-workspace-m9 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-M9 &&
-cd Studio-Tracktion-M9 &&
+git clone --branch feature/studio-sampler-articulations-m11 https://github.com/JonnyLost/Studio-Tracktion.git Studio-Tracktion-M11 &&
+cd Studio-Tracktion-M11 &&
 git init build/deps/tracktion-engine &&
 git -C build/deps/tracktion-engine fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228 &&
 git -C build/deps/tracktion-engine checkout --detach FETCH_HEAD &&

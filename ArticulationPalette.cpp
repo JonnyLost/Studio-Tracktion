@@ -3,6 +3,7 @@
 #include "MidiExpressionValues.h"
 #include "StudioMixing.h"
 #include "StudioUI.h"
+#include "StudioSampler.h"
 #include <cmath>
 
 using namespace juce;
@@ -160,8 +161,12 @@ void ArticulationPalette::syncTrack()
     const auto trackId = t != nullptr ? t->itemID : te::EditItemID();
     const auto instrumentId = instrument != nullptr ? instrument->itemID : te::EditItemID();
     const auto data = t != nullptr ? t->state.getProperty (property).toString() : String();
+    auto* sampler = dynamic_cast<sampler::Plugin*> (instrument);
+    const bool hasRules = sampler && std::any_of (sampler->instrument().groups.begin(), sampler->instrument().groups.end(), [] (const auto& g) { return g.playback.trigger != sampler::GroupTrigger::normal; });
+    const bool nativeChanged = sampler != nullptr && (nativeRevision != sampler->changeCount() || nativeSampler != hasRules);
+    nativeSampler = hasRules;
     const bool targetChanged = loadedTrack != trackId || loadedInstrument != instrumentId;
-    if (targetChanged || serialized != data)
+    if (targetChanged || nativeChanged || serialized != data)
     {
         if (targetChanged)
         {
@@ -183,6 +188,7 @@ void ArticulationPalette::syncTrack()
                 refreshed = readArticulations (*profile);
                 selectedId = profile->getStringAttribute ("active");
             }
+        if (sampler) { nativeRevision = sampler->changeCount(); if (nativeSampler) { refreshed = sampler->articulations(); mappingWritable = false; } }
         if (targetChanged || refreshed != mappings || refreshed.size() != pads.size())
         {
             mappings = std::move (refreshed);
@@ -195,6 +201,12 @@ void ArticulationPalette::syncTrack()
         dontSendNotification);
     subject.setTooltip (subject.getText());
     updateState();
+}
+
+te::Plugin* ArticulationPalette::nativeGroupInstrument() const
+{
+    auto* instrument = uniqueInstrument (target());
+    return nativeSampler && instrument != nullptr && instrument->itemID == loadedInstrument ? instrument : nullptr;
 }
 
 void ArticulationPalette::rebuildPads()
@@ -257,7 +269,7 @@ void ArticulationPalette::updateState()
     pin.setButtonText (pinnedTrack.isValid() ? "Follow selected" : "Pin track");
     pin.setToggleState (pinnedTrack.isValid(), dontSendNotification);
     pin.setEnabled (pinnedTrack.isValid() || followedTrack.isValid());
-    const bool canMap = ready && loadedInstrument.isValid() && mappingWritable && edit != nullptr
+    const bool canMap = ! nativeSampler && ready && loadedInstrument.isValid() && mappingWritable && edit != nullptr
         && ! edit->getTransport().isRecording();
     newMapping.setEnabled (canMap);
     editMapping.setEnabled (canMap && selected() != nullptr);
@@ -276,7 +288,7 @@ void ArticulationPalette::updateState()
     if (panelOpen)
         return;
     const auto* mapping = selected();
-    explanation.setText (actionStatus.isNotEmpty() ? actionStatus : mappings.empty() ? "Unmapped. Add verified messages for this instrument patch."
+    explanation.setText (actionStatus.isNotEmpty() ? actionStatus : mappings.empty() ? (nativeSampler ? "Assign keyswitches or CC ranges in Sampler Groups to expose articulations." : "Unmapped. Add verified messages for this instrument patch.")
         : mapping == nullptr ? "Choose an active articulation. Audition and Insert are separate actions."
         : "Selected: " + mapping->name + "  |  Target channel " + String (mapping->channel)
             + (canInsert() ? "  |  Click Insert to write to the clip." : "  |  Insert requires a matching clip and channel."),
@@ -381,8 +393,11 @@ void ArticulationPalette::selectMapping (size_t index)
     auto root = documentFrom (serialized);
     if (root == nullptr) return;
     auto* profile = profileFor (*root, loadedInstrument);
+    if (profile == nullptr && nativeSampler)
+    { profile = root->createNewChildElement ("Instrument"); profile->setAttribute ("instance", loadedInstrument.toString()); }
     if (profile == nullptr) return;
-    const bool clear = selectedId == mappings[index].id;
+    const auto chosen = mappings[index];
+    const bool clear = ! nativeSampler && selectedId == mappings[index].id;
     if (clear) profile->removeAttribute ("active");
     else profile->setAttribute ("active", mappings[index].id);
     auto& history = t->edit.getUndoManager();
@@ -390,6 +405,7 @@ void ArticulationPalette::selectMapping (size_t index)
     t->state.setProperty (property, root->toString (XmlElement::TextFormat().singleLine()), &history);
     history.beginNewTransaction();
     syncTrack();
+    if (nativeSampler) auditionMapping (chosen);
 }
 
 void ArticulationPalette::auditionMapping (const ArticulationMapping& mapping)
@@ -402,6 +418,13 @@ void ArticulationPalette::auditionMapping (const ArticulationMapping& mapping)
     auto* t = target();
     actionStatus.clear();
     stopLiveNote();
+    if (nativeSampler)
+        if (auto* native = dynamic_cast<sampler::Plugin*> (uniqueInstrument (t)))
+        {
+            if (! native->sendArticulation (mapping)) setStatus ("Sampler switch changed or the preview queue is full. Refresh the assignment and try again.");
+            else updateState();
+            return;
+        }
     if (mapping.message == ArticulationMessage::keyswitch)
     {
         t->injectLiveMidiMessage (MidiMessage::noteOn (mapping.channel, mapping.number, (uint8) mapping.value), {});
@@ -554,7 +577,7 @@ bool ArticulationPalette::selectReviewMapping (const String& label)
     for (size_t i = 0; i < mappings.size(); ++i)
         if (mappings[i].name == label)
         {
-            const bool clearing = reviewActiveName() == label;
+            const bool clearing = ! nativeSampler && reviewActiveName() == label;
             selectMapping (i);
             return clearing ? reviewActiveName().isEmpty() : reviewActiveName() == label;
         }
@@ -735,7 +758,7 @@ void ArticulationStrip::refresh()
         if (! visible) continue;
         const auto& entry = palette.mappings[start + i];
         pad.setButtonText (entry.name);
-        pad.setTooltip ("Toggle " + entry.name + " for composition on MIDI channel " + String (entry.channel));
+        pad.setTooltip ((palette.nativeSampler ? "Select and send " : "Toggle ") + entry.name + " for composition on MIDI channel " + String (entry.channel));
         pad.setEnabled (palette.ready && palette.edit != nullptr && ! palette.edit->getTransport().isRecording());
         pad.setToggleState (entry.id == palette.selectedId, dontSendNotification);
     }

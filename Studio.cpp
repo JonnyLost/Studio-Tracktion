@@ -269,6 +269,8 @@ public:
         };
         articulationStrip.onManage = [this]
         {
+            if (auto* native = articulation.nativeGroupInstrument(); native != nullptr && showNativeInstrument (*native))
+            { if (auto* editor = instrumentWorkspace.getEditor()) editor->restoreView ("4"); return; }
             if (articulationWindow != nullptr) articulationWindow->toFront (true);
             else
             {
@@ -3673,7 +3675,10 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
             timerCallback();
         }
         if (output.createDirectory().failed()) return false;
+        const auto originalWidth = component.getWidth(), originalHeight = component.getHeight();
         if (name.startsWith ("sampler")) studio::sampler::captureNativeScreen (component, output.getChildFile ("native-" + name + ".png"));
+        if (&component == this && (component.getWidth() != originalWidth || component.getHeight() != originalHeight))
+            component.setSize (originalWidth, originalHeight);
         FileOutputStream file (output.getChildFile (name + ".png"));
         return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (component.createComponentSnapshot (component.getLocalBounds()), file);
@@ -3771,6 +3776,88 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     instrumentWorkspace.getEditor()->restoreView ("2");
     if (! snapshot (*this, "sampler-loops")) return fail ("capture loops");
 
+    // Build real sampler articulations, then compose while following violin/horn tracks.
+    auto violinModel = sampler->instrument(); violinModel.name = "Synthetic Violin"; violinModel.groups.clear();
+    violinModel.zones.push_back (violinModel.zones[0]);
+    const StringArray violinNames { "Sustain", "Staccato", "Pizzicato" };
+    for (int i = 0; i < 3; ++i)
+    {
+        studio::sampler::InstrumentGroup g { i, violinNames[i] };
+        g.playback.id = i; g.playback.trigger = studio::sampler::GroupTrigger::keyswitch; g.playback.key = 24 + i;
+        violinModel.groups.push_back (g);
+        auto& z = violinModel.zones[static_cast<std::size_t> (i)]; z.folder = i;
+        z.mapping.low = 48; z.mapping.high = 84; z.mapping.oneShot = i != 0;
+        if (i) { z.mapping.loop = false; z.mapping.end = i == 1 ? 12000 : 8000; }
+    }
+    sampler->commitImport (violinModel); sampler->getOwnerTrack()->setName ("Violin");
+    auto hornTrack = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+    if (! hornTrack) return fail ("create French horn track");
+    hornTrack->setName ("French Horn"); hornTrack->getOutput().setOutputToDefaultDevice (false);
+    auto hornPlugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
+    hornTrack->pluginList.insertPlugin (hornPlugin, 0, nullptr);
+    auto* hornSampler = dynamic_cast<studio::sampler::Plugin*> (hornPlugin.get());
+    if (! hornSampler) return fail ("create native horn sampler");
+    auto hornModel = violinModel; hornModel.name = "Synthetic French Horn";
+    const StringArray hornNames { "Sustain", "Marcato", "Stopped" };
+    for (int i = 0; i < 3; ++i) { hornModel.groups[static_cast<std::size_t> (i)].name = hornNames[i]; hornModel.groups[static_cast<std::size_t> (i)].playback.key = 36 + i; }
+    hornSampler->commitImport (hornModel);
+    edit->dispatchPendingUpdatesSynchronously(); edit->getTransport().ensureContextAllocated (true);
+    auto* violinTrack = dynamic_cast<te::AudioTrack*> (sampler->getOwnerTrack());
+    auto phrase = violinTrack->insertMIDIClip ("Violin articulations", { 0_tp, 2_tp }, nullptr);
+    if (! phrase) return fail ("create violin phrase");
+    const auto phraseId = phrase->itemID;
+    phrase->setMidiChannel (te::MidiChannel (1));
+    showWorkspace (Workspace::closed); selection.selectOnly (violinTrack);
+    articulation.refresh (violinTrack, phrase.get(), true);
+    if (! articulation.selectReviewMapping ("Pizzicato")) return fail ("native violin mappings follow selected track");
+    period();
+    if (sampler->activeKeyswitch (1) != 26) return fail ("strip must deliver the verified violin keyswitch to the audio engine");
+    articulation.writeForDrawnNote (*phrase, te::BeatPosition::fromBeats (.5), 60);
+    phrase->getSequence().addNote (60, te::BeatPosition::fromBeats (.5), te::BeatDuration::fromBeats (.25), 100, 0, nullptr);
+    bool hasSwitch = false;
+    for (const auto* n : phrase->getSequence().getNotes()) if (n->getNoteNumber() == 26) hasSwitch = true;
+    if (! hasSwitch) return fail ("Piano Roll workflow inserts verified native keyswitch");
+    if (! snapshot (articulationStrip, "sampler-violin-strip-closeup") || ! snapshot (*this, "sampler-violin-articulation-strip")) return fail ("capture native violin strip");
+    articulationStrip.onManage();
+    if (instrumentWorkspace.getPlugin() != sampler || instrumentWorkspace.getEditor()->viewState() != "4") return fail ("strip Mappings opens native group assignments");
+    if (! snapshot (*this, "sampler-native-group-editor")) return fail ("capture articulation assignments");
+    showWorkspace (Workspace::closed);
+    edit->dispatchPendingUpdatesSynchronously();
+    MessageManager::getInstance()->runDispatchLoopUntil (100);
+    edit->getTransport().ensureContextAllocated (true);
+    sampler->reset();
+    period();
+    if (sampler->activeKeyswitch (1) != -1) return fail ("reset clears the live keyswitch before clip playback");
+    edit->getTransport().setPosition (0_tp); edit->getTransport().play (false);
+    float phrasePeak = 0;
+    for (int i = 0; i < 30 && (phrasePeak < .001f || sampler->activeKeyswitch (1) != 26); ++i)
+        phrasePeak = jmax (phrasePeak, period());
+    if (phrasePeak < .001f || sampler->activeKeyswitch (1) != 26) return fail ("clip playback applies its stored keyswitch and sounds");
+    if (! edit->getTransport().isPlaying() || ! articulation.selectReviewMapping ("Sustain")) return fail ("select a new native articulation during playback");
+    period();
+    if (sampler->activeKeyswitch (1) != 24) return fail ("live articulation reaches the engine during playback");
+    edit->getTransport().setPosition (1.5_tp, 1.5_tp);
+    period();
+    if (sampler->resourceSnapshot().activeVoices.value_or (1) != 0) return fail ("seeking beyond the phrase clears native sampler voices");
+    edit->getTransport().stop (false, false);
+    period();
+    if (sampler->activeKeyswitch (1) != -1 || sampler->resourceSnapshot().activeVoices.value_or (1) != 0)
+        return fail ("stopping clears the sampler's latched articulation and voices");
+    if (! articulation.selectReviewMapping ("Pizzicato")) return fail ("restore the selected violin articulation for track switching");
+    selection.selectOnly (hornTrack.get()); articulation.refresh (hornTrack.get(), nullptr, true);
+    if (! articulation.selectReviewMapping ("Marcato") || articulation.reviewActiveName() != "Marcato"
+        || ! snapshot (articulationStrip, "sampler-horn-strip-closeup") || ! snapshot (*this, "sampler-horn-articulation-strip")) return fail ("horn strip follows actual horn instrument");
+    period();
+    if (hornSampler->activeKeyswitch (1) != 37) return fail ("strip must deliver the verified horn keyswitch to the audio engine");
+    hornSampler->preview (1, 1, 60, 100);
+    if (period() < .001f) return fail ("horn articulation must audition");
+    hornSampler->preview (1, 1, 60, 0); hornSampler->reset(); period();
+    selection.selectOnly (violinTrack); articulation.refresh (violinTrack, phrase.get(), true);
+    if (articulation.reviewActiveName() != "Pizzicato") return fail ("violin articulation retained after following horn");
+    showWorkspace (Workspace::instrumentEditor); instrumentWorkspace.updateSelection (violinTrack, te::getAudioTracks (*edit), true);
+    instrumentWorkspace.getEditor()->restoreView ("2");
+    phrase = nullptr; hornPlugin = nullptr; hornTrack = nullptr;
+
     for (const auto scale : studio::AppearanceMetrics::interfaceOptions)
         for (const auto text : studio::AppearanceMetrics::textOptions)
         {
@@ -3808,10 +3895,17 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     loadProject (session, false);
     auto* restored = dynamic_cast<studio::sampler::Plugin*> (instrumentWorkspace.getPlugin());
     if (projectGeneration != generation + 1 || restored == nullptr || restored->itemID != samplerID
-        || restored->instrument().zones.size() != 2 || ! restored->instrument().zones[0].mapping.loop
+        || restored->instrument().zones.size() != 3 || restored->instrument().groups.size() != 3
+        || restored->instrument().groups[2].playback.key != 26 || ! restored->instrument().zones[0].mapping.loop
         || ! instrumentWorkspace.isFloating() || dockMode != DockMode::expanded
         || instrumentWorkspace.getEditor()->viewState() != "2" || te::findPluginForID (*edit, synthId) == nullptr)
         return fail ("reopen with the selected editor, layout, page and both instruments intact");
+    auto* restoredPhrase = dynamic_cast<te::MidiClip*> (te::findClipForID (*edit, phraseId));
+    if (restoredPhrase == nullptr || restoredPhrase->getMidiChannel().getChannelNumber() != 1)
+        return fail ("reopened project retains the channel-1 phrase");
+    const auto restoredNotes = restoredPhrase->getSequence().getNotes();
+    if (std::none_of (restoredNotes.begin(), restoredNotes.end(), [] (const auto* note) { return note->getNoteNumber() == 26; }))
+        return fail ("reopened phrase retains the composed keyswitch");
     setSize (1280, 800);
     instrumentWorkspace.setFloating (false);
     if (! snapshot (*this, "sampler-reopened-1280x800")) return fail ("capture reopened sampler");
