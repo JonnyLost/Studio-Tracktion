@@ -1395,6 +1395,15 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
+        // The selected instrument remains loaded, playable and editable, but
+        // the Mixer owns its entire lower workspace: no stacked Performance
+        // controls or articulation strip below the faders.
+        if (workspace == Workspace::mix)
+        {
+            performance.setVisible (false);
+            articulationStrip.setVisible (false);
+            return;
+        }
         const auto& m = studio::appearance;
         const auto mode = (studio::PerformanceMode) performanceMode.getSelectedId();
         const bool visible = edit != nullptr && mode != studio::PerformanceMode::hidden;
@@ -1526,6 +1535,18 @@ private:
         if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
+        if (next == Workspace::mix && changing)
+        {
+            // A click on Mixer is a change of task, not an attempt to stack a
+            // third panel underneath the current instrument. Show an actual
+            // console with usable faders and some arrangement above it.
+            if (dockMode == DockMode::compact)
+                dockMode = DockMode::split;
+            if (dockMode == DockMode::split)
+                workspaceHeight = jmax (workspaceHeight,
+                    jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
+                           getHeight() * 57 / 100));
+        }
         workspace = next;
         syncWorkspace();
         if (changing) restoreWorkspaceScroll();
@@ -2144,7 +2165,8 @@ private:
             if (piano.getClip() != primary)
             {
                 piano.setClip (primary);
-                if (workspace != Workspace::closed && workspace != Workspace::articulations && dockMode != DockMode::compact)
+                if (workspace != Workspace::closed && workspace != Workspace::articulations
+                    && workspace != Workspace::mix && dockMode != DockMode::compact)
                     showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
