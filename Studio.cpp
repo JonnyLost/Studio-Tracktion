@@ -3675,7 +3675,10 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
             timerCallback();
         }
         if (output.createDirectory().failed()) return false;
+        const auto originalSize = component.getLocalBounds().getSize();
         if (name.startsWith ("sampler")) studio::sampler::captureNativeScreen (component, output.getChildFile ("native-" + name + ".png"));
+        if (&component == this && component.getLocalBounds().getSize() != originalSize)
+            component.setSize (originalSize.x, originalSize.y);
         FileOutputStream file (output.getChildFile (name + ".png"));
         return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (component.createComponentSnapshot (component.getLocalBounds()), file);
@@ -3802,6 +3805,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     auto* violinTrack = dynamic_cast<te::AudioTrack*> (sampler->getOwnerTrack());
     auto phrase = violinTrack->insertMIDIClip ("Violin articulations", { 0_tp, 2_tp }, nullptr);
     if (! phrase) return fail ("create violin phrase");
+    const auto phraseId = phrase->itemID;
     phrase->setMidiChannel (te::MidiChannel (1));
     showWorkspace (Workspace::closed); selection.selectOnly (violinTrack);
     articulation.refresh (violinTrack, phrase.get(), true);
@@ -3821,11 +3825,25 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     edit->dispatchPendingUpdatesSynchronously();
     MessageManager::getInstance()->runDispatchLoopUntil (100);
     edit->getTransport().ensureContextAllocated (true);
+    sampler->reset();
     period();
+    if (sampler->activeKeyswitch (1) != -1) return fail ("reset clears the live keyswitch before clip playback");
     edit->getTransport().setPosition (0_tp); edit->getTransport().play (false);
-    float phrasePeak = 0; for (int i = 0; i < 120; ++i) phrasePeak = jmax (phrasePeak, period());
+    float phrasePeak = 0;
+    for (int i = 0; i < 30 && (phrasePeak < .001f || sampler->activeKeyswitch (1) != 26); ++i)
+        phrasePeak = jmax (phrasePeak, period());
+    if (phrasePeak < .001f || sampler->activeKeyswitch (1) != 26) return fail ("clip playback applies its stored keyswitch and sounds");
+    if (! edit->getTransport().isPlaying() || ! articulation.selectReviewMapping ("Sustain")) return fail ("select a new native articulation during playback");
+    period();
+    if (sampler->activeKeyswitch (1) != 24) return fail ("live articulation reaches the engine during playback");
+    edit->getTransport().setPosition (1.5_tp, 1.5_tp);
+    period();
+    if (sampler->resourceSnapshot().activeVoices.value_or (1) != 0) return fail ("seeking beyond the phrase clears native sampler voices");
     edit->getTransport().stop (false, false);
-    if (phrasePeak < .001f) return fail ("native articulation MIDI phrase must sound");
+    period();
+    if (sampler->activeKeyswitch (1) != -1 || sampler->resourceSnapshot().activeVoices.value_or (1) != 0)
+        return fail ("stopping clears the sampler's latched articulation and voices");
+    if (! articulation.selectReviewMapping ("Pizzicato")) return fail ("restore the selected violin articulation for track switching");
     selection.selectOnly (hornTrack.get()); articulation.refresh (hornTrack.get(), nullptr, true);
     if (! articulation.selectReviewMapping ("Marcato") || articulation.reviewActiveName() != "Marcato"
         || ! snapshot (articulationStrip, "sampler-horn-strip-closeup") || ! snapshot (*this, "sampler-horn-articulation-strip")) return fail ("horn strip follows actual horn instrument");
@@ -3882,6 +3900,12 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         || ! instrumentWorkspace.isFloating() || dockMode != DockMode::expanded
         || instrumentWorkspace.getEditor()->viewState() != "2" || te::findPluginForID (*edit, synthId) == nullptr)
         return fail ("reopen with the selected editor, layout, page and both instruments intact");
+    auto* restoredPhrase = dynamic_cast<te::MidiClip*> (te::findClipForID (*edit, phraseId));
+    if (restoredPhrase == nullptr || restoredPhrase->getMidiChannel().getChannelNumber() != 1)
+        return fail ("reopened project retains the channel-1 phrase");
+    const auto restoredNotes = restoredPhrase->getSequence().getNotes();
+    if (std::none_of (restoredNotes.begin(), restoredNotes.end(), [] (const auto* note) { return note->getNoteNumber() == 26; }))
+        return fail ("reopened phrase retains the composed keyswitch");
     setSize (1280, 800);
     instrumentWorkspace.setFloating (false);
     if (! snapshot (*this, "sampler-reopened-1280x800")) return fail ("capture reopened sampler");

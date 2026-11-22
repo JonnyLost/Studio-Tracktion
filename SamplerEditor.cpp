@@ -1492,6 +1492,8 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if (plugin.instrument().groups[1].playback.key != 30 || ! capture ("sampler-keyswitch.png")) return reviewFailure (__LINE__);
     triggerMode.setSelectedId (3, sendNotificationSync); ccNumber.slider.setValue (20, sendNotificationSync); ccLow.slider.setValue (64, sendNotificationSync);
     if (plugin.instrument().groups[1].playback.trigger != GroupTrigger::controller || ! capture ("sampler-cc-range.png")) return reviewFailure (__LINE__);
+    releaseTrigger.setToggleState (true, sendNotificationSync);
+    if (! plugin.instrument().groups[1].playback.releaseTrigger || ! capture ("sampler-release-trigger.png")) return reviewFailure (__LINE__);
     plugin.commitImport (violin); groupRows.selectRow (0); groups.onClick();
     const auto violinFile = first.getSiblingFile ("Violin.studiosampler");
     if (plugin.savePreset (violinFile).failed() || plugin.loadPreset (violinFile).failed()
