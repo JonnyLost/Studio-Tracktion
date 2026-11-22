@@ -70,3 +70,14 @@ Linux CI exposed a failure in `StudioInterfaceReview`: switching from Expanded t
 - Header mini-controls are designed to fit under the existing I/A/M/S/FX buttons inside current arrangement track height. Review at 100% and larger UI/text scales for target size and clipping; further sizing may need refinement from native screenshots.
 
 **Validation gate:** The code changes are committed to this *unmerged* draft branch, but the latest Linux/Intel macOS CI and real MacBook test are required before claiming acceptance. Specifically test an ARIA track with both headphones / stereo output, pan hard left and right, and verify changing pan in the mixer and header updates the Inspector value, audio position and Undo. Confirm the background is opaque, resizing persists, and enabling mini controls on one track does not change another track's header.
+
+## M13.1 follow-up — real MacBook issues (November 22)
+
+Reported on physical Intel MacBook: Studio audio comes from the **left headphone only** even though the headphones play normal stereo music correctly; the timeline guide grid also remains visible across the Inspector.
+
+- **Confirmed UI root cause:** `StudioView::paintOverChildren` draws arrangement time-grid guides *after child components*, so painting an opaque Inspector alone does not stop visible lines. Exclude the Inspector's rectangle from that grid's clip region (`d63d463`).
+- **Stereo device configuration guard:** Studio's JUCE `AudioDeviceSelectorComponent` allowed a one-channel output (`minOutputChannels=1`). Require at least two output channels (`minOutputChannels=2`) for the selectable device configuration (`1bc4f1d`). **This does not prove the saved Mac audio device was mono or repair a previously saved configuration automatically.** Do not silently reset the user's saved audio routing.
+- **Hardware acceptance:** Open Project → Audio Settings and verify the intended headphones/USB device is selected and both left/right channels are enabled. Test an ARIA or native synth track panned hard left and right; then center. Check the same test with the Stage reverb temporarily bypassed; verify main output and actual stereo meters. The root cause of left-only audio remains unconfirmed until stereo routing and audible playback succeed on the user's MacBook.
+- **Inspector acceptance:** With the Inspector open over the timeline at both 1280×800 and 1024×640, no guide-grid lines may draw over the Inspector, including during playback, scroll, and resize.
+
+No repository merges. New CI and screenshot checks required.
