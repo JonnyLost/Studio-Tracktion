@@ -333,6 +333,24 @@ void SpatialMap::paint (Graphics& g)
         if (marker.key == selected && marker.microphone == micMode) drawMarker (marker);
 }
 
+void SpatialMap::mouseMove (const MouseEvent& event)
+{
+    // Reveal names in dense orchestral sessions even if visual labels are
+    // hidden. This only updates a UI tooltip; it never moves a seat.
+    String hint;
+    const float radius = (float) appearance.px (18);
+    for (const auto& marker : markers)
+        if (marker.microphone == micMode
+            && screen (marker.point).getDistanceFrom (event.position) <= radius)
+        {
+            hint = marker.name;
+            if (! micMode)
+                hint += " · " + sectionNames[(size_t) jlimit (0, 5, marker.section)];
+            break;
+        }
+    if (getTooltip() != hint) setTooltip (hint);
+}
+
 void SpatialMap::mouseDown (const MouseEvent& event)
 {
     const auto radius = (float) appearance.px (17);
