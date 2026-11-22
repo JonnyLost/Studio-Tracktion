@@ -1878,10 +1878,11 @@ private:
         message.setText (result.wasOk() ? "Joined MIDI regions." : result.getErrorMessage(), dontSendNotification);
     }
 
-    void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track)
+    void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track, bool nested = true)
     {
         const auto id = track.itemID;
-        PopupMenu tracks;
+        PopupMenu subMenu;
+        PopupMenu& tracks = nested ? subMenu : parent;
         const auto general = studio::tracks::restriction (track, false);
         const auto destructive = studio::tracks::restriction (track, true);
         tracks.addItem ("Rename...", general.isEmpty(), false, trackMenuAction (id,
@@ -1912,7 +1913,8 @@ private:
             }));
         if (destructive.isNotEmpty())
             tracks.addSectionHeader (destructive);
-        parent.addSubMenu ("Track · " + track.getName(), tracks);
+        if (nested)
+            parent.addSubMenu ("Track · " + track.getName(), subMenu);
     }
 
     void renameTrack (te::AudioTrack& track)
@@ -2678,7 +2680,7 @@ private:
             {
                 selection.selectOnly (track);
                 PopupMenu menu;
-                populateTrackEditMenu (menu, *track);
+                populateTrackEditMenu (menu, *track, false);
                 menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
             }
         };
