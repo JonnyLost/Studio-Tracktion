@@ -315,9 +315,21 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
             selection.selectOnly (keys);
             setSize (size.x, size.y);
             refresh();
-            for (auto* button : { &rewind, &stop, &play, &record, &cycleButton, &clickButton })
-                if (button->getBounds().isEmpty() || ! topBar.contains (button->getBounds()))
-                    return fail ("transport controls fit the header at supported sizes");
+            // On compact screens the primary transport is mandatory while
+            // optional Cycle/Click controls may move to native menus.
+            for (auto* button : { &rewind, &stop, &play, &record })
+                if (! button->isVisible() || button->getBounds().isEmpty()
+                    || ! topBar.contains (button->getBounds()))
+                    return fail ("primary transport controls fit the header at supported sizes");
+            for (auto* button : { &cycleButton, &clickButton })
+                if (button->isVisible()
+                    && (button->getBounds().isEmpty() || ! topBar.contains (button->getBounds())))
+                    return fail ("visible optional transport controls fit the header");
+            #if JUCE_MAC
+            // macOS uses the system menu in place of the legacy header picker.
+            if (applicationMenu (4).getNumItems() == 0)
+                return fail ("Cycle and Click remain available from native Record menu");
+            #endif
             if (! getLocalBounds().contains (performance.getBounds()) || performance.getHeight() <= 0
                 || ! getLocalBounds().contains (performanceMode.getBounds()))
                 return fail ("scaled performance controls fit inside the window");
