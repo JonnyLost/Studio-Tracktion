@@ -135,3 +135,20 @@ View includes checked transport-visibility preferences and layout reset, so the 
 Hover any stage marker to see its full track name and orchestral section even when non-selected labels are hidden. This is implemented with JUCE's UI tooltip client and performs no position or routing mutation. The context-menu label visibility setting is intentionally session-local until the UX is hardware-verified. Actual baseline Stage images are available from Intel CI artifact `Studio-M7-unified-stage-macOS` (stage-expanded.png, stage-split.png, stage-compact.png); do not represent them as captures of this newer M14 branch.
 
 For a future native screenshot pass, capture at minimum: the macOS menu bar with File and View menus open; mixer with instrument + FX count; Inspector quick FX menu; Stage overview with labels shown, labels hidden, and selected/hovered instrument label. Compare 1024×640 and 1280×800 and avoid changing audio/MIDI engine code merely to satisfy a screenshot.
+
+## M14 continuation — usability set 7–13 (November 22)
+
+These changes extend the existing **unmerged** M14 draft branch without altering the audio engine, Tracktion DSP routing, MIDI input timestamps or Stage placement.
+
+1. **Context menus:** Piano Roll now presents a right-click menu with existing Select/Draw tools, a grid-resolution submenu, Quantize, Delete Selected Notes and Controller Lanes. Actions respect editing enablement and use lifetime-safe component handles; this is not a rewrite of MIDI editing.
+2. **Track organization:** Existing track colors and icon categories remain shared between Inspector and Mixer. Mixer track tooltips now name the selected icon category. Existing track-header Show All / Hide All presets persist per track as part of the project.
+3. **Piano Roll presentation:** The octave-C row has a subtle accent to aid pitch location, and an empty editor explains that a MIDI region must be selected. Snap/note data are unchanged.
+4. **Timeline toolbar:** macOS retains Track, Region and zoom commands. Track creation/import live in native File/Track menus; Linux keeps its existing responsive fallback. The Region menu remains present regardless of MacBook width.
+5. **Settings:** A unified Studio Settings landing dialog, accessible from File and View, exposes the already existing Audio device panel, Audio Unit plug-in manager, MIDI Monitor and reset-appearance actions. It does not create new device configurations or project preference schemas.
+6. **Commands & keyboard shortcuts:** Help → Keyboard Shortcuts now opens a searchable, read-only command reference that labels only existing key combinations. The real shortcuts continue to be handled by the established editor.
+7. **Resizing:** The Instrument Browser details panel now has a visible drag grip, a clamped width and an application preference for restoring its chosen width. The existing Inspector and lower workspace already retain their own resizing implementations.
+8. **Instrument favorites:** The browser now offers Favorite and Favorites-only controls with keys stored in the application's preferences, preserving selections across restarts. Unavailable plug-ins remain unavailable; marking a favorite never loads a plug-in.
+
+**Validation still required:** This PR has no successful macOS CI result for its latest head. On Intel Mac: compile/run, verify native menus, search and filtering of Help, settings dialog launch and return, instrument favorite persistence across restart, browser drag resizing at 1024×640 and 1280×800, Piano Roll right-click actions with/without a clip, and the narrowed timeline. Confirm existing Save/Undo, Stereo Synth playback, Stage positioning and Inspector/mixer behavior still work before treating this milestone as accepted. Produce fresh macOS screenshots from the M14 head rather than reusing M13 baseline captures.
+
+**Deliberately excluded:** New MIDI region destructive operations, custom shortcut remapping, Stage/ARIA DSP changes, new audio plug-ins, and rearranging insert processing order. These require separate acceptance.
