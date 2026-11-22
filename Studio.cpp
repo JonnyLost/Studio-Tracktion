@@ -4211,7 +4211,7 @@ int StudioView::runInterfaceReview (const File& output)
     if (inspectorDrawer.inspectedTrack() != tracks[2]->itemID)
         return fail ("right Inspector follows arrangement selection");
     setSize (1024, 640);
-    if (! inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isWithin (getLocalBounds()))
+    if (! inspectorDrawer.isVisible() || ! getLocalBounds().contains (inspectorDrawer.getBounds()))
         return fail ("right Inspector fits compact MacBook");
     if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
     setInspectorOpen (false, false);
