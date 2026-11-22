@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - feature/studio-mixer-inspector-m13
+      - feature/studio-transport-header-m14
       - feature/studio-sampler-builder-m10
       - feature/studio-sampler-articulations-m11
       - feature/studio-composer-ui-m12-quickwins
