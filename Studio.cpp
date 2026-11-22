@@ -224,6 +224,7 @@ public:
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
+        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 270);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -238,6 +239,14 @@ public:
         inspectorButton.onClick = [this] { setInspectorOpen (! inspectorOpen); };
         addChildComponent (inspectorDrawer);
         inspectorDrawer.onClose = [this] { setInspectorOpen (false); };
+        inspectorDrawer.onWidthChanged = [this] (int width)
+        {
+            inspectorWidth = jlimit (studio::appearance.span (205),
+                                     jmin (studio::appearance.span (510), jmax (studio::appearance.span (205), getWidth() - studio::appearance.span (220))),
+                                     width);
+            engine.getPropertyStorage().getPropertiesFile().setValue ("studio.inspectorWidth", inspectorWidth);
+            resized();
+        };
         addChildComponent (projectMenu);
         addChildComponent (trackMenu);
         addChildComponent (dockMenu);
@@ -1041,12 +1050,13 @@ public:
             ? m.trackFooter() : 0;
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
-        const int inspectorWidth = jmin (m.span (332), jmax (m.span (235), inspectorRegion.getWidth() * 38 / 100));
+        const int visibleInspectorWidth = jlimit (m.span (205),
+            jmax (m.span (205), jmin (m.span (510), inspectorRegion.getWidth() - m.span (190))), inspectorWidth);
         // Keep timeline zoom and track actions accessible above the overlay.
         const int inspectorTop = arrangementTools.getBottom();
         inspectorDrawer.setBounds (inspectorOpen
-            ? Rectangle<int> (inspectorRegion.getRight() - inspectorWidth, inspectorTop,
-                              inspectorWidth, jmax (0, inspectorRegion.getBottom() - inspectorTop))
+            ? Rectangle<int> (inspectorRegion.getRight() - visibleInspectorWidth, inspectorTop,
+                              visibleInspectorWidth, jmax (0, inspectorRegion.getBottom() - inspectorTop))
             : Rectangle<int>());
         inspectorDrawer.setVisible (inspectorOpen);
         if (inspectorOpen) inspectorDrawer.toFront (false);
@@ -1229,6 +1239,7 @@ private:
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
     bool inspectorOpen = false;
+    int inspectorWidth = 270;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
