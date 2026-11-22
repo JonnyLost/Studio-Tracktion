@@ -223,6 +223,7 @@ public:
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
+        inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -231,6 +232,12 @@ public:
         workspaceViewport.setScrollBarsShown (true, false);
         addChildComponent (workspaceViewport);
         addAndMakeVisible (viewButton);
+        addAndMakeVisible (inspectorButton);
+        inspectorButton.setTooltip ("Toggle the selected-track Inspector on the right");
+        inspectorButton.setTitle ("Selected-track Inspector");
+        inspectorButton.onClick = [this] { setInspectorOpen (! inspectorOpen); };
+        addChildComponent (inspectorDrawer);
+        inspectorDrawer.onClose = [this] { setInspectorOpen (false); };
         addChildComponent (projectMenu);
         addChildComponent (trackMenu);
         addChildComponent (dockMenu);
@@ -606,6 +613,7 @@ public:
         setSize (1024, 640);
         applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
+        setInspectorOpen (inspectorOpen, false);
         timerCallback();
         startTimerHz (24);
         if (environmentWelcome.showAtLaunch()) environmentWelcome.open (true);
@@ -632,6 +640,7 @@ public:
         instrumentWorkspace.clear();
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = {};
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
@@ -1044,6 +1053,7 @@ public:
             view->setScrollBarThickness (m.scrollbar());
         browser.appearanceChanged();
         channelInspector.appearanceChanged();
+        inspectorDrawer.appearanceChanged();
         mixer.appearanceChanged();
         piano.appearanceChanged();
         monitor.appearanceChanged();
@@ -1172,12 +1182,14 @@ private:
     WorkspaceDivider workspaceDivider;
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
+    bool inspectorOpen = false;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
     Viewport railViewport, workspaceViewport;
     bool collapsedDockLinks = false;
-    TextButton viewButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
+    TextButton viewButton { "View..." }, inspectorButton { "Inspector" }, projectMenu { "Project..." },
+               trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<StudioPluginWindows>(), nullptr };
     studio::StudioEnvironmentWelcome environmentWelcome { engine.getPropertyStorage().getPropertiesFile() };
     ComboBox performanceMode;
@@ -1252,6 +1264,7 @@ private:
     juce::String midiFocusStatus;
     studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
     studio::ChannelInspector channelInspector { trackActions };
+    studio::InspectorDrawer inspectorDrawer { trackActions };
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
     studio::spatial::SpatialWorkspace spatialWorkspace;
@@ -2603,6 +2616,7 @@ private:
         editor.reset();
         browser.setStatus ({});
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
@@ -2617,6 +2631,7 @@ private:
         music.setEdit (edit.get());
         studio::spatial::prepareRoomPlayback (*edit);
         channelInspector.setEdit (edit.get());
+        inspectorDrawer.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());
        #if JUCE_MAC
