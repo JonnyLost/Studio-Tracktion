@@ -81,3 +81,9 @@ Reported on physical Intel MacBook: Studio audio comes from the **left headphone
 - **Inspector acceptance:** With the Inspector open over the timeline at both 1280×800 and 1024×640, no guide-grid lines may draw over the Inspector, including during playback, scroll, and resize.
 
 No repository merges. New CI and screenshot checks required.
+
+## Composer follow-up — plug-in management and stereo isolation
+
+- A confirmed headphone device test reaches left and right. The ARIA track remains audible on the left even with Studio pan set fully right. Do **not** attribute this to a mono JUCE device configuration; the output hardware and device mapping test passed. The root cause is still unknown. Distinguish ARIA Audio Unit, native Studio Synth, and a recorded stereo audio file on the same output before changing the render graph. Observe left/right meters at track and Master, with Stage disabled as an isolation step. Do not insert a global mono-to-stereo duplication that could destroy intentional stereo imaging.
+- In the selected-track Inspector, expand **Track Settings → Inserts…** (also available from Mixer FX or track-header FX). Every user instrument/effect appears as a submenu with **Open editor** and **Remove…**. The latter requires stopped transport, confirmation, resolves track and plug-in by stable ID after the dialog, and creates an Undo transaction. Internal Stage/room processors and track fader/meters are not removable through this menu. Track regions remain unchanged. ARIA recovery safety still blocks destructive edits.
+- Automated and physical acceptance required for removal of an Audio Unit instrument, native Studio Synth, and a regular insert effect. Verify Undo, project reopen and floating-editor cleanup. Do not merge until accepted.
