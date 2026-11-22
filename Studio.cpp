@@ -1388,7 +1388,8 @@ public:
         mMidiMonitor, mResources, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
-        mPerformanceFull, mPerformanceArticulation, mPerformanceNone
+        mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
+        mAboutStudio, mKeyboardHelp
     };
 
     PopupMenu applicationMenu (int index)
@@ -1476,9 +1477,9 @@ public:
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
-            case 8:
-                menu.addSectionHeader ("Studio 0.2");
-                menu.addItem (1, "Studio · native macOS music production", false);
+            case 8: // Help
+                add (mAboutStudio, "About Studio...");
+                add (mKeyboardHelp, "Keyboard Shortcuts...");
                 break;
         }
         return menu;
@@ -1523,6 +1524,18 @@ public:
             case mEnvironments: environmentWelcome.open (false); break;
             case mMidiMonitor: invoke (monitorButton); break;
             case mResources: if (resources.onOpen) resources.onOpen(); break;
+            case mAboutStudio:
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon,
+                    "About Studio", "Studio 0.2 · Native macOS music production.\n"
+                    "Orchestral Stage, native instruments, MIDI sequencing and mixing.", "OK");
+                break;
+            case mKeyboardHelp:
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon,
+                    "Keyboard Shortcuts",
+                    "Space: Play / Stop\nCommand-S: Save\nShift-Command-S: Save As\n"
+                    "Command-Z: Undo\nShift-Command-Z: Redo\n"
+                    "Click a transport LCD value to edit tempo or time signature.", "OK");
+                break;
             case mScaleUp: applyAppearance (studio::appearance.adjacentInterfacePercent (1), studio::appearance.textPercent(), true); break;
             case mScaleDown: applyAppearance (studio::appearance.adjacentInterfacePercent (-1), studio::appearance.textPercent(), true); break;
             case mScaleReset: applyAppearance (100, 100, true); break;
