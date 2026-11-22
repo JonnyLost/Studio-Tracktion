@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace studio
@@ -91,6 +92,8 @@ public:
                   const tracktion::MidiClip* selectedClip = nullptr);
     void appearanceChanged();
     tracktion::EditItemID inspectedTrack() const;
+    void setDetailsExpanded (bool expanded);
+    bool areDetailsExpanded() const noexcept { return detailsOpen; }
     void resized() override;
     void paint (juce::Graphics&) override;
 
