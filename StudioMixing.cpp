@@ -524,7 +524,8 @@ public:
         g.setColour (colours::control);
         g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
         g.setColour (colours::divider);
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f),
+                                (float) appearance.px (5), 1.0f);
     }
 
 private:
