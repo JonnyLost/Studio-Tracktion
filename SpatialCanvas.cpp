@@ -310,7 +310,7 @@ void SpatialMap::paint (Graphics& g)
             g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
             g.drawText (familyMarks[family], tile.toNearestInt(), Justification::centred);
         }
-        if (active || (! micMode && markers.size() <= 24))
+        if (active || (! micMode && showTrackLabels && markers.size() <= 24))
         {
             const int labelWidth = m.span (active ? 125 : 88);
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
@@ -340,6 +340,18 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     {
         PopupMenu menu;
         const SafePointer<SpatialMap> safe (this);
+        if (! micMode && ! overview)
+        {
+            menu.addItem ("Show track labels", true, showTrackLabels, [safe]
+            {
+                if (safe != nullptr)
+                {
+                    safe->showTrackLabels = ! safe->showTrackLabels;
+                    safe->repaint();
+                }
+            });
+            menu.addSeparator();
+        }
         for (const auto& marker : markers)
             if (marker.microphone == micMode && screen (marker.point).getDistanceFrom (event.position) <= radius)
                 menu.addItem (marker.name, true, marker.key == selected, [safe, key = marker.key]
