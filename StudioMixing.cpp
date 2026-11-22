@@ -409,7 +409,131 @@ void ChannelInspector::paint (Graphics& g)
     }
 }
 
-InspectorDrawer::InspectorDrawer (TrackActions& actions) : inspector (actions)
+// The Inspector's selected-track channel strip uses the same volume plug-in
+// and level meter as the main Mixer. It is a view, never another signal path.
+class InspectorChannelStrip final : public Component
+{
+public:
+    explicit InspectorChannelStrip (TrackActions& callbacks) : actions (callbacks)
+    {
+        for (Component* item : std::initializer_list<Component*> {
+                 &trackName, &colourButton, &iconButton, &midiIn, &midiOut, &mix, &meter })
+            addAndMakeVisible (*item);
+        for (auto* label : { &trackName, &midiIn, &midiOut })
+        {
+            label->setColour (Label::textColourId, colours::text);
+            label->setMinimumHorizontalScale (0.85f);
+        }
+        trackName.setFont (FontOptions (12.0f, Font::bold));
+        midiIn.setFont (FontOptions (11.0f));
+        midiOut.setFont (FontOptions (11.0f));
+        colourButton.setButtonText ("Colour");
+        colourButton.setTooltip ("Choose the selected track's colour");
+        iconButton.setButtonText ("Icon");
+        iconButton.setTooltip ("Choose the selected track's icon");
+        colourButton.onClick = [this] { if (actions.editTrackColour) actions.editTrackColour (id, colourButton); };
+        iconButton.onClick = [this] { if (actions.editTrackIcon) actions.editTrackIcon (id, iconButton); };
+        mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
+        {
+            if (! actions.canChangeMix || ! actions.canChangeMix()) return {};
+            if (auto* t = trackFor (edit, id)) return t->getVolumePlugin();
+            return {};
+        };
+    }
+
+    ~InspectorChannelStrip() override { meter.attach (nullptr); }
+
+    void setEdit (te::Edit* next)
+    {
+        meter.attach (nullptr);
+        edit = next;
+        id = {};
+    }
+
+    void refresh (te::AudioTrack* track, bool ready, const te::MidiClip* selectedClip)
+    {
+        id = track != nullptr ? track->itemID : te::EditItemID {};
+        const bool enabled = track != nullptr;
+        trackName.setText (enabled ? track->getName() : "Select an instrument track", dontSendNotification);
+        trackName.setTooltip (trackName.getText());
+
+        colourButton.setEnabled (enabled && ready);
+        iconButton.setEnabled (enabled && ready);
+        if (! enabled)
+        {
+            midiIn.setText ("MIDI In: —", dontSendNotification);
+            midiOut.setText ("MIDI Out: —", dontSendNotification);
+            iconButton.setButtonText ("Icon");
+            meter.attach (nullptr);
+            mix.refresh (nullptr, false);
+            return;
+        }
+
+        colourButton.setColour (TextButton::buttonColourId, track->getColour());
+        const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+        iconButton.setButtonText (icon.isEmpty() ? "Icon" : icon);
+        iconButton.setTooltip (icon.isEmpty() ? "Choose an instrument icon" : "Instrument icon: " + icon);
+
+        StringArray inputs;
+        for (auto* input : track->edit.getAllInputDevices())
+            if (input->getTargets().contains (id))
+                if (dynamic_cast<const te::MidiInputDevice*> (&input->getInputDevice()) != nullptr)
+                    inputs.addIfNotAlreadyThere (input->getInputDevice().getName());
+
+        const auto inputName = inputs.isEmpty() ? "Not assigned" : inputs.joinIntoString (", ");
+        midiIn.setText ("MIDI In: " + inputName, dontSendNotification);
+        midiIn.setTooltip ("MIDI input device: " + inputName);
+
+        const auto out = selectedClip != nullptr
+            ? (selectedClip->getMPEMode() ? String ("MPE") :
+                "Ch " + String (selectedClip->getMidiChannel().getChannelNumber()))
+            : outputLabel (*track);
+        midiOut.setText ("Output: " + out, dontSendNotification);
+        midiOut.setTooltip ("Output routing / selected MIDI clip channel: " + out);
+
+        mix.refresh (lastTrackPlugin<te::VolumeAndPanPlugin> (*track), ready);
+        const auto* plugin = lastTrackPlugin<te::LevelMeterPlugin> (*track);
+        meter.attach (plugin != nullptr ? &const_cast<te::LevelMeterPlugin*> (plugin)->measurer : nullptr);
+        meter.sample();
+    }
+
+    void resized() override
+    {
+        const auto& m = appearance;
+        auto area = getLocalBounds().reduced (m.px (6), m.px (5));
+        const auto heading = area.removeFromTop (m.control (23, 11));
+        trackName.setBounds (heading);
+        auto settings = area.removeFromTop (m.control (25, 11));
+        colourButton.setBounds (settings.removeFromLeft (settings.getWidth() / 2).reduced (m.px (2), 0));
+        iconButton.setBounds (settings.reduced (m.px (2), 0));
+        auto info = area.removeFromTop (2 * m.line (11, 2));
+        midiIn.setBounds (info.removeFromTop (m.line (11, 2)));
+        midiOut.setBounds (info);
+        const int meterWidth = m.px (22);
+        meter.setBounds (area.removeFromRight (meterWidth).reduced (m.px (1), m.px (2)));
+        mix.setBounds (area);
+    }
+
+    void paint (Graphics& g) override
+    {
+        g.setColour (colours::control);
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
+    }
+
+private:
+    TrackActions& actions;
+    te::Edit* edit = nullptr;
+    te::EditItemID id;
+    Label trackName, midiIn, midiOut;
+    TextButton colourButton, iconButton;
+    MixControls mix { true };
+    StereoMeter meter;
+};
+
+InspectorDrawer::InspectorDrawer (TrackActions& actions)
+    : inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
 {
     addAndMakeVisible (title);
     title.setText ("Inspector", dontSendNotification);
