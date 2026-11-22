@@ -179,7 +179,7 @@ class AudioSettingsView final : public Viewport
 {
 public:
     explicit AudioSettingsView (AudioDeviceManager& manager)
-        : selector (manager, 0, 512, 1, 512, false, false, true, true)
+        : selector (manager, 0, 512, 2, 512, false, false, true, true)
     {
         selector.setItemHeight (studio::appearance.control (24));
         setScrollBarThickness (studio::appearance.scrollbar());
