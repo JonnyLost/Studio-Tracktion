@@ -497,8 +497,8 @@ public:
         midiOut.setTooltip ("Output routing / selected MIDI clip channel: " + out);
 
         mix.refresh (lastTrackPlugin<te::VolumeAndPanPlugin> (*track), ready);
-        const auto* plugin = lastTrackPlugin<te::LevelMeterPlugin> (*track);
-        meter.attach (plugin != nullptr ? &const_cast<te::LevelMeterPlugin*> (plugin)->measurer : nullptr);
+        auto* plugin = lastTrackPlugin<te::LevelMeterPlugin> (*track);
+        meter.attach (plugin != nullptr ? &plugin->measurer : nullptr);
         meter.sample();
     }
 
@@ -559,8 +559,7 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
     details.onClick = [this]
     {
-        detailsOpen = ! detailsOpen;
-        resized();
+        setDetailsExpanded (! detailsOpen);
     };
 }
 
@@ -598,6 +597,12 @@ void InspectorDrawer::appearanceChanged()
     inspector.appearanceChanged();
     resized();
     repaint();
+}
+
+void InspectorDrawer::setDetailsExpanded (bool expanded)
+{
+    detailsOpen = expanded;
+    resized();
 }
 
 void InspectorDrawer::resized()
