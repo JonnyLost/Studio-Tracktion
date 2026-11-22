@@ -24,6 +24,10 @@ public:
     int minimumContentHeight (int width) const;
     void resized() override;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override;
 
 private:
     struct Entry
@@ -49,6 +53,9 @@ private:
     juce::PropertiesFile* preferences = nullptr;
     juce::StringArray favouriteKeys;
     bool favouritesOnly = false;
+    int preferredDetailsWidth = 258;
+    int resizeStartX = 0, resizeStartWidth = 0;
+    bool resizingDetails = false;
     void saveFavourites();
     std::vector<Entry> entries;
     std::vector<size_t> filtered;
