@@ -4943,6 +4943,19 @@ int StudioView::runInterfaceReview (const File& output)
     if (performance.isVisible() || articulationStrip.isVisible())
         return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+    // New M14 dialog snapshots come from real JUCE components at native
+    // logical sizes; these are not concept mockups or older M13 captures.
+    if (writeImages)
+    {
+        StudioCommandReference reference;
+        reference.setSize (580, 440);
+        if (! capture ("m14-command-reference-580x440.png", &reference))
+            return fail ("capture M14 searchable command reference");
+        StudioSettingsHub settings;
+        settings.setSize (510, 310);
+        if (! capture ("m14-settings-510x310.png", &settings))
+            return fail ("capture M14 Studio Settings panel");
+    }
     // Visual-regression capture for the small projects that previously left a
     // distracting empty gulf between the last channel and pinned Master.
     Array<te::AudioTrack*> smallMixer { tracks[0], tracks[1], tracks[2] };
@@ -5000,6 +5013,11 @@ int StudioView::runInterfaceReview (const File& output)
     zoom.setSelectedId (1, sendNotificationSync);
     timerCallback();
     if (! capture ("composer-arrangement-1280x800.png")) return fail ("write Composer arrangement screenshot");
+    showWorkspace (Workspace::instruments);
+    timerCallback();
+    if (! browser.isVisible() || ! capture ("m14-instrument-browser-1280x800.png"))
+        return fail ("capture M14 instrument browser");
+    showWorkspace (Workspace::closed);
     if (writeImages)
     {
         studio::bounce::showOptions (*this, *edit, { tracks[1]->itemID }, [] (Result, studio::bounce::Options) {});
