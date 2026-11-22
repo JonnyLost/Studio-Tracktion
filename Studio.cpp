@@ -3596,7 +3596,8 @@ private:
             if (plugin == track.getVolumePlugin() || plugin == track.getLevelMeterPlugin()) continue;
             any = true;
             const auto pluginId = plugin->itemID;
-            menu.addItem ("Open " + plugin->getName(), trackMenuAction (id,
+            PopupMenu pluginMenu;
+            pluginMenu.addItem ("Open editor", trackMenuAction (id,
                 [pluginId] (StudioView& studio, te::AudioTrack& target)
                 {
                     for (auto* current : target.pluginList.getPlugins())
@@ -3606,6 +3607,59 @@ private:
                             break;
                         }
                 }));
+            // Keep internal stage/room plumbing out of destructive plug-in
+            // management: those processors have dedicated Stage controls.
+            const auto type = plugin->getPluginType();
+            const bool managed = type == "studioStagePanV1" || type == "studioRoomSendV1"
+                || type == "studioWetRoomV1" || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr
+                || dynamic_cast<te::AuxSendPlugin*> (plugin) != nullptr;
+            if (! managed)
+                pluginMenu.addItem ("Remove...", ! edit->getTransport().isPlaying(), false,
+                    trackMenuAction (id, [pluginId] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        if (studio.ariaReviewPending || studio.edit->getTransport().isPlaying()
+                            || studio.edit->getTransport().isRecording()) return;
+                        auto* candidate = [&]() -> te::Plugin*
+                        {
+                            for (auto* current : target.pluginList.getPlugins())
+                                if (current->itemID == pluginId) return current;
+                            return nullptr;
+                        }();
+                        if (candidate == nullptr || candidate == target.getVolumePlugin()
+                            || candidate == target.getLevelMeterPlugin()) return;
+                        const auto name = candidate->getName();
+                        const auto generation = studio.projectGeneration;
+                        const auto trackId = target.itemID;
+                        const auto safe = Component::SafePointer<StudioView> (&studio);
+                        AlertWindow::showOkCancelBox (MessageBoxIconType::WarningIcon,
+                            "Remove plug-in?",
+                            "Remove " + name + " from " + target.getName()
+                                + "? The track and MIDI/audio regions will remain. You can Undo.",
+                            "Remove", "Cancel", &studio,
+                            ModalCallbackFunction::create ([safe, generation, trackId, pluginId] (int result)
+                            {
+                                if (result != 1 || safe == nullptr
+                                    || safe->projectGeneration != generation || ! safe->canEditRegions()
+                                    || safe->ariaReviewPending || safe->edit->getTransport().isPlaying()) return;
+                                auto* currentTrack = safe->trackById (trackId);
+                                if (currentTrack == nullptr || currentTrack->isFrozen (te::Track::anyFreeze)) return;
+                                for (auto* current : currentTrack->pluginList.getPlugins())
+                                    if (current->itemID == pluginId
+                                        && current != currentTrack->getVolumePlugin()
+                                        && current != currentTrack->getLevelMeterPlugin())
+                                    {
+                                        auto& undo = safe->edit->getUndoManager();
+                                        undo.beginNewTransaction ("Remove " + current->getName());
+                                        current->deleteFromParent();
+                                        safe->instrumentWorkspace.updateSelection (safe->selectedTrack(),
+                                            te::getAudioTracks (*safe->edit), true);
+                                        safe->message.setText ("Plug-in removed. Use Undo to restore it.",
+                                                              dontSendNotification);
+                                        break;
+                                    }
+                            }));
+                    }));
+            menu.addSubMenu (plugin->getName(), pluginMenu);
         }
         if (! any) menu.addItem (10, "No instruments or effects", false);
         PopupMenu effects;
