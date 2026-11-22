@@ -9,6 +9,7 @@ on:
       - feature/studio-composer-ui-m12-quickwins
       - feature/studio-midi-focus-m12
       - feature/studio-unified-track-headers-m12
+      - feature/studio-simplified-navigation-m12
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
@@ -88,6 +89,14 @@ jobs:
             ${{ runner.temp }}/studio-composer-audio/
             ${{ runner.temp }}/ctest-intel-macos.xml
       - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-M13-mixer-inspector-macOS
+          path: |
+            ${{ runner.temp }}/studio-interface-review/mixer-*.png
+            ${{ runner.temp }}/studio-interface-review/right-inspector-*.png
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
         with:
           name: Studio-M6-unified-interface-review
           path: ${{ runner.temp }}/studio-interface-review/
@@ -118,11 +127,11 @@ jobs:
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
       - name: Package Intel Studio application
-        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M11-Intel.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: Studio-M11-Intel-app
-          path: ${{ runner.temp }}/Studio-M11-Intel.zip
+          name: Studio-M13-Intel-app
+          path: ${{ runner.temp }}/Studio-M13-Intel.zip
           if-no-files-found: error
       - name: Measure optimized native synth block times
         run: |

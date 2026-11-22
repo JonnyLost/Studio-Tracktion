@@ -179,7 +179,7 @@ class AudioSettingsView final : public Viewport
 {
 public:
     explicit AudioSettingsView (AudioDeviceManager& manager)
-        : selector (manager, 0, 512, 1, 512, false, false, true, true)
+        : selector (manager, 0, 512, 2, 512, false, false, true, true)
     {
         selector.setItemHeight (studio::appearance.control (24));
         setScrollBarThickness (studio::appearance.scrollbar());
@@ -223,6 +223,8 @@ public:
         studio::appearance.set (prefs.getIntValue ("studio.interfaceScale", 100),
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
+        inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
+        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 270);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -231,6 +233,20 @@ public:
         workspaceViewport.setScrollBarsShown (true, false);
         addChildComponent (workspaceViewport);
         addAndMakeVisible (viewButton);
+        addAndMakeVisible (inspectorButton);
+        inspectorButton.setTooltip ("Toggle the selected-track Inspector on the right");
+        inspectorButton.setTitle ("Selected-track Inspector");
+        inspectorButton.onClick = [this] { setInspectorOpen (! inspectorOpen); };
+        addChildComponent (inspectorDrawer);
+        inspectorDrawer.onClose = [this] { setInspectorOpen (false); };
+        inspectorDrawer.onWidthChanged = [this] (int width)
+        {
+            inspectorWidth = jlimit (studio::appearance.span (205),
+                                     jmin (studio::appearance.span (510), jmax (studio::appearance.span (205), getWidth() - studio::appearance.span (220))),
+                                     width);
+            engine.getPropertyStorage().getPropertiesFile().setValue ("studio.inspectorWidth", inspectorWidth);
+            resized();
+        };
         addChildComponent (projectMenu);
         addChildComponent (trackMenu);
         addChildComponent (dockMenu);
@@ -444,6 +460,11 @@ public:
             addChildComponent (link);
             link.onClick = [this, index]
             {
+                if (contextLinks()[index].destination == Workspace::channel)
+                {
+                    setInspectorOpen (true);
+                    return;
+                }
                 showWorkspace (contextLinks()[index].destination);
                 if (workspaceLinks[index].isVisible())
                     workspaceLinks[index].grabKeyboardFocus();
@@ -606,6 +627,8 @@ public:
         setSize (1024, 640);
         applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
+        setInspectorOpen (inspectorOpen, false);
+        ensureStereoOutputGroup();
         timerCallback();
         startTimerHz (24);
         if (environmentWelcome.showAtLaunch()) environmentWelcome.open (true);
@@ -632,6 +655,7 @@ public:
         instrumentWorkspace.clear();
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = {};
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
@@ -808,6 +832,10 @@ public:
             return;
         g.saveState();
         g.reduceClipRegion (area);
+        // The musical guide grid is a paint-over-children layer. Exclude the
+        // right Inspector or it visibly draws through its fully opaque panel.
+        if (inspectorOpen && inspectorDrawer.isVisible())
+            g.excludeClipRegion (inspectorDrawer.getBounds());
         auto& view = editor->getEditViewState();
         studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
             [&] (const studio::MusicalTick& tick)
@@ -929,6 +957,7 @@ public:
         topBar = area.removeFromTop (projectHeight + transportHeight + m.px (8));
         auto commands = topBar.withHeight (projectHeight).reduced (m.px (10), m.px (2));
         performanceMode.setBounds (commands.removeFromRight (m.span (163)).reduced (m.px (2), 0));
+        inspectorButton.setBounds (commands.removeFromRight (m.span (88)).reduced (m.px (2), 0));
         viewButton.setBounds (commands.removeFromRight (m.span (63)).reduced (m.px (2), 0));
         const bool showCPU = commands.getWidth() > m.span (325);
         resources.audio.setVisible (showCPU);
@@ -993,6 +1022,9 @@ public:
         for (const auto& item : railItems())
             item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
+        // On a MacBook, the right Inspector is an overlay: hiding it always
+        // returns the complete arrangement and lower editor width.
+        const auto inspectorRegion = area;
         layoutPerformance (area);
         layoutDock (area);
         arrangementTools = area.removeFromTop (m.control (29));
@@ -1023,7 +1055,18 @@ public:
             ? m.trackFooter() : 0;
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
+        const int visibleInspectorWidth = jlimit (m.span (205),
+            jmax (m.span (205), jmin (m.span (510), inspectorRegion.getWidth() - m.span (190))), inspectorWidth);
+        // Keep timeline zoom and track actions accessible above the overlay.
+        const int inspectorTop = arrangementTools.getBottom();
+        inspectorDrawer.setBounds (inspectorOpen
+            ? Rectangle<int> (inspectorRegion.getRight() - visibleInspectorWidth, inspectorTop,
+                              visibleInspectorWidth, jmax (0, inspectorRegion.getBottom() - inspectorTop))
+            : Rectangle<int>());
+        inspectorDrawer.setVisible (inspectorOpen);
+        if (inspectorOpen) inspectorDrawer.toFront (false);
         environmentWelcome.setBounds (getLocalBounds());
+        if (environmentWelcome.isVisible()) environmentWelcome.toFront (false);
         repaint();
     }
 
@@ -1044,6 +1087,7 @@ public:
             view->setScrollBarThickness (m.scrollbar());
         browser.appearanceChanged();
         channelInspector.appearanceChanged();
+        inspectorDrawer.appearanceChanged();
         mixer.appearanceChanged();
         piano.appearanceChanged();
         monitor.appearanceChanged();
@@ -1091,6 +1135,22 @@ public:
         return true;
     }
 
+    void setInspectorOpen (bool value, bool persist = true)
+    {
+        inspectorOpen = value;
+        if (value && workspace == Workspace::channel)
+            showWorkspace (Workspace::closed); // Don't display duplicate Channel controls.
+        inspectorButton.setToggleState (value, dontSendNotification);
+        inspectorButton.setTooltip (value ? "Hide the selected-track Inspector" : "Show the selected-track Inspector");
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.inspectorOpen", value);
+            prefs.saveIfNeeded();
+        }
+        resized();
+    }
+
     void showViewOptions()
     {
         PopupMenu scale, textSize;
@@ -1110,6 +1170,17 @@ public:
         menu.addItem ("Studio Environments...", [safe]
         {
             if (safe != nullptr) safe->environmentWelcome.open (false);
+        });
+        menu.addSeparator();
+        menu.addItem ("Show Selected Track Inspector", true, inspectorOpen, [safe]
+        {
+            if (safe != nullptr) safe->setInspectorOpen (! safe->inspectorOpen);
+        });
+        menu.addItem ("Classic Channel Workspace (temporary)", [safe]
+        {
+            if (safe == nullptr) return;
+            safe->setInspectorOpen (false);
+            safe->showWorkspace (Workspace::channel);
         });
         menu.addSeparator();
         PopupMenu diagnostics;
@@ -1172,12 +1243,16 @@ private:
     WorkspaceDivider workspaceDivider;
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
+    bool inspectorOpen = false;
+    int inspectorWidth = 270;
+    int stereoScanTicks = 0;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
     Viewport railViewport, workspaceViewport;
     bool collapsedDockLinks = false;
-    TextButton viewButton { "View..." }, projectMenu { "Project..." }, trackMenu { "Tracks..." }, dockMenu { "Layout..." };
+    TextButton viewButton { "View..." }, inspectorButton { "Inspector" }, projectMenu { "Project..." },
+               trackMenu { "Tracks..." }, dockMenu { "Layout..." };
     te::Engine engine { "Studio 0.1", std::make_unique<StudioPluginWindows>(), nullptr };
     studio::StudioEnvironmentWelcome environmentWelcome { engine.getPropertyStorage().getPropertiesFile() };
     ComboBox performanceMode;
@@ -1241,8 +1316,7 @@ private:
                        pianoButton { "Piano Roll", studio::RailIcon::piano },
                        articulationsButton { "Articulations", studio::RailIcon::articulations },
                        stageButton { "Stage", studio::RailIcon::stage },
-                       mixButton { "Mixer", studio::RailIcon::mixer },
-                       channelButton { "Channel", studio::RailIcon::channel };
+                       mixButton { "Mixer", studio::RailIcon::mixer };
     TextButton compactButton { "Compact" }, splitButton { "Split" },
                expandedButton { "Expanded" }, closeWorkspace { "Hide" };
     std::array<TextButton, 2> workspaceLinks;
@@ -1252,6 +1326,7 @@ private:
     juce::String midiFocusStatus;
     studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
     studio::ChannelInspector channelInspector { trackActions };
+    studio::InspectorDrawer inspectorDrawer { trackActions };
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
     studio::spatial::SpatialWorkspace spatialWorkspace;
@@ -1297,13 +1372,11 @@ private:
     struct DockItem { DockMode mode; TextButton* button; };
     struct WorkspaceEntry { Workspace destination; const char* name; };
 
-    std::array<RailItem, 6> railItems()
+    std::array<RailItem, 5> railItems()
     {
-        // Order by a composer's most common tasks. Channel remains available
-        // until it is replaced by the separately planned right-side Inspector.
         return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::piano, &pianoButton },
                   { Workspace::articulations, &articulationsButton }, { Workspace::stage, &stageButton },
-                  { Workspace::mix, &mixButton }, { Workspace::channel, &channelButton } }};
+                  { Workspace::mix, &mixButton } }};
     }
 
     std::array<DockItem, 3> dockItems()
@@ -1319,7 +1392,7 @@ private:
             case Workspace::stage:       return {{ { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::rooms:       return {{ { Workspace::stage, "Stage" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::microphones: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
-            case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Channel" } }};
+            case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Inspector" } }};
             case Workspace::orchestraSeating: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::channel:     return {{ { Workspace::instruments, "Instruments" }, { Workspace::stage, "Stage" } }};
             default:                    return {{ { Workspace::closed, "" }, { Workspace::closed, "" } }};
@@ -1339,6 +1412,15 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
+        // The selected instrument remains loaded, playable and editable, but
+        // the Mixer owns its entire lower workspace: no stacked Performance
+        // controls or articulation strip below the faders.
+        if (workspace == Workspace::mix)
+        {
+            performance.setVisible (false);
+            articulationStrip.setVisible (false);
+            return;
+        }
         const auto& m = studio::appearance;
         const auto mode = (studio::PerformanceMode) performanceMode.getSelectedId();
         const bool visible = edit != nullptr && mode != studio::PerformanceMode::hidden;
@@ -1449,6 +1531,13 @@ private:
         if (dockMode == mode) return;
         rememberWorkspaceScroll();
         dockMode = mode;
+        // Switching from Expanded to Split must not restore a short dock that
+        // clips the Mixer faders. Entering Mixer already enforces this minimum;
+        // apply it to subsequent dock-mode changes as well.
+        if (mode == DockMode::split && workspace == Workspace::mix)
+            workspaceHeight = jmax (workspaceHeight,
+                jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
+                       getHeight() * 57 / 100));
         syncWorkspace();
         restoreWorkspaceScroll();
     }
@@ -1470,6 +1559,18 @@ private:
         if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
+        if (next == Workspace::mix && changing)
+        {
+            // A click on Mixer is a change of task, not an attempt to stack a
+            // third panel underneath the current instrument. Show an actual
+            // console with usable faders and some arrangement above it.
+            if (dockMode == DockMode::compact)
+                dockMode = DockMode::split;
+            if (dockMode == DockMode::split)
+                workspaceHeight = jmax (workspaceHeight,
+                    jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
+                           getHeight() * 57 / 100));
+        }
         workspace = next;
         syncWorkspace();
         if (changing) restoreWorkspaceScroll();
@@ -1907,6 +2008,25 @@ private:
             }));
         if (destructive.isNotEmpty())
             tracks.addSectionHeader (destructive);
+        if (! nested)
+        {
+            PopupMenu headerMenu;
+            for (const auto& option : std::initializer_list<std::pair<const char*, const char*>> {
+                     { "studioHeaderVolume", "Volume mini-fader" },
+                     { "studioHeaderPan", "Pan mini-control" },
+                     { "studioHeaderMeter", "Audio activity meter" } })
+            {
+                const Identifier key (option.first);
+                const bool enabled = (bool) track.state.getProperty (key, false);
+                headerMenu.addItem (option.second, true, enabled,
+                    trackMenuAction (id, [key, enabled] (StudioView&, te::AudioTrack& target)
+                    {
+                        target.state.setProperty (key, ! enabled, &target.edit.getUndoManager());
+                    }));
+            }
+            tracks.addSeparator();
+            tracks.addSubMenu ("Track Header Controls", headerMenu);
+        }
         if (nested)
             parent.addSubMenu ("Track · " + track.getName(), subMenu);
     }
@@ -1993,6 +2113,14 @@ private:
 
     void timerCallback() override
     {
+        // Picking another sound device can recreate Tracktion output groups.
+        // Correct a newly selected mono group only while stopped, never in an audio callback.
+        if (++stereoScanTicks >= 24)
+        {
+            stereoScanTicks = 0;
+            if (edit == nullptr || (! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording()))
+                ensureStereoOutputGroup();
+        }
        #if JUCE_MAC
         updateSeatingVisibility();
        #endif
@@ -2088,7 +2216,8 @@ private:
             if (piano.getClip() != primary)
             {
                 piano.setClip (primary);
-                if (workspace != Workspace::closed && workspace != Workspace::articulations && dockMode != DockMode::compact)
+                if (workspace != Workspace::closed && workspace != Workspace::articulations
+                    && workspace != Workspace::mix && dockMode != DockMode::compact)
                     showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
@@ -2129,6 +2258,16 @@ private:
             refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
             auto* context = workflowTrack();
             if (performance.isVisible()) performance.refresh (context, transportReady);
+            if (inspectorOpen)
+            {
+                const auto recovery = ariaReviewPending
+                    ? (autoAriaRetryPending ? "ARIA recovery | Restore pending"
+                                            : "ARIA recovery | Verify sound before saving")
+                    : "ARIA recovery | No verification pending";
+                const auto* clip = selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr;
+                inspectorDrawer.refresh (context, ready, canEditRegions(), recovery,
+                    clip != nullptr && context != nullptr && clip->getAudioTrack() == context ? clip : nullptr);
+            }
             if (articulation.isShowing() || articulationStrip.isVisible())
             {
                 articulation.refresh (context, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr, ready);
@@ -2603,6 +2742,7 @@ private:
         editor.reset();
         browser.setStatus ({});
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
@@ -2617,6 +2757,7 @@ private:
         music.setEdit (edit.get());
         studio::spatial::prepareRoomPlayback (*edit);
         channelInspector.setEdit (edit.get());
+        inspectorDrawer.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());
        #if JUCE_MAC
@@ -3046,6 +3187,60 @@ private:
         {
             showTrackMenu (id, kind, anchor);
         };
+        trackActions.editTrackColour = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy || edit->getTransport().isRecording()) return;
+            auto* target = trackById (id);
+            if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return;
+            PopupMenu menu;
+            constexpr std::array<std::pair<const char*, uint32_t>, 10> palette {{
+                { "Strings blue", 0xff7ba9db }, { "Woodwinds green", 0xff75b8a1 },
+                { "Brass gold", 0xffd2ad70 }, { "Percussion red", 0xffcf8194 },
+                { "Keyboards violet", 0xffa08fd7 }, { "Guitars amber", 0xffc6956a },
+                { "Voice pink", 0xffcf92bd }, { "Audio teal", 0xff55aeb9 },
+                { "Neutral silver", 0xff9caabd }, { "Deep blue", 0xff5978af }
+            }};
+            for (const auto& [name, colour] : palette)
+                menu.addItem (name, true, target->getColour() == Colour (colour),
+                    [safe = Component::SafePointer<StudioView> (this), id, colour]
+                    {
+                        if (safe == nullptr || safe->edit == nullptr || safe->busy
+                            || safe->edit->getTransport().isRecording()) return;
+                        if (auto* track = safe->trackById (id))
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Set track colour");
+                            track->setColour (Colour (colour));
+                            safe->repaint();
+                        }
+                    });
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+        };
+        trackActions.editTrackIcon = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy || edit->getTransport().isRecording()) return;
+            auto* target = trackById (id);
+            if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return;
+            PopupMenu menu;
+            for (const auto& name : { "Strings", "Woodwind", "Brass", "Percussion",
+                                      "Keyboard", "Guitar", "Bass", "Voice", "Synth", "Audio", "Other" })
+            {
+                const auto value = String (name);
+                menu.addItem (value, true,
+                    target->state.getProperty (Identifier ("studioTrackIcon")).toString() == value,
+                    [safe = Component::SafePointer<StudioView> (this), id, value]
+                    {
+                        if (safe == nullptr || safe->edit == nullptr || safe->busy
+                            || safe->edit->getTransport().isRecording()) return;
+                        if (auto* track = safe->trackById (id))
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Set instrument icon");
+                            track->state.setProperty (Identifier ("studioTrackIcon"),
+                                value, &safe->edit->getUndoManager());
+                        }
+                    });
+            }
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+        };
         trackActions.openInstrument = [this] (te::EditItemID id)
         {
             if (! busy)
@@ -3411,7 +3606,8 @@ private:
             if (plugin == track.getVolumePlugin() || plugin == track.getLevelMeterPlugin()) continue;
             any = true;
             const auto pluginId = plugin->itemID;
-            menu.addItem ("Open " + plugin->getName(), trackMenuAction (id,
+            PopupMenu pluginMenu;
+            pluginMenu.addItem ("Open editor", trackMenuAction (id,
                 [pluginId] (StudioView& studio, te::AudioTrack& target)
                 {
                     for (auto* current : target.pluginList.getPlugins())
@@ -3421,6 +3617,59 @@ private:
                             break;
                         }
                 }));
+            // Keep internal stage/room plumbing out of destructive plug-in
+            // management: those processors have dedicated Stage controls.
+            const auto type = plugin->getPluginType();
+            const bool managed = type == "studioStagePanV1" || type == "studioRoomSendV1"
+                || type == "studioWetRoomV1" || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr
+                || dynamic_cast<te::AuxSendPlugin*> (plugin) != nullptr;
+            if (! managed)
+                pluginMenu.addItem ("Remove...", ! edit->getTransport().isPlaying(), false,
+                    trackMenuAction (id, [pluginId] (StudioView& studio, te::AudioTrack& target)
+                    {
+                        if (studio.ariaReviewPending || studio.edit->getTransport().isPlaying()
+                            || studio.edit->getTransport().isRecording()) return;
+                        auto* candidate = [&]() -> te::Plugin*
+                        {
+                            for (auto* current : target.pluginList.getPlugins())
+                                if (current->itemID == pluginId) return current;
+                            return nullptr;
+                        }();
+                        if (candidate == nullptr || candidate == target.getVolumePlugin()
+                            || candidate == target.getLevelMeterPlugin()) return;
+                        const auto name = candidate->getName();
+                        const auto generation = studio.projectGeneration;
+                        const auto trackId = target.itemID;
+                        const auto safe = Component::SafePointer<StudioView> (&studio);
+                        AlertWindow::showOkCancelBox (MessageBoxIconType::WarningIcon,
+                            "Remove plug-in?",
+                            "Remove " + name + " from " + target.getName()
+                                + "? The track and MIDI/audio regions will remain. You can Undo.",
+                            "Remove", "Cancel", &studio,
+                            ModalCallbackFunction::create ([safe, generation, trackId, pluginId] (int result)
+                            {
+                                if (result != 1 || safe == nullptr
+                                    || safe->projectGeneration != generation || ! safe->canEditRegions()
+                                    || safe->ariaReviewPending || safe->edit->getTransport().isPlaying()) return;
+                                auto* currentTrack = safe->trackById (trackId);
+                                if (currentTrack == nullptr || currentTrack->isFrozen (te::Track::anyFreeze)) return;
+                                for (auto* current : currentTrack->pluginList.getPlugins())
+                                    if (current->itemID == pluginId
+                                        && current != currentTrack->getVolumePlugin()
+                                        && current != currentTrack->getLevelMeterPlugin())
+                                    {
+                                        auto& undo = safe->edit->getUndoManager();
+                                        undo.beginNewTransaction ("Remove " + current->getName());
+                                        current->deleteFromParent();
+                                        safe->instrumentWorkspace.updateSelection (safe->selectedTrack(),
+                                            te::getAudioTracks (*safe->edit), true);
+                                        safe->message.setText ("Plug-in removed. Use Undo to restore it.",
+                                                              dontSendNotification);
+                                        break;
+                                    }
+                            }));
+                    }));
+            menu.addSubMenu (plugin->getName(), pluginMenu);
         }
         if (! any) menu.addItem (10, "No instruments or effects", false);
         PopupMenu effects;
@@ -3444,6 +3693,27 @@ private:
                         studio.startExternalPlugin (description, target.itemID, false, false);
                     }));
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
+    }
+
+    // JUCE can have both physical output channels active while Tracktion's
+    // virtual default wave output still groups only one channel. That routes
+    // instrument playback to the left output, but the JUCE hardware test still
+    // plays in both ears. Expand only a mono *virtual group* when the active
+    // physical device and Tracktion's description support a stereo pair.
+    void ensureStereoOutputGroup()
+    {
+        auto& devices = engine.getDeviceManager();
+        auto* hardware = devices.deviceManager.getCurrentAudioDevice();
+        if (hardware == nullptr || hardware->getActiveOutputChannels().countNumberOfSetBits() < 2)
+            return;
+        auto* output = devices.getDefaultWaveOutDevice();
+        if (output == nullptr || ! output->isEnabled() || output->getChannels().getNumChannels() != 1)
+            return;
+        if (devices.getPossibleChannelGroupsForDevice (*output, 2).size() < 2)
+            return;
+        Logger::writeToLog ("Studio: repairing mono Tracktion default output group to stereo for "
+                            + output->getName());
+        devices.setDeviceNumChannels (*output, 2);
     }
 
     void showAudioSettings()
@@ -3704,6 +3974,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         edit.reset();
@@ -4076,6 +4347,8 @@ int StudioView::runInterfaceReview (const File& output)
                 setDockMode (DockMode::split);
                 if (! workspaceViewport.isVisible() || ! mixer.isVisible() || ruler.getWidth() < 200)
                     return fail ("split arrangement and Mixer");
+                if (performance.isVisible() || articulationStrip.isVisible())
+                    return fail ("Mixer cannot share lower space with instrument or articulation panels");
                 // Exercise actual pointer and keyboard resizing. Merely
                 // selecting Split does not catch a divider that stops moving
                 // once Split is already the active mode.
@@ -4130,7 +4403,55 @@ int StudioView::runInterfaceReview (const File& output)
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (image, stream);
     };
+    if (performance.isVisible() || articulationStrip.isVisible())
+        return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+    // Visual-regression capture for the small projects that previously left a
+    // distracting empty gulf between the last channel and pinned Master.
+    Array<te::AudioTrack*> smallMixer { tracks[0], tracks[1], tracks[2] };
+    mixer.refresh (smallMixer, tracks[1], true, true);
+    if (! capture ("mixer-three-tracks-1280x800.png")) return fail ("write three-track Mixer screenshot");
+    mixer.refresh (tracks, selectedTrack(), true, true);
+    setDockMode (DockMode::split);
+    mixer.refresh (tracks, selectedTrack(), true, true);
+    if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
+    if (workspacePanel.getHeight() < mixer.minimumContentHeight()
+        || performance.isVisible() || articulationStrip.isVisible())
+        return fail ("Mixer-focused Split must leave the console fully usable");
+    if (! capture ("mixer-focused-1280x800.png"))
+        return fail ("write Mixer-first arrangement screenshot");
+    setDockMode (DockMode::expanded);
+    // The Inspector follows the selected track while leaving the arrangement
+    // geometry untouched; closing it must restore a full-width work surface.
+    const auto unclippedRuler = ruler;
+    setInspectorOpen (true, false);
+    timerCallback();
+    timerCallback();
+    if (! inspectorDrawer.isVisible() || inspectorDrawer.getWidth() < studio::appearance.span (225)
+        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID || ruler != unclippedRuler)
+        return fail ("right Inspector follows selected channel without changing ruler");
+    if (! capture ("right-inspector-1280x800.png")) return fail ("write right Inspector screenshot");
+    inspectorDrawer.setDetailsExpanded (true);
+    if (! inspectorDrawer.areDetailsExpanded())
+        return fail ("Inspector advanced track settings expand");
+    if (! capture ("right-inspector-track-settings-1280x800.png"))
+        return fail ("write expanded Inspector settings screenshot");
+    inspectorDrawer.setDetailsExpanded (false);
+    selection.selectOnly (tracks[2]);
+    timerCallback();
+    timerCallback();
+    if (inspectorDrawer.inspectedTrack() != tracks[2]->itemID)
+        return fail ("right Inspector follows arrangement selection");
+    setSize (1024, 640);
+    if (! inspectorDrawer.isVisible() || ! getLocalBounds().contains (inspectorDrawer.getBounds()))
+        return fail ("right Inspector fits compact MacBook");
+    if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
+    setInspectorOpen (false, false);
+    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty())
+        return fail ("hiding Inspector restores full-width arrangement");
+    setSize (1280, 800);
+    trackActions.selectTrack (tracks[1]->itemID);
+    showWorkspace (Workspace::mix);
 
     const auto seconds = [] (double value) { return te::TimePosition::fromSeconds (value); };
     if (! studio::setTempoEvent (*edit, te::BeatPosition::fromBeats (8), 94)

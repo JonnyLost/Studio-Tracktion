@@ -60,7 +60,9 @@ public:
     int transportRowHeight() const { return line (9, 1) + line (15, 1) + 4 * px (1); }
     int transportPrimaryWidth() const { return 4 * transportKey() + span (92) + span (73) + span (60); }
     bool elapsedFits (int width) const { return width >= transportPrimaryWidth() + span (102); }
-    int mixerStripWidth (int width) const { return span (width < span (950) ? 120 : 134); }
+    // Compact console strips, scaled with accessibility preferences.
+    // Side-by-side FX/Stage controls previously forced overly wide channels.
+    int mixerStripWidth (int width) const { return span (width < span (950) ? 96 : 105); }
 
     bool compactBrowser (int width) const { return width < span (1000); }
     bool browserFilterRow (int width) const { return width < span (660); }

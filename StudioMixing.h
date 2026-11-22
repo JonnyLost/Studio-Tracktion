@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace studio
@@ -20,6 +21,8 @@ struct TrackActions
     std::function<void(tracktion::EditItemID)> toggleArm;
     std::function<void(tracktion::EditItemID)> toggleMonitoring;
     std::function<void(tracktion::EditItemID)> showStage;
+    std::function<void(tracktion::EditItemID, juce::Component&)> editTrackColour;
+    std::function<void(tracktion::EditItemID, juce::Component&)> editTrackIcon;
 };
 
 bool isInstrumentPlugin (tracktion::Plugin&);
@@ -48,6 +51,13 @@ public:
     void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
                   const tracktion::MidiClip* selectedClip = nullptr);
     int minimumContentHeight (int width) const;
+    void setShowMixControls (bool show)
+    {
+        showMixControls = show;
+        mix.setVisible (show);
+        resized();
+    }
+    tracktion::EditItemID inspectedTrack() const { return id; }
     void appearanceChanged();
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -62,7 +72,46 @@ private:
                      monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts..." },
                      routing { "Output..." }, stage { "Open Stage" };
     MixControls mix { false };
+    bool showMixControls = true;
     std::array<juce::Rectangle<int>, 5> columns;
+};
+
+class InspectorChannelStrip;
+
+// A lightweight, non-modal right-side drawer. It reuses the existing
+// ChannelInspector controls and selected-track model, avoiding a second set
+// of audio/MIDI routing implementations.
+class InspectorDrawer final : public juce::Component
+{
+public:
+    explicit InspectorDrawer (TrackActions&);
+    ~InspectorDrawer() override;
+    std::function<void()> onClose;
+    std::function<void(int)> onWidthChanged;
+    void setEdit (tracktion::Edit*);
+    void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
+                  const tracktion::MidiClip* selectedClip = nullptr);
+    void appearanceChanged();
+    tracktion::EditItemID inspectedTrack() const;
+    void setDetailsExpanded (bool expanded);
+    bool areDetailsExpanded() const noexcept { return detailsOpen; }
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override;
+
+private:
+    juce::ComponentDragger resizeDragger; // Drag grip uses a width callback, not component movement.
+    int resizeStartX = 0, resizeStartWidth = 0;
+    bool resizingWidth = false;
+    ChannelInspector inspector;
+    std::unique_ptr<InspectorChannelStrip> channelStrip;
+    juce::Viewport scroll;
+    juce::Label title;
+    juce::TextButton close { "Close" }, details { "Track Settings" };
+    bool detailsOpen = false;
 };
 
 class StudioMixer final : public juce::Component

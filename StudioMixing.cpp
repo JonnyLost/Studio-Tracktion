@@ -140,7 +140,9 @@ MixControls::MixControls (bool fader) : vertical (fader)
     for (auto* control : { &volume, &pan })
     {
         addAndMakeVisible (*control);
-        control->setSliderStyle (control == &volume && vertical ? Slider::LinearVertical : Slider::LinearHorizontal);
+        control->setSliderStyle (control == &volume && vertical ? Slider::LinearVertical
+                                : control == &pan && vertical ? Slider::RotaryHorizontalVerticalDrag
+                                : Slider::LinearHorizontal);
         control->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight, false, 66, 18);
     }
     for (auto* label : { &volumeLabel, &panLabel })
@@ -200,13 +202,15 @@ void MixControls::resized()
     const auto valueWidth = m.span (74);
     const auto valueHeight = m.line (13, 2);
     auto area = getLocalBounds();
-    for (auto* slider : { &volume, &pan })
-        slider->setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
-                                 false, valueWidth, valueHeight);
+    volume.setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
+                            false, vertical ? m.span (64) : valueWidth, valueHeight);
+    pan.setTextBoxStyle (vertical ? Slider::TextBoxBelow : Slider::TextBoxRight,
+                         false, vertical ? m.span (56) : valueWidth, valueHeight);
     if (vertical)
     {
         panLabel.setBounds (area.removeFromTop (m.line (11, 1)));
-        pan.setBounds (area.removeFromTop (m.line (13, 2) + m.px (15)));
+        // Rotary pan provides precise centring without consuming strip width.
+        pan.setBounds (area.removeFromTop (m.control (47, 11) + m.px (5)));
         volumeLabel.setBounds (area.removeFromTop (m.line (11, 1)));
         volume.setBounds (area);
     }
@@ -247,7 +251,7 @@ ChannelInspector::ChannelInspector (TrackActions& callbacks) : actions (callback
     mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
     {
         if (actions.canChangeMix())
-            if (auto* t = track()) return t->getVolumePlugin();
+            if (auto* t = track()) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
         return {};
     };
 }
@@ -331,7 +335,8 @@ void ChannelInspector::refresh (te::AudioTrack* selected, bool ready, bool canRo
 int ChannelInspector::minimumContentHeight (int width) const
 {
     const auto& m = appearance;
-    int height = m.line (14, 5) + 2 * m.control (25) + 3 * m.line (12, 4) + m.px (4);
+    int height = m.line (14, 5) + (showMixControls ? 2 * m.control (25) : 0)
+               + 3 * m.line (12, 4) + m.px (4);
     const int count = channelColumns (width);
     for (int i = 0; i < 5; i += count)
         height += cardRowHeight (i, count) + m.px (3);
@@ -357,8 +362,12 @@ void ChannelInspector::resized()
         for (int i = 0; i < count && start + i < 5; ++i)
             columns[(size_t) (start + i)] = row.removeFromLeft (row.getWidth() / (count - i)).reduced (m.px (2), 0);
     }
-    auto bottom = area.removeFromTop (2 * m.control (25));
-    mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
+    if (showMixControls)
+    {
+        auto bottom = area.removeFromTop (2 * m.control (25));
+        mix.setBounds (bottom.removeFromLeft (jmin (m.span (465), bottom.getWidth())));
+    }
+    else mix.setBounds ({});
     midiStatus.setBounds (area.removeFromTop (2 * m.line (12, 4)));
     ariaStatus.setBounds (area.removeFromTop (m.line (12, 4)));
     const auto heading = m.line (12, 4);
@@ -405,6 +414,270 @@ void ChannelInspector::paint (Graphics& g)
     }
 }
 
+// The Inspector's selected-track channel strip uses the same volume plug-in
+// and level meter as the main Mixer. It is a view, never another signal path.
+class InspectorChannelStrip final : public Component
+{
+public:
+    explicit InspectorChannelStrip (TrackActions& callbacks) : actions (callbacks)
+    {
+        for (Component* item : std::initializer_list<Component*> {
+                 &trackName, &colourButton, &iconButton, &midiIn, &midiOut, &mix, &meter })
+            addAndMakeVisible (*item);
+        for (auto* label : { &trackName, &midiIn, &midiOut })
+        {
+            label->setColour (Label::textColourId, colours::text);
+            label->setMinimumHorizontalScale (0.85f);
+        }
+        trackName.setFont (FontOptions (12.0f, Font::bold));
+        midiIn.setFont (FontOptions (11.0f));
+        midiOut.setFont (FontOptions (11.0f));
+        colourButton.setButtonText ("Colour");
+        colourButton.setTooltip ("Choose the selected track's colour");
+        iconButton.setButtonText ("Icon");
+        iconButton.setTooltip ("Choose the selected track's icon");
+        colourButton.onClick = [this] { if (actions.editTrackColour) actions.editTrackColour (id, colourButton); };
+        iconButton.onClick = [this] { if (actions.editTrackIcon) actions.editTrackIcon (id, iconButton); };
+        mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
+        {
+            if (! actions.canChangeMix || ! actions.canChangeMix()) return {};
+            if (auto* t = trackFor (edit, id)) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
+            return {};
+        };
+    }
+
+    ~InspectorChannelStrip() override { meter.attach (nullptr); }
+
+    void setEdit (te::Edit* next)
+    {
+        meter.attach (nullptr);
+        edit = next;
+        id = {};
+    }
+
+    void refresh (te::AudioTrack* track, bool ready, const te::MidiClip* selectedClip)
+    {
+        id = track != nullptr ? track->itemID : te::EditItemID {};
+        const bool enabled = track != nullptr;
+        trackName.setText (enabled ? track->getName() : "Select an instrument track", dontSendNotification);
+        trackName.setTooltip (trackName.getText());
+
+        colourButton.setEnabled (enabled && ready);
+        iconButton.setEnabled (enabled && ready);
+        if (! enabled)
+        {
+            midiIn.setText ("MIDI In: —", dontSendNotification);
+            midiOut.setText ("MIDI Out: —", dontSendNotification);
+            iconButton.setButtonText ("Icon");
+            meter.attach (nullptr);
+            mix.refresh (nullptr, false);
+            return;
+        }
+
+        colourButton.setColour (TextButton::buttonColourId, track->getColour());
+        const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+        iconButton.setButtonText (icon.isEmpty() ? "Icon" : icon);
+        iconButton.setTooltip (icon.isEmpty() ? "Choose an instrument icon" : "Instrument icon: " + icon);
+
+        StringArray inputs;
+        for (auto* input : track->edit.getAllInputDevices())
+            if (input->getTargets().contains (id))
+                if (dynamic_cast<const te::MidiInputDevice*> (&input->getInputDevice()) != nullptr)
+                    inputs.addIfNotAlreadyThere (input->getInputDevice().getName());
+
+        const auto inputName = inputs.isEmpty() ? "Not assigned" : inputs.joinIntoString (", ");
+        midiIn.setText ("MIDI In: " + inputName, dontSendNotification);
+        midiIn.setTooltip ("MIDI input device: " + inputName);
+
+        const auto out = selectedClip != nullptr
+            ? (selectedClip->getMPEMode() ? String ("MPE") :
+                "Ch " + String (selectedClip->getMidiChannel().getChannelNumber()))
+            : outputLabel (*track);
+        midiOut.setText ("Output: " + out, dontSendNotification);
+        midiOut.setTooltip ("Output routing / selected MIDI clip channel: " + out);
+
+        mix.refresh (lastTrackPlugin<te::VolumeAndPanPlugin> (*track), ready);
+        auto* plugin = lastTrackPlugin<te::LevelMeterPlugin> (*track);
+        meter.attach (plugin != nullptr ? &plugin->measurer : nullptr);
+        meter.sample();
+    }
+
+    void resized() override
+    {
+        const auto& m = appearance;
+        auto area = getLocalBounds().reduced (m.px (6), m.px (5));
+        const auto heading = area.removeFromTop (m.control (23, 11));
+        trackName.setBounds (heading);
+        auto settings = area.removeFromTop (m.control (25, 11));
+        colourButton.setBounds (settings.removeFromLeft (settings.getWidth() / 2).reduced (m.px (2), 0));
+        iconButton.setBounds (settings.reduced (m.px (2), 0));
+        auto info = area.removeFromTop (2 * m.line (11, 2));
+        midiIn.setBounds (info.removeFromTop (m.line (11, 2)));
+        midiOut.setBounds (info);
+        const int meterWidth = m.px (22);
+        meter.setBounds (area.removeFromRight (meterWidth).reduced (m.px (1), m.px (2)));
+        mix.setBounds (area);
+    }
+
+    void paint (Graphics& g) override
+    {
+        g.fillAll (colours::panel); // Opaque backing: never show the timeline through the drawer.
+        g.setColour (colours::control);
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f),
+                                (float) appearance.px (5), 1.0f);
+    }
+
+private:
+    TrackActions& actions;
+    te::Edit* edit = nullptr;
+    te::EditItemID id;
+    Label trackName, midiIn, midiOut;
+    TextButton colourButton, iconButton;
+    MixControls mix { true };
+    StereoMeter meter;
+};
+
+InspectorDrawer::InspectorDrawer (TrackActions& actions)
+    : inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
+{
+    setOpaque (true);
+    setRepaintsOnMouseActivity (true);
+    addAndMakeVisible (title);
+    title.setText ("Inspector", dontSendNotification);
+    title.setFont (FontOptions (14.0f, Font::bold));
+    title.setColour (Label::textColourId, colours::text);
+    title.setMinimumHorizontalScale (1.0f);
+    addAndMakeVisible (close);
+    close.setTitle ("Close selected-track Inspector");
+    close.setTooltip ("Hide Inspector and return to the full arrangement");
+    close.onClick = [this] { if (onClose) onClose(); };
+    scroll.setScrollBarsShown (true, false);
+    scroll.setScrollBarThickness (appearance.scrollbar());
+    inspector.setShowMixControls (false);
+    scroll.setViewedComponent (&inspector, false);
+    addAndMakeVisible (scroll);
+    addAndMakeVisible (*channelStrip);
+    addAndMakeVisible (details);
+    details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
+    details.onClick = [this]
+    {
+        setDetailsExpanded (! detailsOpen);
+    };
+}
+
+InspectorDrawer::~InspectorDrawer()
+{
+    scroll.setViewedComponent (nullptr);
+}
+
+void InspectorDrawer::setEdit (te::Edit* next)
+{
+    inspector.setEdit (next);
+    channelStrip->setEdit (next);
+    scroll.setViewPosition (0, 0);
+}
+
+void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
+                               const String& recovery, const te::MidiClip* selectedClip)
+{
+    inspector.refresh (track, ready, canRoute, recovery, selectedClip);
+    channelStrip->refresh (track, ready, selectedClip);
+    // Avoid encoded separators that can render as stray characters with
+    // some Intel macOS font/fallback combinations.
+    title.setText (track != nullptr ? track->getName() + " Inspector" : "Inspector", dontSendNotification);
+    title.setTooltip (title.getText());
+}
+
+te::EditItemID InspectorDrawer::inspectedTrack() const
+{
+    return inspector.inspectedTrack();
+}
+
+void InspectorDrawer::appearanceChanged()
+{
+    scroll.setScrollBarThickness (appearance.scrollbar());
+    inspector.appearanceChanged();
+    resized();
+    repaint();
+}
+
+void InspectorDrawer::setDetailsExpanded (bool expanded)
+{
+    detailsOpen = expanded;
+    resized();
+}
+
+void InspectorDrawer::resized()
+{
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (8), m.px (8));
+    auto header = area.removeFromTop (m.control (32));
+    close.setBounds (header.removeFromRight (m.span (60)).reduced (m.px (2), 0));
+    title.setBounds (header);
+    area.removeFromTop (m.px (5));
+    const int channelHeight = jmin (m.span (278), jmax (m.span (223), area.getHeight() * 61 / 100));
+    channelStrip->setBounds (area.removeFromTop (jmin (channelHeight, area.getHeight())));
+    area.removeFromTop (m.px (4));
+    details.setBounds (area.removeFromTop (m.control (26, 11)));
+    details.setButtonText (detailsOpen ? "Track Settings  v" : "Track Settings  >");
+    area.removeFromTop (m.px (3));
+    scroll.setVisible (detailsOpen);
+    scroll.setBounds (detailsOpen ? area : Rectangle<int>());
+    if (detailsOpen)
+    {
+        const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (2));
+        const int height = jmax (area.getHeight(),
+                                 inspector.minimumContentHeight (width) + m.px (18));
+        inspector.setSize (width, height);
+    }
+}
+
+void InspectorDrawer::paint (Graphics& g)
+{
+    const auto bounds = getLocalBounds();
+    g.setColour (colours::panel);
+    g.fillRect (bounds);
+    g.setColour (colours::divider);
+    g.drawVerticalLine (0, 0.0f, (float) getHeight());
+    g.drawHorizontalLine (appearance.control (40), 0.0f, (float) getWidth());
+    // Dedicated visible resize grip on the left edge.
+    g.setColour (colours::secondary.withAlpha (0.75f));
+    const auto x = (float) appearance.px (3);
+    const auto y = (float) getHeight() * 0.5f;
+    for (int i = -2; i <= 2; ++i)
+        g.fillRoundedRectangle (x, y + i * (float) appearance.px (7),
+                                (float) appearance.px (2), (float) appearance.px (4), 1.0f);
+}
+
+juce::MouseCursor InspectorDrawer::getMouseCursor()
+{
+    return juce::MouseCursor (getMouseXYRelative().x <= appearance.px (12)
+        ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
+void InspectorDrawer::mouseDown (const juce::MouseEvent& event)
+{
+    resizingWidth = event.x <= appearance.px (12);
+    if (resizingWidth)
+    {
+        resizeStartX = event.getScreenX();
+        resizeStartWidth = getWidth();
+    }
+}
+
+void InspectorDrawer::mouseDrag (const juce::MouseEvent& event)
+{
+    if (resizingWidth && onWidthChanged)
+        onWidthChanged (resizeStartWidth + resizeStartX - event.getScreenX());
+}
+
+void InspectorDrawer::mouseUp (const juce::MouseEvent&)
+{
+    resizingWidth = false;
+}
+
 class StudioMixer::Strip final : public Component
 {
 public:
@@ -412,7 +685,7 @@ public:
         : mixer (owner), id (trackId), masterStrip (isMaster)
     {
         for (Component* component : std::initializer_list<Component*> {
-                 &name, &identity, &source, &inserts, &room, &mute, &solo, &arm, &out, &mix, &meter })
+                 &name, &identity, &inserts, &room, &mute, &solo, &arm, &out, &mix, &meter })
             addAndMakeVisible (*component);
         identity.setColour (Label::textColourId, colours::secondary);
         identity.setFont (FontOptions (10.5f));
@@ -421,7 +694,6 @@ public:
         name.onClick = [this] { mixer.actions.selectTrack (id); };
         inserts.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::inserts, inserts); };
         out.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::output, out); };
-        source.onClick = [this] { mixer.actions.showMenu (id, inputMenu, source); };
         room.onClick = [this] { mixer.actions.showStage (id); };
         arm.onClick = [this] { mixer.actions.toggleArm (id); };
         mute.onClick = [this] { mixer.actions.toggleTrackState (id, false); };
@@ -440,10 +712,10 @@ public:
         {
             if (! mixer.actions.canChangeMix() || mixer.edit == nullptr) return {};
             if (masterStrip) return mixer.edit->getMasterVolumePlugin();
-            if (auto* t = trackFor (mixer.edit, id)) return t->getVolumePlugin();
+            if (auto* t = trackFor (mixer.edit, id)) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
             return {};
         };
-        for (auto* c : { &source, &inserts, &room, &mute, &solo, &arm })
+        for (auto* c : { &inserts, &room, &mute, &solo, &arm })
             c->setVisible (! masterStrip);
         name.setEnabled (! masterStrip);
         out.setEnabled (! masterStrip);
@@ -481,26 +753,16 @@ public:
             identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
-            String firstInput;
             int inputCount = 0;
             bool armed = false;
-            inputMenu = instrument != nullptr ? TrackMenu::midiInput : TrackMenu::audioInput;
             for (auto* instance : inputs)
                 if (instance->getTargets().contains (id))
                 {
-                    if (inputCount++ == 0)
-                    {
-                        const auto& device = instance->getInputDevice();
-                        firstInput = device.getName();
-                        if (dynamic_cast<const te::MidiInputDevice*> (&device) != nullptr) inputMenu = TrackMenu::midiInput;
-                    }
+                    ++inputCount;
                     armed |= instance->isRecordingEnabled (id);
                 }
-            source.setButtonText (wetReturn ? "Stage sends" : firstInput.isEmpty() ? "Input..." : firstInput);
-            source.setTooltip (wetReturn ? "Receives the shared Stage sends"
-                : inputCount == 0 ? "Choose an input. Both input menus are available in Channel."
-                : firstInput + (inputCount > 1 ? " (+" + String (inputCount - 1) + " more)" : String()));
-            source.setEnabled (editable && ! wetReturn);
+            // Input routing lives in the selected-track Inspector or the
+            // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
             arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
@@ -545,21 +807,34 @@ public:
     {
         const auto& m = appearance;
         auto area = getLocalBounds().reduced (m.px (6), m.px (4));
-        name.setBounds (area.removeFromTop (m.control (22)));
+        name.setBounds (area.removeFromTop (m.control (24)));
         identity.setBounds (area.removeFromTop (m.line (11, 3)));
-        source.setBounds (area.removeFromTop (m.control (22)));
-        auto chain = area.removeFromTop (m.control (22));
-        inserts.setBounds (chain.removeFromLeft (chain.getWidth() / 2).reduced (m.px (1)));
-        room.setBounds (chain.reduced (m.px (1)));
-        out.setBounds (area.removeFromBottom (m.control (22)));
-        auto toggles = area.removeFromBottom (m.control (22));
+        area.removeFromTop (m.px (3));
         if (! masterStrip)
         {
+            // Stack insert and room-send controls: wider buttons, narrower strip.
+            inserts.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
+            room.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
+        }
+        else
+        {
+            inserts.setBounds ({});
+            room.setBounds ({});
+        }
+        out.setBounds (area.removeFromBottom (m.control (22)));
+        if (! masterStrip)
+        {
+            auto toggles = area.removeFromBottom (m.control (23));
             mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3).reduced (m.px (1)));
             solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
             arm.setBounds (toggles.reduced (m.px (1)));
         }
-        meter.setBounds (area.removeFromRight (m.px (20)).withTrimmedTop (2 * m.line (11, 1) + m.line (13, 2) + m.px (15)));
+        else
+            for (auto* toggle : { &mute, &solo, &arm })
+                toggle->setBounds ({});
+        area.removeFromBottom (m.px (4));
+        meter.setBounds (area.removeFromRight (m.px (19)).withTrimmedTop (
+            m.line (11, 1) + m.line (13, 2) + m.px (13)));
         mix.setBounds (area);
     }
 
@@ -567,9 +842,8 @@ private:
     StudioMixer& mixer;
     te::EditItemID id;
     bool masterStrip, selected = false;
-    TrackMenu inputMenu = TrackMenu::audioInput;
     Colour accent = colours::action;
-    TextButton name, source, inserts { "FX" }, room { "Room" }, mute { "M" }, solo { "S" }, arm { "R" }, out;
+    TextButton name, inserts { "FX" }, room { "Stage" }, mute { "M" }, solo { "S" }, arm { "A" }, out;
     Label identity;
     MixControls mix { true };
     StereoMeter meter;
@@ -659,8 +933,11 @@ void StudioMixer::appearanceChanged()
 int StudioMixer::minimumContentHeight() const
 {
     const auto& m = appearance;
-    return m.px (12) + 5 * m.control (22) + m.line (11, 3) + 2 * m.line (11, 1)
-        + 2 * m.line (13, 2) + m.px (58) + m.scrollbar();
+    // Include a full-size rotary pan, stacked FX/Stage and usable fader.
+    // The Mixer-focused split mode requests enough height to avoid clipping.
+    return m.px (20) + 2 * m.control (19, 10) + 3 * m.control (23)
+        + m.line (11, 3) + 2 * m.line (11, 1) + m.control (47, 11)
+        + m.px (125) + m.scrollbar();
 }
 
 void StudioMixer::resized()
@@ -668,10 +945,19 @@ void StudioMixer::resized()
     const auto& m = appearance;
     auto area = getLocalBounds().reduced (m.px (7), m.px (2));
     const int stripWidth = m.mixerStripWidth (getWidth());
-    master->setBounds (area.removeFromRight (stripWidth + m.px (4)).withTrimmedBottom (viewport.getScrollBarThickness()));
-    viewport.setBounds (area);
-    const auto height = jmax (0, area.getHeight() - viewport.getScrollBarThickness());
-    stripBank.setSize (jmax (area.getWidth(), (int) strips.size() * stripWidth), height);
+    const int masterSpace = jmin (area.getWidth(), stripWidth + m.px (4));
+    const int bankCapacity = jmax (0, area.getWidth() - masterSpace);
+    // Small sessions should look like a single coherent mixer bank, not
+    // a few tracks on the left and a disconnected Master at the far right.
+    // Once the tracks exceed the bank's available width, the Master stays
+    // pinned while the channels scroll beneath the viewport.
+    const int bankWidth = strips.empty() ? bankCapacity
+        : jmin (bankCapacity, (int) strips.size() * stripWidth + m.px (4));
+    auto bankBounds = area.removeFromLeft (bankWidth);
+    master->setBounds (area.removeFromLeft (masterSpace).withTrimmedBottom (viewport.getScrollBarThickness()));
+    viewport.setBounds (bankBounds);
+    const auto height = jmax (0, bankBounds.getHeight() - viewport.getScrollBarThickness());
+    stripBank.setSize (jmax (bankBounds.getWidth(), (int) strips.size() * stripWidth), height);
     for (size_t i = 0; i < strips.size(); ++i)
         strips[i]->setBounds ((int) i * stripWidth, 0, stripWidth, height);
 }
