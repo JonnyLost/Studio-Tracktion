@@ -20,7 +20,8 @@ private:
     juce::Slider number { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
 };
 
-class SpatialMap final : public juce::Component, public juce::DragAndDropTarget
+class SpatialMap final : public juce::Component, public juce::SettableTooltipClient,
+                         public juce::DragAndDropTarget
 {
 public:
     struct Marker
