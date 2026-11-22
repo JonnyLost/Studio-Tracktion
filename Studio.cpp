@@ -4191,6 +4191,35 @@ int StudioView::runInterfaceReview (const File& output)
             && PNGImageFormat().writeImageToStream (image, stream);
     };
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+    setDockMode (DockMode::split);
+    mixer.refresh (tracks, selectedTrack(), true, true);
+    if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
+    setDockMode (DockMode::expanded);
+    // The Inspector follows the selected track while leaving the arrangement
+    // geometry untouched; closing it must restore a full-width work surface.
+    const auto unclippedRuler = ruler;
+    setInspectorOpen (true, false);
+    timerCallback();
+    timerCallback();
+    if (! inspectorDrawer.isVisible() || inspectorDrawer.getWidth() < studio::appearance.span (225)
+        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID || ruler != unclippedRuler)
+        return fail ("right Inspector follows selected channel without changing ruler");
+    if (! capture ("right-inspector-1280x800.png")) return fail ("write right Inspector screenshot");
+    selection.selectOnly (tracks[2]);
+    timerCallback();
+    timerCallback();
+    if (inspectorDrawer.inspectedTrack() != tracks[2]->itemID)
+        return fail ("right Inspector follows arrangement selection");
+    setSize (1024, 640);
+    if (! inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isWithin (getLocalBounds()))
+        return fail ("right Inspector fits compact MacBook");
+    if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
+    setInspectorOpen (false, false);
+    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty())
+        return fail ("hiding Inspector restores full-width arrangement");
+    setSize (1280, 800);
+    trackActions.selectTrack (tracks[1]->itemID);
+    showWorkspace (Workspace::mix);
 
     const auto seconds = [] (double value) { return te::TimePosition::fromSeconds (value); };
     if (! studio::setTempoEvent (*edit, te::BeatPosition::fromBeats (8), 94)
