@@ -5,6 +5,7 @@ on:
   pull_request:
     branches:
       - feature/studio-sampler-builder-m10
+      - feature/studio-sampler-articulations-m11
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline

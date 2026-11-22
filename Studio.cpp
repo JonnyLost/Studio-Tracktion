@@ -265,6 +265,22 @@ public:
         addChildComponent (articulationStrip);
         performance.onOpenEditor = [this] (te::Plugin& plugin)
         {
+            // A repeated Detailed Editor click closes the same native editor.
+            // Keep the instrument and playback running; this is only a view toggle.
+            if (studio::isNativeInstrument (plugin) && instrumentWorkspace.getPlugin() == &plugin)
+            {
+                if (instrumentWorkspace.isFloating())
+                {
+                    instrumentWorkspace.setFloating (false);
+                    showWorkspace (Workspace::closed);
+                    return;
+                }
+                if (workspace == Workspace::instrumentEditor)
+                {
+                    showWorkspace (Workspace::closed);
+                    return;
+                }
+            }
             if (! showNativeInstrument (plugin)) plugin.showWindowExplicitly();
         };
         articulationStrip.onManage = [this]
@@ -449,17 +465,16 @@ public:
                 resized();
             }
         };
-        addAndMakeVisible (trackPicker);
-        trackPicker.setTextWhenNothingSelected ("Select a track");
-        trackPicker.setTitle ("Select a track");
-        trackPicker.onChange = [this]
+        addAndMakeVisible (trackOptions);
+        trackOptions.setTooltip ("Rename, duplicate, move or delete the selected track");
+        trackOptions.onClick = [this]
         {
-            if (edit == nullptr)
-                return;
-            const auto tracks = te::getAudioTracks (*edit);
-            const int index = trackPicker.getSelectedItemIndex();
-            if (isPositiveAndBelow (index, tracks.size()))
-                selection.selectOnly (tracks[index]);
+            PopupMenu menu;
+            if (auto* track = workflowTrack())
+                populateTrackEditMenu (menu, *track);
+            else
+                menu.addSectionHeader ("Select a track in the arrangement first");
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&trackOptions));
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
@@ -979,8 +994,11 @@ public:
         arrangementTools = area.removeFromTop (m.control (29));
         auto tools = arrangementTools.reduced (m.px (5), m.px (2));
         const bool showAllTrackTools = tools.getWidth() >= m.span (828);
-        trackPicker.setBounds (tools.removeFromLeft (m.span (145)).reduced (m.px (2), 0));
+        trackOptions.setBounds (tools.removeFromLeft (m.span (90)).reduced (m.px (2), 0));
         zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
+        const int zoomButtonWidth = m.span (32);
+        arrangementZoomIn.setBounds (tools.removeFromRight (zoomButtonWidth).reduced (m.px (1), 0));
+        arrangementZoomOut.setBounds (tools.removeFromRight (zoomButtonWidth).reduced (m.px (1), 0));
         trackMenu.setVisible (! showAllTrackTools);
         if (trackMenu.isVisible())
             trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
@@ -996,11 +1014,7 @@ public:
         timeline.setBounds (area);
         sizeEditor();
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (m.trackFooter() + timeline.getScrollBarThickness());
-        auto zoomButtons = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
-        const int zoomWidth = m.span (35);
-        arrangementZoomIn.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
-        arrangementZoomOut.setBounds (zoomButtons.removeFromRight (zoomWidth).reduced (m.px (1)));
-        rulerTrackLabel = zoomButtons;
+        rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
         environmentWelcome.setBounds (getLocalBounds());
         repaint();
     }
@@ -1194,7 +1208,7 @@ private:
     bool displayedLooping = false;
     std::size_t displayedTempoHash = 0;
     studio::TransportReadout bars { "Bars / Beats" }, position { "Elapsed" }, tempo { "BPM", true }, meter { "Meter", true };
-    ComboBox zoom, trackPicker;
+    ComboBox zoom;
     StringArray trackNames;
     TextButton arrangementZoomOut { "-" }, arrangementZoomIn { "+" };
     studio::RailButton instrumentsButton { "Instruments", studio::RailIcon::instruments },
@@ -1240,7 +1254,7 @@ private:
     TextButton newProject { "New Project" }, openProject { "Open Project" },
                saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
-               regionActions { "Edit Regions" },
+               regionActions { "Edit Regions" }, trackOptions { "Track..." },
                addSynthTrack { "Add Synth" }, addSamplerTrack { "Add Sampler" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
                addMidiClip { "+ MIDI Clip" };
@@ -2070,23 +2084,13 @@ private:
 
         auto* track = selectedTrack();
         StringArray names;
-        int selectedIndex = -1;
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
         if (edit != nullptr)
             for (auto* item : tracks)
-            {
-                if (item == track)
-                    selectedIndex = names.size();
                 names.add (item->getName());
-            }
         if (names != trackNames)
-        {
-            trackPicker.clear (dontSendNotification);
-            trackPicker.addItemList (names, 1);
             trackNames = std::move (names);
-        }
-        trackPicker.setEnabled (ready && ! trackNames.isEmpty());
-        trackPicker.setSelectedItemIndex (selectedIndex, dontSendNotification);
+        trackOptions.setEnabled (ready && workflowTrack() != nullptr);
         trackDetails.setColour (Label::textColourId, recording ? studio::colours::record : studio::colours::secondary);
         trackDetails.setText (recording ? String ("Recording") : track == nullptr ? String (trackNames.size()) + " tracks"
             : EngineHelpers::isTrackArmed (*track) ? "Record armed"
