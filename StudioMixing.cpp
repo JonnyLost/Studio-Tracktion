@@ -486,7 +486,7 @@ public:
         : mixer (owner), id (trackId), masterStrip (isMaster)
     {
         for (Component* component : std::initializer_list<Component*> {
-                 &name, &identity, &source, &inserts, &room, &mute, &solo, &arm, &out, &mix, &meter })
+                 &name, &identity, &inserts, &room, &mute, &solo, &arm, &out, &mix, &meter })
             addAndMakeVisible (*component);
         identity.setColour (Label::textColourId, colours::secondary);
         identity.setFont (FontOptions (10.5f));
@@ -495,7 +495,6 @@ public:
         name.onClick = [this] { mixer.actions.selectTrack (id); };
         inserts.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::inserts, inserts); };
         out.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::output, out); };
-        source.onClick = [this] { mixer.actions.showMenu (id, inputMenu, source); };
         room.onClick = [this] { mixer.actions.showStage (id); };
         arm.onClick = [this] { mixer.actions.toggleArm (id); };
         mute.onClick = [this] { mixer.actions.toggleTrackState (id, false); };
@@ -517,7 +516,7 @@ public:
             if (auto* t = trackFor (mixer.edit, id)) return t->getVolumePlugin();
             return {};
         };
-        for (auto* c : { &source, &inserts, &room, &mute, &solo, &arm })
+        for (auto* c : { &inserts, &room, &mute, &solo, &arm })
             c->setVisible (! masterStrip);
         name.setEnabled (! masterStrip);
         out.setEnabled (! masterStrip);
@@ -555,26 +554,16 @@ public:
             identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
-            String firstInput;
             int inputCount = 0;
             bool armed = false;
-            inputMenu = instrument != nullptr ? TrackMenu::midiInput : TrackMenu::audioInput;
             for (auto* instance : inputs)
                 if (instance->getTargets().contains (id))
                 {
-                    if (inputCount++ == 0)
-                    {
-                        const auto& device = instance->getInputDevice();
-                        firstInput = device.getName();
-                        if (dynamic_cast<const te::MidiInputDevice*> (&device) != nullptr) inputMenu = TrackMenu::midiInput;
-                    }
+                    ++inputCount;
                     armed |= instance->isRecordingEnabled (id);
                 }
-            source.setButtonText (wetReturn ? "Stage sends" : firstInput.isEmpty() ? "Input..." : firstInput);
-            source.setTooltip (wetReturn ? "Receives the shared Stage sends"
-                : inputCount == 0 ? "Choose an input. Both input menus are available in Channel."
-                : firstInput + (inputCount > 1 ? " (+" + String (inputCount - 1) + " more)" : String()));
-            source.setEnabled (editable && ! wetReturn);
+            // Input routing lives in the selected-track Inspector or the
+            // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
             arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
@@ -619,21 +608,34 @@ public:
     {
         const auto& m = appearance;
         auto area = getLocalBounds().reduced (m.px (6), m.px (4));
-        name.setBounds (area.removeFromTop (m.control (22)));
+        name.setBounds (area.removeFromTop (m.control (24)));
         identity.setBounds (area.removeFromTop (m.line (11, 3)));
-        source.setBounds (area.removeFromTop (m.control (22)));
-        auto chain = area.removeFromTop (m.control (22));
-        inserts.setBounds (chain.removeFromLeft (chain.getWidth() / 2).reduced (m.px (1)));
-        room.setBounds (chain.reduced (m.px (1)));
-        out.setBounds (area.removeFromBottom (m.control (22)));
-        auto toggles = area.removeFromBottom (m.control (22));
+        area.removeFromTop (m.px (3));
         if (! masterStrip)
         {
+            auto chain = area.removeFromTop (m.control (23));
+            inserts.setBounds (chain.removeFromLeft (chain.getWidth() / 2).reduced (m.px (1)));
+            room.setBounds (chain.reduced (m.px (1)));
+        }
+        else
+        {
+            inserts.setBounds ({});
+            room.setBounds ({});
+        }
+        out.setBounds (area.removeFromBottom (m.control (22)));
+        if (! masterStrip)
+        {
+            auto toggles = area.removeFromBottom (m.control (23));
             mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3).reduced (m.px (1)));
             solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
             arm.setBounds (toggles.reduced (m.px (1)));
         }
-        meter.setBounds (area.removeFromRight (m.px (20)).withTrimmedTop (2 * m.line (11, 1) + m.line (13, 2) + m.px (15)));
+        else
+            for (auto* toggle : { &mute, &solo, &arm })
+                toggle->setBounds ({});
+        area.removeFromBottom (m.px (4));
+        meter.setBounds (area.removeFromRight (m.px (19)).withTrimmedTop (
+            m.line (11, 1) + m.line (13, 2) + m.px (13)));
         mix.setBounds (area);
     }
 
@@ -641,9 +643,8 @@ private:
     StudioMixer& mixer;
     te::EditItemID id;
     bool masterStrip, selected = false;
-    TrackMenu inputMenu = TrackMenu::audioInput;
     Colour accent = colours::action;
-    TextButton name, source, inserts { "FX" }, room { "Room" }, mute { "M" }, solo { "S" }, arm { "R" }, out;
+    TextButton name, inserts { "FX" }, room { "Stage" }, mute { "M" }, solo { "S" }, arm { "A" }, out;
     Label identity;
     MixControls mix { true };
     StereoMeter meter;
@@ -733,8 +734,9 @@ void StudioMixer::appearanceChanged()
 int StudioMixer::minimumContentHeight() const
 {
     const auto& m = appearance;
-    return m.px (12) + 5 * m.control (22) + m.line (11, 3) + 2 * m.line (11, 1)
-        + 2 * m.line (13, 2) + m.px (58) + m.scrollbar();
+    // Reserve meaningful vertical fader travel in Split mode.
+    return m.px (20) + 4 * m.control (23) + m.line (11, 3) + 2 * m.line (11, 1)
+        + m.line (13, 2) + m.px (100) + m.scrollbar();
 }
 
 void StudioMixer::resized()
