@@ -96,9 +96,18 @@ if(studio_track_header_controls_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackHeader controls anchor has changed.")
 endif()
 string(REPLACE "${studio_track_header_controls_anchor}"
-    [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"}, fxButton {"FX"};]=]
+    [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"}, fxButton {"FX"};
+    Slider miniVolume, miniPan;
+    Label miniLevel;
+    void updateMiniControls();
+    void timerCallback() override;
+    te::LevelMeasurer::Client miniMeterClient;
+    juce::WeakReference<te::LevelMeasurer> miniMeter;]=]
     editor_header "${editor_header}")
 
+# Studio's optional per-track mini controls use low-rate UI updates only.
+string(REPLACE "class TrackHeaderComponent : public Component,"
+               "class TrackHeaderComponent : public Component, private Timer," editor_header "${editor_header}")
 file(CONFIGURE OUTPUT generated/Components.h CONTENT "${editor_header}" @ONLY)
 file(READ "${common}/Components.cpp" editor)
 set(midi_assignment [=[else if (res >= 100)
@@ -248,6 +257,10 @@ string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appeara
     auto r = getLocalBounds().reduced (m.px (7), m.px (3));
     trackName.setBounds (r.removeFromTop (m.line (12, 2)));
 
+    const bool showMini = (bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false)
+                       || (bool) track->state.getProperty (Identifier ("studioHeaderPan"), false)
+                       || (bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false);
+    if (showMini) r.removeFromBottom (m.px (14));
     int w = jmin (jmin (r.getHeight(), m.control (23, 11)), (r.getWidth() - 6) / 5);]=] editor "${editor}")
 
 set(studio_fx_bounds_anchor [=[    soloButton.setBounds (r.removeFromLeft (w));
@@ -258,7 +271,13 @@ if(studio_fx_bounds_match EQUAL -1)
 endif()
 string(REPLACE "${studio_fx_bounds_anchor}" [=[    soloButton.setBounds (r.removeFromLeft (w));
     r.removeFromLeft (2);
-    fxButton.setBounds (r.removeFromLeft (w));]=] editor "${editor}")
+    fxButton.setBounds (r.removeFromLeft (w));
+    const bool showVolume = miniVolume.isVisible(), showPan = miniPan.isVisible(), showLevel = miniLevel.isVisible();
+    auto extra = getLocalBounds().reduced (m.px (7), m.px (2)).removeFromBottom (m.px (14));
+    const int remaining = extra.getWidth() - (showLevel ? m.px (20) : 0);
+    miniVolume.setBounds (showVolume ? extra.removeFromLeft (remaining / ((showPan ? 2 : 1))) : Rectangle<int>());
+    miniPan.setBounds (showPan ? extra.removeFromLeft (remaining / (showVolume ? 2 : 1)) : Rectangle<int>());
+    miniLevel.setBounds (showLevel ? extra : Rectangle<int>());]=] editor "${editor}")
 
 # Keep the ruler and generated arrangement in the same logical-point geometry.
 set(track_geometry [=[    const int trackHeight = 50, trackGap = 2;
@@ -321,7 +340,34 @@ string(REPLACE "${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisibl
         if (editViewState.showStudioTrackFX)
             editViewState.showStudioTrackFX (track->itemID, fxButton);
     };
-    trackName.setInterceptsMouseClicks (false, false);]=] editor "${editor}")
+    trackName.setInterceptsMouseClicks (false, false);
+    for (auto* knob : { &miniVolume, &miniPan })
+    {
+        addAndMakeVisible (*knob);
+        knob->setSliderStyle (Slider::LinearHorizontal);
+        knob->setTextBoxStyle (Slider::NoTextBox, false, 0, 0);
+    }
+    miniVolume.setRange (-100.0, 6.0, 0.1);
+    miniVolume.setDoubleClickReturnValue (true, 0.0);
+    miniVolume.setTooltip ("Track volume. Double-click for 0 dB.");
+    miniPan.setRange (-1.0, 1.0, 0.01);
+    miniPan.setDoubleClickReturnValue (true, 0.0);
+    miniPan.setTooltip ("Track pan. Double-click to centre.");
+    miniVolume.onValueChange = [this]
+    {
+        if (auto* at = dynamic_cast<te::AudioTrack*> (track.get()))
+            if (auto p = at->getVolumePlugin()) p->setVolumeDb ((float) miniVolume.getValue());
+    };
+    miniPan.onValueChange = [this]
+    {
+        if (auto* at = dynamic_cast<te::AudioTrack*> (track.get()))
+            if (auto p = at->getVolumePlugin()) p->setPan ((float) miniPan.getValue());
+    };
+    addAndMakeVisible (miniLevel);
+    miniLevel.setJustificationType (Justification::centred);
+    miniLevel.setTooltip ("Track audio level activity");
+    updateMiniControls();
+    startTimerHz (10);]=] editor "${editor}")
 
 set(studio_track_mouse_anchor [=[void TrackHeaderComponent::mouseDown (const MouseEvent&)
 {
@@ -336,6 +382,43 @@ string(REPLACE "${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mous
     editViewState.selectionManager.selectOnly (track.get());
     if (event.mods.isPopupMenu() && editViewState.showStudioTrackMenu)
         editViewState.showStudioTrackMenu (track->itemID, *this);
+}
+
+void TrackHeaderComponent::updateMiniControls()
+{
+    miniVolume.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false));
+    miniPan.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderPan"), false));
+    miniLevel.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false));
+    resized();
+}
+
+void TrackHeaderComponent::timerCallback()
+{
+    auto* at = dynamic_cast<te::AudioTrack*> (track.get());
+    if (at == nullptr) return;
+    if (auto p = at->getVolumePlugin())
+    {
+        if (miniVolume.isVisible() && ! miniVolume.isMouseButtonDown())
+            miniVolume.setValue (p->getVolumeDb(), dontSendNotification);
+        if (miniPan.isVisible() && ! miniPan.isMouseButtonDown())
+            miniPan.setValue (p->getPan(), dontSendNotification);
+    }
+    te::LevelMeasurer* next = nullptr;
+    if (miniLevel.isVisible())
+        for (auto* plugin : at->pluginList)
+            if (auto* level = dynamic_cast<te::LevelMeterPlugin*> (plugin))
+                next = &level->measurer;
+    if (next != miniMeter.get())
+    {
+        if (auto* previous = miniMeter.get()) previous->removeClient (miniMeterClient);
+        miniMeter = next;
+        if (next != nullptr) next->addClient (miniMeterClient);
+    }
+    if (next != nullptr)
+    {
+        const float db = miniMeterClient.getAndClearAudioLevel (0).dB;
+        miniLevel.setText (db > -8 ? "▮▮" : db > -28 ? "▮" : "·", dontSendNotification);
+    }
 }]=] editor "${editor}")
 
 # Keep renamed tracks in sync without recreating the arrangement row.
@@ -353,6 +436,9 @@ string(REPLACE "${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (
             trackName.setText (track->getName(), dontSendNotification);
             trackName.setTooltip (track->getName());
         }
+        else if (i == Identifier ("studioHeaderVolume") || i == Identifier ("studioHeaderPan")
+              || i == Identifier ("studioHeaderMeter"))
+            updateMiniControls();
         else if (i == te::IDs::mute)]=] editor "${editor}")
 
 string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n")
