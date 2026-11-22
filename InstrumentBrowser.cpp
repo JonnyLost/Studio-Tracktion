@@ -124,8 +124,9 @@ void InstrumentBrowser::rebuildCatalog()
             continue;
         const bool aria = isAria (plugin);
         hasAria |= aria;
+        const bool apple = ! aria && plugin.manufacturerName.containsIgnoreCase ("Apple");
         entries.push_back ({ plugin.createIdentifierString(), plugin.name,
-            aria ? "Orchestral" : "Audio Units",
+            aria ? "Orchestral" : apple ? "Apple Instruments" : "Audio Units",
             aria ? "Sample Player" : (plugin.category.isNotEmpty() ? plugin.category : "Instrument"),
             plugin.manufacturerName + " | Audio Unit",
             aria ? "Choose library patches in the hosted ARIA editor." : "Scanned Audio Unit instrument.",
