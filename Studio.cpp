@@ -225,6 +225,11 @@ public:
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
         inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 270);
+        showTransportCycle = prefs.getBoolValue ("studio.transportCycle", true);
+        showTransportClick = prefs.getBoolValue ("studio.transportClick", true);
+        showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
+        showTransportTempo = prefs.getBoolValue ("studio.transportTempo", true);
+        showTransportMeter = prefs.getBoolValue ("studio.transportMeter", true);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -319,6 +324,9 @@ public:
         tempo.setTooltip ("Edit the tempo event at the playhead while stopped");
         meter.setTooltip ("Edit the time signature at the current bar while stopped");
         addAndMakeVisible (music);
+        addAndMakeVisible (transportOptions);
+        transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
+        transportOptions.onClick = [this] { showTransportOptions(); };
         music.onTimelineChanged = [this] { repaint (rulerRow); };
         addAndMakeVisible (regionActions);
         regionActions.setTooltip ("Split, duplicate, copy or paste selected arrangement regions");
@@ -977,28 +985,43 @@ public:
         title.setBounds (commands.reduced (m.px (8), 0));
 
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
-        const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53), menuW = m.span (76);
         const int gap = m.px (6);
-        const int fixed = barW + bpmW + meterW + menuW + 4 * gap;
-        const int key = jlimit (m.px (20), m.px (38), (strip.getWidth() - fixed) / 6);
-        const bool showElapsed = fixed + 6 * key + m.span (97) <= strip.getWidth();
-        const int readoutWidth = barW + bpmW + meterW + (showElapsed ? m.span (97) : 0);
+        const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
+        const int menuW = m.span (76), customizeW = m.span (95), elapsedW = m.span (97);
+        const int optionalButtons = (showTransportCycle ? 1 : 0) + (showTransportClick ? 1 : 0);
+        const int readoutBase = barW + (showTransportTempo ? bpmW : 0)
+            + (showTransportMeter ? meterW : 0);
+        const int fixed = readoutBase + menuW + customizeW + 3 * gap;
+        const int buttonCount = 4 + optionalButtons;
+        const int key = jlimit (m.px (20), m.px (38),
+            (strip.getWidth() - fixed - gap - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
+        const bool hasElapsedRoom = fixed + buttonCount * key + gap + elapsedW <= strip.getWidth();
+        const bool showElapsed = showTransportElapsed && hasElapsedRoom;
         position.setVisible (showElapsed);
-        auto row = strip.withSizeKeepingCentre (fixed + 6 * key + (showElapsed ? m.span (97) : 0), transportHeight);
+        tempo.setVisible (showTransportTempo);
+        meter.setVisible (showTransportMeter);
+        cycleButton.setVisible (showTransportCycle);
+        clickButton.setVisible (showTransportClick);
+        const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
+        auto row = strip.withSizeKeepingCentre (fixed + buttonCount * key + gap
+            + (showElapsed ? elapsedW : 0), transportHeight);
         for (auto* button : { &rewind, &stop, &play, &record })
             button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
         row.removeFromLeft (gap);
         for (auto* button : { &cycleButton, &clickButton })
-            button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
+            button->setBounds (button->isVisible()
+                ? row.removeFromLeft (key).reduced (m.px (1), m.px (5))
+                : Rectangle<int>());
         row.removeFromLeft (gap);
         musicalDisplay = row.removeFromLeft (readoutWidth);
         auto lcd = musicalDisplay.reduced (gap / 2, m.px (2));
         bars.setBounds (lcd.removeFromLeft (barW - gap / 2));
-        if (showElapsed) position.setBounds (lcd.removeFromLeft (m.span (97)));
-        tempo.setBounds (lcd.removeFromLeft (bpmW));
-        meter.setBounds (lcd);
+        position.setBounds (showElapsed ? lcd.removeFromLeft (elapsedW) : Rectangle<int>());
+        tempo.setBounds (showTransportTempo ? lcd.removeFromLeft (bpmW) : Rectangle<int>());
+        meter.setBounds (showTransportMeter ? lcd : Rectangle<int>());
         row.removeFromLeft (gap);
         music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
+        transportOptions.setBounds (row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5)));
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
         ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
@@ -1151,6 +1174,48 @@ public:
         resized();
     }
 
+    void showTransportOptions()
+    {
+        PopupMenu menu;
+        menu.addSectionHeader ("Transport controls");
+        const auto addToggle = [this, &menu] (const String& name, bool current,
+                                             bool StudioView::* member, const char* key)
+        {
+            const auto safe = Component::SafePointer<StudioView> (this);
+            menu.addItem (name, true, current, [safe, member, key]
+            {
+                if (safe == nullptr) return;
+                safe.getComponent()->*member = !(safe.getComponent()->*member);
+                auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+                prefs.setValue (key, safe.getComponent()->*member);
+                prefs.saveIfNeeded();
+                safe->resized();
+            });
+        };
+        addToggle ("Cycle", showTransportCycle, &StudioView::showTransportCycle, "studio.transportCycle");
+        addToggle ("Metronome", showTransportClick, &StudioView::showTransportClick, "studio.transportClick");
+        menu.addSeparator();
+        menu.addSectionHeader ("LCD readouts");
+        addToggle ("Elapsed time", showTransportElapsed, &StudioView::showTransportElapsed, "studio.transportElapsed");
+        addToggle ("Tempo", showTransportTempo, &StudioView::showTransportTempo, "studio.transportTempo");
+        addToggle ("Time signature", showTransportMeter, &StudioView::showTransportMeter, "studio.transportMeter");
+        const auto safe = Component::SafePointer<StudioView> (this);
+        menu.addSeparator();
+        menu.addItem ("Restore default layout", [safe]
+        {
+            if (safe == nullptr) return;
+            safe->showTransportCycle = safe->showTransportClick = true;
+            safe->showTransportElapsed = safe->showTransportTempo = safe->showTransportMeter = true;
+            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+            for (const auto* key : { "studio.transportCycle", "studio.transportClick",
+                                     "studio.transportElapsed", "studio.transportTempo", "studio.transportMeter" })
+                prefs.setValue (key, true);
+            prefs.saveIfNeeded();
+            safe->resized();
+        });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&transportOptions));
+    }
+
     void showViewOptions()
     {
         PopupMenu scale, textSize;
@@ -1246,6 +1311,8 @@ private:
     bool inspectorOpen = false;
     int inspectorWidth = 270;
     int stereoScanTicks = 0;
+    bool showTransportCycle = true, showTransportClick = true, showTransportElapsed = true;
+    bool showTransportTempo = true, showTransportMeter = true;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
@@ -1352,6 +1419,7 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
+    TextButton transportOptions { "Customize..." };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" },
