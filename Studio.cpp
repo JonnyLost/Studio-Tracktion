@@ -201,6 +201,113 @@ private:
     AudioDeviceSelectorComponent selector;
 };
 
+// Searchable reference for controls already implemented in Studio.
+// This is display-only: it does not register or alter keyboard commands.
+class StudioCommandReference final : public Component
+{
+public:
+    StudioCommandReference()
+    {
+        addAndMakeVisible (search);
+        addAndMakeVisible (results);
+        search.setTextToShowWhenEmpty ("Search commands and shortcuts", studio::colours::secondary);
+        search.setColour (TextEditor::backgroundColourId, studio::colours::panel);
+        search.onTextChange = [this] { refreshList(); };
+        results.setMultiLine (true);
+        results.setReadOnly (true);
+        results.setScrollbarsShown (true);
+        results.setColour (TextEditor::backgroundColourId, studio::colours::canvas);
+        refreshList();
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (12);
+        search.setBounds (area.removeFromTop (34));
+        area.removeFromTop (10);
+        results.setBounds (area);
+    }
+
+private:
+    TextEditor search, results;
+    void refreshList()
+    {
+        const auto query = search.getText().trim();
+        StringArray lines;
+        // Only claim shortcuts implemented in StudioView::keyPressed or
+        // enabled by the Piano Roll. Other commands are listed without keys.
+        for (const auto& item : std::initializer_list<const char*> {
+            "Transport  |  Space  |  Play / Stop",
+            "File  |  Command-S  |  Save Project",
+            "File  |  Shift-Command-S  |  Save As",
+            "Edit  |  Command-Z  |  Undo",
+            "Edit  |  Shift-Command-Z  |  Redo",
+            "MIDI  |  Command-J  |  Join Selected MIDI Regions",
+            "Piano Roll  |  Delete  |  Delete Selected Notes",
+            "Piano Roll  |  Escape  |  Clear Note Selection",
+            "Transport  |  Return to Start",
+            "Record  |  Capture Recent MIDI",
+            "Track  |  Add Instrument / Synth / Sampler / Audio",
+            "Mix  |  Selected Track Inspector",
+            "View  |  Transport Layout and Interface Scale",
+            "Window  |  Mixer / Stage / Piano Roll"
+        })
+            if (query.isEmpty() || String (item).containsIgnoreCase (query))
+                lines.add (item);
+        results.setText (lines.isEmpty() ? "No matching commands." : lines.joinIntoString ("\n\n"),
+                         dontSendNotification);
+    }
+};
+
+// A compact landing window for existing Studio settings; it does not replace
+// or reconfigure the established audio and plug-in systems.
+class StudioSettingsHub final : public Component
+{
+public:
+    std::function<void()> openAudio, openPlugins, openMidi, restoreAppearance;
+    StudioSettingsHub()
+    {
+        for (auto* item : { &heading, &detail, &audioInfo, &pluginInfo, &midiInfo, &visualInfo })
+            addAndMakeVisible (*item);
+        for (auto* button : { &audio, &plugins, &midi, &appearance })
+            addAndMakeVisible (*button);
+        heading.setText ("Studio Settings", dontSendNotification);
+        heading.setFont (FontOptions (18.0f, Font::bold));
+        detail.setText ("Existing preferences and diagnostics", dontSendNotification);
+        audioInfo.setText ("Audio output, input and stereo channels", dontSendNotification);
+        pluginInfo.setText ("Audio Unit inventory and scanning", dontSendNotification);
+        midiInfo.setText ("MIDI devices and activity", dontSendNotification);
+        visualInfo.setText ("Restore interface and text sizing", dontSendNotification);
+        for (auto* label : { &detail, &audioInfo, &pluginInfo, &midiInfo, &visualInfo })
+            label->setColour (Label::textColourId, studio::colours::secondary);
+        audio.onClick = [this] { if (openAudio) openAudio(); };
+        plugins.onClick = [this] { if (openPlugins) openPlugins(); };
+        midi.onClick = [this] { if (openMidi) openMidi(); };
+        appearance.onClick = [this] { if (restoreAppearance) restoreAppearance(); };
+    }
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (16);
+        heading.setBounds (area.removeFromTop (32));
+        detail.setBounds (area.removeFromTop (34));
+        area.removeFromTop (8);
+        const auto place = [&] (TextButton& button, Label& label)
+        {
+            auto row = area.removeFromTop (54);
+            button.setBounds (row.removeFromLeft (152).reduced (2, 8));
+            label.setBounds (row.reduced (10, 6));
+        };
+        place (audio, audioInfo);
+        place (plugins, pluginInfo);
+        place (midi, midiInfo);
+        place (appearance, visualInfo);
+    }
+private:
+    Label heading, detail, audioInfo, pluginInfo, midiInfo, visualInfo;
+    TextButton audio { "Audio..." }, plugins { "Plug-ins..." },
+               midi { "MIDI Monitor..." }, appearance { "Reset Appearance" };
+};
+
 class StudioView final : public Component, private Timer
 {
 public:
@@ -225,6 +332,11 @@ public:
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
         inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 270);
+        showTransportCycle = prefs.getBoolValue ("studio.transportCycle", true);
+        showTransportClick = prefs.getBoolValue ("studio.transportClick", true);
+        showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
+        showTransportTempo = prefs.getBoolValue ("studio.transportTempo", true);
+        showTransportMeter = prefs.getBoolValue ("studio.transportMeter", true);
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -319,6 +431,12 @@ public:
         tempo.setTooltip ("Edit the tempo event at the playhead while stopped");
         meter.setTooltip ("Edit the time signature at the current bar while stopped");
         addAndMakeVisible (music);
+        addAndMakeVisible (transportOptions);
+        addAndMakeVisible (flashbackButton);
+        flashbackButton.setTooltip ("Capture recently played MIDI from the selected track's assigned input, even if Record wasn't pressed");
+        flashbackButton.onClick = [this] { captureFlashbackMidi(); };
+        transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
+        transportOptions.onClick = [this] { showTransportOptions(); };
         music.onTimelineChanged = [this] { repaint (rulerRow); };
         addAndMakeVisible (regionActions);
         regionActions.setTooltip ("Split, duplicate, copy or paste selected arrangement regions");
@@ -956,17 +1074,33 @@ public:
         const int transportHeight = jmax (m.control (44, 12), m.transportRowHeight() + m.px (7));
         topBar = area.removeFromTop (projectHeight + transportHeight + m.px (8));
         auto commands = topBar.withHeight (projectHeight).reduced (m.px (10), m.px (2));
+       #if JUCE_MAC
+        performanceMode.setVisible (false);
+        viewButton.setVisible (false);
+        projectMenu.setVisible (false);
+       #else
+        performanceMode.setVisible (true);
+        viewButton.setVisible (true);
         performanceMode.setBounds (commands.removeFromRight (m.span (163)).reduced (m.px (2), 0));
+       #endif
         inspectorButton.setBounds (commands.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+       #if ! JUCE_MAC
         viewButton.setBounds (commands.removeFromRight (m.span (63)).reduced (m.px (2), 0));
+       #endif
         const bool showCPU = commands.getWidth() > m.span (325);
         resources.audio.setVisible (showCPU);
         resources.ram.setVisible (false);
         resources.dropouts.setVisible (false);
         if (showCPU) resources.audio.setBounds (commands.removeFromRight (m.span (68)).reduced (m.px (2), 0));
+       #if ! JUCE_MAC
         projectMenu.setVisible (true);
         projectMenu.setBounds (commands.removeFromRight (m.span (81)).reduced (m.px (2), 0));
+       #endif
+       #if JUCE_MAC
+        const bool showFiles = false; // New/Open live in the native File menu.
+       #else
         const bool showFiles = commands.getWidth() >= m.span (340);
+       #endif
         for (auto* button : { &newProject, &openProject })
         {
             button->setVisible (showFiles);
@@ -977,28 +1111,80 @@ public:
         title.setBounds (commands.reduced (m.px (8), 0));
 
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
-        const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53), menuW = m.span (76);
         const int gap = m.px (6);
-        const int fixed = barW + bpmW + meterW + menuW + 4 * gap;
-        const int key = jlimit (m.px (20), m.px (38), (strip.getWidth() - fixed) / 6);
-        const bool showElapsed = fixed + 6 * key + m.span (97) <= strip.getWidth();
-        const int readoutWidth = barW + bpmW + meterW + (showElapsed ? m.span (97) : 0);
+        const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
+        const int menuW = m.span (76), flashbackW = m.span (98), elapsedW = m.span (97);
+       #if JUCE_MAC
+        const int customizeW = 0; // View menu owns transport customization.
+       #else
+        const int customizeW = m.span (95);
+       #endif
+        // Responsive transport: playback and record remain reachable at
+        // 1024-wide MacBook sizes even with large accessibility text. Hidden
+        // controls retain their persisted preferences and native menu actions.
+        const int availableWidth = strip.getWidth();
+        const bool showCycle = showTransportCycle && availableWidth >= m.span (740);
+        const bool showClick = showTransportClick && availableWidth >= m.span (780);
+        const bool showTempo = showTransportTempo && availableWidth >= m.span (580);
+        const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
+        const bool showMusicMenu = availableWidth >= m.span (610);
+        const bool showFlashback = availableWidth >= m.span (830);
+        const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
+        const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
+        const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
+        const int secondaryWidth = (showMusicMenu ? menuW + gap : 0)
+                                 + (showFlashback ? flashbackW + gap : 0)
+                                 + (showCustomize ? customizeW : 0);
+        const int fixed = readoutBase + secondaryWidth + 2 * gap;
+        const int buttonCount = 4 + optionalButtons;
+        const int key = jlimit (m.px (20), m.px (38),
+            (availableWidth - fixed - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
+        const bool showElapsed = showTransportElapsed
+            && fixed + buttonCount * key + elapsedW <= availableWidth;
         position.setVisible (showElapsed);
-        auto row = strip.withSizeKeepingCentre (fixed + 6 * key + (showElapsed ? m.span (97) : 0), transportHeight);
+        tempo.setVisible (showTempo);
+        meter.setVisible (showMeter);
+        cycleButton.setVisible (showCycle);
+        clickButton.setVisible (showClick);
+        music.setVisible (showMusicMenu);
+        flashbackButton.setVisible (showFlashback);
+        const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
+        const int totalWidth = fixed + buttonCount * key + (showElapsed ? elapsedW : 0);
+        auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
         for (auto* button : { &rewind, &stop, &play, &record })
             button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
         row.removeFromLeft (gap);
         for (auto* button : { &cycleButton, &clickButton })
-            button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
+            button->setBounds (button->isVisible()
+                ? row.removeFromLeft (key).reduced (m.px (1), m.px (5))
+                : Rectangle<int>());
         row.removeFromLeft (gap);
         musicalDisplay = row.removeFromLeft (readoutWidth);
         auto lcd = musicalDisplay.reduced (gap / 2, m.px (2));
         bars.setBounds (lcd.removeFromLeft (barW - gap / 2));
-        if (showElapsed) position.setBounds (lcd.removeFromLeft (m.span (97)));
-        tempo.setBounds (lcd.removeFromLeft (bpmW));
-        meter.setBounds (lcd);
-        row.removeFromLeft (gap);
-        music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
+        position.setBounds (showElapsed ? lcd.removeFromLeft (elapsedW) : Rectangle<int>());
+        tempo.setBounds (showTransportTempo ? lcd.removeFromLeft (bpmW) : Rectangle<int>());
+        meter.setBounds (showMeter ? lcd : Rectangle<int>());
+        if (showMusicMenu)
+        {
+            row.removeFromLeft (gap);
+            music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
+        }
+        else music.setBounds ({});
+        if (showFlashback)
+        {
+            row.removeFromLeft (gap);
+            flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
+        }
+        else flashbackButton.setBounds ({});
+       #if JUCE_MAC
+        transportOptions.setVisible (false);
+       #else
+        transportOptions.setVisible (showCustomize);
+        transportOptions.setBounds (showCustomize
+            ? row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5))
+            : Rectangle<int>());
+       #endif
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
         ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
@@ -1029,7 +1215,13 @@ public:
         layoutDock (area);
         arrangementTools = area.removeFromTop (m.control (29));
         auto tools = arrangementTools.reduced (m.px (5), m.px (2));
+       #if JUCE_MAC
+        // Track creation/import commands now live in the native Track/File
+        // menus. Keep only selection, region actions and zoom above the ruler.
+        const bool showAllTrackTools = false;
+       #else
         const bool showAllTrackTools = tools.getWidth() >= m.span (828);
+       #endif
         trackOptions.setBounds (tools.removeFromLeft (m.span (90)).reduced (m.px (2), 0));
         zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
         const int zoomButtonWidth = m.span (32);
@@ -1038,12 +1230,16 @@ public:
         trackMenu.setVisible (! showAllTrackTools);
         if (trackMenu.isVisible())
             trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
-        for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions })
+        for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio })
         {
             button->setVisible (showAllTrackTools);
             if (showAllTrackTools)
                 button->setBounds (tools.removeFromLeft (m.span (button == &addAudio ? 69 : 94)).reduced (m.px (2), 0));
         }
+        // Region editing is used frequently, so retain one discoverable
+        // entry point at narrow as well as full MacBook widths.
+        regionActions.setVisible (true);
+        regionActions.setBounds (tools.removeFromLeft (m.span (100)).reduced (m.px (2), 0));
         trackDetails.setBounds (tools);
 
         rulerRow = area.removeFromTop (m.control (26) + m.control (18));
@@ -1151,6 +1347,112 @@ public:
         resized();
     }
 
+    void captureFlashbackMidi()
+    {
+        if (edit == nullptr || busy || ariaReviewPending || ! studio::transportSettled (*edit))
+            return;
+        if (edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+        {
+            message.setText ("Stop playback before using Capture MIDI.", dontSendNotification);
+            return;
+        }
+        auto* target = workflowTrack();
+        if (target == nullptr || target->isFrozen (te::Track::anyFreeze))
+        {
+            message.setText ("Select an unfrozen instrument track before Capture MIDI.", dontSendNotification);
+            return;
+        }
+        auto* context = edit->getTransport().getCurrentPlaybackContext();
+        if (context == nullptr)
+        {
+            message.setText ("Audio/MIDI playback context isn't ready.", dontSendNotification);
+            return;
+        }
+
+        // Use the input device's existing bounded retrospective MIDI buffer.
+        // Do not open a competing CoreMIDI port or capture unrelated tracks.
+        int assigned = 0;
+        Array<te::Clip*> created;
+        for (auto* input : edit->getAllInputDevices())
+        {
+            if (! input->getTargets().contains (target->itemID)
+                || input->getInputDevice().getDeviceType() != te::InputDevice::physicalMidiDevice)
+                continue;
+            if (input->getTargets().size() != 1)
+            {
+                message.setText ("Capture MIDI requires an input assigned only to the selected track.",
+                                 dontSendNotification);
+                return;
+            }
+            ++assigned;
+        }
+        if (assigned == 0)
+        {
+            message.setText ("Assign a physical MIDI input to this track using its I button first.",
+                             dontSendNotification);
+            return;
+        }
+        edit->getUndoManager().beginNewTransaction ("Capture MIDI");
+        for (auto* input : edit->getAllInputDevices())
+            if (input->getTargets().contains (target->itemID)
+                && input->getInputDevice().getDeviceType() == te::InputDevice::physicalMidiDevice)
+                created.addArray (input->applyRetrospectiveRecord (false));
+
+        if (created.isEmpty())
+        {
+            message.setText ("No recent MIDI notes were captured. Play the keyboard and try again.",
+                             dontSendNotification);
+            return;
+        }
+        selection.selectOnly (created.getFirst());
+        sizeEditor();
+        message.setText ("Captured " + String (created.size()) + " MIDI clip(s) on "
+                            + target->getName() + ". Save your project or Undo to remove them.",
+                         dontSendNotification);
+    }
+
+    void showTransportOptions()
+    {
+        PopupMenu menu;
+        menu.addSectionHeader ("Transport controls");
+        const auto addToggle = [this, &menu] (const String& name, bool current,
+                                             bool StudioView::* member, const char* key)
+        {
+            const auto safe = Component::SafePointer<StudioView> (this);
+            menu.addItem (name, true, current, [safe, member, key]
+            {
+                if (safe == nullptr) return;
+                safe.getComponent()->*member = !(safe.getComponent()->*member);
+                auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+                prefs.setValue (key, safe.getComponent()->*member);
+                prefs.saveIfNeeded();
+                safe->resized();
+            });
+        };
+        addToggle ("Cycle", showTransportCycle, &StudioView::showTransportCycle, "studio.transportCycle");
+        addToggle ("Metronome", showTransportClick, &StudioView::showTransportClick, "studio.transportClick");
+        menu.addSeparator();
+        menu.addSectionHeader ("LCD readouts");
+        addToggle ("Elapsed time", showTransportElapsed, &StudioView::showTransportElapsed, "studio.transportElapsed");
+        addToggle ("Tempo", showTransportTempo, &StudioView::showTransportTempo, "studio.transportTempo");
+        addToggle ("Time signature", showTransportMeter, &StudioView::showTransportMeter, "studio.transportMeter");
+        const auto safe = Component::SafePointer<StudioView> (this);
+        menu.addSeparator();
+        menu.addItem ("Restore default layout", [safe]
+        {
+            if (safe == nullptr) return;
+            safe->showTransportCycle = safe->showTransportClick = true;
+            safe->showTransportElapsed = safe->showTransportTempo = safe->showTransportMeter = true;
+            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+            for (const auto* key : { "studio.transportCycle", "studio.transportClick",
+                                     "studio.transportElapsed", "studio.transportTempo", "studio.transportMeter" })
+                prefs.setValue (key, true);
+            prefs.saveIfNeeded();
+            safe->resized();
+        });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&transportOptions));
+    }
+
     void showViewOptions()
     {
         PopupMenu scale, textSize;
@@ -1217,6 +1519,207 @@ public:
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&viewButton));
     }
 
+    // Native macOS menus use the existing action handlers; no duplicate DAW logic.
+    enum MenuAction
+    {
+        mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
+        mMidiExport, mAudioExport, mAudioSettings, mPluginManager, mUndo, mRedo,
+        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
+        mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
+        mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
+        mMidiMonitor, mResources, mScaleUp, mScaleDown, mScaleReset,
+        mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
+        mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
+        mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
+        mAboutStudio, mKeyboardHelp, mSettings
+    };
+
+    PopupMenu applicationMenu (int index)
+    {
+        PopupMenu menu;
+        const bool project = edit != nullptr;
+        const bool editable = canEditRegions();
+        auto add = [&] (int id, const char* label, bool enabled = true, bool ticked = false)
+        {
+            menu.addItem (id, label, enabled, ticked);
+        };
+        switch (index)
+        {
+            case 0: // File
+                add (mNew, "New Project..."); add (mOpen, "Open Project...");
+                menu.addSeparator();
+                add (mSave, "Save", saveProject.isEnabled());
+                add (mSaveAs, "Save As...", saveAsProject.isEnabled());
+                menu.addSeparator();
+                add (mMidiImport, "Import MIDI...", importMidi.isEnabled());
+                add (mAudioImport, "Import Audio...", importAudio.isEnabled());
+                add (mMidiExport, "Export MIDI...", exportMidi.isEnabled());
+                add (mAudioExport, "Export Audio...", exportWav.isEnabled());
+                menu.addSeparator();
+                add (mAudioSettings, "Audio Settings...");
+                add (mSettings, "Studio Settings...");
+                break;
+            case 1: // Edit
+                add (mUndo, "Undo", editable && edit->getUndoManager().canUndo());
+                add (mRedo, "Redo", editable && edit->getUndoManager().canRedo());
+                menu.addSeparator(); add (mRegionActions, "Region Actions...", regionActions.isEnabled());
+                break;
+            case 2: // Track
+                add (mAddInstrument, "New Instrument Track", editable);
+                add (mAddSynth, "New Studio Synth Track", canInsertPlugin());
+                add (mAddSampler, "New Studio Sampler Track", canInsertPlugin());
+                add (mAddAudio, "New Audio Track", editable);
+                add (mAddMidiClip, "New MIDI Clip", addMidiClip.isEnabled());
+                break;
+            case 3: // Navigate
+                add (mRewind, "Return to Start", project);
+                menu.addSeparator();
+                add (mBrowser, "Instrument Browser");
+                add (mPiano, "Piano Roll");
+                add (mStage, "Stage");
+                add (mMixer, "Mixer");
+                break;
+            case 4: // Record
+                add (mRecord, "Record", record.isEnabled());
+                add (mFlashback, "Capture Recent MIDI", project);
+                menu.addSeparator();
+                add (mCycle, "Toggle Cycle", project);
+                add (mClick, "Toggle Metronome", project);
+                break;
+            case 5: // Mix
+                add (mMixer, "Show Mixer");
+                add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                menu.addSeparator();
+                add (mPluginManager, "Plug-in Manager...");
+                add (mAudioSettings, "Audio Settings...");
+                break;
+            case 6: // View
+                add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                add (mEnvironments, "Studio Environments...");
+                add (mSettings, "Studio Settings...");
+                menu.addSeparator();
+                add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
+                add (mTransportClick, "Transport: Metronome", true, showTransportClick);
+                add (mTransportElapsed, "Transport: Elapsed Time", true, showTransportElapsed);
+                add (mTransportTempo, "Transport: Tempo", true, showTransportTempo);
+                add (mTransportMeter, "Transport: Time Signature", true, showTransportMeter);
+                add (mTransportReset, "Reset Transport Layout");
+                menu.addSeparator();
+                add (mScaleDown, "Decrease Interface Scale", studio::appearance.interfacePercent() > 100);
+                add (mScaleUp, "Increase Interface Scale", studio::appearance.interfacePercent() < 175);
+                add (mScaleReset, "Reset Appearance");
+                break;
+            case 7: // Window
+                add (mCompact, "Compact Workspace", true, dockMode == DockMode::compact);
+                add (mSplit, "Split Workspace", true, dockMode == DockMode::split);
+                add (mExpanded, "Expanded Workspace", true, dockMode == DockMode::expanded);
+                menu.addSeparator();
+                add (mPerformanceFull, "Performance Panel", true, performanceMode.getSelectedId() == 1);
+                add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
+                add (mPerformanceNone, "Hide Performance Panel", true, performanceMode.getSelectedId() == 3);
+                menu.addSeparator();
+                add (mMidiMonitor, "MIDI Monitor");
+                add (mResources, "Resource Inspector");
+                break;
+            case 8: // Help
+                add (mAboutStudio, "About Studio...");
+                add (mKeyboardHelp, "Keyboard Shortcuts...");
+                break;
+        }
+        return menu;
+    }
+
+    void applicationMenuSelected (int action)
+    {
+        const auto invoke = [] (TextButton& button)
+        {
+            if (button.isEnabled() && button.onClick) button.onClick();
+        };
+        switch (action)
+        {
+            case mNew: invoke (newProject); break;
+            case mOpen: invoke (openProject); break;
+            case mSave: invoke (saveProject); break;
+            case mSaveAs: invoke (saveAsProject); break;
+            case mMidiImport: invoke (importMidi); break;
+            case mAudioImport: invoke (importAudio); break;
+            case mMidiExport: invoke (exportMidi); break;
+            case mAudioExport: invoke (exportWav); break;
+            case mAudioSettings: invoke (audioSettings); break;
+            case mPluginManager: invoke (plugins); break;
+            case mSettings: showStudioSettings(); break;
+            case mUndo: if (canEditRegions()) edit->undo(); break;
+            case mRedo: if (canEditRegions()) edit->redo(); break;
+            case mAddInstrument: if (canEditRegions()) addTrack ("Instrument"); break;
+            case mAddSynth: invoke (addSynthTrack); break;
+            case mAddSampler: invoke (addSamplerTrack); break;
+            case mAddAudio: invoke (addAudio); break;
+            case mAddMidiClip: invoke (addMidiClip); break;
+            case mRegionActions: invoke (regionActions); break;
+            case mRewind: invoke (rewind); break;
+            case mRecord: invoke (record); break;
+            case mFlashback: invoke (flashbackButton); break;
+            case mCycle: invoke (cycleButton); break;
+            case mClick: invoke (clickButton); break;
+            case mBrowser: showWorkspace (Workspace::instruments); break;
+            case mPiano: showWorkspace (Workspace::piano); break;
+            case mStage: showWorkspace (Workspace::stage); break;
+            case mMixer: showWorkspace (Workspace::mix); break;
+            case mInspector: setInspectorOpen (! inspectorOpen); break;
+            case mEnvironments: environmentWelcome.open (false); break;
+            case mMidiMonitor: invoke (monitorButton); break;
+            case mResources: if (resources.onOpen) resources.onOpen(); break;
+            case mAboutStudio:
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon,
+                    "About Studio", "Studio 0.2 · Native macOS music production.\n"
+                    "Orchestral Stage, native instruments, MIDI sequencing and mixing.", "OK");
+                break;
+            case mKeyboardHelp:
+            {
+                DialogWindow::LaunchOptions options;
+                options.dialogTitle = "Studio Commands and Shortcuts";
+                options.dialogBackgroundColour = studio::colours::canvas;
+                options.escapeKeyTriggersCloseButton = true;
+                options.useNativeTitleBar = true;
+                options.resizable = true;
+                options.content.setOwned (new StudioCommandReference());
+                options.content->setSize (jmin (getWidth() - 30, 600), jmin (getHeight() - 60, 460));
+                options.launchAsync();
+                break;
+            }
+            case mScaleUp: applyAppearance (studio::appearance.adjacentInterfacePercent (1), studio::appearance.textPercent(), true); break;
+            case mScaleDown: applyAppearance (studio::appearance.adjacentInterfacePercent (-1), studio::appearance.textPercent(), true); break;
+            case mScaleReset: applyAppearance (100, 100, true); break;
+            case mCompact: setDockMode (DockMode::compact); break;
+            case mSplit: setDockMode (DockMode::split); break;
+            case mExpanded: setDockMode (DockMode::expanded); break;
+            case mPerformanceFull: performanceMode.setSelectedId (1, sendNotification); break;
+            case mPerformanceArticulation: performanceMode.setSelectedId (2, sendNotification); break;
+            case mPerformanceNone: performanceMode.setSelectedId (3, sendNotification); break;
+            case mTransportCycle: showTransportCycle = ! showTransportCycle; break;
+            case mTransportClick: showTransportClick = ! showTransportClick; break;
+            case mTransportElapsed: showTransportElapsed = ! showTransportElapsed; break;
+            case mTransportTempo: showTransportTempo = ! showTransportTempo; break;
+            case mTransportMeter: showTransportMeter = ! showTransportMeter; break;
+            case mTransportReset:
+                showTransportCycle = showTransportClick = showTransportElapsed = true;
+                showTransportTempo = showTransportMeter = true;
+                break;
+            default: break;
+        }
+        if (action >= mTransportCycle && action <= mTransportReset)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.transportCycle", showTransportCycle);
+            prefs.setValue ("studio.transportClick", showTransportClick);
+            prefs.setValue ("studio.transportElapsed", showTransportElapsed);
+            prefs.setValue ("studio.transportTempo", showTransportTempo);
+            prefs.setValue ("studio.transportMeter", showTransportMeter);
+            prefs.saveIfNeeded();
+            resized();
+        }
+    }
+
     void showCommandMenu (TextButton& anchor, std::initializer_list<TextButton*> commands)
     {
         PopupMenu menu;
@@ -1246,6 +1749,8 @@ private:
     bool inspectorOpen = false;
     int inspectorWidth = 270;
     int stereoScanTicks = 0;
+    bool showTransportCycle = true, showTransportClick = true, showTransportElapsed = true;
+    bool showTransportTempo = true, showTransportMeter = true;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
@@ -1324,7 +1829,8 @@ private:
     studio::MidiPerformanceFocus midiFocus;
     bool followSelectedMidi = true;
     juce::String midiFocusStatus;
-    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList };
+    studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList,
+                                        &engine.getPropertyStorage().getPropertiesFile() };
     studio::ChannelInspector channelInspector { trackActions };
     studio::InspectorDrawer inspectorDrawer { trackActions };
     studio::StudioMixer mixer { trackActions };
@@ -1352,6 +1858,7 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
+    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" },
@@ -2024,6 +2531,23 @@ private:
                         target.state.setProperty (key, ! enabled, &target.edit.getUndoManager());
                     }));
             }
+            headerMenu.addSeparator();
+            headerMenu.addItem ("Show All Mini Controls", trackMenuAction (id,
+                [] (StudioView&, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Show track header mini controls");
+                    for (const auto* property : { "studioHeaderVolume", "studioHeaderPan", "studioHeaderMeter" })
+                        target.state.setProperty (Identifier (property), true, &undo);
+                }));
+            headerMenu.addItem ("Hide All Mini Controls", trackMenuAction (id,
+                [] (StudioView&, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Hide track header mini controls");
+                    for (const auto* property : { "studioHeaderVolume", "studioHeaderPan", "studioHeaderMeter" })
+                        target.state.setProperty (Identifier (property), false, &undo);
+                }));
             tracks.addSeparator();
             tracks.addSubMenu ("Track Header Controls", headerMenu);
         }
@@ -3684,14 +4208,21 @@ private:
                 if (! studio.canInsertPlugin()) return;
                 studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
             }));
+        PopupMenu appleEffects;
         for (const auto& description : engine.getPluginManager().knownPluginList.getTypes())
             if (description.pluginFormatName == "AudioUnit" && ! description.isInstrument
                 && ! description.name.containsIgnoreCase ("ARIA Player"))
-                effects.addItem (description.name, trackMenuAction (id,
+            {
+                auto& destination = description.manufacturerName.containsIgnoreCase ("Apple")
+                    ? appleEffects : effects;
+                destination.addItem (description.name, trackMenuAction (id,
                     [description] (StudioView& studio, te::AudioTrack& target)
                     {
                         studio.startExternalPlugin (description, target.itemID, false, false);
                     }));
+            }
+        if (appleEffects.getNumItems() > 0)
+            effects.addSubMenu ("Apple Audio Unit Effects", appleEffects);
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
     }
 
@@ -3714,6 +4245,32 @@ private:
         Logger::writeToLog ("Studio: repairing mono Tracktion default output group to stereo for "
                             + output->getName());
         devices.setDeviceNumChannels (*output, 2);
+    }
+
+    void showStudioSettings()
+    {
+        DialogWindow::LaunchOptions options;
+        options.dialogTitle = "Studio Settings";
+        options.dialogBackgroundColour = studio::colours::canvas;
+        options.escapeKeyTriggersCloseButton = true;
+        options.useNativeTitleBar = true;
+        options.resizable = false;
+        auto panel = std::make_unique<StudioSettingsHub>();
+        const Component::SafePointer<StudioView> safe (this);
+        panel->openAudio = [safe] { if (safe != nullptr) safe->showAudioSettings(); };
+        panel->openPlugins = [safe] { if (safe != nullptr) safe->showPlugins(); };
+        panel->openMidi = [safe]
+        {
+            if (safe != nullptr && safe->monitorButton.onClick)
+                safe->monitorButton.onClick();
+        };
+        panel->restoreAppearance = [safe]
+        {
+            if (safe != nullptr) safe->applyAppearance (100, 100, true);
+        };
+        options.content.setOwned (panel.release());
+        options.content->setSize (jmin (getWidth() - 30, 510), 310);
+        options.launchAsync();
     }
 
     void showAudioSettings()
@@ -4261,6 +4818,11 @@ int StudioView::runInterfaceReview (const File& output)
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
     if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
+    // Each macOS menu category must expose at least one real command; keep
+    // menu generation platform-neutral so Linux CI can verify its structure.
+    for (int category = 0; category < 9; ++category)
+        if (applicationMenu (category).getNumItems() == 0)
+            return fail ("native application menu has no commands");
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
@@ -4406,6 +4968,19 @@ int StudioView::runInterfaceReview (const File& output)
     if (performance.isVisible() || articulationStrip.isVisible())
         return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+    // New M14 dialog snapshots come from real JUCE components at native
+    // logical sizes; these are not concept mockups or older M13 captures.
+    if (writeImages)
+    {
+        StudioCommandReference reference;
+        reference.setSize (580, 440);
+        if (! capture ("m14-command-reference-580x440.png", &reference))
+            return fail ("capture M14 searchable command reference");
+        StudioSettingsHub settings;
+        settings.setSize (510, 310);
+        if (! capture ("m14-settings-510x310.png", &settings))
+            return fail ("capture M14 Studio Settings panel");
+    }
     // Visual-regression capture for the small projects that previously left a
     // distracting empty gulf between the last channel and pinned Master.
     Array<te::AudioTrack*> smallMixer { tracks[0], tracks[1], tracks[2] };
@@ -4463,6 +5038,11 @@ int StudioView::runInterfaceReview (const File& output)
     zoom.setSelectedId (1, sendNotificationSync);
     timerCallback();
     if (! capture ("composer-arrangement-1280x800.png")) return fail ("write Composer arrangement screenshot");
+    showWorkspace (Workspace::instruments);
+    timerCallback();
+    if (! browser.isVisible() || ! capture ("m14-instrument-browser-1280x800.png"))
+        return fail ("capture M14 instrument browser");
+    showWorkspace (Workspace::closed);
     if (writeImages)
     {
         studio::bounce::showOptions (*this, *edit, { tracks[1]->itemID }, [] (Result, studio::bounce::Options) {});
@@ -4526,6 +5106,25 @@ int StudioView::runInterfaceReview (const File& output)
 namespace studio::spatial { int runSpatialRoutingTest(); }
 namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
+
+// Native macOS system menu bar, with a safe pointer to the current window.
+class StudioApplicationMenu final : public MenuBarModel
+{
+public:
+    Component::SafePointer<StudioView> target;
+    StringArray getMenuBarNames() override
+    {
+        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Help" };
+    }
+    PopupMenu getMenuForIndex (int index, const String&) override
+    {
+        return target != nullptr ? target->applicationMenu (index) : PopupMenu();
+    }
+    void menuItemSelected (int id, int) override
+    {
+        if (target != nullptr) target->applicationMenuSelected (id);
+    }
+};
 
 class StudioApplication final : public JUCEApplication
 {
@@ -4645,8 +5244,19 @@ public:
         ignoreUnused (commandLine);
        #endif
         window = std::make_unique<Window>();
+       #if JUCE_MAC
+        appMenu.target = static_cast<StudioView*> (window->getContentComponent());
+        MenuBarModel::setMacMainMenu (&appMenu);
+       #endif
     }
-    void shutdown() override { window.reset(); }
+    void shutdown() override
+    {
+       #if JUCE_MAC
+        MenuBarModel::setMacMainMenu (nullptr);
+        appMenu.target = nullptr;
+       #endif
+        window.reset();
+    }
     void systemRequestedQuit() override
     {
         if (window != nullptr)
@@ -4654,6 +5264,7 @@ public:
     }
 
 private:
+    StudioApplicationMenu appMenu;
     std::unique_ptr<Window> window;
 };
 

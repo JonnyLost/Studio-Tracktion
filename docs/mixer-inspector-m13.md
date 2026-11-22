@@ -95,3 +95,60 @@ Physical MacBook confirmation: JUCE's Audio Settings Test plays both AirPods, bu
 Tracktion Engine maintains *virtual wave output channel groups* independently of JUCE's physical active output-channel mask. Its default wave output can have a **one-channel group** even when the hardware has **two active channels**. Code now checks the physical output mask, virtual default output configuration and supported channel group sizes before repairing a mono default virtual group to two channels. It runs on launch and after audio-device changes **only when playback is stopped**; it does not alter plug-in processing, duplicate channels, change other devices, or reset saved projects. The correction is logged as `Studio: repairing mono Tracktion default output group to stereo`.
 
 **Verification still required:** Native macOS build and a test on AirPods. Play both native Studio Synth and ARIA with pan center/left/right, confirm Master left and right level meters react, and check that Stage/room sends still function. For a deliberate mono physical output, the virtual group must remain mono. If the stereo fix doesn't resolve the issue, inspect the actual Tracktion group name and channel indices; do not apply generic forced stereo duplication.
+
+## Milestone 14 continuation (separate unmerged branch)
+
+The user elected to **park ARIA-specific Stage compatibility** after Stage placement and ambience worked with native Studio Synth. Do not change Stage DSP while progressing the UI backlog. The mono default Tracktion output group was independently verified fixed on the user's MacBook.
+
+Branch `feature/studio-transport-header-m14` is based on M13 and adds a first-pass customizable Logic-inspired transport. A visible **Customize…** control opens a popup for separately showing/hiding Cycle, Metronome, Elapsed Time, Tempo and Time Signature, and restoring defaults. Choices persist in application preferences. Rewind, Stop, Play, Record, Bars/Beats and the music/timeline menu remain reachable; narrow MacBook screens automatically hide elapsed time if needed. No MIDI timing or audio callback changes.
+
+**Outstanding backlog (not implied complete):** finish and validate Flashback Capture of MIDI played before Record; reintegration of native Ostinato engine; Apple instrument/effect browser; Picture Scoring; richer sampler expression (CC1/CC11). The transport UI work must be validated via CI and MacBook screenshot before treating M14 as accepted. Flashback Capture requires an always-on, bounded, real-time-safe MIDI capture path into project clips, not just an event table in MIDI Monitor.
+
+### Capture MIDI implementation and checks
+
+A **Capture MIDI** button now uses Tracktion's own existing retrospective buffers. Unlike the MIDI Monitor table, these buffers live in the enabled Tracktion MIDI input devices and retain approximately the preceding 30 seconds by default. The action requires a selected unfrozen track with one or more assigned physical MIDI inputs, with each selected input exclusively targeted to this track; it won't consume a shared device's buffer or accidentally record another instrument's performance. Playback must be stopped. It creates clips through the existing Tracktion MIDI clip and Undo path, selects the captured clip and reports results. No extra MIDI device listener, CoreMIDI port, or audio-thread allocation has been introduced.
+
+Acceptance requires an Intel MacBook test with a physical MIDI keyboard: play notes *without* pressing Record, then Capture MIDI; verify notes/velocities/timing, undo/redo, saved project restoration, and clipping boundaries. Confirm attempts with no input, shared input targets or empty buffer cause no project modification. Feature is still unverified on hardware.
+
+### Mac native menu-bar consolidation (November 22)
+
+Following product-owner screenshots comparing Studio with Logic's macOS system menu, added a native JUCE `MenuBarModel` attached at application launch and detached before window teardown. Categories: **File, Edit, Track, Navigate, Record, Mix, View, Window, Help**. The menus use the existing project/transport/MIDI/UI actions and honor existing project edit guards; the design deliberately does not copy Logic's full feature inventory. On macOS, New/Open, Project…, View… and the top-row Performance mode drop-down move into the system menu, freeing header space. The current Inspector toggle and transport controls remain directly accessible. Existing keyboard shortcuts still route through the original Studio component, and other platforms retain the previous fallback controls.
+
+View includes checked transport-visibility preferences and layout reset, so the former Customize… header button can be hidden on macOS. Window includes the compact/split/expanded workspace choices and performance panel modes. Help contains concise About and Keyboard Shortcuts panels. An interface-review regression check verifies that all nine menu categories contain items.
+
+**Required Intel macOS acceptance:** Confirm the Apple menu bar is present with Studio focused, menus appear without orphaned header duplicates, all File actions and disabled state work, Window and View choices work, transport LCD preferences persist after restart, and the header stays unclipped at 1024×640 and 1280×800. Also validate project save and no behavior regressions in stereo playback. Keep PR #32 unmerged until CI and screenshots are reviewed.
+
+**Still outstanding:** Full Flashback acceptance with physical MIDI, Ostinato engine integration from historical branch, Picture Scoring, expressive sampler controls; ARIA-specific Stage remains parked.
+
+### Milestone 14 interface polish — Mixer and Stage seating
+
+**Mixer (visual/readability only):** Narrow mixer strips retain fader, meter, pan, FX and Stage controls. FX now shows a compact count of visible user instrument/effect insert plug-ins (for example, `FX 2`); native gain/pan, meters, aux send/return and Stage panner are excluded from this count. The button's tooltip explains the count and opens the existing safe insert/Remove menu. No inserts are moved and no audio processing changes.
+
+**Stage (presentation only):** On the interactive Stage map (not the microphone seating map), right-click to toggle **Show track labels**. The default presentation is unchanged, selected instrument labels always display, and when labels are hidden the stage markers/sections remain visible. The current automatic label density limit for large ensembles remains in force. The underlying seat positions, sends, Stage pan, room acoustics, or ARIA behavior are not changed.
+
+**Screenshots:** Actual M13 Intel/macOS baseline images are available in CI artifact `Studio-M13-mixer-inspector-macOS` and `Studio-M7-unified-stage-macOS`; they predate these M14 changes. New M14 macOS screenshots and CI are required before marking the visual polish verified. The development branch is unmerged.
+
+**MacBook checks after M14 build:** For a track with one native synth and one inserted effect verify `FX 2`, the Insert menu still opens and removes safely, and hidden Stage DSP isn't counted. On Stage, right-click empty map area, hide labels, verify conductor/section/selected instrument are still shown, toggle back, reopen project, and confirm instrument seating and audio unchanged.
+
+### Stage usability follow-up
+
+Hover any stage marker to see its full track name and orchestral section even when non-selected labels are hidden. This is implemented with JUCE's UI tooltip client and performs no position or routing mutation. The context-menu label visibility setting is intentionally session-local until the UX is hardware-verified. Actual baseline Stage images are available from Intel CI artifact `Studio-M7-unified-stage-macOS` (stage-expanded.png, stage-split.png, stage-compact.png); do not represent them as captures of this newer M14 branch.
+
+For a future native screenshot pass, capture at minimum: the macOS menu bar with File and View menus open; mixer with instrument + FX count; Inspector quick FX menu; Stage overview with labels shown, labels hidden, and selected/hovered instrument label. Compare 1024×640 and 1280×800 and avoid changing audio/MIDI engine code merely to satisfy a screenshot.
+
+## M14 continuation — usability set 7–13 (November 22)
+
+These changes extend the existing **unmerged** M14 draft branch without altering the audio engine, Tracktion DSP routing, MIDI input timestamps or Stage placement.
+
+1. **Context menus:** Piano Roll now presents a right-click menu with existing Select/Draw tools, a grid-resolution submenu, Quantize, Delete Selected Notes and Controller Lanes. Actions respect editing enablement and use lifetime-safe component handles; this is not a rewrite of MIDI editing.
+2. **Track organization:** Existing track colors and icon categories remain shared between Inspector and Mixer. Mixer track tooltips now name the selected icon category. Existing track-header Show All / Hide All presets persist per track as part of the project.
+3. **Piano Roll presentation:** The octave-C row has a subtle accent to aid pitch location, and an empty editor explains that a MIDI region must be selected. Snap/note data are unchanged.
+4. **Timeline toolbar:** macOS retains Track, Region and zoom commands. Track creation/import live in native File/Track menus; Linux keeps its existing responsive fallback. The Region menu remains present regardless of MacBook width.
+5. **Settings:** A unified Studio Settings landing dialog, accessible from File and View, exposes the already existing Audio device panel, Audio Unit plug-in manager, MIDI Monitor and reset-appearance actions. It does not create new device configurations or project preference schemas.
+6. **Commands & keyboard shortcuts:** Help → Keyboard Shortcuts now opens a searchable, read-only command reference that labels only existing key combinations. The real shortcuts continue to be handled by the established editor.
+7. **Resizing:** The Instrument Browser details panel now has a visible drag grip, a clamped width and an application preference for restoring its chosen width. The existing Inspector and lower workspace already retain their own resizing implementations.
+8. **Instrument favorites:** The browser now offers Favorite and Favorites-only controls with keys stored in the application's preferences, preserving selections across restarts. Unavailable plug-ins remain unavailable; marking a favorite never loads a plug-in.
+
+**Validation still required:** This PR has no successful macOS CI result for its latest head. On Intel Mac: compile/run, verify native menus, search and filtering of Help, settings dialog launch and return, instrument favorite persistence across restart, browser drag resizing at 1024×640 and 1280×800, Piano Roll right-click actions with/without a clip, and the narrowed timeline. Confirm existing Save/Undo, Stereo Synth playback, Stage positioning and Inspector/mixer behavior still work before treating this milestone as accepted. Produce fresh macOS screenshots from the M14 head rather than reusing M13 baseline captures.
+
+**Deliberately excluded:** New MIDI region destructive operations, custom shortcut remapping, Stage/ARIA DSP changes, new audio plug-ins, and rearranging insert processing order. These require separate acceptance.

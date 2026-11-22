@@ -20,7 +20,8 @@ private:
     juce::Slider number { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
 };
 
-class SpatialMap final : public juce::Component, public juce::DragAndDropTarget
+class SpatialMap final : public juce::Component, public juce::SettableTooltipClient,
+                         public juce::DragAndDropTarget
 {
 public:
     struct Marker
@@ -43,6 +44,7 @@ public:
     void itemDropped (const SourceDetails&) override;
     void display (std::vector<Marker>, juce::String selected, bool microphones, Seating);
     void paint (juce::Graphics&) override;
+    void mouseMove (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -55,6 +57,7 @@ private:
     juce::String selected, dragged;
     Position preview, dragOrigin;
     bool micMode = false, moving = false, overview = false, dropTarget = false;
+    bool showTrackLabels = true; // Presentation-only; Stage coordinates and DSP are unchanged.
     Seating seating = Seating::concert;
     juce::Rectangle<float> plot() const;
     int legendHeight() const;

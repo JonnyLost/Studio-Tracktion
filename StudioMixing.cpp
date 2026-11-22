@@ -540,7 +540,7 @@ private:
 };
 
 InspectorDrawer::InspectorDrawer (TrackActions& actions)
-    : inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
+    : actions (actions), inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
 {
     setOpaque (true);
     setRepaintsOnMouseActivity (true);
@@ -560,6 +560,13 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     addAndMakeVisible (scroll);
     addAndMakeVisible (*channelStrip);
     addAndMakeVisible (details);
+    addAndMakeVisible (quickFx);
+    quickFx.setTooltip ("Open, edit or safely remove the selected track's instrument and effects");
+    quickFx.onClick = [this]
+    {
+        if (inspector.inspectedTrack().isValid() && this->actions.showMenu)
+            this->actions.showMenu (inspector.inspectedTrack(), TrackMenu::inserts, quickFx);
+    };
     details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
     details.onClick = [this]
     {
@@ -584,6 +591,7 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
 {
     inspector.refresh (track, ready, canRoute, recovery, selectedClip);
     channelStrip->refresh (track, ready, selectedClip);
+    quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
     title.setText (track != nullptr ? track->getName() + " Inspector" : "Inspector", dontSendNotification);
@@ -620,7 +628,9 @@ void InspectorDrawer::resized()
     const int channelHeight = jmin (m.span (278), jmax (m.span (223), area.getHeight() * 61 / 100));
     channelStrip->setBounds (area.removeFromTop (jmin (channelHeight, area.getHeight())));
     area.removeFromTop (m.px (4));
-    details.setBounds (area.removeFromTop (m.control (26, 11)));
+    auto settingsRow = area.removeFromTop (m.control (26, 11));
+    quickFx.setBounds (settingsRow.removeFromRight (m.span (58)).reduced (m.px (2), 0));
+    details.setBounds (settingsRow);
     details.setButtonText (detailsOpen ? "Track Settings  v" : "Track Settings  >");
     area.removeFromTop (m.px (3));
     scroll.setVisible (detailsOpen);
@@ -745,7 +755,9 @@ public:
         else if (track != nullptr)
         {
             name.setButtonText (track->getName());
-            name.setTooltip (track->getName());
+            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+            name.setTooltip ((icon.isNotEmpty() ? icon + " · " : String()) + track->getName()
+                             + " (select track)");
             auto* instrument = findInstrument (*track);
             const bool wetReturn = spatial::isRoomReturn (*track);
             const auto nextAccent = wetReturn ? colours::roomReturn : track->getColour().interpolatedWith (colours::action, 0.38f);
@@ -753,6 +765,24 @@ public:
             identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
+            // Count only user-facing instruments/effects; do not count Studio's
+            // mixer gain, meters, room sends or stage spatial processors.
+            int insertsCount = 0;
+            for (auto* plugin : track->pluginList.getPlugins())
+            {
+                if (plugin == nullptr || dynamic_cast<te::VolumeAndPanPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::LevelMeterPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::AuxSendPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr
+                    || plugin->getPluginType() == "studioStagePanV1"
+                    || plugin->getPluginType() == "studioWetRoomV1")
+                    continue;
+                ++insertsCount;
+            }
+            inserts.setButtonText (insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
+            inserts.setTooltip (insertsCount > 0
+                ? String (insertsCount) + " instrument/effect insert(s). Open to edit or remove."
+                : "No instrument/effect inserts. Open to add an effect.");
             int inputCount = 0;
             bool armed = false;
             for (auto* instance : inputs)

@@ -10,7 +10,7 @@ namespace studio
 class InstrumentBrowser final : public juce::Component, private juce::ChangeListener
 {
 public:
-    explicit InstrumentBrowser (juce::KnownPluginList&);
+    explicit InstrumentBrowser (juce::KnownPluginList&, juce::PropertiesFile* preferences = nullptr);
     ~InstrumentBrowser() override;
 
     std::function<void()> openPluginManager;
@@ -24,6 +24,10 @@ public:
     int minimumContentHeight (int width) const;
     void resized() override;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    juce::MouseCursor getMouseCursor() override;
 
 private:
     struct Entry
@@ -46,6 +50,13 @@ private:
     };
 
     juce::KnownPluginList& known;
+    juce::PropertiesFile* preferences = nullptr;
+    juce::StringArray favouriteKeys;
+    bool favouritesOnly = false;
+    int preferredDetailsWidth = 258;
+    int resizeStartX = 0, resizeStartWidth = 0;
+    bool resizingDetails = false;
+    void saveFavourites();
     std::vector<Entry> entries;
     std::vector<size_t> filtered;
     juce::StringArray families, types;
@@ -56,7 +67,8 @@ private:
     juce::ComboBox compactFamily, compactType;
     juce::TextEditor search;
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
-    juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" };
+    juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
+                     favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
     void rebuildCatalog();

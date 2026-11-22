@@ -310,7 +310,7 @@ void SpatialMap::paint (Graphics& g)
             g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
             g.drawText (familyMarks[family], tile.toNearestInt(), Justification::centred);
         }
-        if (active || (! micMode && markers.size() <= 24))
+        if (active || (! micMode && showTrackLabels && markers.size() <= 24))
         {
             const int labelWidth = m.span (active ? 125 : 88);
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
@@ -333,6 +333,24 @@ void SpatialMap::paint (Graphics& g)
         if (marker.key == selected && marker.microphone == micMode) drawMarker (marker);
 }
 
+void SpatialMap::mouseMove (const MouseEvent& event)
+{
+    // Reveal names in dense orchestral sessions even if visual labels are
+    // hidden. This only updates a UI tooltip; it never moves a seat.
+    String hint;
+    const float radius = (float) appearance.px (18);
+    for (const auto& marker : markers)
+        if (marker.microphone == micMode
+            && screen (marker.point).getDistanceFrom (event.position) <= radius)
+        {
+            hint = marker.name;
+            if (! micMode)
+                hint += String (" · ") + sectionNames[(size_t) jlimit (0, 5, marker.section)];
+            break;
+        }
+    if (getTooltip() != hint) setTooltip (hint);
+}
+
 void SpatialMap::mouseDown (const MouseEvent& event)
 {
     const auto radius = (float) appearance.px (17);
@@ -340,6 +358,18 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     {
         PopupMenu menu;
         const SafePointer<SpatialMap> safe (this);
+        if (! micMode && ! overview)
+        {
+            menu.addItem ("Show track labels", true, showTrackLabels, [safe]
+            {
+                if (safe != nullptr)
+                {
+                    safe->showTrackLabels = ! safe->showTrackLabels;
+                    safe->repaint();
+                }
+            });
+            menu.addSeparator();
+        }
         for (const auto& marker : markers)
             if (marker.microphone == micMode && screen (marker.point).getDistanceFrom (event.position) <= radius)
                 menu.addItem (marker.name, true, marker.key == selected, [safe, key = marker.key]
