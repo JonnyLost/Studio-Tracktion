@@ -1287,8 +1287,7 @@ private:
                        pianoButton { "Piano Roll", studio::RailIcon::piano },
                        articulationsButton { "Articulations", studio::RailIcon::articulations },
                        stageButton { "Stage", studio::RailIcon::stage },
-                       mixButton { "Mixer", studio::RailIcon::mixer },
-                       channelButton { "Channel", studio::RailIcon::channel };
+                       mixButton { "Mixer", studio::RailIcon::mixer };
     TextButton compactButton { "Compact" }, splitButton { "Split" },
                expandedButton { "Expanded" }, closeWorkspace { "Hide" };
     std::array<TextButton, 2> workspaceLinks;
@@ -1344,13 +1343,11 @@ private:
     struct DockItem { DockMode mode; TextButton* button; };
     struct WorkspaceEntry { Workspace destination; const char* name; };
 
-    std::array<RailItem, 6> railItems()
+    std::array<RailItem, 5> railItems()
     {
-        // Order by a composer's most common tasks. Channel remains available
-        // until it is replaced by the separately planned right-side Inspector.
         return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::piano, &pianoButton },
                   { Workspace::articulations, &articulationsButton }, { Workspace::stage, &stageButton },
-                  { Workspace::mix, &mixButton }, { Workspace::channel, &channelButton } }};
+                  { Workspace::mix, &mixButton } }};
     }
 
     std::array<DockItem, 3> dockItems()
@@ -2176,6 +2173,16 @@ private:
             refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
             auto* context = workflowTrack();
             if (performance.isVisible()) performance.refresh (context, transportReady);
+            if (inspectorOpen)
+            {
+                const auto recovery = ariaReviewPending
+                    ? (autoAriaRetryPending ? "ARIA recovery | Restore pending"
+                                            : "ARIA recovery | Verify sound before saving")
+                    : "ARIA recovery | No verification pending";
+                const auto* clip = selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr;
+                inspectorDrawer.refresh (context, ready, canEditRegions(), recovery,
+                    clip != nullptr && context != nullptr && clip->getAudioTrack() == context ? clip : nullptr);
+            }
             if (articulation.isShowing() || articulationStrip.isVisible())
             {
                 articulation.refresh (context, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr, ready);
