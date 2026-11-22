@@ -345,7 +345,7 @@ void SpatialMap::mouseMove (const MouseEvent& event)
         {
             hint = marker.name;
             if (! micMode)
-                hint += " · " + sectionNames[(size_t) jlimit (0, 5, marker.section)];
+                hint += String (" · ") + sectionNames[(size_t) jlimit (0, 5, marker.section)];
             break;
         }
     if (getTooltip() != hint) setTooltip (hint);
