@@ -831,6 +831,10 @@ public:
             return;
         g.saveState();
         g.reduceClipRegion (area);
+        // The musical guide grid is a paint-over-children layer. Exclude the
+        // right Inspector or it visibly draws through its fully opaque panel.
+        if (inspectorOpen && inspectorDrawer.isVisible())
+            g.excludeClipRegion (inspectorDrawer.getBounds());
         auto& view = editor->getEditViewState();
         studio::forEachMusicalTick (edit->tempoSequence, view.viewX1.get(), view.viewX2.get(),
             [&] (const studio::MusicalTick& tick)
