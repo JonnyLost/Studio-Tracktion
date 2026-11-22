@@ -55,6 +55,7 @@ private:
     juce::String selected, dragged;
     Position preview, dragOrigin;
     bool micMode = false, moving = false, overview = false, dropTarget = false;
+    bool showTrackLabels = true; // Presentation-only; Stage coordinates and DSP are unchanged.
     Seating seating = Seating::concert;
     juce::Rectangle<float> plot() const;
     int legendHeight() const;
