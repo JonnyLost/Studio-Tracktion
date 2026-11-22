@@ -604,6 +604,7 @@ void StudioMixer::setEdit (te::Edit* next)
     lastSelection = {};
     viewport.setViewPosition (0, 0);
     resized();
+    repaint();
 }
 
 void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack* selected, bool ready, bool canRoute)
@@ -621,6 +622,7 @@ void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack*
             strips.push_back (std::move (strip));
         }
         resized();
+        repaint(); // Clear stale "open a project" empty-state text when strips arrive.
     }
 
     const auto selectedId = selected != nullptr ? selected->itemID : te::EditItemID {};
