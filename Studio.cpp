@@ -4200,6 +4200,12 @@ int StudioView::runInterfaceReview (const File& output)
             && PNGImageFormat().writeImageToStream (image, stream);
     };
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
+    // Visual-regression capture for the small projects that previously left a
+    // distracting empty gulf between the last channel and pinned Master.
+    Array<te::AudioTrack*> smallMixer { tracks[0], tracks[1], tracks[2] };
+    mixer.refresh (smallMixer, tracks[1], true, true);
+    if (! capture ("mixer-three-tracks-1280x800.png")) return fail ("write three-track Mixer screenshot");
+    mixer.refresh (tracks, selectedTrack(), true, true);
     setDockMode (DockMode::split);
     mixer.refresh (tracks, selectedTrack(), true, true);
     if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
