@@ -591,6 +591,7 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
 {
     inspector.refresh (track, ready, canRoute, recovery, selectedClip);
     channelStrip->refresh (track, ready, selectedClip);
+    quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
     title.setText (track != nullptr ? track->getName() + " Inspector" : "Inspector", dontSendNotification);
