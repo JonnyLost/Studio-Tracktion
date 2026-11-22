@@ -20,6 +20,8 @@ struct TrackActions
     std::function<void(tracktion::EditItemID)> toggleArm;
     std::function<void(tracktion::EditItemID)> toggleMonitoring;
     std::function<void(tracktion::EditItemID)> showStage;
+    std::function<void(tracktion::EditItemID, juce::Component&)> editTrackColour;
+    std::function<void(tracktion::EditItemID, juce::Component&)> editTrackIcon;
 };
 
 bool isInstrumentPlugin (tracktion::Plugin&);
@@ -66,6 +68,8 @@ private:
     std::array<juce::Rectangle<int>, 5> columns;
 };
 
+class InspectorChannelStrip;
+
 // A lightweight, non-modal right-side drawer. It reuses the existing
 // ChannelInspector controls and selected-track model, avoiding a second set
 // of audio/MIDI routing implementations.
@@ -85,9 +89,11 @@ public:
 
 private:
     ChannelInspector inspector;
+    std::unique_ptr<InspectorChannelStrip> channelStrip;
     juce::Viewport scroll;
     juce::Label title;
-    juce::TextButton close { "Close" };
+    juce::TextButton close { "Close" }, details { "Track Settings" };
+    bool detailsOpen = false;
 };
 
 class StudioMixer final : public juce::Component
