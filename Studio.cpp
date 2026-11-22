@@ -1116,8 +1116,8 @@ public:
             auto& properties = safe->engine.getPropertyStorage().getPropertiesFile();
             properties.setValue ("studio.midiFollowSelection", safe->followSelectedMidi);
             properties.saveIfNeeded();
-            if (! safe->followSelectedMidi && safe->edit != nullptr)
-                safe->midiFocus.release (safe->edit.get());
+            // The normal focus timer releases routing only after held notes
+            // and sustain pedal have ended; don't cut off a note here.
         });
         menu.addSeparator();
         menu.addSubMenu ("Interface Scale", scale);
