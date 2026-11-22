@@ -503,6 +503,14 @@ void StudioPianoRoll::paint (Graphics& g)
         return;
     paintGrid (g);
     paintNotes (g);
+    if (clip == nullptr)
+    {
+        g.setColour (studio::colours::secondary);
+        g.setFont (studio::uiFont (13.0f));
+        g.drawFittedText ("Select a MIDI region to edit notes",
+                          notesArea.reduced (studio::appearance.px (14)),
+                          Justification::centred, 2);
+    }
     if (gesture == Gesture::lasso && ! lassoBounds.isEmpty())
     {
         g.saveState();
@@ -536,6 +544,13 @@ void StudioPianoRoll::paintGrid (Graphics& g)
         const bool black = semitone == 1 || semitone == 3 || semitone == 6 || semitone == 8 || semitone == 10;
         g.setColour (black ? studio::colours::canvas : studio::colours::timeline);
         g.fillRect (notesArea.getX(), y, notesArea.getWidth(), rowHeight - 1);
+        // Octave guide rows are slightly brighter to help locate orchestral
+        // registrations in a dense piano roll without modifying MIDI data.
+        if (pitch % 12 == 0)
+        {
+            g.setColour (studio::colours::action.withAlpha (0.065f));
+            g.fillRect (notesArea.getX(), y, notesArea.getWidth(), rowHeight - 1);
+        }
         g.setColour (black ? studio::colours::well : studio::colours::action);
         g.fillRect (keyboard.getX(), y, keyboard.getWidth() - 1, rowHeight - 1);
         if (pitch == auditionPitch)
@@ -764,7 +779,43 @@ void StudioPianoRoll::paintVelocity (Graphics& g)
 
 void StudioPianoRoll::mouseDown (const MouseEvent& event)
 {
-    if (clip == nullptr || ! editingEnabled || ! clip->hasValidSequence())
+    if (clip == nullptr || ! clip->hasValidSequence())
+        return;
+    if (event.mods.isPopupMenu())
+    {
+        PopupMenu menu;
+        menu.addSectionHeader ("Piano Roll");
+        menu.addItem ("Select Tool", true, tool.getSelectedId() == 1, [this]
+        {
+            tool.setSelectedId (1, sendNotification);
+        });
+        menu.addItem ("Draw Tool", true, tool.getSelectedId() == 2, [this]
+        {
+            tool.setSelectedId (2, sendNotification);
+        });
+        menu.addSeparator();
+        PopupMenu snap;
+        const int selectedGrid = grid.getSelectedId();
+        for (const auto& item : std::initializer_list<std::pair<const char*, int>> {
+                 { "Off", 1 }, { "Quarter", 2 }, { "Quarter triplet", 9 },
+                 { "Eighth", 3 }, { "Eighth triplet", 6 },
+                 { "Sixteenth", 4 }, { "Sixteenth triplet", 7 },
+                 { "Thirty-second", 5 }, { "Thirty-second triplet", 8 } })
+            snap.addItem (item.first, true, selectedGrid == item.second,
+                [this, id = item.second] { grid.setSelectedId (id, sendNotification); });
+        menu.addSubMenu ("Snap Grid", snap);
+        menu.addSeparator();
+        menu.addItem ("Quantize Notes", editingEnabled, false,
+            [this] { if (editingEnabled && clip != nullptr) quantizeNotes(); });
+        menu.addItem ("Delete Selected Notes", editingEnabled && ! selectedNotes.isEmpty(), false,
+            [this] { if (editingEnabled && clip != nullptr) deleteSelected(); });
+        menu.addSeparator();
+        menu.addItem ("Controller Lanes...", [this] { controllers.showMenu (expression); });
+        menu.showMenuAsync (PopupMenu::Options().withTargetScreenArea (
+            Rectangle<int> (event.getScreenPosition().x, event.getScreenPosition().y, 1, 1)));
+        return;
+    }
+    if (! editingEnabled)
         return;
     grabKeyboardFocus();
     const auto point = event.getPosition();
