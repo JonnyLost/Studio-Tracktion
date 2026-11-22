@@ -2379,6 +2379,23 @@ private:
                         target.state.setProperty (key, ! enabled, &target.edit.getUndoManager());
                     }));
             }
+            headerMenu.addSeparator();
+            headerMenu.addItem ("Show All Mini Controls", trackMenuAction (id,
+                [] (StudioView&, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Show track header mini controls");
+                    for (const auto* property : { "studioHeaderVolume", "studioHeaderPan", "studioHeaderMeter" })
+                        target.state.setProperty (Identifier (property), true, &undo);
+                }));
+            headerMenu.addItem ("Hide All Mini Controls", trackMenuAction (id,
+                [] (StudioView&, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Hide track header mini controls");
+                    for (const auto* property : { "studioHeaderVolume", "studioHeaderPan", "studioHeaderMeter" })
+                        target.state.setProperty (Identifier (property), false, &undo);
+                }));
             tracks.addSeparator();
             tracks.addSubMenu ("Track Header Controls", headerMenu);
         }
