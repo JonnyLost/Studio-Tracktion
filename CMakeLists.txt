@@ -81,23 +81,23 @@ string(REPLACE "${edit_view_accessor}"
 # so effects, ARIA safety and destructive menus retain their existing checks.
 set(studio_view_callbacks_anchor [=[    ValueTree state;
 };]=])
-string(FIND "\${editor_header}" "\${studio_view_callbacks_anchor}" studio_view_callbacks_match)
+string(FIND "${editor_header}" "${studio_view_callbacks_anchor}" studio_view_callbacks_match)
 if(studio_view_callbacks_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example EditViewState callbacks anchor has changed.")
 endif()
-string(REPLACE "\${studio_view_callbacks_anchor}" [=[    ValueTree state;
+string(REPLACE "${studio_view_callbacks_anchor}" [=[    ValueTree state;
 
     std::function<void (te::EditItemID, Component&)> showStudioTrackFX;
     std::function<void (te::EditItemID, Component&)> showStudioTrackMenu;
-};]=] editor_header "\${editor_header}")
+};]=] editor_header "${editor_header}")
 set(studio_track_header_controls_anchor [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"};]=])
-string(FIND "\${editor_header}" "\${studio_track_header_controls_anchor}" studio_track_header_controls_match)
+string(FIND "${editor_header}" "${studio_track_header_controls_anchor}" studio_track_header_controls_match)
 if(studio_track_header_controls_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackHeader controls anchor has changed.")
 endif()
-string(REPLACE "\${studio_track_header_controls_anchor}"
+string(REPLACE "${studio_track_header_controls_anchor}"
     [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"}, fxButton {"FX"};]=]
-    editor_header "\${editor_header}")
+    editor_header "${editor_header}")
 
 file(CONFIGURE OUTPUT generated/Components.h CONTENT "${editor_header}" @ONLY)
 file(READ "${common}/Components.cpp" editor)
@@ -252,13 +252,13 @@ string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appeara
 
 set(studio_fx_bounds_anchor [=[    soloButton.setBounds (r.removeFromLeft (w));
     r.removeFromLeft (2);]=])
-string(FIND "\${editor}" "\${studio_fx_bounds_anchor}" studio_fx_bounds_match)
+string(FIND "${editor}" "${studio_fx_bounds_anchor}" studio_fx_bounds_match)
 if(studio_fx_bounds_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackHeader FX position anchor has changed.")
 endif()
-string(REPLACE "\${studio_fx_bounds_anchor}" [=[    soloButton.setBounds (r.removeFromLeft (w));
+string(REPLACE "${studio_fx_bounds_anchor}" [=[    soloButton.setBounds (r.removeFromLeft (w));
     r.removeFromLeft (2);
-    fxButton.setBounds (r.removeFromLeft (w));]=] editor "\${editor}")
+    fxButton.setBounds (r.removeFromLeft (w));]=] editor "${editor}")
 
 # Keep the ruler and generated arrangement in the same logical-point geometry.
 set(track_geometry [=[    const int trackHeight = 50, trackGap = 2;
@@ -308,11 +308,11 @@ string(REPLACE "${footer_geometry}" [=[    const auto& metrics = studio::appeara
 # single FX control on the left. StudioView owns the popup action so all
 # plug-in/undo/ARIA restrictions still apply.
 set(studio_track_buttons_anchor [=[    Helpers::addAndMakeVisible (*this, { &trackName, &armButton, &muteButton, &soloButton, &inputButton });]=])
-string(FIND "\${editor}" "\${studio_track_buttons_anchor}" studio_track_buttons_match)
+string(FIND "${editor}" "${studio_track_buttons_anchor}" studio_track_buttons_match)
 if(studio_track_buttons_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackHeader button initialization has changed.")
 endif()
-string(REPLACE "\${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisible (*this, { &trackName, &armButton, &muteButton, &soloButton, &inputButton, &fxButton });
+string(REPLACE "${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisible (*this, { &trackName, &armButton, &muteButton, &soloButton, &inputButton, &fxButton });
     fxButton.setTooltip ("Instrument and insert effects");
     fxButton.setTitle ("Track instrument and insert effects");
     fxButton.setVisible (dynamic_cast<te::AudioTrack*> (track.get()) != nullptr);
@@ -321,39 +321,39 @@ string(REPLACE "\${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisib
         if (editViewState.showStudioTrackFX)
             editViewState.showStudioTrackFX (track->itemID, fxButton);
     };
-    trackName.setInterceptsMouseClicks (false, false);]=] editor "\${editor}")
+    trackName.setInterceptsMouseClicks (false, false);]=] editor "${editor}")
 
 set(studio_track_mouse_anchor [=[void TrackHeaderComponent::mouseDown (const MouseEvent&)
 {
     editViewState.selectionManager.selectOnly (track.get());
 }]=])
-string(FIND "\${editor}" "\${studio_track_mouse_anchor}" studio_track_mouse_match)
+string(FIND "${editor}" "${studio_track_mouse_anchor}" studio_track_mouse_match)
 if(studio_track_mouse_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example track-header mouse callback has changed.")
 endif()
-string(REPLACE "\${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mouseDown (const MouseEvent& event)
+string(REPLACE "${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mouseDown (const MouseEvent& event)
 {
     editViewState.selectionManager.selectOnly (track.get());
     if (event.mods.isPopupMenu() && editViewState.showStudioTrackMenu)
         editViewState.showStudioTrackMenu (track->itemID, *this);
-}]=] editor "\${editor}")
+}]=] editor "${editor}")
 
 # Keep renamed tracks in sync without recreating the arrangement row.
 set(studio_track_name_anchor [=[    if (te::TrackList::isTrack (v))
     {
         if (i == te::IDs::mute)]=])
-string(FIND "\${editor}" "\${studio_track_name_anchor}" studio_track_name_match)
+string(FIND "${editor}" "${studio_track_name_anchor}" studio_track_name_match)
 if(studio_track_name_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example TrackHeader property listener has changed.")
 endif()
-string(REPLACE "\${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (v))
+string(REPLACE "${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (v))
     {
         if (i == te::IDs::name)
         {
             trackName.setText (track->getName(), dontSendNotification);
             trackName.setTooltip (track->getName());
         }
-        else if (i == te::IDs::mute)]=] editor "\${editor}")
+        else if (i == te::IDs::mute)]=] editor "${editor}")
 
 string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
