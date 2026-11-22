@@ -421,6 +421,38 @@ void TrackHeaderComponent::timerCallback()
     }
 }]=] editor "${editor}")
 
+# Keep the arrangement mini-controls attached to the exact final channel
+# gain/pan plug-in used by Mixer and Inspector, not a different insert.
+set(studio_header_mixer_access [=[TrackHeaderComponent::TrackHeaderComponent (EditViewState& evs, te::Track::Ptr t)]=])
+string(FIND "${editor}" "${studio_header_mixer_access}" studio_header_mixer_match)
+if(studio_header_mixer_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion header mini-control gain anchor missing.")
+endif()
+string(REPLACE "${studio_header_mixer_access}" [=[static te::VolumeAndPanPlugin* studioHeaderMixPlugin (te::AudioTrack& track)
+{
+    for (int i = track.pluginList.size(); --i >= 0;)
+        if (auto* p = dynamic_cast<te::VolumeAndPanPlugin*> (track.pluginList[i]))
+            return p;
+    return nullptr;
+}
+
+TrackHeaderComponent::TrackHeaderComponent (EditViewState& evs, te::Track::Ptr t)]=] editor "${editor}")
+string(REPLACE "at->getVolumePlugin()" "studioHeaderMixPlugin (*at)" editor "${editor}")
+set(studio_header_destructor [=[TrackHeaderComponent::~TrackHeaderComponent()
+{
+    track->state.removeListener (this);
+}]=])
+string(FIND "${editor}" "${studio_header_destructor}" studio_header_destructor_match)
+if(studio_header_destructor_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion header mini-meter destructor anchor missing.")
+endif()
+string(REPLACE "${studio_header_destructor}" [=[TrackHeaderComponent::~TrackHeaderComponent()
+{
+    stopTimer();
+    if (auto* meter = miniMeter.get()) meter->removeClient (miniMeterClient);
+    track->state.removeListener (this);
+}]=] editor "${editor}")
+
 # Keep renamed tracks in sync without recreating the arrangement row.
 set(studio_track_name_anchor [=[    if (te::TrackList::isTrack (v))
     {
