@@ -541,6 +541,8 @@ private:
 InspectorDrawer::InspectorDrawer (TrackActions& actions)
     : inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
 {
+    setOpaque (true);
+    setRepaintsOnMouseActivity (true);
     addAndMakeVisible (title);
     title.setText ("Inspector", dontSendNotification);
     title.setFont (FontOptions (14.0f, Font::bold));
@@ -639,6 +641,39 @@ void InspectorDrawer::paint (Graphics& g)
     g.setColour (colours::divider);
     g.drawVerticalLine (0, 0.0f, (float) getHeight());
     g.drawHorizontalLine (appearance.control (40), 0.0f, (float) getWidth());
+    // Dedicated visible resize grip on the left edge.
+    g.setColour (colours::secondary.withAlpha (0.75f));
+    const auto x = (float) appearance.px (3);
+    const auto y = (float) getHeight() * 0.5f;
+    for (int i = -2; i <= 2; ++i)
+        g.fillRoundedRectangle (x, y + i * (float) appearance.px (7),
+                                (float) appearance.px (2), (float) appearance.px (4), 1.0f);
+}
+
+juce::MouseCursor InspectorDrawer::getMouseCursor()
+{
+    return juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+}
+
+void InspectorDrawer::mouseDown (const juce::MouseEvent& event)
+{
+    resizingWidth = event.x <= appearance.px (12);
+    if (resizingWidth)
+    {
+        resizeStartX = event.getScreenX();
+        resizeStartWidth = getWidth();
+    }
+}
+
+void InspectorDrawer::mouseDrag (const juce::MouseEvent& event)
+{
+    if (resizingWidth && onWidthChanged)
+        onWidthChanged (resizeStartWidth + resizeStartX - event.getScreenX());
+}
+
+void InspectorDrawer::mouseUp (const juce::MouseEvent&)
+{
+    resizingWidth = false;
 }
 
 class StudioMixer::Strip final : public Component
