@@ -1190,7 +1190,13 @@ public:
         layoutDock (area);
         arrangementTools = area.removeFromTop (m.control (29));
         auto tools = arrangementTools.reduced (m.px (5), m.px (2));
+       #if JUCE_MAC
+        // Track creation/import commands now live in the native Track/File
+        // menus. Keep only selection, region actions and zoom above the ruler.
+        const bool showAllTrackTools = false;
+       #else
         const bool showAllTrackTools = tools.getWidth() >= m.span (828);
+       #endif
         trackOptions.setBounds (tools.removeFromLeft (m.span (90)).reduced (m.px (2), 0));
         zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
         const int zoomButtonWidth = m.span (32);
@@ -1199,12 +1205,16 @@ public:
         trackMenu.setVisible (! showAllTrackTools);
         if (trackMenu.isVisible())
             trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
-        for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio, &regionActions })
+        for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio })
         {
             button->setVisible (showAllTrackTools);
             if (showAllTrackTools)
                 button->setBounds (tools.removeFromLeft (m.span (button == &addAudio ? 69 : 94)).reduced (m.px (2), 0));
         }
+        // Region editing is used frequently, so retain one discoverable
+        // entry point at narrow as well as full MacBook widths.
+        regionActions.setVisible (true);
+        regionActions.setBounds (tools.removeFromLeft (m.span (100)).reduced (m.px (2), 0));
         trackDetails.setBounds (tools);
 
         rulerRow = area.removeFromTop (m.control (26) + m.control (18));
