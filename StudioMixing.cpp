@@ -755,7 +755,9 @@ public:
         else if (track != nullptr)
         {
             name.setButtonText (track->getName());
-            name.setTooltip (track->getName());
+            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+            name.setTooltip ((icon.isNotEmpty() ? icon + " · " : String()) + track->getName()
+                             + " (select track)");
             auto* instrument = findInstrument (*track);
             const bool wetReturn = spatial::isRoomReturn (*track);
             const auto nextAccent = wetReturn ? colours::roomReturn : track->getColour().interpolatedWith (colours::action, 0.38f);
