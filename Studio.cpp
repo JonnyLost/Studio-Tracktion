@@ -628,6 +628,7 @@ public:
         applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
         setInspectorOpen (inspectorOpen, false);
+        ensureStereoOutputGroup();
         timerCallback();
         startTimerHz (24);
         if (environmentWelcome.showAtLaunch()) environmentWelcome.open (true);
@@ -1244,6 +1245,7 @@ private:
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
     bool inspectorOpen = false;
     int inspectorWidth = 270;
+    int stereoScanTicks = 0;
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
@@ -2111,6 +2113,14 @@ private:
 
     void timerCallback() override
     {
+        // Picking another sound device can recreate Tracktion output groups.
+        // Correct a newly selected mono group only while stopped, never in an audio callback.
+        if (++stereoScanTicks >= 24)
+        {
+            stereoScanTicks = 0;
+            if (edit == nullptr || (! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording()))
+                ensureStereoOutputGroup();
+        }
        #if JUCE_MAC
         updateSeatingVisibility();
        #endif
@@ -3683,6 +3693,27 @@ private:
                         studio.startExternalPlugin (description, target.itemID, false, false);
                     }));
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
+    }
+
+    // JUCE can have both physical output channels active while Tracktion's
+    // virtual default wave output still groups only one channel. That routes
+    // instrument playback to the left output, but the JUCE hardware test still
+    // plays in both ears. Expand only a mono *virtual group* when the active
+    // physical device and Tracktion's description support a stereo pair.
+    void ensureStereoOutputGroup()
+    {
+        auto& devices = engine.getDeviceManager();
+        auto* hardware = devices.deviceManager.getCurrentAudioDevice();
+        if (hardware == nullptr || hardware->getActiveOutputChannels().countNumberOfSetBits() < 2)
+            return;
+        auto* output = devices.getDefaultWaveOutDevice();
+        if (output == nullptr || ! output->isEnabled() || output->getChannels().getNumChannels() != 1)
+            return;
+        if (devices.getPossibleChannelGroupsForDevice (*output, 2).size() < 2)
+            return;
+        Logger::writeToLog ("Studio: repairing mono Tracktion default output group to stereo for "
+                            + output->getName());
+        devices.setDeviceNumChannels (*output, 2);
     }
 
     void showAudioSettings()
