@@ -763,6 +763,24 @@ public:
             identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
+            // Count only user-facing instruments/effects; do not count Studio's
+            // mixer gain, meters, room sends or stage spatial processors.
+            int insertsCount = 0;
+            for (auto* plugin : track->pluginList.getPlugins())
+            {
+                if (plugin == nullptr || dynamic_cast<te::VolumeAndPanPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::LevelMeterPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::AuxSendPlugin*> (plugin) != nullptr
+                    || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr
+                    || plugin->getPluginType() == "studioStagePanV1"
+                    || plugin->getPluginType() == "studioWetRoomV1")
+                    continue;
+                ++insertsCount;
+            }
+            inserts.setButtonText (insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
+            inserts.setTooltip (insertsCount > 0
+                ? String (insertsCount) + " instrument/effect insert(s). Open to edit or remove."
+                : "No instrument/effect inserts. Open to add an effect.");
             int inputCount = 0;
             bool armed = false;
             for (auto* instance : inputs)
