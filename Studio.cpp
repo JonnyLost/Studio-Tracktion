@@ -4623,6 +4623,11 @@ int StudioView::runInterfaceReview (const File& output)
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
     if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
+    // Each macOS menu category must expose at least one real command; keep
+    // menu generation platform-neutral so Linux CI can verify its structure.
+    for (int category = 0; category < 9; ++category)
+        if (applicationMenu (category).getNumItems() == 0)
+            return fail ("native application menu has no commands");
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
