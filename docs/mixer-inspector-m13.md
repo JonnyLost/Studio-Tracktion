@@ -34,3 +34,25 @@ The existing native interface review now captures **mixer-1280x800.png**, **mixe
 Linux + Intel macOS CI results and screenshots should be added to the PR after they actually complete. Physical MacBook/MIDI hardware acceptance remains unverified until the owner tries the build.
 
 **Scope boundary:** This is the first complete Mixer/Inspector layout pass. A deeper mixer redesign (send lanes, user-configurable banking, integrated mixer automation and scalable metering) can follow owner screenshots and feedback. No merge without explicit product-owner approval.
+
+## M13 finishing pass — composer review (November 22, 2026)
+
+The real Intel Mac screenshots highlighted several problems that are resolved on this branch:
+
+1. **Mixer-focused workspace.** Choosing Mixer removes the instrument Performance panel and the articulation strip from the visible lower workspace, but does not unload instruments, change MIDI focus, stop audio, or touch routing. The first switch to Mixer requests a taller split console, keeping a smaller arrangement visible above. MIDI clip selection while the Mixer is active does not unexpectedly force-open Piano Roll. Compact and Expanded remain explicit choices.
+2. **Narrow, functional console channels.** The main strips are approximately 96–105 logical points wide at 100% UI scale (scaling with accessibility options), rather than 120–134. FX and Stage buttons are stacked, and the pan slider becomes a rotary knob with double-click-to-center. Faders and stereo meters keep their own vertical space.
+3. **Selected-track channel strip in Inspector.** The right drawer shows a persistent working fader, stereo meter, pan, track name, color and icon category controls, and visible MIDI input/output information. Selecting a different track follows that track; it does not record-arm or reroute it.
+4. **Track appearance and routing.** The Color menu selects an actual Tracktion track color, and the Icon menu stores an instrument-category label in the track's ValueTree with Undo support. Existing engine/project state loading is preserved. This is an initial category selector, *not* the final per-instrument artwork/icons collection. The expanded **Track Settings** section contains existing input, instrument, effects, sends/Stage, output and ARIA/MIDI details.
+5. **Less clutter.** The Inspector's track settings are collapsed until opened and scroll when necessary. The old Channel workspace remains available under View as a fallback. The Mixer does not display a second instrument panel or a redundant set of channel input selectors.
+
+### Updated acceptance requirements
+
+- Verify the actual native **mixer-focused-1280x800.png** screenshot shows fully visible console faders with only arrangement above and no Performance/Articulation panel below.
+- Verify **right-inspector-1280x800.png** shows the selected channel strip, and **right-inspector-track-settings-1280x800.png** shows the expanded settings. Check **right-inspector-1024x640.png** as well.
+- Verify the MIDI input and clip output labels are accurate for an assigned physical keyboard and a selected MIDI clip; don't infer the plug-in's receive channel from the clip.
+- Change track color and icon; save, reopen and Undo on a disposable project. Make sure the visible name and selected track follow changes. This must not affect MIDI data or audio.
+- In Split mode, select a MIDI clip while viewing Mixer. Mixer must stay visible. Switch to Piano Roll or Instrument and confirm the appropriate panel and its Performance controls return normally.
+- Confirm 1280×800 and 1024×640 layouts, fader movement, centered pan, stereo metering, FX/Stage routing, Master pinning, ARIA save protection, keyboard audition and the metronome/transport.
+- Run Linux and Intel macOS CI. Physical MacBook acceptance is still required.
+
+**Scope boundary:** This completes the specified Milestone 13 Mixer/Inspector pass. More elaborate Logic-like dual channel strips, custom individual instrument graphics, full per-track channel/filter inspector controls, and customization of the *transport bar* are separate milestones; do not imply they are fully implemented here. Retrospective MIDI recording is also separate.
