@@ -989,7 +989,11 @@ public:
         projectMenu.setVisible (true);
         projectMenu.setBounds (commands.removeFromRight (m.span (81)).reduced (m.px (2), 0));
        #endif
+       #if JUCE_MAC
+        const bool showFiles = false; // New/Open live in the native File menu.
+       #else
         const bool showFiles = commands.getWidth() >= m.span (340);
+       #endif
         for (auto* button : { &newProject, &openProject })
         {
             button->setVisible (showFiles);
@@ -1002,11 +1006,16 @@ public:
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
         const int gap = m.px (6);
         const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
-        const int menuW = m.span (76), customizeW = m.span (95), flashbackW = m.span (98), elapsedW = m.span (97);
+        const int menuW = m.span (76), flashbackW = m.span (98), elapsedW = m.span (97);
+       #if JUCE_MAC
+        const int customizeW = 0; // View menu owns transport customization.
+       #else
+        const int customizeW = m.span (95);
+       #endif
         const int optionalButtons = (showTransportCycle ? 1 : 0) + (showTransportClick ? 1 : 0);
         const int readoutBase = barW + (showTransportTempo ? bpmW : 0)
             + (showTransportMeter ? meterW : 0);
-        const int fixed = readoutBase + menuW + customizeW + flashbackW + 4 * gap;
+        const int fixed = readoutBase + menuW + customizeW + flashbackW + 3 * gap;
         const int buttonCount = 4 + optionalButtons;
         const int key = jlimit (m.px (20), m.px (38),
             (strip.getWidth() - fixed - gap - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
