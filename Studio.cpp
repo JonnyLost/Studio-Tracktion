@@ -2002,6 +2002,25 @@ private:
             }));
         if (destructive.isNotEmpty())
             tracks.addSectionHeader (destructive);
+        if (! nested)
+        {
+            PopupMenu headerMenu;
+            for (const auto& option : std::initializer_list<std::pair<const char*, const char*>> {
+                     { "studioHeaderVolume", "Volume mini-fader" },
+                     { "studioHeaderPan", "Pan mini-control" },
+                     { "studioHeaderMeter", "Audio activity meter" } })
+            {
+                const Identifier key (option.first);
+                const bool enabled = (bool) track.state.getProperty (key, false);
+                headerMenu.addItem (option.second, true, enabled,
+                    trackMenuAction (id, [key, enabled] (StudioView&, te::AudioTrack& target)
+                    {
+                        target.state.setProperty (key, ! enabled, &target.edit.getUndoManager());
+                    }));
+            }
+            tracks.addSeparator();
+            tracks.addSubMenu ("Track Header Controls", headerMenu);
+        }
         if (nested)
             parent.addSubMenu ("Track · " + track.getName(), subMenu);
     }
