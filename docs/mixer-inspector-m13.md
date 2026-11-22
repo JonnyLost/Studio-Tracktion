@@ -56,3 +56,7 @@ The real Intel Mac screenshots highlighted several problems that are resolved on
 - Run Linux and Intel macOS CI. Physical MacBook acceptance is still required.
 
 **Scope boundary:** This completes the specified Milestone 13 Mixer/Inspector pass. More elaborate Logic-like dual channel strips, custom individual instrument graphics, full per-track channel/filter inspector controls, and customization of the *transport bar* are separate milestones; do not imply they are fully implemented here. Retrospective MIDI recording is also separate.
+
+### Split height regression fix (November 22)
+
+Linux CI exposed a failure in `StudioInterfaceReview`: switching from Expanded to Split while Mixer was already selected could reuse the previous short dock height, clipping the console. `setDockMode` now reapplies the Mixer minimum height on that transition, using the same minimum imposed when first entering Mixer. This changes only GUI layout policy; no DSP, routing or project file changes. Commit `cd9c752`. **Linux and Intel CI must rerun on this commit before automated acceptance is claimed.**
