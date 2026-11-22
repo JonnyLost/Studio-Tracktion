@@ -3136,6 +3136,60 @@ private:
         {
             showTrackMenu (id, kind, anchor);
         };
+        trackActions.editTrackColour = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy || edit->getTransport().isRecording()) return;
+            auto* target = trackById (id);
+            if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return;
+            PopupMenu menu;
+            constexpr std::array<std::pair<const char*, uint32_t>, 10> palette {{
+                { "Strings blue", 0xff7ba9db }, { "Woodwinds green", 0xff75b8a1 },
+                { "Brass gold", 0xffd2ad70 }, { "Percussion red", 0xffcf8194 },
+                { "Keyboards violet", 0xffa08fd7 }, { "Guitars amber", 0xffc6956a },
+                { "Voice pink", 0xffcf92bd }, { "Audio teal", 0xff55aeb9 },
+                { "Neutral silver", 0xff9caabd }, { "Deep blue", 0xff5978af }
+            }};
+            for (const auto& [name, colour] : palette)
+                menu.addItem (name, true, target->getColour() == Colour (colour),
+                    [safe = Component::SafePointer<StudioView> (this), id, colour]
+                    {
+                        if (safe == nullptr || safe->edit == nullptr || safe->busy
+                            || safe->edit->getTransport().isRecording()) return;
+                        if (auto* track = safe->trackById (id))
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Set track colour");
+                            track->setColour (Colour (colour));
+                            safe->repaint();
+                        }
+                    });
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+        };
+        trackActions.editTrackIcon = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy || edit->getTransport().isRecording()) return;
+            auto* target = trackById (id);
+            if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return;
+            PopupMenu menu;
+            for (const auto& name : { "Strings", "Woodwind", "Brass", "Percussion",
+                                      "Keyboard", "Guitar", "Bass", "Voice", "Synth", "Audio", "Other" })
+            {
+                const auto value = String (name);
+                menu.addItem (value, true,
+                    target->state.getProperty (Identifier ("studioTrackIcon")).toString() == value,
+                    [safe = Component::SafePointer<StudioView> (this), id, value]
+                    {
+                        if (safe == nullptr || safe->edit == nullptr || safe->busy
+                            || safe->edit->getTransport().isRecording()) return;
+                        if (auto* track = safe->trackById (id))
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Set instrument icon");
+                            track->state.setProperty (Identifier ("studioTrackIcon"),
+                                value, &safe->edit->getUndoManager());
+                        }
+                    });
+            }
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+        };
         trackActions.openInstrument = [this] (te::EditItemID id)
         {
             if (! busy)
