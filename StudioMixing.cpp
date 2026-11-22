@@ -251,7 +251,7 @@ ChannelInspector::ChannelInspector (TrackActions& callbacks) : actions (callback
     mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
     {
         if (actions.canChangeMix())
-            if (auto* t = track()) return t->getVolumePlugin();
+            if (auto* t = track()) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
         return {};
     };
 }
@@ -441,7 +441,7 @@ public:
         mix.resolveVolume = [this]() -> te::VolumeAndPanPlugin::Ptr
         {
             if (! actions.canChangeMix || ! actions.canChangeMix()) return {};
-            if (auto* t = trackFor (edit, id)) return t->getVolumePlugin();
+            if (auto* t = trackFor (edit, id)) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
             return {};
         };
     }
@@ -521,6 +521,7 @@ public:
 
     void paint (Graphics& g) override
     {
+        g.fillAll (colours::panel); // Opaque backing: never show the timeline through the drawer.
         g.setColour (colours::control);
         g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), (float) appearance.px (5));
         g.setColour (colours::divider);
@@ -652,7 +653,8 @@ void InspectorDrawer::paint (Graphics& g)
 
 juce::MouseCursor InspectorDrawer::getMouseCursor()
 {
-    return juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    return juce::MouseCursor (getMouseXYRelative().x <= appearance.px (12)
+        ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
 }
 
 void InspectorDrawer::mouseDown (const juce::MouseEvent& event)
@@ -710,7 +712,7 @@ public:
         {
             if (! mixer.actions.canChangeMix() || mixer.edit == nullptr) return {};
             if (masterStrip) return mixer.edit->getMasterVolumePlugin();
-            if (auto* t = trackFor (mixer.edit, id)) return t->getVolumePlugin();
+            if (auto* t = trackFor (mixer.edit, id)) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
             return {};
         };
         for (auto* c : { &inserts, &room, &mute, &solo, &arm })
