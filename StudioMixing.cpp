@@ -405,6 +405,80 @@ void ChannelInspector::paint (Graphics& g)
     }
 }
 
+InspectorDrawer::InspectorDrawer (TrackActions& actions) : inspector (actions)
+{
+    addAndMakeVisible (title);
+    title.setText ("Inspector", dontSendNotification);
+    title.setFont (FontOptions (14.0f, Font::bold));
+    title.setColour (Label::textColourId, colours::text);
+    title.setMinimumHorizontalScale (1.0f);
+    addAndMakeVisible (close);
+    close.setTitle ("Close selected-track Inspector");
+    close.setTooltip ("Hide Inspector and return to the full arrangement");
+    close.onClick = [this] { if (onClose) onClose(); };
+    scroll.setScrollBarsShown (true, false);
+    scroll.setScrollBarThickness (appearance.scrollbar());
+    scroll.setViewedComponent (&inspector, false);
+    addAndMakeVisible (scroll);
+}
+
+InspectorDrawer::~InspectorDrawer()
+{
+    scroll.setViewedComponent (nullptr);
+}
+
+void InspectorDrawer::setEdit (te::Edit* next)
+{
+    inspector.setEdit (next);
+    scroll.setViewPosition (0, 0);
+}
+
+void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
+                               const String& recovery, const te::MidiClip* selectedClip)
+{
+    inspector.refresh (track, ready, canRoute, recovery, selectedClip);
+    title.setText (track != nullptr ? "Inspector · " + track->getName() : "Inspector", dontSendNotification);
+    title.setTooltip (title.getText());
+}
+
+te::EditItemID InspectorDrawer::inspectedTrack() const
+{
+    return inspector.inspectedTrack();
+}
+
+void InspectorDrawer::appearanceChanged()
+{
+    scroll.setScrollBarThickness (appearance.scrollbar());
+    inspector.appearanceChanged();
+    resized();
+    repaint();
+}
+
+void InspectorDrawer::resized()
+{
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (8), m.px (8));
+    auto header = area.removeFromTop (m.control (32));
+    close.setBounds (header.removeFromRight (m.span (60)).reduced (m.px (2), 0));
+    title.setBounds (header);
+    area.removeFromTop (m.px (5));
+    scroll.setBounds (area);
+    const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (2));
+    const int height = jmax (area.getHeight(),
+                             inspector.minimumContentHeight (width) + m.px (30));
+    inspector.setSize (width, height);
+}
+
+void InspectorDrawer::paint (Graphics& g)
+{
+    const auto bounds = getLocalBounds();
+    g.setColour (colours::panel);
+    g.fillRect (bounds);
+    g.setColour (colours::divider);
+    g.drawVerticalLine (0, 0.0f, (float) getHeight());
+    g.drawHorizontalLine (appearance.control (40), 0.0f, (float) getWidth());
+}
+
 class StudioMixer::Strip final : public Component
 {
 public:
