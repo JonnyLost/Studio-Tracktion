@@ -702,8 +702,6 @@ public:
         graphics.drawText ("Tracks", rulerTrackLabel.reduced (m.px (5), 0),
                            Justification::centredLeft);
         auto area = ruler;
-        graphics.drawText ("Inserts", rulerRow.withLeft (area.getRight()).reduced (m.px (8), 0),
-                           Justification::centredLeft);
         if (editor == nullptr)
         {
             graphics.setColour (secondary);
@@ -1016,7 +1014,11 @@ public:
         rulerRow = area.removeFromTop (m.control (26) + m.control (18));
         timeline.setBounds (area);
         sizeEditor();
-        ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (m.trackFooter() + timeline.getScrollBarThickness());
+        // Right-side Tracktion plug-in initials are disabled; the musical
+        // ruler must use the same content width as the arrangement clips.
+        const auto footerWidth = editor != nullptr && editor->getEditViewState().showFooters
+            ? m.trackFooter() : 0;
+        ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
         environmentWelcome.setBounds (getLocalBounds());
         repaint();
@@ -2656,8 +2658,30 @@ private:
 
         editor = std::make_unique<EditComponent> (*edit, selection);
         auto& view = editor->getEditViewState();
-        view.showFooters = true;
+        // The FX menu now lives in the left-hand track header. Retain the
+        // actual plug-in chain but reclaim the old Tracktion footer column.
+        view.showFooters = false;
         view.showMidiDevices = true;
+        view.showStudioTrackFX = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy) return;
+            if (auto* track = trackById (id))
+            {
+                selection.selectOnly (track);
+                showTrackMenu (id, studio::TrackMenu::inserts, anchor);
+            }
+        };
+        view.showStudioTrackMenu = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy) return;
+            if (auto* track = trackById (id))
+            {
+                selection.selectOnly (track);
+                PopupMenu menu;
+                populateTrackEditMenu (menu, *track);
+                menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+            }
+        };
         view.showWaveDevices = true;
         timeline.setViewedComponent (editor.get(), false);
         zoom.onChange();
