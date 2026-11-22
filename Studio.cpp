@@ -967,16 +967,28 @@ public:
         const int transportHeight = jmax (m.control (44, 12), m.transportRowHeight() + m.px (7));
         topBar = area.removeFromTop (projectHeight + transportHeight + m.px (8));
         auto commands = topBar.withHeight (projectHeight).reduced (m.px (10), m.px (2));
+       #if JUCE_MAC
+        performanceMode.setVisible (false);
+        viewButton.setVisible (false);
+        projectMenu.setVisible (false);
+       #else
+        performanceMode.setVisible (true);
+        viewButton.setVisible (true);
         performanceMode.setBounds (commands.removeFromRight (m.span (163)).reduced (m.px (2), 0));
+       #endif
         inspectorButton.setBounds (commands.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+       #if ! JUCE_MAC
         viewButton.setBounds (commands.removeFromRight (m.span (63)).reduced (m.px (2), 0));
+       #endif
         const bool showCPU = commands.getWidth() > m.span (325);
         resources.audio.setVisible (showCPU);
         resources.ram.setVisible (false);
         resources.dropouts.setVisible (false);
         if (showCPU) resources.audio.setBounds (commands.removeFromRight (m.span (68)).reduced (m.px (2), 0));
+       #if ! JUCE_MAC
         projectMenu.setVisible (true);
         projectMenu.setBounds (commands.removeFromRight (m.span (81)).reduced (m.px (2), 0));
+       #endif
         const bool showFiles = commands.getWidth() >= m.span (340);
         for (auto* button : { &newProject, &openProject })
         {
@@ -1026,7 +1038,12 @@ public:
         music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
         row.removeFromLeft (gap);
         flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
+       #if JUCE_MAC
+        transportOptions.setVisible (false);
+       #else
+        transportOptions.setVisible (true);
         transportOptions.setBounds (row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5)));
+       #endif
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
         ariaBanner = ariaReviewPending ? area.removeFromTop (m.control (34)) : Rectangle<int>();
@@ -1349,6 +1366,185 @@ public:
                                                                 studio::appearance.textPercent(), true); });
         menu.addItem ("Reset Appearance", [safe] { if (safe != nullptr) safe->applyAppearance (100, 100, true); });
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&viewButton));
+    }
+
+    // Native macOS menus use the existing action handlers; no duplicate DAW logic.
+    enum MenuAction
+    {
+        mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
+        mMidiExport, mAudioExport, mAudioSettings, mPluginManager, mUndo, mRedo,
+        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
+        mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
+        mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
+        mMidiMonitor, mResources, mScaleUp, mScaleDown, mScaleReset,
+        mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
+        mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
+        mPerformanceFull, mPerformanceArticulation, mPerformanceNone
+    };
+
+    PopupMenu applicationMenu (int index)
+    {
+        PopupMenu menu;
+        const bool project = edit != nullptr;
+        const bool editable = canEditRegions();
+        auto add = [&] (int id, const char* label, bool enabled = true, bool ticked = false)
+        {
+            menu.addItem (id, label, enabled, ticked);
+        };
+        switch (index)
+        {
+            case 0: // File
+                add (mNew, "New Project..."); add (mOpen, "Open Project...");
+                menu.addSeparator();
+                add (mSave, "Save", saveProject.isEnabled());
+                add (mSaveAs, "Save As...", saveAsProject.isEnabled());
+                menu.addSeparator();
+                add (mMidiImport, "Import MIDI...", importMidi.isEnabled());
+                add (mAudioImport, "Import Audio...", importAudio.isEnabled());
+                add (mMidiExport, "Export MIDI...", exportMidi.isEnabled());
+                add (mAudioExport, "Export Audio...", exportWav.isEnabled());
+                menu.addSeparator();
+                add (mAudioSettings, "Audio Settings...");
+                break;
+            case 1: // Edit
+                add (mUndo, "Undo", editable && edit->getUndoManager().canUndo());
+                add (mRedo, "Redo", editable && edit->getUndoManager().canRedo());
+                menu.addSeparator(); add (mRegionActions, "Region Actions...", regionActions.isEnabled());
+                break;
+            case 2: // Track
+                add (mAddInstrument, "New Instrument Track", editable);
+                add (mAddSynth, "New Studio Synth Track", canInsertPlugin());
+                add (mAddSampler, "New Studio Sampler Track", canInsertPlugin());
+                add (mAddAudio, "New Audio Track", editable);
+                add (mAddMidiClip, "New MIDI Clip", addMidiClip.isEnabled());
+                break;
+            case 3: // Navigate
+                add (mRewind, "Return to Start", project);
+                menu.addSeparator();
+                add (mBrowser, "Instrument Browser");
+                add (mPiano, "Piano Roll");
+                add (mStage, "Stage");
+                add (mMixer, "Mixer");
+                break;
+            case 4: // Record
+                add (mRecord, "Record", record.isEnabled());
+                add (mFlashback, "Capture Recent MIDI", project);
+                menu.addSeparator();
+                add (mCycle, "Toggle Cycle", project);
+                add (mClick, "Toggle Metronome", project);
+                break;
+            case 5: // Mix
+                add (mMixer, "Show Mixer");
+                add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                menu.addSeparator();
+                add (mPluginManager, "Plug-in Manager...");
+                add (mAudioSettings, "Audio Settings...");
+                break;
+            case 6: // View
+                add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                add (mEnvironments, "Studio Environments...");
+                menu.addSeparator();
+                add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
+                add (mTransportClick, "Transport: Metronome", true, showTransportClick);
+                add (mTransportElapsed, "Transport: Elapsed Time", true, showTransportElapsed);
+                add (mTransportTempo, "Transport: Tempo", true, showTransportTempo);
+                add (mTransportMeter, "Transport: Time Signature", true, showTransportMeter);
+                add (mTransportReset, "Reset Transport Layout");
+                menu.addSeparator();
+                add (mScaleDown, "Decrease Interface Scale", studio::appearance.interfacePercent() > 100);
+                add (mScaleUp, "Increase Interface Scale", studio::appearance.interfacePercent() < 175);
+                add (mScaleReset, "Reset Appearance");
+                break;
+            case 7: // Window
+                add (mCompact, "Compact Workspace", true, dockMode == DockMode::compact);
+                add (mSplit, "Split Workspace", true, dockMode == DockMode::split);
+                add (mExpanded, "Expanded Workspace", true, dockMode == DockMode::expanded);
+                menu.addSeparator();
+                add (mPerformanceFull, "Performance Panel", true, performanceMode.getSelectedId() == 1);
+                add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
+                add (mPerformanceNone, "Hide Performance Panel", true, performanceMode.getSelectedId() == 3);
+                menu.addSeparator();
+                add (mMidiMonitor, "MIDI Monitor");
+                add (mResources, "Resource Inspector");
+                break;
+            case 8:
+                menu.addSectionHeader ("Studio 0.2");
+                menu.addItem (1, "Studio · native macOS music production", false);
+                break;
+        }
+        return menu;
+    }
+
+    void applicationMenuSelected (int action)
+    {
+        const auto invoke = [] (TextButton& button)
+        {
+            if (button.isEnabled() && button.onClick) button.onClick();
+        };
+        switch (action)
+        {
+            case mNew: invoke (newProject); break;
+            case mOpen: invoke (openProject); break;
+            case mSave: invoke (saveProject); break;
+            case mSaveAs: invoke (saveAsProject); break;
+            case mMidiImport: invoke (importMidi); break;
+            case mAudioImport: invoke (importAudio); break;
+            case mMidiExport: invoke (exportMidi); break;
+            case mAudioExport: invoke (exportWav); break;
+            case mAudioSettings: invoke (audioSettings); break;
+            case mPluginManager: invoke (plugins); break;
+            case mUndo: if (canEditRegions()) edit->undo(); break;
+            case mRedo: if (canEditRegions()) edit->redo(); break;
+            case mAddInstrument: if (canEditRegions()) addTrack ("Instrument"); break;
+            case mAddSynth: invoke (addSynthTrack); break;
+            case mAddSampler: invoke (addSamplerTrack); break;
+            case mAddAudio: invoke (addAudio); break;
+            case mAddMidiClip: invoke (addMidiClip); break;
+            case mRegionActions: invoke (regionActions); break;
+            case mRewind: invoke (rewind); break;
+            case mRecord: invoke (record); break;
+            case mFlashback: invoke (flashbackButton); break;
+            case mCycle: invoke (cycleButton); break;
+            case mClick: invoke (clickButton); break;
+            case mBrowser: showWorkspace (Workspace::instruments); break;
+            case mPiano: showWorkspace (Workspace::piano); break;
+            case mStage: showWorkspace (Workspace::stage); break;
+            case mMixer: showWorkspace (Workspace::mix); break;
+            case mInspector: setInspectorOpen (! inspectorOpen); break;
+            case mEnvironments: environmentWelcome.open (false); break;
+            case mMidiMonitor: invoke (monitorButton); break;
+            case mResources: if (resources.onOpen) resources.onOpen(); break;
+            case mScaleUp: applyAppearance (studio::appearance.adjacentInterfacePercent (1), studio::appearance.textPercent(), true); break;
+            case mScaleDown: applyAppearance (studio::appearance.adjacentInterfacePercent (-1), studio::appearance.textPercent(), true); break;
+            case mScaleReset: applyAppearance (100, 100, true); break;
+            case mCompact: setDockMode (DockMode::compact); break;
+            case mSplit: setDockMode (DockMode::split); break;
+            case mExpanded: setDockMode (DockMode::expanded); break;
+            case mPerformanceFull: performanceMode.setSelectedId (1, sendNotification); break;
+            case mPerformanceArticulation: performanceMode.setSelectedId (2, sendNotification); break;
+            case mPerformanceNone: performanceMode.setSelectedId (3, sendNotification); break;
+            case mTransportCycle: showTransportCycle = ! showTransportCycle; break;
+            case mTransportClick: showTransportClick = ! showTransportClick; break;
+            case mTransportElapsed: showTransportElapsed = ! showTransportElapsed; break;
+            case mTransportTempo: showTransportTempo = ! showTransportTempo; break;
+            case mTransportMeter: showTransportMeter = ! showTransportMeter; break;
+            case mTransportReset:
+                showTransportCycle = showTransportClick = showTransportElapsed = true;
+                showTransportTempo = showTransportMeter = true;
+                break;
+            default: break;
+        }
+        if (action >= mTransportCycle && action <= mTransportReset)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.transportCycle", showTransportCycle);
+            prefs.setValue ("studio.transportClick", showTransportClick);
+            prefs.setValue ("studio.transportElapsed", showTransportElapsed);
+            prefs.setValue ("studio.transportTempo", showTransportTempo);
+            prefs.setValue ("studio.transportMeter", showTransportMeter);
+            prefs.saveIfNeeded();
+            resized();
+        }
     }
 
     void showCommandMenu (TextButton& anchor, std::initializer_list<TextButton*> commands)
@@ -4671,6 +4867,25 @@ namespace studio::spatial { int runSpatialRoutingTest(); }
 namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
 
+// Native macOS system menu bar, with a safe pointer to the current window.
+class StudioApplicationMenu final : public MenuBarModel
+{
+public:
+    Component::SafePointer<StudioView> target;
+    StringArray getMenuBarNames() override
+    {
+        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Help" };
+    }
+    PopupMenu getMenuForIndex (int index, const String&) override
+    {
+        return target != nullptr ? target->applicationMenu (index) : PopupMenu();
+    }
+    void menuItemSelected (int id, int) override
+    {
+        if (target != nullptr) target->applicationMenuSelected (id);
+    }
+};
+
 class StudioApplication final : public JUCEApplication
 {
     class Window final : public DocumentWindow
@@ -4789,8 +5004,19 @@ public:
         ignoreUnused (commandLine);
        #endif
         window = std::make_unique<Window>();
+       #if JUCE_MAC
+        appMenu.target = static_cast<StudioView*> (window->getContentComponent());
+        MenuBarModel::setMacMainMenu (&appMenu);
+       #endif
     }
-    void shutdown() override { window.reset(); }
+    void shutdown() override
+    {
+       #if JUCE_MAC
+        MenuBarModel::setMacMainMenu (nullptr);
+        appMenu.target = nullptr;
+       #endif
+        window.reset();
+    }
     void systemRequestedQuit() override
     {
         if (window != nullptr)
@@ -4798,6 +5024,7 @@ public:
     }
 
 private:
+    StudioApplicationMenu appMenu;
     std::unique_ptr<Window> window;
 };
 
