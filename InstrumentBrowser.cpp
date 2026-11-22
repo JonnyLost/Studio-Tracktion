@@ -52,6 +52,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
 {
     if (preferences != nullptr)
     {
+        preferredDetailsWidth = jlimit (180, 420, preferences->getIntValue ("studio.browserDetailsWidth", 258));
         const auto parsed = JSON::parse (preferences->getValue ("studio.browserFavourites", "[]"));
         if (auto* array = parsed.getArray())
             for (const auto& value : *array)
@@ -453,7 +454,9 @@ void InstrumentBrowser::resized()
     }
     else
     {
-        detailPanel = area.removeFromRight (jmin (area.getWidth() / 2, m.span (258)));
+        const int maxWidth = jmax (m.span (180), jmin (m.span (420), area.getWidth() / 2));
+        detailPanel = area.removeFromRight (jlimit (m.span (180), maxWidth,
+                                                   m.px (preferredDetailsWidth)));
         if (! compactFamilyFilter) familyList.setBounds (area.removeFromLeft (m.span (110)));
         if (! compact) typeList.setBounds (area.removeFromLeft (m.span (120)));
         resultList.setBounds (area);
@@ -471,6 +474,44 @@ void InstrumentBrowser::resized()
     art = detail.reduced (m.px (2), m.px (1));
 }
 
+MouseCursor InstrumentBrowser::getMouseCursor()
+{
+    if (! appearance.stackedBrowserDetails (getWidth())
+        && std::abs (getMouseXYRelative().x - detailPanel.getX()) <= appearance.px (8))
+        return MouseCursor (MouseCursor::LeftRightResizeCursor);
+    return MouseCursor (MouseCursor::NormalCursor);
+}
+
+void InstrumentBrowser::mouseDown (const MouseEvent& event)
+{
+    resizingDetails = ! appearance.stackedBrowserDetails (getWidth())
+                   && std::abs (event.x - detailPanel.getX()) <= appearance.px (8);
+    if (resizingDetails)
+    {
+        resizeStartX = event.getScreenX();
+        resizeStartWidth = preferredDetailsWidth;
+    }
+}
+
+void InstrumentBrowser::mouseDrag (const MouseEvent& event)
+{
+    if (! resizingDetails) return;
+    preferredDetailsWidth = jlimit (180, 420, resizeStartWidth + resizeStartX - event.getScreenX());
+    resized();
+    repaint();
+}
+
+void InstrumentBrowser::mouseUp (const MouseEvent&)
+{
+    if (! resizingDetails) return;
+    resizingDetails = false;
+    if (preferences != nullptr)
+    {
+        preferences->setValue ("studio.browserDetailsWidth", preferredDetailsWidth);
+        preferences->saveIfNeeded();
+    }
+}
+
 void InstrumentBrowser::paint (Graphics& g)
 {
     const auto detail = detailPanel.toFloat().reduced (0.5f);
@@ -478,6 +519,15 @@ void InstrumentBrowser::paint (Graphics& g)
     g.fillRoundedRectangle (detail, (float) appearance.px (5));
     g.setColour (colours::divider);
     g.drawRoundedRectangle (detail, (float) appearance.px (5), 0.75f);
+    if (! appearance.stackedBrowserDetails (getWidth()) && ! detailPanel.isEmpty())
+    {
+        const float x = (float) detailPanel.getX() + 2.0f;
+        const float mid = (float) detailPanel.getCentreY();
+        g.setColour (colours::secondary.withAlpha (0.72f));
+        for (int i = -2; i <= 2; ++i)
+            g.fillRoundedRectangle (x, mid + i * (float) appearance.px (7),
+                                    (float) appearance.px (2), (float) appearance.px (4), 1.0f);
+    }
     if (const auto* e = selected(); e && art.getHeight() > 8)
     {
         g.setColour (colours::well);
