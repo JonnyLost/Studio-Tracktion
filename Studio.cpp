@@ -259,6 +259,55 @@ private:
     }
 };
 
+// A compact landing window for existing Studio settings; it does not replace
+// or reconfigure the established audio and plug-in systems.
+class StudioSettingsHub final : public Component
+{
+public:
+    std::function<void()> openAudio, openPlugins, openMidi, restoreAppearance;
+    StudioSettingsHub()
+    {
+        for (auto* item : { &heading, &detail, &audioInfo, &pluginInfo, &midiInfo, &visualInfo })
+            addAndMakeVisible (*item);
+        for (auto* button : { &audio, &plugins, &midi, &appearance })
+            addAndMakeVisible (*button);
+        heading.setText ("Studio Settings", dontSendNotification);
+        heading.setFont (FontOptions (18.0f, Font::bold));
+        detail.setText ("Existing preferences and diagnostics", dontSendNotification);
+        audioInfo.setText ("Audio output, input and stereo channels", dontSendNotification);
+        pluginInfo.setText ("Audio Unit inventory and scanning", dontSendNotification);
+        midiInfo.setText ("MIDI devices and activity", dontSendNotification);
+        visualInfo.setText ("Restore interface and text sizing", dontSendNotification);
+        for (auto* label : { &detail, &audioInfo, &pluginInfo, &midiInfo, &visualInfo })
+            label->setColour (Label::textColourId, studio::colours::secondary);
+        audio.onClick = [this] { if (openAudio) openAudio(); };
+        plugins.onClick = [this] { if (openPlugins) openPlugins(); };
+        midi.onClick = [this] { if (openMidi) openMidi(); };
+        appearance.onClick = [this] { if (restoreAppearance) restoreAppearance(); };
+    }
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (16);
+        heading.setBounds (area.removeFromTop (32));
+        detail.setBounds (area.removeFromTop (34));
+        area.removeFromTop (8);
+        const auto place = [&] (TextButton& button, Label& label)
+        {
+            auto row = area.removeFromTop (54);
+            button.setBounds (row.removeFromLeft (152).reduced (2, 8));
+            label.setBounds (row.reduced (10, 6));
+        };
+        place (audio, audioInfo);
+        place (plugins, pluginInfo);
+        place (midi, midiInfo);
+        place (appearance, visualInfo);
+    }
+private:
+    Label heading, detail, audioInfo, pluginInfo, midiInfo, visualInfo;
+    TextButton audio { "Audio..." }, plugins { "Plug-ins..." },
+               midi { "MIDI Monitor..." }, appearance { "Reset Appearance" };
+};
+
 class StudioView final : public Component, private Timer
 {
 public:
@@ -1447,7 +1496,7 @@ public:
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp
+        mAboutStudio, mKeyboardHelp, mSettings
     };
 
     PopupMenu applicationMenu (int index)
@@ -1473,6 +1522,7 @@ public:
                 add (mAudioExport, "Export Audio...", exportWav.isEnabled());
                 menu.addSeparator();
                 add (mAudioSettings, "Audio Settings...");
+                add (mSettings, "Studio Settings...");
                 break;
             case 1: // Edit
                 add (mUndo, "Undo", editable && edit->getUndoManager().canUndo());
@@ -1511,6 +1561,7 @@ public:
             case 6: // View
                 add (mInspector, "Selected Track Inspector", project, inspectorOpen);
                 add (mEnvironments, "Studio Environments...");
+                add (mSettings, "Studio Settings...");
                 menu.addSeparator();
                 add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
                 add (mTransportClick, "Transport: Metronome", true, showTransportClick);
@@ -1561,6 +1612,7 @@ public:
             case mAudioExport: invoke (exportWav); break;
             case mAudioSettings: invoke (audioSettings); break;
             case mPluginManager: invoke (plugins); break;
+            case mSettings: showStudioSettings(); break;
             case mUndo: if (canEditRegions()) edit->undo(); break;
             case mRedo: if (canEditRegions()) edit->redo(); break;
             case mAddInstrument: if (canEditRegions()) addTrack ("Instrument"); break;
@@ -4157,6 +4209,32 @@ private:
         Logger::writeToLog ("Studio: repairing mono Tracktion default output group to stereo for "
                             + output->getName());
         devices.setDeviceNumChannels (*output, 2);
+    }
+
+    void showStudioSettings()
+    {
+        DialogWindow::LaunchOptions options;
+        options.dialogTitle = "Studio Settings";
+        options.dialogBackgroundColour = studio::colours::canvas;
+        options.escapeKeyTriggersCloseButton = true;
+        options.useNativeTitleBar = true;
+        options.resizable = false;
+        auto panel = std::make_unique<StudioSettingsHub>();
+        const Component::SafePointer<StudioView> safe (this);
+        panel->openAudio = [safe] { if (safe != nullptr) safe->showAudioSettings(); };
+        panel->openPlugins = [safe] { if (safe != nullptr) safe->showPlugins(); };
+        panel->openMidi = [safe]
+        {
+            if (safe != nullptr && safe->monitorButton.onClick)
+                safe->monitorButton.onClick();
+        };
+        panel->restoreAppearance = [safe]
+        {
+            if (safe != nullptr) safe->applyAppearance (100, 100, true);
+        };
+        options.content.setOwned (panel.release());
+        options.content->setSize (jmin (getWidth() - 30, 510), 310);
+        options.launchAsync();
     }
 
     void showAudioSettings()
