@@ -60,3 +60,13 @@ The real Intel Mac screenshots highlighted several problems that are resolved on
 ### Split height regression fix (November 22)
 
 Linux CI exposed a failure in `StudioInterfaceReview`: switching from Expanded to Split while Mixer was already selected could reuse the previous short dock height, clipping the console. `setDockMode` now reapplies the Mixer minimum height on that transition, using the same minimum imposed when first entering Mixer. This changes only GUI layout policy; no DSP, routing or project file changes. Commit `cd9c752`. **Linux and Intel CI must rerun on this commit before automated acceptance is claimed.**
+
+## M13.1 refinement — MacBook feedback (November 22)
+
+- The right Inspector now starts at 270 logical points and supports dragging its **left edge** to resize, with a constrained 205–510 point range and stored width preference. Its backing is painted as opaque to prevent the timeline from showing through.
+- The channel strip paint has a solid background and the Inspector uses an explicit left-edge grip and horizontal-resize cursor.
+- Mixer, Channel and right Inspector pan/volume edits now select the **same last gain/pan processor they display**, rather than reading the last processor but writing an earlier processor when there are multiple. This addresses a plausible source of the reported inert pan; confirm actual stereo pan acoustically on hardware before declaring it resolved.
+- Right-click an arrangement track header → **Track Header Controls** to independently enable compact Volume, Pan and Audio activity mini-controls. They read and edit Tracktion track state (with Undo) and follow the same gain/pan processor as the main Mixer. The mini meter reads the existing level-meter plug-in without a new audio callback. Per-track options are persisted within the project; inactive headers do not poll.
+- Header mini-controls are designed to fit under the existing I/A/M/S/FX buttons inside current arrangement track height. Review at 100% and larger UI/text scales for target size and clipping; further sizing may need refinement from native screenshots.
+
+**Validation gate:** The code changes are committed to this *unmerged* draft branch, but the latest Linux/Intel macOS CI and real MacBook test are required before claiming acceptance. Specifically test an ARIA track with both headphones / stereo output, pan hard left and right, and verify changing pan in the mixer and header updates the Inspector value, audio position and Undo. Confirm the background is opaque, resizing persists, and enabling mini controls on one track does not change another track's header.
