@@ -540,7 +540,7 @@ private:
 };
 
 InspectorDrawer::InspectorDrawer (TrackActions& actions)
-    : inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
+    : actions (actions), inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
 {
     setOpaque (true);
     setRepaintsOnMouseActivity (true);
@@ -560,6 +560,13 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     addAndMakeVisible (scroll);
     addAndMakeVisible (*channelStrip);
     addAndMakeVisible (details);
+    addAndMakeVisible (quickFx);
+    quickFx.setTooltip ("Open, edit or safely remove the selected track's instrument and effects");
+    quickFx.onClick = [this]
+    {
+        if (inspector.inspectedTrack().isValid() && actions.showMenu)
+            actions.showMenu (inspector.inspectedTrack(), TrackMenu::inserts, quickFx);
+    };
     details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
     details.onClick = [this]
     {
@@ -620,7 +627,9 @@ void InspectorDrawer::resized()
     const int channelHeight = jmin (m.span (278), jmax (m.span (223), area.getHeight() * 61 / 100));
     channelStrip->setBounds (area.removeFromTop (jmin (channelHeight, area.getHeight())));
     area.removeFromTop (m.px (4));
-    details.setBounds (area.removeFromTop (m.control (26, 11)));
+    auto settingsRow = area.removeFromTop (m.control (26, 11));
+    quickFx.setBounds (settingsRow.removeFromRight (m.span (58)).reduced (m.px (2), 0));
+    details.setBounds (settingsRow);
     details.setButtonText (detailsOpen ? "Track Settings  v" : "Track Settings  >");
     area.removeFromTop (m.px (3));
     scroll.setVisible (detailsOpen);
