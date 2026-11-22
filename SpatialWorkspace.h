@@ -43,6 +43,7 @@ public:
     void itemDropped (const SourceDetails&) override;
     void display (std::vector<Marker>, juce::String selected, bool microphones, Seating);
     void paint (juce::Graphics&) override;
+    void mouseMove (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
