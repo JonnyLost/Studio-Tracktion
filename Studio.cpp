@@ -2114,7 +2114,10 @@ private:
             trackNames = std::move (names);
         trackOptions.setEnabled (ready && workflowTrack() != nullptr);
         trackDetails.setColour (Label::textColourId, recording ? studio::colours::record : studio::colours::secondary);
+        const bool focusNeedsAttention = midiFocusStatus.contains ("record-armed")
+            || midiFocusStatus.contains ("multi-track") || midiFocusStatus.contains ("Release ");
         trackDetails.setText (recording ? String ("Recording")
+            : focusNeedsAttention ? midiFocusStatus
             : workflowTrack() != nullptr && midiFocus.isFollowing (workflowTrack()->itemID) ? midiFocusStatus
             : track == nullptr ? String (trackNames.size()) + " tracks"
             : EngineHelpers::isTrackArmed (*track) ? "Record armed"
