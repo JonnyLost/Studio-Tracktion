@@ -1119,23 +1119,38 @@ public:
        #else
         const int customizeW = m.span (95);
        #endif
-        const int optionalButtons = (showTransportCycle ? 1 : 0) + (showTransportClick ? 1 : 0);
-        const int readoutBase = barW + (showTransportTempo ? bpmW : 0)
-            + (showTransportMeter ? meterW : 0);
-        const int fixed = readoutBase + menuW + customizeW + flashbackW + 3 * gap;
+        // Responsive transport: playback and record remain reachable at
+        // 1024-wide MacBook sizes even with large accessibility text. Hidden
+        // controls retain their persisted preferences and native menu actions.
+        const int availableWidth = strip.getWidth();
+        const bool showCycle = showTransportCycle && availableWidth >= m.span (740);
+        const bool showClick = showTransportClick && availableWidth >= m.span (780);
+        const bool showTempo = showTransportTempo && availableWidth >= m.span (580);
+        const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
+        const bool showMusicMenu = availableWidth >= m.span (610);
+        const bool showFlashback = availableWidth >= m.span (830);
+        const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
+        const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
+        const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
+        const int secondaryWidth = (showMusicMenu ? menuW + gap : 0)
+                                 + (showFlashback ? flashbackW + gap : 0)
+                                 + (showCustomize ? customizeW : 0);
+        const int fixed = readoutBase + secondaryWidth + 2 * gap;
         const int buttonCount = 4 + optionalButtons;
         const int key = jlimit (m.px (20), m.px (38),
-            (strip.getWidth() - fixed - gap - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
-        const bool hasElapsedRoom = fixed + buttonCount * key + gap + elapsedW <= strip.getWidth();
-        const bool showElapsed = showTransportElapsed && hasElapsedRoom;
+            (availableWidth - fixed - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
+        const bool showElapsed = showTransportElapsed
+            && fixed + buttonCount * key + elapsedW <= availableWidth;
         position.setVisible (showElapsed);
-        tempo.setVisible (showTransportTempo);
-        meter.setVisible (showTransportMeter);
-        cycleButton.setVisible (showTransportCycle);
-        clickButton.setVisible (showTransportClick);
+        tempo.setVisible (showTempo);
+        meter.setVisible (showMeter);
+        cycleButton.setVisible (showCycle);
+        clickButton.setVisible (showClick);
+        music.setVisible (showMusicMenu);
+        flashbackButton.setVisible (showFlashback);
         const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
-        auto row = strip.withSizeKeepingCentre (fixed + buttonCount * key + gap
-            + (showElapsed ? elapsedW : 0), transportHeight);
+        const int totalWidth = fixed + buttonCount * key + (showElapsed ? elapsedW : 0);
+        auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
         for (auto* button : { &rewind, &stop, &play, &record })
             button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
         row.removeFromLeft (gap);
@@ -1149,16 +1164,26 @@ public:
         bars.setBounds (lcd.removeFromLeft (barW - gap / 2));
         position.setBounds (showElapsed ? lcd.removeFromLeft (elapsedW) : Rectangle<int>());
         tempo.setBounds (showTransportTempo ? lcd.removeFromLeft (bpmW) : Rectangle<int>());
-        meter.setBounds (showTransportMeter ? lcd : Rectangle<int>());
-        row.removeFromLeft (gap);
-        music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
-        row.removeFromLeft (gap);
-        flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
+        meter.setBounds (showMeter ? lcd : Rectangle<int>());
+        if (showMusicMenu)
+        {
+            row.removeFromLeft (gap);
+            music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
+        }
+        else music.setBounds ({});
+        if (showFlashback)
+        {
+            row.removeFromLeft (gap);
+            flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
+        }
+        else flashbackButton.setBounds ({});
        #if JUCE_MAC
         transportOptions.setVisible (false);
        #else
-        transportOptions.setVisible (true);
-        transportOptions.setBounds (row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5)));
+        transportOptions.setVisible (showCustomize);
+        transportOptions.setBounds (showCustomize
+            ? row.removeFromLeft (customizeW).reduced (m.px (1), m.px (5))
+            : Rectangle<int>());
        #endif
 
         message.setBounds (area.removeFromBottom (m.line (13, 5)).reduced (m.px (10), 0));
