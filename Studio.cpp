@@ -4017,6 +4017,44 @@ int StudioView::runInterfaceReview (const File& output)
         MessageManager::getInstance()->runDispatchLoopUntil (50);
     if (! arrangementReady()) return fail ("arrangement rows and regions did not load");
     timerCallback();
+    // A compact composer rail must expose only distinct destinations.
+    // Stage sub-pages, instrument detail, and diagnostics remain reachable
+    // through their owning workspace or View, never a duplicate More menu.
+    if (railContent.getNumChildComponents() != (int) railItems().size())
+        return fail ("composer navigation contains redundant rail destinations");
+    setDockMode (DockMode::split);
+    showWorkspace (Workspace::stage);
+    if (! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
+        || contextLinks()[0].destination != Workspace::rooms
+        || contextLinks()[1].destination != Workspace::microphones)
+        return fail ("Stage exposes Rooms and Microphones");
+    for (auto target : { Workspace::rooms, Workspace::microphones })
+    {
+        showWorkspace (target);
+        if (! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
+            || workspaceTitle.getText().isEmpty())
+            return fail ("Stage subview remains in Stage navigation");
+    }
+   #if JUCE_MAC
+    showWorkspace (Workspace::stage);
+    if (! spatialWorkspace.onOpenSeating)
+        return fail ("Arrangement Reference remains available from Stage");
+    spatialWorkspace.onOpenSeating();
+    if (! stageButton.getToggleState() || ! seatingWorkspace.isVisible())
+        return fail ("Arrangement Reference stays within Stage");
+   #endif
+    showWorkspace (Workspace::instrumentEditor);
+    if (! instrumentsButton.getToggleState() || workspaceTitle.getText() != "Instrument Editor")
+        return fail ("Instrument Editor stays under Instruments");
+    if (resources.onOpen)
+        resources.onOpen();
+    if (! resources.isVisible() || workspaceTitle.getText() != "Resource Inspector"
+        || stageButton.getToggleState())
+        return fail ("Resource Inspector remains available from View");
+    monitorButton.onClick();
+    if (! monitor.isVisible() || workspaceTitle.getText() != "MIDI Monitor")
+        return fail ("MIDI Monitor remains available from View");
+    showWorkspace (Workspace::closed);
     for (auto scale : studio::AppearanceMetrics::interfaceOptions)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {
