@@ -47,8 +47,17 @@ void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, Colou
 }
 }
 
-InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
+InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* prefs)
+    : known (source), preferences (prefs)
 {
+    if (preferences != nullptr)
+    {
+        const auto parsed = JSON::parse (preferences->getValue ("studio.browserFavourites", "[]"));
+        if (auto* array = parsed.getArray())
+            for (const auto& value : *array)
+                if (value.isString())
+                    favouriteKeys.addIfNotAlreadyThere (value.toString());
+    }
     for (auto* list : { &familyList, &typeList, &resultList })
     {
         list->setColour (ListBox::backgroundColourId, colours::canvas);
@@ -62,7 +71,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
              &search, &compactFamily, &compactType, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add })
+             &explanation, &status, &count, &load, &add, &favourite, &favouritesFilter })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
@@ -100,6 +109,26 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source) : known (source)
     load.onClick = [this] { loadSelected (false); };
     add.onClick = [this] { loadSelected (true); };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
+    favourite.setTooltip ("Mark this instrument as a favorite or remove its favorite");
+    favourite.onClick = [this]
+    {
+        if (const auto* entry = selected())
+        {
+            if (favouriteKeys.contains (entry->key))
+                favouriteKeys.removeString (entry->key);
+            else
+                favouriteKeys.addIfNotAlreadyThere (entry->key);
+            saveFavourites();
+            rebuildResults();
+        }
+    };
+    favouritesFilter.setClickingTogglesState (true);
+    favouritesFilter.setTooltip ("Show only favorite instruments");
+    favouritesFilter.onClick = [this]
+    {
+        favouritesOnly = favouritesFilter.getToggleState();
+        rebuildResults();
+    };
     appearanceChanged();
     known.addChangeListener (this);
     rebuildCatalog();
@@ -110,6 +139,16 @@ InstrumentBrowser::~InstrumentBrowser()
     known.removeChangeListener (this);
     for (auto* list : { &familyList, &typeList, &resultList })
         list->setModel (nullptr);
+}
+
+void InstrumentBrowser::saveFavourites()
+{
+    if (preferences == nullptr) return;
+    Array<var> keys;
+    for (const auto& key : favouriteKeys)
+        keys.add (var (key));
+    preferences->setValue ("studio.browserFavourites", JSON::toString (var (keys), true));
+    preferences->saveIfNeeded();
 }
 
 void InstrumentBrowser::changeListenerCallback (ChangeBroadcaster*) { rebuildCatalog(); }
@@ -195,7 +234,8 @@ void InstrumentBrowser::rebuildResults()
     for (size_t i = 0; i < entries.size(); ++i)
     {
         const auto& e = entries[i];
-        if ((family != "All Instruments" && family != e.family) || (type != "All Types" && type != e.type))
+        if ((family != "All Instruments" && family != e.family) || (type != "All Types" && type != e.type)
+            || (favouritesOnly && ! favouriteKeys.contains (e.key)))
             continue;
         if (query.isNotEmpty() && ! (e.name + " " + e.family + " " + e.type + " " + e.vendor).containsIgnoreCase (query))
             continue;
@@ -260,6 +300,9 @@ void InstrumentBrowser::updateDetails()
     const auto* e = selected();
     const bool available = e != nullptr && e->available;
     instrumentName.setText (e != nullptr ? e->name : "No results", dontSendNotification);
+    favourite.setEnabled (e != nullptr);
+    favourite.setButtonText (e != nullptr && favouriteKeys.contains (e->key)
+                             ? "★ Favorited" : "☆ Favorite");
     vendor.setText (e != nullptr ? e->vendor : String(), dontSendNotification);
     vendor.setTooltip (vendor.getText());
     instrumentName.setTooltip (instrumentName.getText());
@@ -291,7 +334,8 @@ String InstrumentBrowser::Rows::getNameForRow (int row)
     if (! isPositiveAndBelow (row, getNumRows())) return {};
     if (kind != results) return (kind == families ? browser.families : browser.types)[row];
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    return entry.name + ", " + entry.type + ", " + (entry.available ? "available"
+    return (browser.favouriteKeys.contains (entry.key) ? "Favorite: " : String())
+             + entry.name + ", " + entry.type + ", " + (entry.available ? "available"
              : entry.family == "Studio" ? "planned" : "unavailable");
 }
 
@@ -380,6 +424,7 @@ void InstrumentBrowser::resized()
     auto area = getLocalBounds().reduced (m.px (8), m.px (2));
     auto toolbar = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
     manage.setBounds (toolbar.removeFromRight (m.span (95)));
+    favouritesFilter.setBounds (toolbar.removeFromRight (m.span (88)).reduced (m.px (2), 0));
     const bool compactFamilyFilter = m.browserFilterRow (getWidth());
     compact = m.compactBrowser (getWidth());
     const bool stackDetails = m.stackedBrowserDetails (getWidth());
@@ -417,6 +462,7 @@ void InstrumentBrowser::resized()
     load.setButtonText (shortActions ? "Load on Track" : "Load on Selected Track");
     auto detail = detailPanel.reduced (m.px (8), m.px (2));
     add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    favourite.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     load.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     explanation.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
     vendor.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
