@@ -451,6 +451,11 @@ public:
             addChildComponent (link);
             link.onClick = [this, index]
             {
+                if (contextLinks()[index].destination == Workspace::channel)
+                {
+                    setInspectorOpen (true);
+                    return;
+                }
                 showWorkspace (contextLinks()[index].destination);
                 if (workspaceLinks[index].isVisible())
                     workspaceLinks[index].grabKeyboardFocus();
@@ -1037,9 +1042,11 @@ public:
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
         const int inspectorWidth = jmin (m.span (332), jmax (m.span (235), inspectorRegion.getWidth() * 38 / 100));
+        // Keep timeline zoom and track actions accessible above the overlay.
+        const int inspectorTop = arrangementTools.getBottom();
         inspectorDrawer.setBounds (inspectorOpen
-            ? Rectangle<int> (inspectorRegion.getRight() - inspectorWidth, inspectorRegion.getY(),
-                              inspectorWidth, inspectorRegion.getHeight())
+            ? Rectangle<int> (inspectorRegion.getRight() - inspectorWidth, inspectorTop,
+                              inspectorWidth, jmax (0, inspectorRegion.getBottom() - inspectorTop))
             : Rectangle<int>());
         inspectorDrawer.setVisible (inspectorOpen);
         if (inspectorOpen) inspectorDrawer.toFront (false);
@@ -1156,7 +1163,9 @@ public:
         });
         menu.addItem ("Classic Channel Workspace (temporary)", [safe]
         {
-            if (safe != nullptr) safe->showWorkspace (Workspace::channel);
+            if (safe == nullptr) return;
+            safe->setInspectorOpen (false);
+            safe->showWorkspace (Workspace::channel);
         });
         menu.addSeparator();
         PopupMenu diagnostics;
@@ -1366,7 +1375,7 @@ private:
             case Workspace::stage:       return {{ { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::rooms:       return {{ { Workspace::stage, "Stage" }, { Workspace::microphones, "Microphones" } }};
             case Workspace::microphones: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
-            case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Channel" } }};
+            case Workspace::instrumentEditor: return {{ { Workspace::instruments, "Browser" }, { Workspace::channel, "Inspector" } }};
             case Workspace::orchestraSeating: return {{ { Workspace::stage, "Stage" }, { Workspace::rooms, "Rooms" } }};
             case Workspace::channel:     return {{ { Workspace::instruments, "Instruments" }, { Workspace::stage, "Stage" } }};
             default:                    return {{ { Workspace::closed, "" }, { Workspace::closed, "" } }};
