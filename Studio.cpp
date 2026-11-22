@@ -243,7 +243,7 @@ public:
         projectMenu.onClick = [this]
         {
             showCommandMenu (projectMenu, { &newProject, &openProject, &saveProject, &saveAsProject,
-                                           &audioSettings, &plugins, &monitorButton, &importMidi, &exportMidi, &exportWav });
+                                           &audioSettings, &plugins, &importMidi, &exportMidi, &exportWav });
         };
         trackMenu.onClick = [this]
         {
@@ -417,8 +417,11 @@ public:
                 toggleWorkspace (Workspace::articulations);
             }
         };
-        railContent.addAndMakeVisible (moreButton);
-        moreButton.onClick = [this] { showMoreWorkspaces(); };
+        // The rail contains real composer destinations only. Stage subviews
+        // live in its workspace header; diagnostics live under View.
+        // Reserve the remaining rail space for actual future composing tools.
+        stageButton.setTooltip ("Orchestral Stage | Rooms, Virtual Microphones and Arrangement Reference");
+        instrumentsButton.setTooltip ("Instrument browser | Open the selected instrument from its own editor");
         addAndMakeVisible (closeWorkspace);
         closeWorkspace.onClick = [this]
         {
@@ -445,7 +448,7 @@ public:
                 if (workspaceLinks[index].isVisible())
                     workspaceLinks[index].grabKeyboardFocus();
                 else
-                    moreButton.grabKeyboardFocus();
+                    viewButton.grabKeyboardFocus();
             };
         }
         workspaceSummary.setColour (Label::textColourId, studio::colours::secondary);
@@ -981,14 +984,14 @@ public:
         railBounds = area.removeFromLeft (m.span (getWidth() < m.px (1100) ? 76 : 80));
         railViewport.setBounds (railBounds);
         const int tileHeight = m.px (50) + m.line (11, 1) - m.px (14);
-        railContent.setSize (railViewport.getMaximumVisibleWidth(), tileHeight * 7 + m.px (8));
+        railContent.setSize (railViewport.getMaximumVisibleWidth(),
+                             tileHeight * (int) railItems().size() + m.px (8));
         // Reserve the scrollbar only when the complete rail needs it.
         if (railContent.getHeight() > railBounds.getHeight())
             railContent.setSize (jmax (1, railBounds.getWidth() - railViewport.getScrollBarThickness()), railContent.getHeight());
         auto destinations = railContent.getLocalBounds().reduced (m.px (3), m.px (4));
         for (const auto& item : railItems())
             item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
-        moreButton.setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
         layoutPerformance (area);
         layoutDock (area);
@@ -1109,8 +1112,16 @@ public:
             if (safe != nullptr) safe->environmentWelcome.open (false);
         });
         menu.addSeparator();
-        menu.addItem ("Resource Inspector", [safe] { if (safe != nullptr) safe->resources.onOpen(); });
-        menu.addItem ("MIDI Monitor", [safe] { if (safe != nullptr) safe->monitorButton.onClick(); });
+        PopupMenu diagnostics;
+        diagnostics.addItem ("MIDI Monitor", [safe]
+        {
+            if (safe != nullptr) safe->monitorButton.onClick();
+        });
+        diagnostics.addItem ("Resource Inspector", [safe]
+        {
+            if (safe != nullptr) safe->resources.onOpen();
+        });
+        menu.addSubMenu ("Diagnostics", diagnostics);
         menu.addItem ("MIDI Keyboard Follows Selected Track", true, followSelectedMidi, [safe]
         {
             if (safe == nullptr) return;
@@ -1227,12 +1238,11 @@ private:
     StringArray trackNames;
     TextButton arrangementZoomOut { "-" }, arrangementZoomIn { "+" };
     studio::RailButton instrumentsButton { "Instruments", studio::RailIcon::instruments },
-                       channelButton { "Channel", studio::RailIcon::channel },
-                       stageButton { "Stage", studio::RailIcon::stage },
-                       articulationsButton { "Articulations", studio::RailIcon::articulations },
                        pianoButton { "Piano Roll", studio::RailIcon::piano },
+                       articulationsButton { "Articulations", studio::RailIcon::articulations },
+                       stageButton { "Stage", studio::RailIcon::stage },
                        mixButton { "Mixer", studio::RailIcon::mixer },
-                       moreButton { "More", studio::RailIcon::more };
+                       channelButton { "Channel", studio::RailIcon::channel };
     TextButton compactButton { "Compact" }, splitButton { "Split" },
                expandedButton { "Expanded" }, closeWorkspace { "Hide" };
     std::array<TextButton, 2> workspaceLinks;
@@ -1289,9 +1299,11 @@ private:
 
     std::array<RailItem, 6> railItems()
     {
-        return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::channel, &channelButton },
-                  { Workspace::stage, &stageButton }, { Workspace::articulations, &articulationsButton },
-                  { Workspace::piano, &pianoButton }, { Workspace::mix, &mixButton } }};
+        // Order by a composer's most common tasks. Channel remains available
+        // until it is replaced by the separately planned right-side Inspector.
+        return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::piano, &pianoButton },
+                  { Workspace::articulations, &articulationsButton }, { Workspace::stage, &stageButton },
+                  { Workspace::mix, &mixButton }, { Workspace::channel, &channelButton } }};
     }
 
     std::array<DockItem, 3> dockItems()
@@ -1299,15 +1311,6 @@ private:
         return {{ { DockMode::compact, &compactButton }, { DockMode::split, &splitButton },
                   { DockMode::expanded, &expandedButton } }};
     }
-
-    static constexpr WorkspaceEntry extraWorkspaces[] {
-        { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
-        { Workspace::midi, "MIDI Monitor" }, { Workspace::resources, "Resource Inspector" },
-        { Workspace::instrumentEditor, "Instrument Editor" },
-       #if JUCE_MAC
-        { Workspace::orchestraSeating, "Arrangement Reference" },
-       #endif
-    };
 
     std::array<WorkspaceEntry, 2> contextLinks() const
     {
@@ -1441,20 +1444,6 @@ private:
         showWorkspace (workspace == destination ? Workspace::closed : destination);
     }
 
-    void showMoreWorkspaces()
-    {
-        PopupMenu menu;
-        int id = 1;
-        for (const auto& entry : extraWorkspaces)
-            menu.addItem (id++, entry.name, true, workspace == entry.destination);
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&moreButton),
-                            [safe = Component::SafePointer<StudioView> (this)] (int choice)
-                            {
-                                if (safe != nullptr && choice > 0)
-                                    safe->toggleWorkspace (extraWorkspaces[choice - 1].destination);
-                            });
-    }
-
     void setDockMode (DockMode mode)
     {
         if (dockMode == mode) return;
@@ -1500,28 +1489,33 @@ private:
         const bool showingSpatial = workspace == Workspace::stage || workspace == Workspace::rooms
                                  || workspace == Workspace::microphones;
         String name;
-        bool inPrimaryRail = false;
         for (const auto& item : railItems())
         {
-            const bool selected = workspace == item.destination
+            const bool stageSubview = item.destination == Workspace::stage
+                && (workspace == Workspace::rooms || workspace == Workspace::microphones
+                    || workspace == Workspace::orchestraSeating);
+            const bool instrumentSubview = item.destination == Workspace::instruments
+                && workspace == Workspace::instrumentEditor;
+            const bool selected = workspace == item.destination || stageSubview || instrumentSubview
                 || (item.destination == Workspace::articulations && articulationWindow != nullptr);
             item.button->setToggleState (selected, dontSendNotification);
             if (workspace == item.destination)
-            {
                 name = item.button->getButtonText();
-                inPrimaryRail = true;
-            }
         }
-        for (const auto& entry : extraWorkspaces)
-            if (workspace == entry.destination)
-                name = entry.name;
-        moreButton.setToggleState (open && ! inPrimaryRail, dontSendNotification);
-        if (monitoring)
-            name = "MIDI Monitor";
-        if (workspace == Workspace::instruments)
-            name = "Instrument Browser";
-        if (workspace == Workspace::stage)
-            name = "Orchestral Stage";
+        // Contextual tools stay under their owning destination, not in a
+        // second global navigation list.
+        switch (workspace)
+        {
+            case Workspace::instruments:       name = "Instrument Browser"; break;
+            case Workspace::instrumentEditor: name = "Instrument Editor"; break;
+            case Workspace::stage:             name = "Orchestral Stage"; break;
+            case Workspace::rooms:             name = "Rooms"; break;
+            case Workspace::microphones:       name = "Virtual Microphones"; break;
+            case Workspace::orchestraSeating:  name = "Arrangement Reference"; break;
+            case Workspace::midi:              name = "MIDI Monitor"; break;
+            case Workspace::resources:         name = "Resource Inspector"; break;
+            default: break;
+        }
 
         instrumentWorkspace.setVisible (workspace == Workspace::instrumentEditor && ! compact);
         browser.setVisible (browsing && ! compact);
