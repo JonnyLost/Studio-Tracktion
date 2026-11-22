@@ -3675,10 +3675,10 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
             timerCallback();
         }
         if (output.createDirectory().failed()) return false;
-        const auto originalSize = component.getLocalBounds().getSize();
+        const auto originalWidth = component.getWidth(), originalHeight = component.getHeight();
         if (name.startsWith ("sampler")) studio::sampler::captureNativeScreen (component, output.getChildFile ("native-" + name + ".png"));
-        if (&component == this && component.getLocalBounds().getSize() != originalSize)
-            component.setSize (originalSize.x, originalSize.y);
+        if (&component == this && (component.getWidth() != originalWidth || component.getHeight() != originalHeight))
+            component.setSize (originalWidth, originalHeight);
         FileOutputStream file (output.getChildFile (name + ".png"));
         return file.openedOk() && file.setPosition (0) && file.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (component.createComponentSnapshot (component.getLocalBounds()), file);
