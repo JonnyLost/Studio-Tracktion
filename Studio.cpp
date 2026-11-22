@@ -1044,6 +1044,7 @@ public:
         inspectorDrawer.setVisible (inspectorOpen);
         if (inspectorOpen) inspectorDrawer.toFront (false);
         environmentWelcome.setBounds (getLocalBounds());
+        if (environmentWelcome.isVisible()) environmentWelcome.toFront (false);
         repaint();
     }
 
@@ -1115,6 +1116,8 @@ public:
     void setInspectorOpen (bool value, bool persist = true)
     {
         inspectorOpen = value;
+        if (value && workspace == Workspace::channel)
+            showWorkspace (Workspace::closed); // Don't display duplicate Channel controls.
         inspectorButton.setToggleState (value, dontSendNotification);
         inspectorButton.setTooltip (value ? "Hide the selected-track Inspector" : "Show the selected-track Inspector");
         if (persist)
@@ -3760,6 +3763,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         channelInspector.setEdit (nullptr);
+        inspectorDrawer.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         edit.reset();
