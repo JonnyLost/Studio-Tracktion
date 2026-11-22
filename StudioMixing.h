@@ -50,6 +50,12 @@ public:
     void refresh (tracktion::AudioTrack*, bool ready, bool canRoute, const juce::String& recovery,
                   const tracktion::MidiClip* selectedClip = nullptr);
     int minimumContentHeight (int width) const;
+    void setShowMixControls (bool show)
+    {
+        showMixControls = show;
+        mix.setVisible (show);
+        resized();
+    }
     tracktion::EditItemID inspectedTrack() const { return id; }
     void appearanceChanged();
     void resized() override;
@@ -65,6 +71,7 @@ private:
                      monitor { "Monitor" }, editor { "Open Instrument" }, inserts { "Inserts..." },
                      routing { "Output..." }, stage { "Open Stage" };
     MixControls mix { false };
+    bool showMixControls = true;
     std::array<juce::Rectangle<int>, 5> columns;
 };
 
