@@ -1514,6 +1514,13 @@ private:
         if (dockMode == mode) return;
         rememberWorkspaceScroll();
         dockMode = mode;
+        // Switching from Expanded to Split must not restore a short dock that
+        // clips the Mixer faders. Entering Mixer already enforces this minimum;
+        // apply it to subsequent dock-mode changes as well.
+        if (mode == DockMode::split && workspace == Workspace::mix)
+            workspaceHeight = jmax (workspaceHeight,
+                jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
+                       getHeight() * 57 / 100));
         syncWorkspace();
         restoreWorkspaceScroll();
     }
