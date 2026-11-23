@@ -352,6 +352,7 @@ if(BUILD_TESTING)
 
     add_executable(StudioFilmScoringTests tests/FilmScoringTests.cpp)
     target_compile_features(StudioFilmScoringTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmScoringTests PRIVATE -UNDEBUG)
     target_compile_definitions(StudioFilmScoringTests PRIVATE JUCE_USE_CURL=0)
     target_link_libraries(StudioFilmScoringTests PRIVATE juce::juce_data_structures)
     add_test(NAME StudioFilmScoringCore COMMAND StudioFilmScoringTests)
