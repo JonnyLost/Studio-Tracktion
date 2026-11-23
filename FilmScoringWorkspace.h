@@ -12,6 +12,95 @@ namespace studio::film
 {
 // Film-scoring controls live on the JUCE message thread. No video or UI work
 // happens inside Tracktion's audio callback.
+// Picture-source timeline that stays independent of musical tempo and offset.
+class SpottingStrip final : public juce::Component
+{
+public:
+    std::function<void (std::string)> onChooseHit;
+    std::function<void (double)> onSeekPictureSeconds;
+
+    void update (const Project* data, int64_t playheadFrame, double mediaDuration)
+    {
+        project = data;
+        playhead = playheadFrame;
+        lengthSeconds = juce::jmax (30.0, mediaDuration);
+        if (project)
+        {
+            for (const auto& hit : project->spots)
+                lengthSeconds = juce::jmax (lengthSeconds, frameSeconds (hit.pictureFrame, project->rate) + 3.0);
+            lengthSeconds = juce::jmax (lengthSeconds, frameSeconds (playheadFrame, project->rate) + 3.0);
+        }
+        if (playhead != lastDrawn || lengthSeconds != lastLength)
+        {
+            lastDrawn = playhead;
+            lastLength = lengthSeconds;
+            repaint();
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().reduced (2);
+        g.setColour (juce::Colour (0xff222e3e));
+        g.fillRoundedRectangle (area.toFloat(), 4.0f);
+        if (! project) return;
+        area = area.reduced (10, 4);
+        const int lineY = area.getBottom() - 13;
+        g.setColour (juce::Colour (0xff607184));
+        g.drawHorizontalLine (lineY, (float) area.getX(), (float) area.getRight());
+        g.setFont (11.0f);
+        g.setColour (juce::Colour (0xff9caaba));
+        g.drawText ("PICTURE HITS  |  Click to seek", area.removeFromTop (15),
+                    juce::Justification::centredLeft, false);
+        for (int i = 0; i <= 8; ++i)
+        {
+            const auto x = area.getX() + area.getWidth() * i / 8;
+            g.setColour (juce::Colour (0xff556272));
+            g.drawVerticalLine (x, (float) lineY - 3, (float) lineY + 3);
+        }
+        for (const auto& hit : project->spots)
+        {
+            const auto x = xAt (frameSeconds (hit.pictureFrame, project->rate), area);
+            g.setColour (juce::Colour (0xfff2ae58));
+            g.fillEllipse ((float) x - 4, (float) lineY - 4, 8.0f, 8.0f);
+            g.setColour (juce::Colour (0xffe8d6b4));
+            g.drawFittedText (juce::String (hit.cue), x + 5, lineY - 19, 55, 15,
+                              juce::Justification::centredLeft, 1);
+        }
+        const auto x = xAt (frameSeconds (playhead, project->rate), area);
+        g.setColour (juce::Colour (0xfff06b6b));
+        g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom() + 12);
+    }
+
+    void mouseDown (const juce::MouseEvent& event) override
+    {
+        if (! project) return;
+        const auto area = getLocalBounds().reduced (12, 6).withTrimmedTop (15);
+        if (area.getWidth() <= 0) return;
+        for (const auto& hit : project->spots)
+        {
+            if (std::abs (event.x - xAt (frameSeconds (hit.pictureFrame, project->rate), area)) <= 9)
+            {
+                if (onChooseHit) onChooseHit (hit.id);
+                return;
+            }
+        }
+        const auto proportion = juce::jlimit (0.0, 1.0, double (event.x - area.getX()) / area.getWidth());
+        if (onSeekPictureSeconds) onSeekPictureSeconds (lengthSeconds * proportion);
+    }
+
+private:
+    int xAt (double seconds, juce::Rectangle<int> area) const
+    {
+        return area.getX() + juce::roundToInt (juce::jlimit (0.0, 1.0,
+                                seconds / juce::jmax (0.001, lengthSeconds)) * area.getWidth());
+    }
+
+    const Project* project = nullptr;
+    int64_t playhead = 0, lastDrawn = std::numeric_limits<int64_t>::min();
+    double lengthSeconds = 30, lastLength = -1;
+};
+
 class Workspace final : public juce::Component
 {
 public:
@@ -24,6 +113,20 @@ public:
                          &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
+        addAndMakeVisible (strip);
+        strip.onChooseHit = [this] (const std::string& id)
+        {
+            activeId = id;
+            refreshMarkerPicker();
+            seekToSelectedHit();
+        };
+        strip.onSeekPictureSeconds = [this] (double seconds)
+        {
+            if (! edit || edit->getTransport().isRecording()) return;
+            if (const auto source = secondsToFrames (seconds, project.rate))
+                edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+                    juce::jmax (0.0, project.timelineSeconds (*source))));
+        };
         timecode.setJustificationType (juce::Justification::centredLeft);
         timecode.setText ("00:00:00:00", juce::dontSendNotification);
         status.setText ("Load a picture reference (MOV, MP4, M4V). Its audio is muted.", juce::dontSendNotification);
@@ -112,6 +215,7 @@ public:
         setEnabledForProject (edit != nullptr);
         refreshMarkerPicker();
         loadSavedPicture();
+        strip.update (&project, 0, 0);
     }
 
     int minimumContentHeight (int width) const
@@ -123,6 +227,12 @@ public:
     {
         if (! edit) return;
         updateTimecode();
+        const auto nowPicture = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
+       #if JUCE_MAC
+        strip.update (&project, nowPicture.value_or (0), video.isVideoOpen() ? video.getVideoDuration() : 0);
+       #else
+        strip.update (&project, nowPicture.value_or (0), 0);
+       #endif
        #if JUCE_MAC
         if (! video.isVideoOpen()) return;
         if (! isShowing() && ! isFloating())
@@ -181,6 +291,8 @@ public:
        #endif
         area.removeFromTop (3);
         status.setBounds (area.removeFromTop (26));
+        area.removeFromTop (4);
+        strip.setBounds (area.removeFromTop (59));
         area.removeFromTop (5);
         row = area.removeFromTop (30);
         addHitButton.setBounds (row.removeFromLeft (115));
@@ -501,6 +613,7 @@ private:
     std::vector<std::string> sortedIds;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Component monitorHost;
+    SpottingStrip strip;
     juce::Label timecode, status, timing;
     juce::TextButton importButton { "Import Picture" }, floatButton { "Float" };
     juce::ComboBox ratePicker;
