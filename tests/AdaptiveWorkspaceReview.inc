@@ -308,6 +308,25 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     refresh();
     if (! performance.visibleControls().isEmpty() || ! snapshot (*this, "12-au-fallback"))
         return fail ("capture unavailable AU without invented controls");
+
+    // Regress the hardware report: the old 270-point Split opened the
+    // Cinematic Atelier with its bottom row hidden behind a vertical scrollbar.
+    // An unavailable hosted AU fixture is enough to exercise presentation;
+    // no real Audio Unit or MIDI hardware is required.
+    if (auto* hosted = studio::findInstrument (*external); hosted == nullptr || ! showAtelierInstrument (*hosted))
+        return fail ("open hosted instrument in the Atelier dock");
+    if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
+        || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
+        return fail ("Atelier opens without mandatory vertical scrolling at 1280 x 800");
+    if (! snapshot (*this, "13-atelier-no-scroll-1280x800"))
+        return fail ("capture Atelier default dock height");
+    instrumentWorkspace.setFloating (true);
+    if (! instrumentWorkspace.isFloating())
+        return fail ("Atelier opens a floating window");
+    instrumentWorkspace.setFloating (false);
+    if (instrumentWorkspace.isFloating() || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
+        return fail ("Atelier docks at a readable height without a scrollbar");
+
     for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1600, 960) })
         for (const auto scale : studio::AppearanceMetrics::interfaceOptions)
         {
