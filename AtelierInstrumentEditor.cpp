@@ -15,6 +15,15 @@ const Colour ivory  { 0xfff1e2c7 };
 const Colour muted  { 0xffc5b49d };
 const Colour blue   { 0xff294660 };
 
+// Portraits are the user's independent artwork collection. Audio Unit patch
+// names cannot be reliably inferred from an ARIA Player instance, so the
+// portrait is selected explicitly and stored with this instrument view.
+File portraitDirectory()
+{
+    return File::getSpecialLocation (File::userApplicationDataDirectory)
+        .getChildFile ("Studio").getChildFile ("AtelierArtwork");
+}
+
 // The study already belongs to Studio's bundled environment collection. Keep
 // a small, predecoded copy; neither the audio callback nor the GUI render path
 // performs I/O or image decoding.
@@ -92,6 +101,16 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
                10.5f, muted);
     initLabel (sceneCaption, "BLUE-HOUR STUDY", 11.0f, ivory, true);
     sceneCaption.setJustificationType (Justification::centred);
+
+    portraitChoice.setTitle ("Instrument artwork");
+    portraitChoice.setTooltip ("Choose the artwork for this instrument. The image does not change its patch.");
+    portraitChoice.addItem ("Composer Study", 1);
+    int portraitItem = 2;
+    for (const auto* name : { "Violin", "Cello", "Flute", "Clarinet", "Horn", "Oboe" })
+        portraitChoice.addItem (name, portraitItem++);
+    portraitChoice.setSelectedId (1, dontSendNotification);
+    portraitChoice.onChange = [this] { changePortrait(); };
+    addAndMakeVisible (portraitChoice);
 
     for (auto* button : { &original, &articulation, &stage })
     {
@@ -251,8 +270,53 @@ int AtelierInstrumentEditor::minimumDockHeight() const
     return appearance.control (30, 12) + appearance.px (420);
 }
 
-String AtelierInstrumentEditor::viewState() const { return "atelier-v1"; }
-void AtelierInstrumentEditor::restoreView (const String&) { refreshControls(); }
+void AtelierInstrumentEditor::loadPortrait()
+{
+    portraitImage = {};
+    if (portraitName.isNotEmpty())
+    {
+        const auto artwork = portraitDirectory().getChildFile (portraitName + ".jpg");
+        if (artwork.existsAsFile())
+            portraitImage = ImageFileFormat::loadFrom (artwork);
+    }
+
+    sceneCaption.setText (portraitName.isEmpty() ? "BLUE-HOUR STUDY"
+                         : portraitImage.isValid() ? portraitName.toUpperCase()
+                                                   : "PORTRAIT NOT INSTALLED",
+                         dontSendNotification);
+    hint.setText (portraitName.isNotEmpty() && ! portraitImage.isValid()
+            ? "This portrait is not installed. The instrument and its audio are unaffected."
+            : "Only supported controls are shown. Detailed instrument editing remains available.",
+            dontSendNotification);
+    repaint (portraitBounds);
+}
+
+void AtelierInstrumentEditor::changePortrait()
+{
+    const int id = portraitChoice.getSelectedId();
+    portraitName = id <= 1 ? String() : portraitChoice.getText();
+    loadPortrait();
+    if (onSizePreferenceChanged)
+        onSizePreferenceChanged(); // Persist per-instance visual state via InstrumentWorkspace.
+}
+
+String AtelierInstrumentEditor::viewState() const
+{
+    return "atelier-v2|" + portraitName;
+}
+
+void AtelierInstrumentEditor::restoreView (const String& saved)
+{
+    portraitName = saved.startsWith ("atelier-v2|")
+        ? saved.fromFirstOccurrenceOf ("|", false, false) : String();
+    int chosen = 1;
+    for (int i = 1; i < portraitChoice.getNumItems(); ++i)
+        if (portraitChoice.getItemText (i) == portraitName)
+            chosen = portraitChoice.getItemId (i);
+    portraitChoice.setSelectedId (chosen, dontSendNotification);
+    loadPortrait();
+    refreshControls();
+}
 
 void AtelierInstrumentEditor::appearanceChanged()
 {
@@ -273,10 +337,13 @@ void AtelierInstrumentEditor::paint (Graphics& g)
     {
         Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (portraitBounds);
-        drawCover (g, blueHour, portraitBounds);
-        g.setGradientFill (ColourGradient (Colour (0x50100808), portraitBounds.getTopLeft().toFloat(),
-                                            Colour (0xdd160d0a), portraitBounds.getBottomRight().toFloat(),
-                                            false));
+        const bool artworkInstalled = portraitImage.isValid();
+        drawCover (g, artworkInstalled ? portraitImage : blueHour, portraitBounds);
+        // Retain the Blue-Hour palette but do not obscure the instrument.
+        g.setGradientFill (ColourGradient (artworkInstalled ? Colour (0x08100808) : Colour (0x50100808),
+                                            portraitBounds.getTopLeft().toFloat(),
+                                            artworkInstalled ? Colour (0x89160d0a) : Colour (0xdd160d0a),
+                                            portraitBounds.getBottomRight().toFloat(), false));
         g.fillRect (portraitBounds);
         auto rect = portraitBounds.toFloat().reduced (1);
         g.setColour (amber.withAlpha (0.80f));
@@ -310,7 +377,10 @@ void AtelierInstrumentEditor::resized()
     // One consistent hierarchy in both docking modes: instrument name first,
     // actual AU name beneath it. Do not scatter the two labels horizontally.
     auto header = area.removeFromTop (m.control (70, 17));
-    title.setBounds (header.removeFromTop (m.control (37, 10)));
+    auto titleRow = header.removeFromTop (m.control (37, 10));
+    const int portraitMenuW = jmin (m.span (175), jmax (m.span (105), titleRow.getWidth() / 3));
+    portraitChoice.setBounds (titleRow.removeFromRight (portraitMenuW).reduced (m.px (2), m.px (1)));
+    title.setBounds (titleRow);
     subtitle.setBounds (header.removeFromTop (m.control (23, 9)));
     area.removeFromTop (m.px (6));
 
@@ -410,7 +480,8 @@ bool AtelierInstrumentEditor::essentialControlsFit() const
 {
     const auto bounds = getLocalBounds();
     return ! portraitBounds.isEmpty() && ! controlBounds.isEmpty()
-        && bounds.contains (title.getBounds()) && bounds.contains (original.getBounds())
+        && bounds.contains (title.getBounds()) && bounds.contains (portraitChoice.getBounds())
+        && bounds.contains (original.getBounds())
         && bounds.contains (volumeLabel.getBounds()) && bounds.contains (panLabel.getBounds())
         && bounds.contains (volume.getBounds()) && bounds.contains (pan.getBounds())
         && volume.getWidth() <= appearance.span (125)
