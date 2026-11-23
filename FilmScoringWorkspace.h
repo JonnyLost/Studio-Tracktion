@@ -5,6 +5,7 @@
 #include "FilmScoringState.h"
 #include "FilmScoringCueSheet.h"
 #include "FilmPictureSync.h"
+#include "FilmCueRender.h"
 #include <JuceHeader.h>
 #if JUCE_MAC
  #include <juce_video/juce_video.h>
@@ -115,7 +116,9 @@ public:
                          &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing,
                          &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                          &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
-                         &deleteCueButton, &exportCueButton, &cueSection })
+                         &deleteCueButton, &exportCueButton, &cueSection,
+                         &renderMixButton, &renderTracksButton, &cancelRenderButton,
+                         &renderStatus })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
         addAndMakeVisible (strip);
@@ -208,6 +211,14 @@ public:
         saveCueButton.onClick = [this] { applyCueChanges(); };
         deleteCueButton.onClick = [this] { deleteSelectedCue(); };
         exportCueButton.onClick = [this] { exportCueSheet(); };
+        renderMixButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::stereoMix); };
+        renderTracksButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::individualTracks); };
+        cancelRenderButton.onClick = [this] { cueRender.cancel(); };
+        cueRender.onUpdate = [this] { renderStatus.setText (cueRender.description(), juce::dontSendNotification); };
+        renderStatus.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        renderStatus.setText ("Cue WAV: 24-bit, 48 kHz, exact range, no tail.", juce::dontSendNotification);
+        renderMixButton.setTooltip ("Export the selected closed cue as a stereo WAV, through Studio's Tracktion engine");
+        renderTracksButton.setTooltip ("Export one WAV per existing audio track, including routing dependencies where possible");
 
        #if JUCE_MAC
         monitorHost.addAndMakeVisible (video);
@@ -236,6 +247,8 @@ public:
     void setEdit (tracktion::engine::Edit* next)
     {
         if (edit == next) return;
+        ++editGeneration;
+        cueRender.clear();
         setFloating (false);
         edit = next;
         pictureSync.reset();
@@ -254,12 +267,18 @@ public:
 
     int minimumContentHeight (int width) const
     {
-        return juce::jmax (630, 410 + juce::jmin (370, juce::jmax (150, width * 9 / 23)));
+        return juce::jmax (735, 520 + juce::jmin (370, juce::jmax (150, width * 9 / 23)));
     }
 
     void tick()
     {
         if (! edit) return;
+        if (cueRender.hasStarted())
+            renderStatus.setText (cueRender.description(), juce::dontSendNotification);
+        const bool rendering = cueRender.isActive();
+        renderMixButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        renderTracksButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        cancelRenderButton.setEnabled (rendering);
         // Undo/Redo swaps the versioned ValueTree subtree. Refresh our
         // message-thread snapshot before any future scoring edits can overwrite
         // an undone operation with stale local cue/spot data.
@@ -373,6 +392,15 @@ public:
         cueNotesEdit.setBounds (row);
         area.removeFromTop (4);
         deleteCueButton.setBounds (area.removeFromTop (27).removeFromLeft (112));
+        area.removeFromTop (6);
+        row = area.removeFromTop (30);
+        renderMixButton.setBounds (row.removeFromLeft (132));
+        row.removeFromLeft (5);
+        renderTracksButton.setBounds (row.removeFromLeft (142));
+        row.removeFromLeft (6);
+        cancelRenderButton.setBounds (row.removeFromLeft (112));
+        area.removeFromTop (3);
+        renderStatus.setBounds (area.removeFromTop (26));
     }
 
     void paint (juce::Graphics& g) override
@@ -440,8 +468,10 @@ private:
                                    &notesEdit, &applyHitButton, &quarterBeatsEdit,
                                    &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                                    &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
-                                   &deleteCueButton, &exportCueButton })
+                                   &deleteCueButton, &exportCueButton, &renderMixButton,
+                                   &renderTracksButton })
             c->setEnabled (enabled);
+        cancelRenderButton.setEnabled (enabled && cueRender.isActive());
     }
 
     void choosePicture()
@@ -744,6 +774,50 @@ private:
                 juce::jmax (0.0, project.timelineSeconds (cue->startPictureFrame))));
     }
 
+    void chooseCueDelivery (CueRenderSession::Mode mode)
+    {
+        if (! edit || cueRender.isActive())
+            return;
+        if (edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+        {
+            status.setText ("Stop transport before exporting.", juce::dontSendNotification);
+            return;
+        }
+        const auto* cue = project.findCue (activeCueId);
+        if (! cue || ! deliveryRange (project, *cue))
+        {
+            status.setText ("Choose a cue with a valid start and marked end.", juce::dontSendNotification);
+            return;
+        }
+        const auto version = editGeneration;
+        const auto pictureSnapshot = project;
+        const auto selectedCue = *cue;
+        deliveryChooser = std::make_unique<juce::FileChooser> ("Choose a destination for cue WAV delivery",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
+        deliveryChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                    | juce::FileBrowserComponent::canSelectDirectories,
+            [safe = juce::Component::SafePointer<Workspace> (this), version,
+             pictureSnapshot, selectedCue, mode] (const juce::FileChooser& dialog)
+            {
+                if (safe == nullptr) return;
+                if (safe->edit == nullptr || version != safe->editGeneration)
+                {
+                    safe->status.setText ("Project changed. Cue render cancelled.", juce::dontSendNotification);
+                    return;
+                }
+                const auto destination = dialog.getResult();
+                if (destination == juce::File()) return;
+                const auto result = safe->cueRender.start (*safe->edit, pictureSnapshot,
+                                                            selectedCue, destination, mode);
+                if (result.failed())
+                    safe->status.setText ("Cue render unavailable: " + result.getErrorMessage(),
+                                         juce::dontSendNotification);
+                else
+                    safe->status.setText ("Rendering cue " + juce::String (selectedCue.id)
+                                         + " into a new folder.", juce::dontSendNotification);
+            });
+    }
+
     void exportCueSheet()
     {
         if (! edit || project.cues.empty())
@@ -833,7 +907,9 @@ private:
     std::vector<std::string> sortedIds, sortedCueIds;
     std::string activeCueId;
     PictureSyncController pictureSync;
-    std::unique_ptr<juce::FileChooser> chooser, cueExportChooser;
+    CueRenderSession cueRender;
+    uint64_t editGeneration = 0;
+    std::unique_ptr<juce::FileChooser> chooser, cueExportChooser, deliveryChooser;
     juce::Component monitorHost;
     SpottingStrip strip;
     juce::Label timecode, status, timing;
@@ -849,5 +925,9 @@ private:
     juce::TextButton newCueButton { "+ Cue" }, outCueButton { "Mark End" },
                      gotoCueButton { "Go Cue" }, saveCueButton { "Apply" },
                      deleteCueButton { "Delete Cue" }, exportCueButton { "Export CSV" };
+    juce::TextButton renderMixButton { "Render Cue WAV" },
+                     renderTracksButton { "Render Track WAVs" },
+                     cancelRenderButton { "Cancel Render" };
+    juce::Label renderStatus;
 };
 } // namespace studio::film
