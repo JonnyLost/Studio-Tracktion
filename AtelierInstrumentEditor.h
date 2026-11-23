@@ -35,11 +35,15 @@ private:
     tracktion::AudioTrack* track() const;
     tracktion::VolumeAndPanPlugin* volumePlugin() const;
     void refreshControls();
+    void loadPortrait();
+    void changePortrait();
 
     tracktion::Plugin::Ptr instrument;
     tracktion::EditItemID trackId;
     tracktion::AutomatableParameter::Ptr expressionParameter;
-    juce::Image blueHour;
+    juce::Image blueHour, portraitImage;
+    juce::String portraitName;
+    juce::ComboBox portraitChoice;
     juce::ComponentBoundsConstrainer limits;
     juce::Label title, subtitle, mixHeading, volumeLabel, panLabel, expressionHeading, hint, sceneCaption;
     juce::TextButton original { "Open Original Instrument" },
