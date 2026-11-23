@@ -17,7 +17,7 @@ class Workspace final : public juce::Component
 public:
     Workspace()
     {
-        for (auto* c : { static_cast<juce::Component*> (&importButton),
+        for (auto* c : std::initializer_list<juce::Component*> { &importButton,
                          &floatButton, &ratePicker, &offsetEdit, &applyOffsetButton,
                          &addHitButton, &removeHitButton, &prevButton, &nextButton,
                          &goButton, &markerPicker, &cueEdit, &nameEdit, &notesEdit,
@@ -251,7 +251,7 @@ private:
 
     void setEnabledForProject (bool enabled)
     {
-        for (juce::Component* c : { static_cast<juce::Component*> (&importButton), &ratePicker, &offsetEdit,
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &importButton, &ratePicker, &offsetEdit,
                                    &applyOffsetButton, &addHitButton, &removeHitButton, &prevButton,
                                    &nextButton, &goButton, &markerPicker, &cueEdit, &nameEdit,
                                    &notesEdit, &applyHitButton, &quarterBeatsEdit })
