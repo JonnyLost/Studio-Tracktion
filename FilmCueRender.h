@@ -180,7 +180,7 @@ private:
         if (! queue || renderedDirectory == juce::File()) return;
         std::ostringstream csv;
         csv << "Cue ID,Cue Title,Picture Start SMPTE,Picture End SMPTE,Start Timeline Seconds,"
-               "End Timeline Seconds,Output File,Result,Error\\r\\n";
+               "End Timeline Seconds,Output File,Result,Error\r\n";
         for (const auto& job : queue->getJobs())
         {
             using State = tracktion::engine::RenderQueue::Job::State;
@@ -200,7 +200,7 @@ private:
                 << std::fixed << std::setprecision (6) << currentRange.timelineStart << ','
                 << std::fixed << std::setprecision (6) << currentRange.timelineEnd << ','
                 << csvText (job->getParameters().destFile.getFileName().toStdString()) << ','
-                << result << ',' << csvText (job->getError().toStdString()) << "\\r\\n";
+                << result << ',' << csvText (job->getError().toStdString()) << "\r\n";
         }
         const auto file = renderedDirectory.getChildFile ("Delivery-Report.csv");
         if (! file.replaceWithText (juce::String (csv.str())))
