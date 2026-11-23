@@ -72,6 +72,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
 {
     setName ("Cinematic Atelier");
     setTitle ("Studio Instrument - " + audioTrack.getName());
+    limits.setSizeLimits (440, 340, 1600, 1000);
     setWantsKeyboardFocus (true);
 
     for (auto* label : { &title, &subtitle, &mixHeading, &expressionHeading, &hint, &sceneCaption })
