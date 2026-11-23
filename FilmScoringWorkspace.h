@@ -327,7 +327,14 @@ public:
         g.drawRoundedRectangle (r, 5.0f, 1.0f);
     }
 
-    bool isFloating() const { return floating != nullptr; }
+    bool isFloating() const
+    {
+       #if JUCE_MAC
+        return floating != nullptr;
+       #else
+        return false;
+       #endif
+    }
     size_t spotCount() const { return project.spots.size(); }
     const Project& snapshot() const { return project; }
 
@@ -361,6 +368,7 @@ private:
     {
         if (edit)
             store (edit->state, project, &edit->getUndoManager());
+        strip.repaint();
     }
 
     void setEnabledForProject (bool enabled)
@@ -568,7 +576,13 @@ private:
         if (wantFloat)
         {
             floating = std::make_unique<PictureWindow>();
-            floating->onDock = [this] { setFloating (false); };
+            floating->onDock = [safe = juce::Component::SafePointer<Workspace> (this)]
+            {
+                juce::MessageManager::callAsync ([safe]
+                {
+                    if (safe != nullptr) safe->setFloating (false);
+                });
+            };
             floating->setContentNonOwned (&video, false);
             floating->centreWithSize (760, 470);
             floating->setVisible (true);
