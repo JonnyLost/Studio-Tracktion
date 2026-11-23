@@ -70,6 +70,10 @@ int main()
     assert (cue && cue->durationSeconds > 10 && cue->suggestedTempo > 90);
     assert (! calculateCue (project, map, "hit2", "hit1", 16));
 
+    assert (project.addCue ({ "1M1", "Opening", "Spot notes", 0, 300 }));
+    assert (project.addCue ({ "1M2", "Next scene", "", 540, std::nullopt }));
+    assert (! project.addCue ({ "1M1", "Duplicate", "", 100, 200 }));
+
     juce::ValueTree root ("EDIT");
     juce::UndoManager undo;
     store (root, project, &undo);
@@ -77,6 +81,9 @@ int main()
     assert (restored.rate == project.rate && restored.pictureStartFrame == 240);
     assert (restored.picturePath == "reference.mov");
     assert (restored.spots.size() == 2 && restored.find ("hit1")->notes == "hard sync");
+    assert (restored.cues.size() == 2);
+    assert (restored.findCue ("1M1")->endPictureFrame == 300);
+    assert (! restored.findCue ("1M2")->endPictureFrame);
     assert (undo.undo());
     assert (decode (root).spots.empty());
     assert (undo.redo());
@@ -94,5 +101,7 @@ int main()
     assert (xml != nullptr);
     auto reloaded = juce::ValueTree::fromXml (*xml);
     assert (decode (reloaded).find ("hit1")->pictureFrame == 300);
+    assert (decode (reloaded).findCue ("1M1")->startPictureFrame == 0);
+    assert (decode (reloaded).findCue ("1M2") != nullptr);
     std::cout << "Film scoring timing, spotting, and persistence passed\n";
 }
