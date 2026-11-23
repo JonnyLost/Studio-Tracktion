@@ -237,6 +237,10 @@ public:
 
     ~Workspace() override
     {
+        // Members are destroyed after this body, in reverse declaration
+        // order. Disable callbacks before child controls start destructing.
+        cueRender.onUpdate = {};
+        cueRender.clear();
         setFloating (false);
        #if JUCE_MAC
         video.closeVideo();
