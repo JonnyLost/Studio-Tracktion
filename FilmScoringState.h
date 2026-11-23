@@ -24,6 +24,17 @@ inline juce::ValueTree encode (const Project& project)
         item.setProperty ("frame", juce::String (spot.pictureFrame), nullptr);
         node.addChild (item, -1, nullptr);
     }
+    for (const auto& cue : project.cues)
+    {
+        juce::ValueTree item ("CUE");
+        item.setProperty ("id", juce::String (cue.id), nullptr);
+        item.setProperty ("title", juce::String (cue.title), nullptr);
+        item.setProperty ("notes", juce::String (cue.notes), nullptr);
+        item.setProperty ("startFrame", juce::String (cue.startPictureFrame), nullptr);
+        if (cue.endPictureFrame)
+            item.setProperty ("endFrame", juce::String (*cue.endPictureFrame), nullptr);
+        node.addChild (item, -1, nullptr);
+    }
     return node;
 }
 
@@ -38,13 +49,26 @@ inline Project decode (const juce::ValueTree& root)
     project.picturePath = node.getProperty ("picturePath").toString().toStdString();
     for (const auto& child : node)
     {
-        if (! child.hasType ("SPOT")) continue;
-        Spot spot { child.getProperty ("id").toString().toStdString(),
-                    child.getProperty ("cue").toString().toStdString(),
-                    child.getProperty ("name").toString().toStdString(),
-                    child.getProperty ("notes").toString().toStdString(),
-                    child.getProperty ("frame", "0").toString().getLargeIntValue() };
-        project.addSpot (std::move (spot));
+        if (child.hasType ("SPOT"))
+        {
+            Spot spot { child.getProperty ("id").toString().toStdString(),
+                        child.getProperty ("cue").toString().toStdString(),
+                        child.getProperty ("name").toString().toStdString(),
+                        child.getProperty ("notes").toString().toStdString(),
+                        child.getProperty ("frame", "0").toString().getLargeIntValue() };
+            project.addSpot (std::move (spot));
+        }
+        else if (child.hasType ("CUE"))
+        {
+            Cue cue;
+            cue.id = child.getProperty ("id").toString().toStdString();
+            cue.title = child.getProperty ("title").toString().toStdString();
+            cue.notes = child.getProperty ("notes").toString().toStdString();
+            cue.startPictureFrame = child.getProperty ("startFrame", "0").toString().getLargeIntValue();
+            if (child.hasProperty ("endFrame"))
+                cue.endPictureFrame = child.getProperty ("endFrame").toString().getLargeIntValue();
+            project.addCue (std::move (cue)); // Skip corrupt or duplicate cue records.
+        }
     }
     return project;
 }
