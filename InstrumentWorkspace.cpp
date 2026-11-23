@@ -26,7 +26,11 @@ public:
     {
         setUsingNativeTitleBar (true);
         setResizable (true, false);
-        setResizeLimits (440, 340, 1600, 1000);
+        // A saved tiny floating window must not reopen with the bottom
+        // controls clipped. Native Synth/Sampler windows retain their limits.
+        const int minimumHeight = host.atelierMode
+            ? jmax (340, host.editorHeight() + appearance.px (42)) : 340;
+        setResizeLimits (440, minimumHeight, 1600, 1000);
         viewport.setScrollBarsShown (true, false);
         viewport.setViewedComponent (&host.content, false);
         setContentNonOwned (&viewport, false);
@@ -344,6 +348,13 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
         window->setName (plugin->getName());
         window->centreWithSize (820, 620);
         window->restoreWindowStateFromString (preferences.getValue ("studio.instrumentEditorWindow"));
+        if (atelierMode)
+        {
+            // The saved window geometry may predate the Atelier layout.
+            const int minimumHeight = editorHeight() + appearance.px (42);
+            if (window->getHeight() < minimumHeight)
+                window->setSize (window->getWidth(), minimumHeight);
+        }
         window->setVisible (true);
         window->toFront (true);
     }
