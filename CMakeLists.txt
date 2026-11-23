@@ -349,6 +349,12 @@ if(BUILD_TESTING)
     target_compile_features(StudioEnvironmentTests PRIVATE cxx_std_20)
     add_test(NAME StudioEnvironmentSelection COMMAND StudioEnvironmentTests)
 
+    add_executable(StudioFilmScoringTests tests/FilmScoringTests.cpp)
+    target_compile_features(StudioFilmScoringTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioFilmScoringTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioFilmScoringTests PRIVATE juce::juce_data_structures)
+    add_test(NAME StudioFilmScoringCore COMMAND StudioFilmScoringTests)
+
     add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
     target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)
     add_custom_target(StudioSynthValidation DEPENDS StudioSynthBench)
