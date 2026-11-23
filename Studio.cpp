@@ -2060,6 +2060,21 @@ private:
         showWorkspace (workspace == destination ? Workspace::closed : destination);
     }
 
+    void fitInstrumentDockOnOpen()
+    {
+        if (instrumentWorkspace.getEditor() == nullptr || instrumentWorkspace.isFloating())
+            return;
+
+        // Atelier and native editor heights differ. At first open choose a
+        // useful dock height instead of inheriting the generic 270-point Split.
+        // Limit the preference on shorter MacBooks; layoutDock() will still
+        // clamp it to the actual available window space.
+        const auto& m = studio::appearance;
+        const int required = instrumentWorkspace.minimumContentHeight() + m.control (34);
+        const int preferred = jmin (m.px (525), getHeight() * 62 / 100);
+        workspaceHeight = jmax (workspaceHeight, jmax (required, preferred));
+    }
+
     void setDockMode (DockMode mode)
     {
         if (dockMode == mode) return;
@@ -2072,6 +2087,8 @@ private:
             workspaceHeight = jmax (workspaceHeight,
                 jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
                        getHeight() * 57 / 100));
+        if (mode == DockMode::split && workspace == Workspace::instrumentEditor)
+            fitInstrumentDockOnOpen();
         syncWorkspace();
         restoreWorkspaceScroll();
     }
@@ -2093,6 +2110,8 @@ private:
         if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
+        if (next == Workspace::instrumentEditor && dockMode == DockMode::split)
+            fitInstrumentDockOnOpen();
         if (next == Workspace::mix && changing)
         {
             // A click on Mixer is a change of task, not an attempt to stack a
