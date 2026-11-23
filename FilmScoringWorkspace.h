@@ -216,6 +216,8 @@ public:
     }
 
     bool isFloating() const { return floating != nullptr; }
+    size_t spotCount() const { return project.spots.size(); }
+    const Project& snapshot() const { return project; }
 
 private:
     static juce::String rateName (Rate rate)
