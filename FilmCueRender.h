@@ -2,6 +2,9 @@
 #pragma once
 
 #include "FilmCueDelivery.h"
+#include "FilmScoringCueSheet.h"
+#include <sstream>
+#include <iomanip>
 #include <JuceHeader.h>
 #include <memory>
 #include <vector>
@@ -38,6 +41,8 @@ public:
         queue.reset();  // Tracktion joins/cancels the render before Edit release.
         message.clear();
         renderedDirectory = {};
+        currentCue = {};
+        currentRange = {};
     }
 
     float progress() const
@@ -151,9 +156,16 @@ public:
 
         queue = std::make_unique<te::RenderQueue>();
         queue->onJobFinished = [this] (te::RenderQueue::Job&) { notify(); };
-        queue->onFinished = [this] { notify(); };
+        queue->onFinished = [this]
+        {
+            writeDeliveryReport();
+            notify();
+        };
         queue->addJobs (std::move (planned));
         renderedDirectory = folder;
+        currentCue = cue;
+        currentRange = *range;
+        currentRate = project.rate;
         message = "Cue delivery rendering started.";
         queue->start();
         notify();
@@ -163,7 +175,42 @@ public:
 private:
     void notify() { if (onUpdate) onUpdate(); }
 
+    void writeDeliveryReport()
+    {
+        if (! queue || renderedDirectory == juce::File()) return;
+        std::ostringstream csv;
+        csv << "Cue ID,Cue Title,Picture Start SMPTE,Picture End SMPTE,Start Timeline Seconds,"
+               "End Timeline Seconds,Output File,Result,Error\\r\\n";
+        for (const auto& job : queue->getJobs())
+        {
+            using State = tracktion::engine::RenderQueue::Job::State;
+            std::string result = "pending";
+            switch (job->getState())
+            {
+                case State::active: result = "active"; break;
+                case State::completed: result = "completed"; break;
+                case State::failed: result = "failed"; break;
+                case State::cancelled: result = "cancelled"; break;
+                default: break;
+            }
+            csv << csvText (currentCue.id) << ','
+                << csvText (currentCue.title) << ','
+                << cueTimecode (currentRange.startFrame, currentRate) << ','
+                << cueTimecode (currentRange.endFrame, currentRate) << ','
+                << std::fixed << std::setprecision (6) << currentRange.timelineStart << ','
+                << std::fixed << std::setprecision (6) << currentRange.timelineEnd << ','
+                << csvText (job->getParameters().destFile.getFileName().toStdString()) << ','
+                << result << ',' << csvText (job->getError().toStdString()) << "\\r\\n";
+        }
+        const auto file = renderedDirectory.getChildFile ("Delivery-Report.csv");
+        if (! file.replaceWithText (juce::String (csv.str())))
+            message = "Cue WAVs rendered; unable to write delivery report.";
+    }
+
     std::unique_ptr<tracktion::engine::RenderQueue> queue;
+    Cue currentCue;
+    DeliveryRange currentRange;
+    Rate currentRate = Rate::fps24;
     juce::File renderedDirectory;
     juce::String message;
 };
