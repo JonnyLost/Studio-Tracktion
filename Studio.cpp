@@ -26,6 +26,7 @@ using namespace tracktion::literals;
 #include "StudioSynth.h"
 #include "InstrumentWorkspace.h"
 #include "Seating/SeatingWorkspace.h"
+#include "FilmScoringWorkspace.h"
 
 class StudioPluginWindows final : public ExtendedUIBehaviour
 {
@@ -264,6 +265,7 @@ public:
         for (auto* indicator : { &resources.audio, &resources.ram, &resources.dropouts })
             addAndMakeVisible (*indicator);
         workspaceBody.addChildComponent (resources);
+        workspaceBody.addChildComponent (filmWorkspace);
         workspaceBody.addChildComponent (instrumentWorkspace);
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = [this] (te::Plugin& plug)
         {
@@ -547,6 +549,7 @@ public:
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
        #if JUCE_MAC
         seatingWorkspace.setEdit (nullptr);
        #endif
@@ -1004,6 +1007,7 @@ private:
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
     studio::spatial::SpatialWorkspace spatialWorkspace;
+    studio::film::Workspace filmWorkspace;
    #if JUCE_MAC
     studio::seating::Workspace seatingWorkspace;
    #endif
@@ -1060,6 +1064,7 @@ private:
         { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
         { Workspace::midi, "MIDI Monitor" }, { Workspace::resources, "Resource Inspector" },
         { Workspace::instrumentEditor, "Instrument Editor" },
+        { Workspace::filmScoring, "Film Scoring" },
        #if JUCE_MAC
         { Workspace::orchestraSeating, "Arrangement Reference" },
        #endif
@@ -1131,6 +1136,7 @@ private:
             if (piano.isVisible()) return piano.minimumContentHeight (width);
             if (resources.isVisible()) return resources.minimumContentHeight (width);
             if (spatialWorkspace.isVisible()) return spatialWorkspace.minimumContentHeight (width);
+            if (filmWorkspace.isVisible()) return filmWorkspace.minimumContentHeight (width);
             if (articulationWindow == nullptr && articulation.isVisible()) return articulation.minimumContentHeight (width);
             return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
         };
@@ -1144,7 +1150,7 @@ private:
             height = minimumContentHeight (width);
         }
         workspaceBody.setSize (width, jmax (height, body.getHeight()));
-        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace })
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace, &filmWorkspace })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
@@ -1200,7 +1206,7 @@ private:
     {
         const bool changing = workspace != next;
         if (changing) rememberWorkspaceScroll();
-        if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
+        if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating || next == Workspace::filmScoring) && changing))
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
         workspace = next;
@@ -1218,6 +1224,7 @@ private:
         const bool browsing = workspace == Workspace::instruments;
         const bool inspecting = workspace == Workspace::channel;
         const bool checkingResources = workspace == Workspace::resources;
+        const bool scoringPicture = workspace == Workspace::filmScoring;
         const bool showingArticulation = workspace == Workspace::articulations;
         const bool showingSpatial = workspace == Workspace::stage || workspace == Workspace::rooms
                                  || workspace == Workspace::microphones;
@@ -1249,6 +1256,7 @@ private:
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
+        filmWorkspace.setVisible (scoringPicture && ! compact);
         spatialWorkspace.setVisible (showingSpatial && (! compact || workspace == Workspace::stage));
         if (showingSpatial)
         {
@@ -1634,6 +1642,7 @@ private:
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
         completePendingPlugin();
+        filmWorkspace.tick();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
@@ -2170,6 +2179,7 @@ private:
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
        #if JUCE_MAC
         seatingWorkspace.setEdit (nullptr);
@@ -2180,6 +2190,7 @@ private:
         channelInspector.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());
+        filmWorkspace.setEdit (edit.get());
        #if JUCE_MAC
         seatingWorkspace.setEdit (edit.get());
        #endif
@@ -3057,6 +3068,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         resources.setEdit (nullptr);
         channelInspector.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         edit.reset();
         devices.deviceManager.closeAudioDevice();
