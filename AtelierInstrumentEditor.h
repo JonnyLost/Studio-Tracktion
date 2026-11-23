@@ -41,7 +41,7 @@ private:
     tracktion::AutomatableParameter::Ptr expressionParameter;
     juce::Image blueHour;
     juce::ComponentBoundsConstrainer limits;
-    juce::Label title, subtitle, mixHeading, expressionHeading, hint, sceneCaption;
+    juce::Label title, subtitle, mixHeading, volumeLabel, panLabel, expressionHeading, hint, sceneCaption;
     juce::TextButton original { "Open Original Instrument" },
                      articulation { "Articulation Mappings..." }, stage { "Open Orchestral Stage..." };
     juce::Slider volume, pan, expression;
