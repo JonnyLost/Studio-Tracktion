@@ -33,6 +33,11 @@ int main()
     assert (! project.addSpot ({ "hit1", "1M1", "duplicate", "", 301 }));
     const auto absolute = project.timelineSeconds (300);
     assert (project.pictureFrameAt (absolute) == 300);
+    const auto originalHit = project.find ("hit1")->pictureFrame;
+    assert (project.addSpot ({ "another", "1M2", "Jump", "", 350 }));
+    assert (project.spots.size() == 2);
+    project.spots.pop_back();
+    near (project.timelineSeconds (originalHit), absolute);
     assert (project.find ("hit1")->pictureFrame == 300);
 
     TempoMap map ({ { 0, 120, 4, 4 }, { 10, 60, 3, 4 }, { 16, 90, 6, 8 } });
@@ -44,6 +49,18 @@ int main()
     assert (map.barBeatAt (10)->bar == 6);
     assert (map.barBeatAt (13)->bar == 7);
     assert (map.barBeatAt (16)->bar == 8);
+    // A tempo change halfway through a bar must not advance to a new bar.
+    TempoMap tempoOnly ({ { 0, 120, 4, 4 }, { 3, 60, 4, 4 } });
+    assert (tempoOnly.barBeatAt (3)->bar == 2 && tempoOnly.barBeatAt (3)->beat == 3);
+    assert (tempoOnly.barBeatAt (5)->bar == 3 && tempoOnly.barBeatAt (5)->beat == 1);
+    TempoMap meterChange ({ { 0, 120, 4, 4 }, { 2.5, 100, 3, 4 } });
+    assert (meterChange.barBeatAt (2.5)->bar == 3);
+    assert (meterChange.barBeatAt (2.5)->beat == 1);
+    for (auto rate : { Rate::fps23976, Rate::fps2997DF })
+    {
+        const auto extreme = fromFrames (std::numeric_limits<int64_t>::min(), rate);
+        assert (extreme.hours >= 0 && extreme.hours < 24);
+    }
     assert (! TempoMap ({ { 0, 0 } }).valid());
     near (*suggestedBpm (8, 16), 120);
     assert (! suggestedBpm (0, 16));
