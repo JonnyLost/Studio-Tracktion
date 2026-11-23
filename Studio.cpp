@@ -3076,6 +3076,14 @@ int StudioView::runFilmScoringReview (const File& output)
         return fail ("dock reads versioned picture metadata");
     if (te::getAudioTracks (*edit).size() != trackCount)
         return fail ("spotting modified audio tracks");
+    if (! edit->getUndoManager().undo()) return fail ("undo spotting metadata");
+    filmWorkspace.tick();
+    if (! filmWorkspace.snapshot().cues.empty() || ! filmWorkspace.snapshot().spots.empty())
+        return fail ("workspace did not reconcile project Undo");
+    if (! edit->getUndoManager().redo()) return fail ("redo spotting metadata");
+    filmWorkspace.tick();
+    if (filmWorkspace.snapshot().cues.size() != 2 || filmWorkspace.snapshot().spots.size() != 2)
+        return fail ("workspace did not reconcile project Redo");
 
     const auto saved = studio::film::decode (edit->state);
     if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false))
