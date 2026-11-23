@@ -314,7 +314,8 @@ target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h Instrume
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
-    StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h)
+    StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
+    FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -334,7 +335,7 @@ if(APPLE)
     add_library(StudioSeatingUI STATIC ${studio_seating_model} Seating/SeatingEditor.swift Seating/SeatingBridge.swift)
     set_target_properties(StudioSeatingUI PROPERTIES Swift_LANGUAGE_VERSION 5)
     target_sources(Studio PRIVATE Seating/SeatingWorkspace.cpp)
-    target_link_libraries(Studio PRIVATE StudioSeatingUI "-framework SwiftUI" "-framework AppKit")
+    target_link_libraries(Studio PRIVATE StudioSeatingUI juce::juce_video "-framework SwiftUI" "-framework AppKit")
     if(CMAKE_GENERATOR STREQUAL "Xcode")
         set_target_properties(Studio PROPERTIES XCODE_ATTRIBUTE_ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES YES)
         target_link_directories(Studio PRIVATE "$(TOOLCHAIN_DIR)/usr/lib/swift/macosx" "$(SDKROOT)/usr/lib/swift")
