@@ -24,7 +24,6 @@ public:
                          &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
-        monitorHost.setOpaque (true);
         timecode.setJustificationType (juce::Justification::centredLeft);
         timecode.setText ("00:00:00:00", juce::dontSendNotification);
         status.setText ("Load a picture reference (MOV, MP4, M4V). Its audio is muted.", juce::dontSendNotification);
