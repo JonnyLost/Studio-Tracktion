@@ -6,6 +6,7 @@ on:
     branches:
       - feature/studio-mixer-inspector-m13
       - feature/studio-transport-header-m14
+      - feature/studio-cinematic-atelier-m1
       - feature/studio-sampler-builder-m10
       - feature/studio-sampler-articulations-m11
       - feature/studio-composer-ui-m12-quickwins
