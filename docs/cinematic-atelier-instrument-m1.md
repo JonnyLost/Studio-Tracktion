@@ -70,3 +70,16 @@ The art is decoded only on the GUI thread when selected (not for each frame), th
 - Without the files installed, selecting any portrait must fall back to the original study image without crashing.
 - At least 1024×640 and 1280×800, keep the artwork dropdown, title, original editor button and channel controls readable.
 - Confirm MacBook idle CPU remains low; artwork selection must not introduce a timer or audio-thread file access.
+
+
+## M1.3 — Open at a usable height (MacBook screenshot fix)
+
+The MacBook hardware screenshot showed that the generic Split workspace default of **270 logical points** leaves the bottom half of the Atelier editor behind a scrollbar, even at a normal 1536×960 Studio window size. This was a container sizing problem, not an image-loading or Audio Unit problem.
+
+When an instrument editor is shown in Split, Studio now increases the preferred lower-workspace height to fit the current editor, targeting the smaller of 525 scaled points or 62% of the main window height, without shrinking an intentionally larger dock. `dockRoom()` still clamps the result to the actual display. The Atelier editor can adapt its content as low as 315 scaled points; if the display is genuinely too small for that and the arrangement, scrolling remains available as a fallback. Switching from Expanded to Split also fits the instrument, rather than returning to a clipped 270-point dock.
+
+Floating Atelier windows use minimum bounds derived from the editor's real height, including when restoring older saved small-window geometry. Studio Synth, Studio Sampler, Mixer, and other workspace size policies remain unchanged. These are presentation-only changes; the same instrument, sound, preset, routing and state safeguards are retained.
+
+The adaptive-workspace automated fixture now checks the first opening of a hosted-AU Atelier panel at 1280×800, verifies that the viewport can display its entire minimum content without scrolling, and repeats the check after Float and Dock.
+
+**Hardware acceptance:** open the ARIA instrument editor in the lower workspace at the default Studio window size and confirm the artwork, both dials, value fields, and all visible bottom buttons can be seen immediately, without scrolling. Confirm Float/Dock doesn't regress this behavior.
