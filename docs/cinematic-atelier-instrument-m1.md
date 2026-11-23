@@ -42,3 +42,11 @@ This is the **first working implementation**, not the approved full-screen conce
 Potential follow-ups: add a separately authored violin portrait, capability-driven native Studio Synth/Sampler presentation, accurate MIDI-channel routing control, keyboard audition via selected live route, and optional direct mapped articulation tiles.
 
 Milestone 1 serves as a reviewable development branch, **not** an instruction to install during the M14 acceptance test.
+
+## Initial MacBook screenshot review — layout correction
+
+Two actual MacBook captures of the first Atelier editor (docked and floating) confirmed the new hosted-ARIA view opens and moves between Studio's lower workspace and a separate window. They also revealed an unacceptable presentation regression: JUCE's rotary controls were stretched to fill available panel space, producing enormous knobs in the floating window and missing visible control labels.
+
+The follow-up changes cap the physical width of volume, pan and optional Expression controls at `appearance.span(125)`, add explicit VOLUME/PAN labels, align the title and real AU name as a vertical hierarchy, and retain the same linked Tracktion fader/parameter instances. The bounds regression helper now verifies dial size and label containment. These changes do not alter plug-in loading, project state, audio graphs, Stage processing, or Float/Dock lifetimes.
+
+**Still not visually complete:** the portrait still displays the cached Composer Studio Blue-Hour Study scene, not an instrument-specific violin illustration, and the full photographic mockup is a future design reference rather than an implemented control map. Do not claim these screenshots represent the final Cinematic Atelier look.
