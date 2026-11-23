@@ -995,6 +995,7 @@ private:
     studio::RailButton instrumentsButton { "Instruments", studio::RailIcon::instruments },
                        channelButton { "Channel", studio::RailIcon::channel },
                        stageButton { "Stage", studio::RailIcon::stage },
+                       pictureButton { "Picture", studio::RailIcon::picture },
                        articulationsButton { "Articulations", studio::RailIcon::articulations },
                        pianoButton { "Piano Roll", studio::RailIcon::piano },
                        mixButton { "Mixer", studio::RailIcon::mixer },
@@ -1048,10 +1049,11 @@ private:
     struct DockItem { DockMode mode; TextButton* button; };
     struct WorkspaceEntry { Workspace destination; const char* name; };
 
-    std::array<RailItem, 6> railItems()
+    std::array<RailItem, 7> railItems()
     {
         return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::channel, &channelButton },
-                  { Workspace::stage, &stageButton }, { Workspace::articulations, &articulationsButton },
+                  { Workspace::stage, &stageButton }, { Workspace::filmScoring, &pictureButton },
+                  { Workspace::articulations, &articulationsButton },
                   { Workspace::piano, &pianoButton }, { Workspace::mix, &mixButton } }};
     }
 
@@ -1065,7 +1067,6 @@ private:
         { Workspace::rooms, "Rooms" }, { Workspace::microphones, "Virtual Microphones" },
         { Workspace::midi, "MIDI Monitor" }, { Workspace::resources, "Resource Inspector" },
         { Workspace::instrumentEditor, "Instrument Editor" },
-        { Workspace::filmScoring, "Film Scoring" },
        #if JUCE_MAC
         { Workspace::orchestraSeating, "Arrangement Reference" },
        #endif
