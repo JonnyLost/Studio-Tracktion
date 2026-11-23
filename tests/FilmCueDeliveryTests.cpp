@@ -49,6 +49,12 @@ int main()
     assert (safeDeliveryName (std::string (250, 'A')).size() <= 72);
     assert (safeDeliveryName ("a\r\nb") == "a-b");
 
+    project.pictureStartFrame = std::numeric_limits<int64_t>::max();
+    cue.startPictureFrame = 360;
+    cue.endPictureFrame = 600;
+    assert (! deliveryRange (project, cue));
+    project.pictureStartFrame = 0;
+
     project.rate = Rate::fps2997DF;
     project.pictureStartFrame = 0;
     cue.startPictureFrame = 17982;
