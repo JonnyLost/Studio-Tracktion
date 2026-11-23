@@ -411,7 +411,8 @@ public:
                     return;
                 }
             }
-            if (! showNativeInstrument (plugin)) plugin.showWindowExplicitly();
+            if (! showNativeInstrument (plugin) && ! showAtelierInstrument (plugin))
+                plugin.showWindowExplicitly();
         };
         articulationStrip.onManage = [this]
         {
@@ -466,6 +467,24 @@ public:
             showWorkspace (Workspace::instrumentEditor);
         };
         instrumentWorkspace.onPreferenceChange = [this] { rememberInstrumentWorkspace(); };
+        instrumentWorkspace.onArticulations = [this] (te::EditItemID id)
+        {
+            if (auto* target = trackById (id))
+            {
+                selection.selectOnly (target);
+                if (dockMode == DockMode::compact) setDockMode (DockMode::split);
+                showWorkspace (Workspace::articulations);
+            }
+        };
+        instrumentWorkspace.onStage = [this] (te::EditItemID id)
+        {
+            if (auto* target = trackById (id))
+            {
+                selection.selectOnly (target);
+                if (dockMode == DockMode::compact) setDockMode (DockMode::split);
+                showWorkspace (Workspace::stage);
+            }
+        };
         workspaceBody.addChildComponent (articulation);
         workspaceBody.addChildComponent (spatialWorkspace);
         spatialWorkspace.onExpandStage = [this] { setDockMode (DockMode::split); };
@@ -1531,7 +1550,7 @@ public:
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier
     };
 
     PopupMenu applicationMenu (int index)
@@ -1597,6 +1616,7 @@ public:
                 add (mInspector, "Selected Track Inspector", project, inspectorOpen);
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
+                add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
                 menu.addSeparator();
                 add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
                 add (mTransportClick, "Transport: Metronome", true, showTransportClick);
@@ -1648,6 +1668,13 @@ public:
             case mAudioSettings: invoke (audioSettings); break;
             case mPluginManager: invoke (plugins); break;
             case mSettings: showStudioSettings(); break;
+            case mAtelier:
+                if (auto* target = workflowTrack())
+                    if (auto* inst = studio::findInstrument (*target))
+                        if (! showAtelierInstrument (*inst) && ! showNativeInstrument (*inst))
+                            message.setText ("Choose a hosted Audio Unit instrument for Cinematic Atelier.",
+                                             dontSendNotification);
+                break;
             case mUndo: if (canEditRegions()) edit->undo(); break;
             case mRedo: if (canEditRegions()) edit->redo(); break;
             case mAddInstrument: if (canEditRegions()) addTrack ("Instrument"); break;
@@ -3352,7 +3379,8 @@ private:
         const auto lastInstrument = instrumentWorkspace.rememberedInstrument();
         if (! create && lastInstrument.isValid())
             if (auto savedPlugin = te::findPluginForID (*edit, lastInstrument); savedPlugin != nullptr)
-                if (showNativeInstrument (*savedPlugin))
+                if ((instrumentWorkspace.rememberedAtelier() && ! ariaReviewPending
+                        && showAtelierInstrument (*savedPlugin)) || showNativeInstrument (*savedPlugin))
                 {
                     const bool floating = instrumentWorkspace.rememberedFloating();
                     setDockMode (instrumentWorkspace.rememberedLayout());
@@ -3634,6 +3662,22 @@ private:
         return true;
     }
 
+    bool showAtelierInstrument (te::Plugin& plug)
+    {
+        // The Atelier UI is opt-in for hosted AU instruments. Studio Synth
+        // and Studio Sampler retain their existing, fully functional editors.
+        if (edit == nullptr || &plug.edit != edit.get()
+            || dynamic_cast<te::ExternalPlugin*> (&plug) == nullptr)
+            return false;
+        auto* target = dynamic_cast<te::AudioTrack*> (plug.getOwnerTrack());
+        if (target == nullptr || ! instrumentWorkspace.openAtelier (plug, *target))
+            return false;
+        if (workflowTrack() != target) selection.selectOnly (target);
+        if (dockMode == DockMode::compact) setDockMode (DockMode::split);
+        showWorkspace (Workspace::instrumentEditor);
+        return true;
+    }
+
     void configureInstrumentWorkflow()
     {
         browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
@@ -3769,7 +3813,8 @@ private:
         {
             if (! busy)
                 if (auto* track = trackById (id))
-                    if (auto* instrument = studio::findInstrument (*track); instrument != nullptr && ! showNativeInstrument (*instrument))
+                    if (auto* instrument = studio::findInstrument (*track); instrument != nullptr
+                        && ! showNativeInstrument (*instrument) && ! showAtelierInstrument (*instrument))
                         instrument->showWindowExplicitly();
         };
         trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
