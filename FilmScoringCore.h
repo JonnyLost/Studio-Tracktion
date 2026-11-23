@@ -51,7 +51,8 @@ inline Timecode fromFrames (int64_t frame, Rate rate)
     const bool negative = frame < 0;
     // Avoid abs(INT64_MIN) undefined behavior; limit values to a 24-hour label cycle.
     const int64_t cycle = r.drop ? 2589408 : int64_t (r.nominal) * 86400;
-    int64_t f = (negative ? -(frame + 1) + 1 : frame) % cycle;
+    const uint64_t magnitude = negative ? uint64_t (-(frame + 1)) + 1ULL : uint64_t (frame);
+    int64_t f = (int64_t) (magnitude % (uint64_t) cycle);
     if (r.drop)
     {
         const int64_t tenMinutes = 17982;
@@ -177,25 +178,38 @@ public:
     std::optional<BarBeat> barBeatAt (double second) const
     {
         if (! valid() || ! std::isfinite (second) || second < 0) return {};
-        int64_t barBase = 1;
+        int64_t completedBars = 0;
+        double quartersInMeter = 0;
         for (size_t i = 0; i < entries.size(); ++i)
         {
             const auto& p = entries[i];
-            const double duration = (i + 1 < entries.size() ? entries[i + 1].startSecond : second) - p.startSecond;
-            const double beatsPerBar = double (p.numerator) * 4 / p.denominator;
-            const double beats = std::max (0.0, std::min (second - p.startSecond, duration)) * p.bpm / 60;
-            if (i + 1 == entries.size() || second < entries[i + 1].startSecond)
+            if (i > 0 && (p.numerator != entries[i - 1].numerator
+                          || p.denominator != entries[i - 1].denominator))
             {
-                const double intoBar = std::fmod (beats, beatsPerBar);
-                const double unit = 4.0 / p.denominator;
-                return BarBeat { barBase + (int64_t) std::floor (beats / beatsPerBar),
-                                 1 + (int) std::floor ((intoBar + 1e-9) / unit),
-                                 std::fmod (intoBar / unit, 1.0) };
+                // A signature change begins a new bar; a tempo-only change
+                // must NOT discard the accumulated position within a bar.
+                const auto& prior = entries[i - 1];
+                const double oldBarQuarters = double (prior.numerator) * 4 / prior.denominator;
+                completedBars += (int64_t) std::ceil (quartersInMeter / oldBarQuarters - 1e-9);
+                quartersInMeter = 0;
             }
-            barBase += (int64_t) std::ceil (beats / beatsPerBar - 1e-9);
+            const double boundary = i + 1 < entries.size() ? entries[i + 1].startSecond : second;
+            const double elapsed = std::max (0.0, std::min (second, boundary) - p.startSecond);
+            quartersInMeter += elapsed * p.bpm / 60;
+            if (i + 1 == entries.size() || second < boundary)
+            {
+                const double quartersPerBar = double (p.numerator) * 4 / p.denominator;
+                const double quartersPerBeat = 4.0 / p.denominator;
+                const auto bars = (int64_t) std::floor (quartersInMeter / quartersPerBar + 1e-9);
+                const double into = std::max (0.0, quartersInMeter - bars * quartersPerBar);
+                const auto unitIndex = (int) std::floor (into / quartersPerBeat + 1e-9);
+                return BarBeat { completedBars + bars + 1, unitIndex + 1,
+                                 std::max (0.0, into / quartersPerBeat - unitIndex) };
+            }
         }
         return {};
     }
+
 private:
     std::vector<TempoPoint> entries;
 };
