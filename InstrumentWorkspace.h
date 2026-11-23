@@ -26,11 +26,13 @@ public:
     void relocateProject (const juce::File&);
     void clear();
     bool open (tracktion::Plugin&, tracktion::AudioTrack&);
+    bool openAtelier (tracktion::Plugin&, tracktion::AudioTrack&);
     void updateSelection (tracktion::AudioTrack*, const juce::Array<tracktion::AudioTrack*>&, bool follow);
     void saveSession (bool open, DockMode);
     tracktion::EditItemID rememberedInstrument() const;
     DockMode rememberedLayout() const;
     bool rememberedFloating() const;
+    bool rememberedAtelier() const;
     int minimumContentHeight() const;
     void appearanceChanged();
     void setFloating (bool);
@@ -40,6 +42,7 @@ public:
     void resized() override;
 
     std::function<void()> onLayout, onExpand, onDock, onPreferenceChange;
+    std::function<void (tracktion::EditItemID)> onArticulations, onStage;
 
 private:
     class Window;
@@ -58,6 +61,7 @@ private:
     juce::Label empty;
     juce::TextButton bringBack { "Dock Instrument" };
     std::unique_ptr<Window> window;
+    bool atelierMode = false;
     tracktion::Plugin::Ptr plugin;
     std::unique_ptr<NativeInstrumentEditor> editor;
     juce::Array<tracktion::EditItemID> choices;
