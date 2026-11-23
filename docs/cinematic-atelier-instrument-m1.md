@@ -50,3 +50,23 @@ Two actual MacBook captures of the first Atelier editor (docked and floating) co
 The follow-up changes cap the physical width of volume, pan and optional Expression controls at `appearance.span(125)`, add explicit VOLUME/PAN labels, align the title and real AU name as a vertical hierarchy, and retain the same linked Tracktion fader/parameter instances. The bounds regression helper now verifies dial size and label containment. These changes do not alter plug-in loading, project state, audio graphs, Stage processing, or Float/Dock lifetimes.
 
 **Still not visually complete:** the portrait still displays the cached Composer Studio Blue-Hour Study scene, not an instrument-specific violin illustration, and the full photographic mockup is a future design reference rather than an implemented control map. Do not claim these screenshots represent the final Cinematic Atelier look.
+
+## M1.2 — Real instrument portrait collection
+
+A real artwork package is now prepared from approved Studio instrument paintings: **Violin, Cello, Flute, Clarinet, Horn and Oboe**. Each is optimized to a 480×680 JPEG (roughly 60–90 KB/image) so the MacBook stores compact images rather than loading full-resolution original paintings into every instrument window. The exact package is a separate conversation artifact, `Studio-Cinematic-Atelier-Portraits.zip`, not yet embedded in the GitHub source tree.
+
+### Install images (optional)
+
+Unzip the portrait JPEGs directly to `~/Library/Application Support/Studio/AtelierArtwork/`. The app looks for these exact filenames: `Violin.jpg`, `Cello.jpg`, `Flute.jpg`, `Clarinet.jpg`, `Horn.jpg` and `Oboe.jpg`. This is local/offline artwork; no network, third-party plugin or remote asset service is involved. Without the pack, the existing Blue-Hour Study remains visible with a clear "Portrait not installed" message when an unavailable painting is selected.
+
+In the Atelier editor, use the **Instrument artwork** dropdown at upper right. The choice is intentionally **manual**, as the currently observed AU name `ARIA Player` does not reveal whether a particular patch is violin, horn, or another instrument. The chosen picture is stored as `atelier-v2|<name>` in the existing per-instrument workspace view state (not in the Audio Unit state), and should survive switching instruments, Float/Dock, and reopening a saved project. It never changes the selected sound or patch.
+
+The art is decoded only on the GUI thread when selected (not for each frame), then cached; `paint()` only uses the cached JUCE image. The underlying faders, mix routing, MIDI and ARIA recovery safeguards are untouched. Blue-hour coloring remains an atmospheric border rather than obscuring the portrait.
+
+### Specific acceptance
+- Confirm violin artwork can be selected while `ARIA Player` hosts a violin and that the art changes without changing audio/preset, patch, or AU instance.
+- Switch to another instrument, then back; confirm independent portrait selection is restored.
+- Float and Dock; confirm the same artwork and controls.
+- Without the files installed, selecting any portrait must fall back to the original study image without crashing.
+- At least 1024×640 and 1280×800, keep the artwork dropdown, title, original editor button and channel controls readable.
+- Confirm MacBook idle CPU remains low; artwork selection must not introduce a timer or audio-thread file access.
