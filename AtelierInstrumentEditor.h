@@ -15,6 +15,7 @@ public:
     ~AtelierInstrumentEditor() override;
 
     bool allowWindowResizing() override { return true; }
+    juce::ComponentBoundsConstrainer* getBoundsConstrainer() override { return &limits; }
     void appearanceChanged() override;
     int minimumDockHeight() const override;
     juce::String viewState() const override;
@@ -39,6 +40,7 @@ private:
     tracktion::EditItemID trackId;
     tracktion::AutomatableParameter::Ptr expressionParameter;
     juce::Image blueHour;
+    juce::ComponentBoundsConstrainer limits;
     juce::Label title, subtitle, mixHeading, expressionHeading, hint, sceneCaption;
     juce::TextButton original { "Open Original Instrument" },
                      articulation { "Articulation Mappings..." }, stage { "Open Orchestral Stage..." };
