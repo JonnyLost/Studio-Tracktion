@@ -316,7 +316,7 @@ target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h Instrume
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
     FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
-    FilmPictureSync.h FilmScoringCueSheet.h)
+    FilmPictureSync.h FilmScoringCueSheet.h FilmCueDelivery.h FilmCueRender.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -367,6 +367,11 @@ if(BUILD_TESTING)
     target_compile_features(StudioFilmPictureSyncTests PRIVATE cxx_std_20)
     target_compile_options(StudioFilmPictureSyncTests PRIVATE -UNDEBUG)
     add_test(NAME StudioFilmPictureSync COMMAND StudioFilmPictureSyncTests)
+
+    add_executable(StudioFilmCueDeliveryTests tests/FilmCueDeliveryTests.cpp)
+    target_compile_features(StudioFilmCueDeliveryTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmCueDeliveryTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmCueDelivery COMMAND StudioFilmCueDeliveryTests)
 
     add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
     target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)
