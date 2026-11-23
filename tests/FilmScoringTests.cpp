@@ -81,6 +81,15 @@ int main()
     assert (decode (root).spots.empty());
     assert (undo.redo());
     assert (decode (root).spots.size() == 2);
+    // Updating an existing state is one undoable user action, not two.
+    auto revised = project;
+    revised.spots[0].name = "New title";
+    store (root, revised, &undo);
+    assert (decode (root).find ("hit1")->name == "New title");
+    assert (undo.undo());
+    assert (decode (root).find ("hit1")->name == "Door slams");
+    assert (undo.redo());
+    assert (decode (root).find ("hit1")->name == "New title");
     auto xml = root.createXml();
     assert (xml != nullptr);
     auto reloaded = juce::ValueTree::fromXml (*xml);
