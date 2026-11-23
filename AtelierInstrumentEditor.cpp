@@ -267,7 +267,10 @@ void AtelierInstrumentEditor::timerCallback()
 
 int AtelierInstrumentEditor::minimumDockHeight() const
 {
-    return appearance.control (30, 12) + appearance.px (420);
+    // The dock can contract on smaller MacBooks without forcing a vertical
+    // scrollbar. The Main page adapts its dials and portrait to the height;
+    // Studio still prefers a taller dock whenever the display has room.
+    return appearance.px (315);
 }
 
 void AtelierInstrumentEditor::loadPortrait()
