@@ -325,7 +325,7 @@ private:
     juce::Label caption, value;
 };
 
-enum class RailIcon { instruments, channel, stage, articulations, piano, mixer, more };
+enum class RailIcon { instruments, channel, stage, picture, articulations, piano, mixer, more };
 
 class RailButton final : public juce::TextButton
 {
@@ -388,6 +388,14 @@ private:
                 for (int y = 3; y <= 13; y += 5)
                     for (int x = 3; x <= 13; x += 5)
                         g.drawEllipse ((float) x, (float) y, 2.8f, 2.8f, 1.0f);
+                break;
+            case RailIcon::picture:
+                g.drawRoundedRectangle (2.0f, 3.0f, 14.0f, 12.0f, 1.0f, 1.2f);
+                for (int x : { 4, 13 })
+                    for (int y : { 5, 9, 13 })
+                        g.fillRect (x, y, 2, 2);
+                g.drawLine (8.0f, 6.0f, 11.5f, 9.0f, 1.3f);
+                g.drawLine (11.5f, 9.0f, 8.0f, 12.0f, 1.3f);
                 break;
             case RailIcon::piano:
                 g.drawRoundedRectangle (2.0f, 3.0f, 14.0f, 12.0f, 1.5f, 1.1f);
