@@ -75,13 +75,19 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     limits.setSizeLimits (440, 340, 1600, 1000);
     setWantsKeyboardFocus (true);
 
-    for (auto* label : { &title, &subtitle, &mixHeading, &expressionHeading, &hint, &sceneCaption })
+    for (auto* label : { &title, &subtitle, &mixHeading, &volumeLabel, &panLabel,
+                         &expressionHeading, &hint, &sceneCaption })
         addAndMakeVisible (*label);
 
     initLabel (title, audioTrack.getName(), 23.0f, ivory, true);
     initLabel (subtitle, source.getName() + "  |  CINEMATIC ATELIER", 11.5f, muted);
     initLabel (mixHeading, "CHANNEL", 12.0f, amber, true);
-    initLabel (expressionHeading, "EXPRESSION", 12.0f, amber, true);
+    initLabel (volumeLabel, "VOLUME", 12.0f, ivory, true);
+    initLabel (panLabel, "PAN", 12.0f, ivory, true);
+    volumeLabel.setJustificationType (Justification::centred);
+    panLabel.setJustificationType (Justification::centred);
+    initLabel (expressionHeading, "EXPRESSION", 12.0f, ivory, true);
+    expressionHeading.setJustificationType (Justification::centred);
     initLabel (hint, "Only supported controls are shown. Detailed instrument editing remains available.",
                10.5f, muted);
     initLabel (sceneCaption, "BLUE-HOUR STUDY", 11.0f, ivory, true);
@@ -298,70 +304,92 @@ void AtelierInstrumentEditor::paint (Graphics& g)
 
 void AtelierInstrumentEditor::resized()
 {
-    auto area = getLocalBounds().reduced (appearance.px (13));
-    auto header = area.removeFromTop (appearance.control (68, 17));
-    title.setBounds (header.removeFromLeft (jmin (header.getWidth() * 45 / 100, appearance.span (330)))
-                      .removeFromTop (appearance.control (34, 9)));
-    subtitle.setBounds (header.removeFromTop (appearance.control (24)));
-    area.removeFromTop (appearance.px (6));
+    const auto& m = appearance;
+    auto area = getLocalBounds().reduced (m.px (13));
 
-    const int gap = appearance.px (12);
-    const bool wide = area.getWidth() >= appearance.span (720);
-    if (wide)
+    // One consistent hierarchy in both docking modes: instrument name first,
+    // actual AU name beneath it. Do not scatter the two labels horizontally.
+    auto header = area.removeFromTop (m.control (70, 17));
+    title.setBounds (header.removeFromTop (m.control (37, 10)));
+    subtitle.setBounds (header.removeFromTop (m.control (23, 9)));
+    area.removeFromTop (m.px (6));
+
+    const int gap = m.px (12);
+    const bool sideBySide = area.getWidth() >= m.span (680);
+    if (sideBySide)
     {
-        portraitBounds = area.removeFromLeft (jlimit (appearance.span (180), appearance.span (290),
-                                                     area.getWidth() * 32 / 100));
+        portraitBounds = area.removeFromLeft (jlimit (m.span (170), m.span (290),
+                                                     area.getWidth() * 30 / 100));
         area.removeFromLeft (gap);
     }
     else
     {
-        portraitBounds = area.removeFromTop (jmin (appearance.control (160), area.getHeight() / 3));
+        portraitBounds = area.removeFromTop (jmin (m.control (150), area.getHeight() / 3));
         area.removeFromTop (gap);
     }
     controlBounds = area;
 
-    auto portraitFooter = portraitBounds.reduced (appearance.px (8)).removeFromBottom (appearance.control (32));
-    sceneCaption.setBounds (portraitFooter);
+    sceneCaption.setBounds (portraitBounds.reduced (m.px (8))
+                               .removeFromBottom (m.control (32)));
 
-    auto controls = controlBounds.reduced (appearance.px (17));
-    const int buttonHeight = appearance.control (32, 11);
-    auto commands = controls.removeFromBottom (buttonHeight);
-    const auto commandGap = appearance.px (7);
-    if (commands.getWidth() > appearance.span (600))
+    auto controls = controlBounds.reduced (m.px (17));
+    const int commandHeight = m.control (32, 11);
+    auto commands = controls.removeFromBottom (commandHeight);
+    const int commandGap = m.px (7);
+    if (commands.getWidth() >= m.span (550))
     {
-        original.setBounds (commands.removeFromRight (jmin (appearance.span (205), commands.getWidth() / 3)));
+        original.setBounds (commands.removeFromRight (jmin (m.span (205), commands.getWidth() / 3)));
         commands.removeFromRight (commandGap);
-        stage.setBounds (commands.removeFromRight (jmin (appearance.span (170), commands.getWidth() / 2)));
+        stage.setBounds (commands.removeFromRight (jmin (m.span (170), commands.getWidth() / 2)));
         commands.removeFromRight (commandGap);
         articulation.setBounds (commands);
     }
     else
     {
-        // Compact dock: priority to opening the original instrument. The
-        // remaining destinations are still available from the Studio dock.
+        // At narrow widths the dock keeps the original editor accessible.
+        // Stage and articulation remain reachable through Studio's sidebar.
         original.setBounds (commands);
         articulation.setBounds ({});
         stage.setBounds ({});
     }
 
-    controls.removeFromBottom (appearance.px (9));
-    hint.setBounds (controls.removeFromBottom (appearance.control (35, 12)));
+    controls.removeFromBottom (m.px (9));
+    hint.setBounds (controls.removeFromBottom (m.control (35, 12)));
     auto mix = controls;
-    const int labelHeight = appearance.control (28, 10);
-    mixHeading.setBounds (mix.removeFromTop (labelHeight));
+    mixHeading.setBounds (mix.removeFromTop (m.control (28, 10)));
+    mix.removeFromTop (m.px (5));
+
     const bool hasExpression = expressionParameter != nullptr;
     const int count = hasExpression ? 3 : 2;
-    const int cell = jmax (1, mix.getWidth() / count);
-    auto first = mix.removeFromLeft (cell);
-    auto second = hasExpression ? mix.removeFromLeft (cell) : mix;
-    volume.setBounds (first.reduced (appearance.px (6)));
-    pan.setBounds (second.reduced (appearance.px (6)));
+    const int cellWidth = jmax (1, mix.getWidth() / count);
+
+    // Keep the controls *physically sized*, rather than stretching JUCE
+    // rotary sliders to fill an 800px-wide floating editor. Textbox positions
+    // and the underlying Tracktion parameter bindings are unchanged.
+    const auto placeDial = [&] (Label& heading, Slider& slider, Rectangle<int> cell)
+    {
+        const int labelH = jmin (m.control (24, 9), cell.getHeight());
+        const int sliderH = jmax (0, jmin (m.control (145, 14), cell.getHeight() - labelH));
+        const int sliderW = jmax (0, jmin (m.span (125), cell.getWidth() - m.px (10)));
+        const int totalH = labelH + sliderH;
+        const int top = cell.getY() + jmax (0, (cell.getHeight() - totalH) / 2);
+        const int left = cell.getCentreX() - sliderW / 2;
+        heading.setBounds (left, top, sliderW, labelH);
+        slider.setBounds (left, top + labelH, sliderW, sliderH);
+    };
+
+    placeDial (volumeLabel, volume, mix.removeFromLeft (cellWidth));
     if (hasExpression)
     {
-        expression.setBounds (mix.reduced (appearance.px (6)));
-        expressionHeading.setBounds (expression.getBounds().removeFromTop (appearance.control (20)));
+        placeDial (panLabel, pan, mix.removeFromLeft (cellWidth));
+        placeDial (expressionHeading, expression, mix);
     }
-    else expression.setBounds ({});
+    else
+    {
+        placeDial (panLabel, pan, mix);
+        expressionHeading.setBounds ({});
+        expression.setBounds ({});
+    }
 }
 
 #if STUDIO_SPATIAL_TESTS
@@ -383,7 +411,10 @@ bool AtelierInstrumentEditor::essentialControlsFit() const
     const auto bounds = getLocalBounds();
     return ! portraitBounds.isEmpty() && ! controlBounds.isEmpty()
         && bounds.contains (title.getBounds()) && bounds.contains (original.getBounds())
-        && bounds.contains (volume.getBounds()) && bounds.contains (pan.getBounds());
+        && bounds.contains (volumeLabel.getBounds()) && bounds.contains (panLabel.getBounds())
+        && bounds.contains (volume.getBounds()) && bounds.contains (pan.getBounds())
+        && volume.getWidth() <= appearance.span (125)
+        && pan.getWidth() <= appearance.span (125);
 }
 #endif
 }
