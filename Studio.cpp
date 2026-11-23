@@ -203,6 +203,7 @@ public:
     int runInstrumentWorkspaceReview (const File& output);
     int runSeatingProjectReview (const File& output);
     int runUnifiedStageReview (const File& output);
+    int runFilmScoringReview (const File& output);
    #endif
 
     StudioView()
@@ -1700,7 +1701,7 @@ private:
             {
                 piano.setClip (primary);
                 workspaceHeight = studio::appearance.px (360);
-                if (workspace != Workspace::articulations)
+                if (workspace != Workspace::articulations && workspace != Workspace::filmScoring)
                     showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
@@ -3037,6 +3038,66 @@ int StudioView::runSeatingProjectReview (const File& output)
     return 0;
 }
 
+int StudioView::runFilmScoringReview (const File& output)
+{
+    stopTimer();
+    environmentWelcome.dismiss();
+    setSize (1280, 800);
+    const auto fail = [] (const char* message)
+    {
+        std::fprintf (stderr, "Film Scoring workspace review failed: %s\n", message);
+        return 1;
+    };
+    TemporaryFile fixture (".tracktionedit");
+    loadProject (fixture.getFile(), true);
+    if (! edit) return fail ("create film scoring project");
+    const auto trackCount = te::getAudioTracks (*edit).size();
+    setDockMode (DockMode::expanded);
+    showWorkspace (Workspace::filmScoring);
+    if (! filmWorkspace.isVisible() || ! workspaceViewport.isVisible())
+        return fail ("Film Scoring is accessible from the existing dock");
+
+    studio::film::Project picture;
+    picture.rate = studio::film::Rate::fps2997DF;
+    picture.pictureStartFrame = 107892;
+    if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 17982 })
+        || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 21582 }))
+        return fail ("create picture-anchored hits");
+    studio::film::store (edit->state, picture, &edit->getUndoManager());
+    filmWorkspace.setEdit (nullptr);
+    filmWorkspace.setEdit (edit.get());
+    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().pictureStartFrame != 107892
+        || filmWorkspace.snapshot().rate != studio::film::Rate::fps2997DF)
+        return fail ("dock reads versioned picture metadata");
+    if (te::getAudioTracks (*edit).size() != trackCount)
+        return fail ("spotting modified audio tracks");
+
+    const auto saved = studio::film::decode (edit->state);
+    if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false))
+        return fail ("save project with film scoring metadata");
+    const auto generation = projectGeneration;
+    loadProject (fixture.getFile(), false);
+    if (projectGeneration != generation + 1 || edit == nullptr
+        || studio::film::decode (edit->state).spots.size() != 2
+        || studio::film::decode (edit->state).pictureStartFrame != saved.pictureStartFrame)
+        return fail ("reopen picture scoring metadata and offset");
+    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().find ("test-1") == nullptr
+        || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 17982
+        || te::getAudioTracks (*edit).size() != trackCount)
+        return fail ("restore exact source frame anchors without altering tracks");
+    showWorkspace (Workspace::filmScoring);
+    if (output != File())
+    {
+        if (output.createDirectory().failed()) return fail ("create screenshot folder");
+        FileOutputStream stream (output.getChildFile ("film-scoring-workspace.png"));
+        if (! stream.openedOk() || ! PNGImageFormat().writeImageToStream (
+                createComponentSnapshot (getLocalBounds()), stream))
+            return fail ("render workspace screenshot");
+    }
+    std::puts ("Film Scoring workspace, frame anchors, project isolation and reload passed.");
+    return 0;
+}
+
 int StudioView::runInstrumentWorkspaceReview (const File& output)
 {
     stopTimer();
@@ -3442,6 +3503,14 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-film-scoring-workspace")
+        {
+            StudioView view;
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_FILM_SCORING_SCREENSHOTS", {});
+            setApplicationReturnValue (view.runFilmScoringReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-unified-stage")
         {
             StudioView view;
