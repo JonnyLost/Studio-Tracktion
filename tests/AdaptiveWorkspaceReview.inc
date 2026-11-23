@@ -312,7 +312,12 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     // Regress the hardware report: the old 270-point Split opened the
     // Cinematic Atelier with its bottom row hidden behind a vertical scrollbar.
     // An unavailable hosted AU fixture is enough to exercise presentation;
-    // no real Audio Unit or MIDI hardware is required.
+    // no real Audio Unit or MIDI hardware is required. Explicitly reproduce
+    // the too-short 270-point default before opening the new editor.
+    showWorkspace (Workspace::closed);
+    setDockMode (DockMode::split);
+    workspaceHeight = studio::appearance.px (270);
+    resized();
     if (auto* hosted = studio::findInstrument (*external); hosted == nullptr || ! showAtelierInstrument (*hosted))
         return fail ("open hosted instrument in the Atelier dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
