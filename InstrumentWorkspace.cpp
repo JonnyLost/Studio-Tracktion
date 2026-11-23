@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentWorkspace.h"
+#include "AtelierInstrumentEditor.h"
 #include "StudioSampler.h"
 #include "StudioSynth.h"
 
@@ -64,7 +65,7 @@ private:
 InstrumentWorkspace::Content::Content (InstrumentWorkspace& workspace) : host (workspace)
 {
     choice.setTitle ("Instrument instance");
-    choice.setTextWhenNothingSelected ("No native instrument selected");
+    choice.setTextWhenNothingSelected ("No instrument selected");
     floating.setTooltip ("Move the instrument between Studio and a floating window");
     expand.setTooltip ("Give the instrument more room in Studio");
     addAndMakeVisible (choice);
@@ -78,7 +79,10 @@ InstrumentWorkspace::Content::Content (InstrumentWorkspace& workspace) : host (w
             for (auto* candidate : track->pluginList)
                 if (candidate->itemID == host.choices[index])
                 {
-                    host.open (*candidate, *track);
+                    if (isNativeInstrument (*candidate))
+                        host.open (*candidate, *track);
+                    else
+                        host.openAtelier (*candidate, *track);
                     break;
                 }
     };
@@ -104,7 +108,7 @@ InstrumentWorkspace::InstrumentWorkspace (PropertiesFile& settings) : preference
     addAndMakeVisible (content);
     addChildComponent (empty);
     addChildComponent (bringBack);
-    empty.setText ("Select a Studio Synth or Studio Sampler track.", dontSendNotification);
+    empty.setText ("Choose an instrument track to open its editor.", dontSendNotification);
     empty.setFont (FontOptions (14.0f));
     bringBack.onClick = [this] { setFloating (false); };
 }
@@ -135,6 +139,7 @@ void InstrumentWorkspace::releaseEditor()
     rememberView();
     editor.reset();
     plugin = nullptr;
+    atelierMode = false;
 }
 
 void InstrumentWorkspace::clear()
@@ -158,7 +163,7 @@ void InstrumentWorkspace::populateChoices (te::AudioTrack* track)
     StringArray labels;
     if (track != nullptr)
         for (auto* item : track->pluginList)
-            if (isNativeInstrument (*item))
+            if (isNativeInstrument (*item) || (atelierMode && dynamic_cast<te::ExternalPlugin*> (item) != nullptr))
             {
                 ids.add (item->itemID);
                 labels.add (track->getName() + "  |  " + item->getName()
@@ -180,13 +185,14 @@ void InstrumentWorkspace::populateChoices (te::AudioTrack* track)
 bool InstrumentWorkspace::open (te::Plugin& candidate, te::AudioTrack& track)
 {
     if (! isNativeInstrument (candidate) || track.pluginList.indexOf (&candidate) < 0) return false;
-    if (plugin.get() != &candidate)
+    if (plugin.get() != &candidate || atelierMode)
     {
         auto component = candidate.createEditor();
         auto* native = dynamic_cast<NativeInstrumentEditor*> (component.get());
         if (native == nullptr) return false;
         releaseEditor();
         plugin = &candidate;
+        atelierMode = false;
         component.release();
         editor.reset (native);
         editor->restoreView (session.getProperty (viewKey (plugin->itemID)).toString());
@@ -199,6 +205,42 @@ bool InstrumentWorkspace::open (te::Plugin& candidate, te::AudioTrack& track)
     }
     populateChoices (&track);
     if (window) window->setName (track.getName() + " - " + plugin->getName());
+    resized();
+    content.resized();
+    return true;
+}
+
+bool InstrumentWorkspace::openAtelier (te::Plugin& candidate, te::AudioTrack& track)
+{
+    // Opt-in visual wrapper for hosted instruments only. The original Audio
+    // Unit remains untouched and is always available from the Atelier view.
+    if (dynamic_cast<te::ExternalPlugin*> (&candidate) == nullptr
+        || track.pluginList.indexOf (&candidate) < 0) return false;
+    if (plugin.get() != &candidate || ! atelierMode)
+    {
+        auto component = std::make_unique<AtelierInstrumentEditor> (candidate, track);
+        component->onArticulations = [this] (te::EditItemID id)
+        {
+            if (onArticulations) onArticulations (id);
+        };
+        component->onStage = [this] (te::EditItemID id)
+        {
+            if (onStage) onStage (id);
+        };
+        releaseEditor();
+        plugin = &candidate;
+        atelierMode = true;
+        editor = std::move (component);
+        editor->restoreView (session.getProperty (viewKey (plugin->itemID)).toString());
+        editor->onSizePreferenceChanged = [this]
+        {
+            if (window) window->resized();
+            if (onLayout) onLayout();
+        };
+        content.addAndMakeVisible (*editor);
+    }
+    populateChoices (&track);
+    if (window) window->setName (track.getName() + " - Cinematic Atelier");
     resized();
     content.resized();
     return true;
@@ -227,9 +269,14 @@ void InstrumentWorkspace::updateSelection (te::AudioTrack* selected, const Array
         {
             const auto preferred = te::EditItemID::fromRawID (static_cast<uint64_t> (static_cast<int64> (session.getProperty ("instrument", var (0)))));
             te::Plugin* first = nullptr;
+            const bool followingAtelier = atelierMode;
             for (auto* item : selected->pluginList)
-                if (isNativeInstrument (*item) && (first == nullptr || item->itemID == preferred)) first = item;
-            if (first != nullptr) changed |= open (*first, *selected);
+                if ((followingAtelier ? dynamic_cast<te::ExternalPlugin*> (item) != nullptr
+                                     : isNativeInstrument (*item))
+                    && (first == nullptr || item->itemID == preferred))
+                    first = item;
+            if (first != nullptr)
+                changed |= followingAtelier ? openAtelier (*first, *selected) : open (*first, *selected);
             else if (! window && plugin != nullptr) { releaseEditor(); changed = true; }
         }
     }
@@ -247,6 +294,7 @@ void InstrumentWorkspace::saveSession (bool open, DockMode mode)
     rememberView();
     session.setProperty ("instrument", open && plugin != nullptr ? static_cast<int64> (plugin->itemID.getRawID()) : 0, nullptr);
     session.setProperty ("floating", window != nullptr, nullptr);
+    session.setProperty ("atelier", atelierMode, nullptr);
     session.setProperty ("layout", static_cast<int> (mode), nullptr);
     if (window) preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
     if (const auto xml = session.createXml())
@@ -262,6 +310,7 @@ DockMode InstrumentWorkspace::rememberedLayout() const
     return static_cast<DockMode> (jlimit (0, 2, static_cast<int> (session.getProperty ("layout", 1))));
 }
 bool InstrumentWorkspace::rememberedFloating() const { return static_cast<bool> (session.getProperty ("floating", false)); }
+bool InstrumentWorkspace::rememberedAtelier() const { return static_cast<bool> (session.getProperty ("atelier", false)); }
 
 int InstrumentWorkspace::minimumContentHeight() const
 {
