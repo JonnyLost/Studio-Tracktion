@@ -234,8 +234,12 @@ bool InstrumentWorkspace::openAtelier (te::Plugin& candidate, te::AudioTrack& tr
         editor->restoreView (session.getProperty (viewKey (plugin->itemID)).toString());
         editor->onSizePreferenceChanged = [this]
         {
+            // The selector changes presentation only; persist the chosen art
+            // with this instrument, leaving Audio Unit/project audio state alone.
+            rememberView();
             if (window) window->resized();
             if (onLayout) onLayout();
+            if (onPreferenceChange) onPreferenceChange();
         };
         content.addAndMakeVisible (*editor);
     }
