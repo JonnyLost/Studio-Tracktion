@@ -3064,14 +3064,26 @@ int StudioView::runFilmScoringReview (const File& output)
     if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 17982 })
         || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 21582 }))
         return fail ("create picture-anchored hits");
+    if (! picture.addCue ({ "1M1", "Opening score", "Transition", 17982, 21582 })
+        || ! picture.addCue ({ "1M2", "Next sequence", "", 30000, std::nullopt }))
+        return fail ("create frame-anchored film cues");
     studio::film::store (edit->state, picture, &edit->getUndoManager());
     filmWorkspace.setEdit (nullptr);
     filmWorkspace.setEdit (edit.get());
-    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().pictureStartFrame != 107892
+    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().cues.size() != 2
+        || filmWorkspace.snapshot().pictureStartFrame != 107892
         || filmWorkspace.snapshot().rate != studio::film::Rate::fps2997DF)
         return fail ("dock reads versioned picture metadata");
     if (te::getAudioTracks (*edit).size() != trackCount)
         return fail ("spotting modified audio tracks");
+    if (! edit->getUndoManager().undo()) return fail ("undo spotting metadata");
+    filmWorkspace.tick();
+    if (! filmWorkspace.snapshot().cues.empty() || ! filmWorkspace.snapshot().spots.empty())
+        return fail ("workspace did not reconcile project Undo");
+    if (! edit->getUndoManager().redo()) return fail ("redo spotting metadata");
+    filmWorkspace.tick();
+    if (filmWorkspace.snapshot().cues.size() != 2 || filmWorkspace.snapshot().spots.size() != 2)
+        return fail ("workspace did not reconcile project Redo");
 
     const auto saved = studio::film::decode (edit->state);
     if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false))
@@ -3080,10 +3092,13 @@ int StudioView::runFilmScoringReview (const File& output)
     loadProject (fixture.getFile(), false);
     if (projectGeneration != generation + 1 || edit == nullptr
         || studio::film::decode (edit->state).spots.size() != 2
-        || studio::film::decode (edit->state).pictureStartFrame != saved.pictureStartFrame)
+        || studio::film::decode (edit->state).pictureStartFrame != saved.pictureStartFrame
+        || studio::film::decode (edit->state).cues.size() != 2)
         return fail ("reopen picture scoring metadata and offset");
     if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().find ("test-1") == nullptr
         || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 17982
+        || filmWorkspace.snapshot().findCue ("1M1") == nullptr
+        || filmWorkspace.snapshot().findCue ("1M1")->endPictureFrame != 21582
         || te::getAudioTracks (*edit).size() != trackCount)
         return fail ("restore exact source frame anchors without altering tracks");
     showWorkspace (Workspace::filmScoring);

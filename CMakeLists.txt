@@ -315,7 +315,8 @@ target_sources(Studio PRIVATE Studio.cpp AppearanceMetrics.h StudioUI.h Instrume
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
-    FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h)
+    FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
+    FilmPictureSync.h FilmScoringCueSheet.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -356,6 +357,16 @@ if(BUILD_TESTING)
     target_compile_definitions(StudioFilmScoringTests PRIVATE JUCE_USE_CURL=0)
     target_link_libraries(StudioFilmScoringTests PRIVATE juce::juce_data_structures)
     add_test(NAME StudioFilmScoringCore COMMAND StudioFilmScoringTests)
+
+    add_executable(StudioFilmCueSheetTests tests/FilmCueSheetTests.cpp)
+    target_compile_features(StudioFilmCueSheetTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmCueSheetTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmCueSheet COMMAND StudioFilmCueSheetTests)
+
+    add_executable(StudioFilmPictureSyncTests tests/FilmPictureSyncTests.cpp)
+    target_compile_features(StudioFilmPictureSyncTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmPictureSyncTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmPictureSync COMMAND StudioFilmPictureSyncTests)
 
     add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
     target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)

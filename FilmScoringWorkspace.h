@@ -3,6 +3,8 @@
 
 #include "FilmScoringCore.h"
 #include "FilmScoringState.h"
+#include "FilmScoringCueSheet.h"
+#include "FilmPictureSync.h"
 #include <JuceHeader.h>
 #if JUCE_MAC
  #include <juce_video/juce_video.h>
@@ -110,7 +112,10 @@ public:
                          &floatButton, &ratePicker, &offsetEdit, &applyOffsetButton,
                          &addHitButton, &removeHitButton, &prevButton, &nextButton,
                          &goButton, &markerPicker, &cueEdit, &nameEdit, &notesEdit,
-                         &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing })
+                         &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing,
+                         &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
+                         &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
+                         &deleteCueButton, &exportCueButton, &cueSection })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
         addAndMakeVisible (strip);
@@ -141,6 +146,15 @@ public:
         cueEdit.setTextToShowWhenEmpty ("Cue ID (e.g. 1M1)", juce::Colours::grey);
         notesEdit.setTextToShowWhenEmpty ("Spotting notes", juce::Colours::grey);
         markerPicker.setTextWhenNothingSelected ("Select a hit point");
+        cueSection.setText ("FILM CUES", juce::dontSendNotification);
+        cueSection.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        cuePicker.setTextWhenNothingSelected ("Choose a cue");
+        cueIdEdit.setTextToShowWhenEmpty ("Cue ID", juce::Colours::grey);
+        cueTitleEdit.setTextToShowWhenEmpty ("Cue title", juce::Colours::grey);
+        cueNotesEdit.setTextToShowWhenEmpty ("Cue notes", juce::Colours::grey);
+        cueIdEdit.setTooltip ("Unique cue ID, such as 1M1 or 2M3");
+        outCueButton.setTooltip ("Set the selected cue end at the picture playhead");
+        exportCueButton.setTooltip ("Export a frame-anchored SMPTE cue sheet; no rendered audio");
         for (int i = 0; i < 6; ++i)
             ratePicker.addItem (rateName ((Rate) i), i + 1);
         ratePicker.setSelectedId (2, juce::dontSendNotification);
@@ -151,14 +165,17 @@ public:
         {
             if (! edit || ratePicker.getSelectedId() == 0) return;
             project.rate = (Rate) (ratePicker.getSelectedId() - 1);
+            pictureSync.reset();
             persist();
             refreshMarkerPicker();
+            refreshCuePicker();
             updateTimecode();
         };
         applyOffsetButton.onClick = [this]
         {
             if (! edit) return;
             project.pictureStartFrame = offsetEdit.getText().getLargeIntValue();
+            pictureSync.reset();
             persist();
             updateTimecode();
         };
@@ -178,6 +195,19 @@ public:
                 activeId.clear();
             populateHitFields();
         };
+        cuePicker.onChange = [this]
+        {
+            const int index = cuePicker.getSelectedItemIndex();
+            activeCueId = juce::isPositiveAndBelow (index, (int) sortedCueIds.size())
+                        ? sortedCueIds[(size_t) index] : std::string {};
+            populateCueFields();
+        };
+        newCueButton.onClick = [this] { addCueAtPlayhead(); };
+        outCueButton.onClick = [this] { markCueEnd(); };
+        gotoCueButton.onClick = [this] { goToSelectedCue(); };
+        saveCueButton.onClick = [this] { applyCueChanges(); };
+        deleteCueButton.onClick = [this] { deleteSelectedCue(); };
+        exportCueButton.onClick = [this] { exportCueSheet(); };
 
        #if JUCE_MAC
         monitorHost.addAndMakeVisible (video);
@@ -208,24 +238,45 @@ public:
         if (edit == next) return;
         setFloating (false);
         edit = next;
+        pictureSync.reset();
         project = edit ? decode (edit->state) : Project {};
+        knownScoringNode = edit ? edit->state.getChildWithName ("STUDIO_FILM_SCORING") : juce::ValueTree {};
         activeId.clear();
         ratePicker.setSelectedId ((int) project.rate + 1, juce::dontSendNotification);
         offsetEdit.setText (juce::String (project.pictureStartFrame), juce::dontSendNotification);
         setEnabledForProject (edit != nullptr);
         refreshMarkerPicker();
+        activeCueId.clear();
+        refreshCuePicker();
         loadSavedPicture();
         strip.update (&project, 0, 0);
     }
 
     int minimumContentHeight (int width) const
     {
-        return juce::jmax (520, 290 + juce::jmin (370, juce::jmax (150, width * 9 / 23)));
+        return juce::jmax (630, 410 + juce::jmin (370, juce::jmax (150, width * 9 / 23)));
     }
 
     void tick()
     {
         if (! edit) return;
+        // Undo/Redo swaps the versioned ValueTree subtree. Refresh our
+        // message-thread snapshot before any future scoring edits can overwrite
+        // an undone operation with stale local cue/spot data.
+        const auto current = edit->state.getChildWithName ("STUDIO_FILM_SCORING");
+        if (current != knownScoringNode)
+        {
+            const auto oldMedia = project.picturePath;
+            project = decode (edit->state);
+            knownScoringNode = current;
+            ratePicker.setSelectedId ((int) project.rate + 1, juce::dontSendNotification);
+            offsetEdit.setText (juce::String (project.pictureStartFrame), juce::dontSendNotification);
+            refreshMarkerPicker();
+            refreshCuePicker();
+            pictureSync.reset();
+            if (oldMedia != project.picturePath) loadSavedPicture();
+            strip.repaint();
+        }
         updateTimecode();
         const auto nowPicture = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
        #if JUCE_MAC
@@ -234,37 +285,22 @@ public:
         strip.update (&project, nowPicture.value_or (0), 0);
        #endif
        #if JUCE_MAC
-        if (! video.isVideoOpen()) return;
-        if (! isShowing() && ! isFloating())
+        PreviewObservation observed;
+        observed.timelineSeconds = edit->getTransport().getPosition().inSeconds();
+        observed.videoOpen = video.isVideoOpen();
+        observed.visible = isShowing() || isFloating();
+        observed.transportPlaying = edit->getTransport().isPlaying();
+        observed.videoPlaying = observed.videoOpen && video.isPlaying();
+        if (observed.videoOpen)
         {
-            if (video.isPlaying()) video.stop();
-            return;
+            observed.videoSeconds = video.getPlayPosition();
+            observed.videoDurationSeconds = video.getVideoDuration();
         }
-        const auto now = edit->getTransport().getPosition().inSeconds();
-        const auto frame = project.pictureFrameAt (now);
-        if (! frame) return;
-        const auto sourceSeconds = frameSeconds (*frame, project.rate);
-        const auto duration = video.getVideoDuration();
-        if (sourceSeconds < 0 || (duration > 0 && sourceSeconds >= duration))
-        {
-            if (video.isPlaying()) video.stop();
-            return;
-        }
-        const bool playing = edit->getTransport().isPlaying();
-        if (playing != video.isPlaying())
-        {
-            if (playing) video.play();
-            else video.stop();
-        }
-        // Seek only when position error is meaningful, and throttle correction:
-        // AVPlayer seeks are asynchronous and repeated seeks cause stuttering.
-        const double tolerance = playing ? 0.22 : 0.055;
-        const auto elapsedMs = juce::Time::getMillisecondCounter() - lastSeekMs;
-        if (std::abs (video.getPlayPosition() - sourceSeconds) > tolerance && elapsedMs > 350)
-        {
-            video.setPlayPosition (sourceSeconds);
-            lastSeekMs = juce::Time::getMillisecondCounter();
-        }
+        observed.tickMillis = (uint64_t) juce::Time::getMillisecondCounter();
+        const auto command = pictureSync.update (project, observed);
+        if (command.stop) video.stop();
+        if (command.seek) video.setPlayPosition (command.targetSeconds);
+        if (command.play) video.play();
        #endif
     }
 
@@ -315,6 +351,28 @@ public:
         row = area.removeFromTop (30);
         quarterBeatsEdit.setBounds (row.removeFromLeft (55));
         timing.setBounds (row);
+        area.removeFromTop (9);
+        row = area.removeFromTop (25);
+        cueSection.setBounds (row.removeFromLeft (120));
+        exportCueButton.setBounds (row.removeFromRight (116));
+        area.removeFromTop (2);
+        row = area.removeFromTop (30);
+        newCueButton.setBounds (row.removeFromLeft (92));
+        row.removeFromLeft (4);
+        outCueButton.setBounds (row.removeFromLeft (92));
+        row.removeFromLeft (5);
+        gotoCueButton.setBounds (row.removeFromRight (70));
+        cuePicker.setBounds (row);
+        area.removeFromTop (5);
+        row = area.removeFromTop (30);
+        cueIdEdit.setBounds (row.removeFromLeft (88));
+        row.removeFromLeft (5);
+        cueTitleEdit.setBounds (row.removeFromLeft (juce::jmax (130, row.getWidth() / 2)));
+        row.removeFromLeft (5);
+        saveCueButton.setBounds (row.removeFromRight (60));
+        cueNotesEdit.setBounds (row);
+        area.removeFromTop (4);
+        deleteCueButton.setBounds (area.removeFromTop (27).removeFromLeft (112));
     }
 
     void paint (juce::Graphics& g) override
@@ -367,7 +425,10 @@ private:
     void persist()
     {
         if (edit)
+        {
             store (edit->state, project, &edit->getUndoManager());
+            knownScoringNode = edit->state.getChildWithName ("STUDIO_FILM_SCORING");
+        }
         strip.repaint();
     }
 
@@ -376,7 +437,10 @@ private:
         for (juce::Component* c : std::initializer_list<juce::Component*> { &importButton, &ratePicker, &offsetEdit,
                                    &applyOffsetButton, &addHitButton, &removeHitButton, &prevButton,
                                    &nextButton, &goButton, &markerPicker, &cueEdit, &nameEdit,
-                                   &notesEdit, &applyHitButton, &quarterBeatsEdit })
+                                   &notesEdit, &applyHitButton, &quarterBeatsEdit,
+                                   &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
+                                   &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
+                                   &deleteCueButton, &exportCueButton })
             c->setEnabled (enabled);
     }
 
@@ -423,7 +487,7 @@ private:
             return;
         }
         video.setAudioVolume (0.0f);
-        lastSeekMs = 0;
+        pictureSync.reset();
        #else
         status.setText ("Video preview requires macOS.", juce::dontSendNotification);
         if (savePath) return;
@@ -569,6 +633,148 @@ private:
         timing.setText ("No later hit point in this cue", juce::dontSendNotification);
     }
 
+    void refreshCuePicker()
+    {
+        sortedCueIds.clear();
+        for (const auto& cue : project.cues) sortedCueIds.push_back (cue.id);
+        std::sort (sortedCueIds.begin(), sortedCueIds.end(), [this] (const auto& lhs, const auto& rhs)
+        {
+            const auto* a = project.findCue (lhs);
+            const auto* b = project.findCue (rhs);
+            return a->startPictureFrame == b->startPictureFrame
+                 ? lhs < rhs : a->startPictureFrame < b->startPictureFrame;
+        });
+        cuePicker.clear (juce::dontSendNotification);
+        int selection = 0;
+        for (size_t i = 0; i < sortedCueIds.size(); ++i)
+        {
+            const auto* cue = project.findCue (sortedCueIds[i]);
+            if (! cue) continue;
+            const juce::String label = juce::String (cue->id) + "  " + juce::String (cue->title)
+                + "  [" + juce::String (cueTimecode (cue->startPictureFrame, project.rate))
+                + " - " + (cue->endPictureFrame
+                            ? juce::String (cueTimecode (*cue->endPictureFrame, project.rate)) : "open") + "]";
+            cuePicker.addItem (label, (int) i + 1);
+            if (cue->id == activeCueId) selection = (int) i + 1;
+        }
+        cuePicker.setSelectedId (selection, juce::dontSendNotification);
+        populateCueFields();
+    }
+
+    void populateCueFields()
+    {
+        const auto* cue = project.findCue (activeCueId);
+        cueIdEdit.setText (cue ? juce::String (cue->id) : "", juce::dontSendNotification);
+        cueTitleEdit.setText (cue ? juce::String (cue->title) : "", juce::dontSendNotification);
+        cueNotesEdit.setText (cue ? juce::String (cue->notes) : "", juce::dontSendNotification);
+    }
+
+    void addCueAtPlayhead()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto frame = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
+        if (! frame || *frame < 0)
+        {
+            status.setText ("Move the playhead inside picture time to add a cue.", juce::dontSendNotification);
+            return;
+        }
+        int counter = 1;
+        std::string id;
+        do { id = "1M" + std::to_string (counter++); } while (project.findCue (id) != nullptr);
+        if (! project.addCue ({ id, "New Cue", "", *frame, std::nullopt })) return;
+        activeCueId = id;
+        persist();
+        refreshCuePicker();
+        status.setText ("Created " + juce::String (id) + ". Mark End when the cue finishes.",
+                        juce::dontSendNotification);
+    }
+
+    void markCueEnd()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto* original = project.findCue (activeCueId);
+        const auto frame = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
+        if (! original || ! frame || *frame <= original->startPictureFrame)
+        {
+            status.setText ("Choose a cue and seek after its start to mark an end.",
+                            juce::dontSendNotification);
+            return;
+        }
+        auto updated = *original;
+        updated.endPictureFrame = *frame;
+        if (project.updateCue (activeCueId, std::move (updated)))
+        {
+            persist();
+            refreshCuePicker();
+        }
+    }
+
+    void applyCueChanges()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto* original = project.findCue (activeCueId);
+        if (! original) return;
+        auto updated = *original;
+        updated.id = cueIdEdit.getText().trim().toStdString();
+        updated.title = cueTitleEdit.getText().toStdString();
+        updated.notes = cueNotesEdit.getText().toStdString();
+        if (! project.updateCue (activeCueId, updated))
+        {
+            status.setText ("Invalid cue ID or duplicate cue number.", juce::dontSendNotification);
+            return;
+        }
+        activeCueId = updated.id;
+        persist();
+        refreshCuePicker();
+    }
+
+    void deleteSelectedCue()
+    {
+        if (! edit || edit->getTransport().isRecording() || ! project.removeCue (activeCueId)) return;
+        activeCueId.clear();
+        persist();
+        refreshCuePicker();
+    }
+
+    void goToSelectedCue()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        if (const auto* cue = project.findCue (activeCueId))
+            edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+                juce::jmax (0.0, project.timelineSeconds (cue->startPictureFrame))));
+    }
+
+    void exportCueSheet()
+    {
+        if (! edit || project.cues.empty())
+        {
+            status.setText ("Add a cue before exporting a cue sheet.", juce::dontSendNotification);
+            return;
+        }
+        // Capture a snapshot before the asynchronous save dialog opens. A user
+        // can change projects or edit cues while the native file panel is open.
+        const auto csv = cueSheetCSV (project);
+        cueExportChooser = std::make_unique<juce::FileChooser> ("Export picture cue sheet",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Studio Cue Sheet.csv"),
+            "*.csv");
+        cueExportChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                      | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+            [safe = juce::Component::SafePointer<Workspace> (this), csv] (const juce::FileChooser& dialog)
+            {
+                if (safe == nullptr) return;
+                auto file = dialog.getResult();
+                if (file == juce::File()) return;
+                file = file.withFileExtension (".csv");
+                auto output = file.createOutputStream();
+                const bool ok = output && output->openedOk() && output->setPosition (0)
+                             && output->truncate().wasOk() && output->write (csv.data(), csv.size());
+                safe->status.setText (ok ? "Cue sheet exported to " + file.getFileName()
+                                       : "Unable to write cue sheet.",
+                                      juce::dontSendNotification);
+            });
+    }
+
     void setFloating (bool wantFloat)
     {
        #if JUCE_MAC
@@ -616,16 +822,18 @@ private:
     };
     juce::VideoComponent video { false };
     std::unique_ptr<PictureWindow> floating;
-    uint32_t lastSeekMs = 0;
    #else
     juce::Label noVideo;
    #endif
 
     tracktion::engine::Edit* edit = nullptr;
     Project project;
+    juce::ValueTree knownScoringNode;
     std::string activeId;
-    std::vector<std::string> sortedIds;
-    std::unique_ptr<juce::FileChooser> chooser;
+    std::vector<std::string> sortedIds, sortedCueIds;
+    std::string activeCueId;
+    PictureSyncController pictureSync;
+    std::unique_ptr<juce::FileChooser> chooser, cueExportChooser;
     juce::Component monitorHost;
     SpottingStrip strip;
     juce::Label timecode, status, timing;
@@ -635,6 +843,11 @@ private:
     juce::TextButton applyOffsetButton { "Set Offset" }, addHitButton { "Add Hit" },
                      removeHitButton { "Remove" }, prevButton { "<" }, nextButton { ">" },
                      goButton { "Go To" }, applyHitButton { "Apply Hit" };
-    juce::ComboBox markerPicker;
+    juce::ComboBox markerPicker, cuePicker;
+    juce::Label cueSection;
+    juce::TextEditor cueIdEdit, cueTitleEdit, cueNotesEdit;
+    juce::TextButton newCueButton { "+ Cue" }, outCueButton { "Mark End" },
+                     gotoCueButton { "Go Cue" }, saveCueButton { "Apply" },
+                     deleteCueButton { "Delete Cue" }, exportCueButton { "Export CSV" };
 };
 } // namespace studio::film
