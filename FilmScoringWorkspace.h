@@ -168,6 +168,7 @@ public:
             pictureSync.reset();
             persist();
             refreshMarkerPicker();
+            refreshCuePicker();
             updateTimecode();
         };
         applyOffsetButton.onClick = [this]
@@ -239,6 +240,7 @@ public:
         edit = next;
         pictureSync.reset();
         project = edit ? decode (edit->state) : Project {};
+        knownScoringNode = edit ? edit->state.getChildWithName ("STUDIO_FILM_SCORING") : juce::ValueTree {};
         activeId.clear();
         ratePicker.setSelectedId ((int) project.rate + 1, juce::dontSendNotification);
         offsetEdit.setText (juce::String (project.pictureStartFrame), juce::dontSendNotification);
@@ -258,6 +260,23 @@ public:
     void tick()
     {
         if (! edit) return;
+        // Undo/Redo swaps the versioned ValueTree subtree. Refresh our
+        // message-thread snapshot before any future scoring edits can overwrite
+        // an undone operation with stale local cue/spot data.
+        const auto current = edit->state.getChildWithName ("STUDIO_FILM_SCORING");
+        if (current != knownScoringNode)
+        {
+            const auto oldMedia = project.picturePath;
+            project = decode (edit->state);
+            knownScoringNode = current;
+            ratePicker.setSelectedId ((int) project.rate + 1, juce::dontSendNotification);
+            offsetEdit.setText (juce::String (project.pictureStartFrame), juce::dontSendNotification);
+            refreshMarkerPicker();
+            refreshCuePicker();
+            pictureSync.reset();
+            if (oldMedia != project.picturePath) loadSavedPicture();
+            strip.repaint();
+        }
         updateTimecode();
         const auto nowPicture = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
        #if JUCE_MAC
@@ -406,7 +425,10 @@ private:
     void persist()
     {
         if (edit)
+        {
             store (edit->state, project, &edit->getUndoManager());
+            knownScoringNode = edit->state.getChildWithName ("STUDIO_FILM_SCORING");
+        }
         strip.repaint();
     }
 
@@ -806,6 +828,7 @@ private:
 
     tracktion::engine::Edit* edit = nullptr;
     Project project;
+    juce::ValueTree knownScoringNode;
     std::string activeId;
     std::vector<std::string> sortedIds, sortedCueIds;
     std::string activeCueId;
