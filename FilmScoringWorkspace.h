@@ -611,6 +611,148 @@ private:
         timing.setText ("No later hit point in this cue", juce::dontSendNotification);
     }
 
+    void refreshCuePicker()
+    {
+        sortedCueIds.clear();
+        for (const auto& cue : project.cues) sortedCueIds.push_back (cue.id);
+        std::sort (sortedCueIds.begin(), sortedCueIds.end(), [this] (const auto& lhs, const auto& rhs)
+        {
+            const auto* a = project.findCue (lhs);
+            const auto* b = project.findCue (rhs);
+            return a->startPictureFrame == b->startPictureFrame
+                 ? lhs < rhs : a->startPictureFrame < b->startPictureFrame;
+        });
+        cuePicker.clear (juce::dontSendNotification);
+        int selection = 0;
+        for (size_t i = 0; i < sortedCueIds.size(); ++i)
+        {
+            const auto* cue = project.findCue (sortedCueIds[i]);
+            if (! cue) continue;
+            const juce::String label = juce::String (cue->id) + "  " + juce::String (cue->title)
+                + "  [" + juce::String (cueTimecode (cue->startPictureFrame, project.rate))
+                + " - " + (cue->endPictureFrame
+                            ? juce::String (cueTimecode (*cue->endPictureFrame, project.rate)) : "open") + "]";
+            cuePicker.addItem (label, (int) i + 1);
+            if (cue->id == activeCueId) selection = (int) i + 1;
+        }
+        cuePicker.setSelectedId (selection, juce::dontSendNotification);
+        populateCueFields();
+    }
+
+    void populateCueFields()
+    {
+        const auto* cue = project.findCue (activeCueId);
+        cueIdEdit.setText (cue ? juce::String (cue->id) : "", juce::dontSendNotification);
+        cueTitleEdit.setText (cue ? juce::String (cue->title) : "", juce::dontSendNotification);
+        cueNotesEdit.setText (cue ? juce::String (cue->notes) : "", juce::dontSendNotification);
+    }
+
+    void addCueAtPlayhead()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto frame = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
+        if (! frame || *frame < 0)
+        {
+            status.setText ("Move the playhead inside picture time to add a cue.", juce::dontSendNotification);
+            return;
+        }
+        int counter = 1;
+        std::string id;
+        do { id = "1M" + std::to_string (counter++); } while (project.findCue (id) != nullptr);
+        if (! project.addCue ({ id, "New Cue", "", *frame, std::nullopt })) return;
+        activeCueId = id;
+        persist();
+        refreshCuePicker();
+        status.setText ("Created " + juce::String (id) + ". Mark End when the cue finishes.",
+                        juce::dontSendNotification);
+    }
+
+    void markCueEnd()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto* original = project.findCue (activeCueId);
+        const auto frame = project.pictureFrameAt (edit->getTransport().getPosition().inSeconds());
+        if (! original || ! frame || *frame <= original->startPictureFrame)
+        {
+            status.setText ("Choose a cue and seek after its start to mark an end.",
+                            juce::dontSendNotification);
+            return;
+        }
+        auto updated = *original;
+        updated.endPictureFrame = *frame;
+        if (project.updateCue (activeCueId, std::move (updated)))
+        {
+            persist();
+            refreshCuePicker();
+        }
+    }
+
+    void applyCueChanges()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        const auto* original = project.findCue (activeCueId);
+        if (! original) return;
+        auto updated = *original;
+        updated.id = cueIdEdit.getText().trim().toStdString();
+        updated.title = cueTitleEdit.getText().toStdString();
+        updated.notes = cueNotesEdit.getText().toStdString();
+        if (! project.updateCue (activeCueId, updated))
+        {
+            status.setText ("Invalid cue ID or duplicate cue number.", juce::dontSendNotification);
+            return;
+        }
+        activeCueId = updated.id;
+        persist();
+        refreshCuePicker();
+    }
+
+    void deleteSelectedCue()
+    {
+        if (! edit || edit->getTransport().isRecording() || ! project.removeCue (activeCueId)) return;
+        activeCueId.clear();
+        persist();
+        refreshCuePicker();
+    }
+
+    void goToSelectedCue()
+    {
+        if (! edit || edit->getTransport().isRecording()) return;
+        if (const auto* cue = project.findCue (activeCueId))
+            edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+                juce::jmax (0.0, project.timelineSeconds (cue->startPictureFrame))));
+    }
+
+    void exportCueSheet()
+    {
+        if (! edit || project.cues.empty())
+        {
+            status.setText ("Add a cue before exporting a cue sheet.", juce::dontSendNotification);
+            return;
+        }
+        // Capture a snapshot before the asynchronous save dialog opens. A user
+        // can change projects or edit cues while the native file panel is open.
+        const auto csv = cueSheetCSV (project);
+        cueExportChooser = std::make_unique<juce::FileChooser> ("Export picture cue sheet",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Studio Cue Sheet.csv"),
+            "*.csv");
+        cueExportChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                      | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+            [safe = juce::Component::SafePointer<Workspace> (this), csv] (const juce::FileChooser& dialog)
+            {
+                if (safe == nullptr) return;
+                auto file = dialog.getResult();
+                if (file == juce::File()) return;
+                file = file.withFileExtension (".csv");
+                auto output = file.createOutputStream();
+                const bool ok = output && output->openedOk() && output->setPosition (0)
+                             && output->truncate().wasOk() && output->write (csv.data(), csv.size());
+                safe->status.setText (ok ? "Cue sheet exported to " + file.getFileName()
+                                       : "Unable to write cue sheet.",
+                                      juce::dontSendNotification);
+            });
+    }
+
     void setFloating (bool wantFloat)
     {
        #if JUCE_MAC
