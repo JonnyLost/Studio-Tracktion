@@ -27,6 +27,12 @@ inline std::optional<DeliveryRange> deliveryRange (const Project& project, const
         || *cue.endPictureFrame <= cue.startPictureFrame)
         return {};
 
+    // Project::timelineSeconds adds signed frame indices. Guard corrupted or
+    // hostile offsets before doing that arithmetic.
+    if (project.pictureStartFrame > 0
+        && *cue.endPictureFrame > std::numeric_limits<int64_t>::max() - project.pictureStartFrame)
+        return {};
+
     const double start = project.timelineSeconds (cue.startPictureFrame);
     const double end = project.timelineSeconds (*cue.endPictureFrame);
     if (! std::isfinite (start) || ! std::isfinite (end) || start < 0
