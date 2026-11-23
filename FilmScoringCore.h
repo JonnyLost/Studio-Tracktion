@@ -86,12 +86,22 @@ inline std::optional<int64_t> secondsToFrames (double seconds, Rate rate)
 }
 
 struct Spot { std::string id, cue, name, notes; int64_t pictureFrame = 0; };
+
+// Cue boundaries belong to source picture frames, never musical ticks.
+// An unset end means the composer has not yet spotted the cue out.
+struct Cue
+{
+    std::string id, title, notes;
+    int64_t startPictureFrame = 0;
+    std::optional<int64_t> endPictureFrame;
+};
 struct Project
 {
     Rate rate = Rate::fps24;
     int64_t pictureStartFrame = 0; // Timeline frame where source picture frame zero starts.
     std::string picturePath;
     std::vector<Spot> spots;
+    std::vector<Cue> cues;
 
     double timelineSeconds (int64_t pictureFrame) const
     {
@@ -113,6 +123,48 @@ struct Project
     {
         const auto it = std::find_if (spots.begin(), spots.end(), [&] (const auto& s) { return s.id == id; });
         return it == spots.end() ? nullptr : &*it;
+    }
+
+    const Cue* findCue (const std::string& id) const
+    {
+        const auto it = std::find_if (cues.begin(), cues.end(), [&] (const auto& cue) { return cue.id == id; });
+        return it == cues.end() ? nullptr : &*it;
+    }
+
+    bool validCue (const Cue& cue, const std::string& updatingId = {}) const
+    {
+        if (cue.id.empty() || cue.startPictureFrame < 0
+            || (cue.endPictureFrame && *cue.endPictureFrame <= cue.startPictureFrame))
+            return false;
+        for (const auto& other : cues)
+            if (other.id == cue.id && other.id != updatingId)
+                return false;
+        return true;
+    }
+
+    bool addCue (Cue cue)
+    {
+        if (! validCue (cue)) return false;
+        cues.push_back (std::move (cue));
+        return true;
+    }
+
+    bool updateCue (const std::string& currentId, Cue next)
+    {
+        const auto it = std::find_if (cues.begin(), cues.end(),
+                                     [&] (const auto& cue) { return cue.id == currentId; });
+        if (it == cues.end() || ! validCue (next, currentId)) return false;
+        *it = std::move (next);
+        return true;
+    }
+
+    bool removeCue (const std::string& id)
+    {
+        const auto it = std::find_if (cues.begin(), cues.end(),
+                                     [&] (const auto& cue) { return cue.id == id; });
+        if (it == cues.end()) return false;
+        cues.erase (it);
+        return true;
     }
 };
 
