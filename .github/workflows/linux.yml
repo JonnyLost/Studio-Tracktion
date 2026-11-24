@@ -2,6 +2,9 @@ name: Linux Composer checks
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - integration/studio-0.2-integrated-alpha
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
@@ -46,6 +49,7 @@ jobs:
       - name: Build and test
         env:
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-composer-images
+          STUDIO_FILM_SCORING_SCREENSHOTS: ${{ runner.temp }}/studio-film-scoring
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine"
@@ -61,6 +65,7 @@ jobs:
           name: Studio-composer-linux
           path: |
             ${{ runner.temp }}/studio-composer-images/
+            ${{ runner.temp }}/studio-film-scoring/
             ${{ runner.temp }}/studio-composer-audio/
             ${{ runner.temp }}/studio-composer-bench.tsv
             ${{ runner.temp }}/studio-sampler-bench.tsv

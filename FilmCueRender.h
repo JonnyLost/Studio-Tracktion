@@ -1,0 +1,271 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "ComposerBounce.h"
+#include "FilmCueDelivery.h"
+#include "FilmStemDelivery.h"
+#include "FilmScoringCueSheet.h"
+#include <sstream>
+#include <iomanip>
+#include <JuceHeader.h>
+#include <memory>
+#include <vector>
+
+namespace studio::film
+{
+// Native Tracktion render graph only. This class owns the asynchronous
+// serial queue, and must be accessed on the JUCE message thread. No I/O,
+// graph preparation or video decoding is done in the audio callback.
+class CueRenderSession final
+{
+public:
+    enum class Mode { stereoMix, individualTracks, familyStems };
+    std::function<void()> onUpdate;
+
+    ~CueRenderSession() { cancel(); queue.reset(); }
+
+    bool isActive() const { return queue != nullptr && ! finished; }
+    bool hasStarted() const { return queue != nullptr; }
+
+    void releaseFinishedRender()
+    {
+        if (queue == nullptr || ! finished) return;
+        message = description();
+        queue.reset();
+        snapshot.reset();
+    }
+
+    void cancel()
+    {
+        if (queue != nullptr && ! queue->hasFinished())
+        {
+            queue->cancelAll();
+            message = "Cancelling cue rendering...";
+            notify();
+        }
+    }
+
+    void clear()
+    {
+        cancel();
+        queue.reset();  // Tracktion joins/cancels the render before Edit release.
+        snapshot.reset();
+        message.clear();
+        renderedDirectory = juce::File();
+        currentCue = {};
+        currentRange = {};
+        finished = false;
+    }
+
+    float progress() const
+    {
+        return queue ? queue->getTotalProgress() : 0.0f;
+    }
+
+    juce::String description() const
+    {
+        if (queue == nullptr) return message;
+        if (! queue->hasFinished())
+            return "Rendering cue " + juce::String (int (progress() * 100.0f)) + "%";
+        int completed = 0, failed = 0, cancelled = 0;
+        for (const auto& job : queue->getJobs())
+        {
+            using State = tracktion::engine::RenderQueue::Job::State;
+            switch (job->getState())
+            {
+                case State::completed: ++completed; break;
+                case State::failed: ++failed; break;
+                case State::cancelled: ++cancelled; break;
+                default: break;
+            }
+        }
+        return "Cue delivery: " + juce::String (completed) + " complete, "
+             + juce::String (failed) + " failed, "
+             + juce::String (cancelled) + " cancelled. " + renderedDirectory.getFileName();
+    }
+
+    juce::File outputDirectory() const { return renderedDirectory; }
+
+    juce::Result start (tracktion::engine::Edit& source,
+                        const Project& project,
+                        const Cue& cue,
+                        const juce::File& chosenDirectory,
+                        Mode mode,
+                        const std::vector<StemAssignment>& assignments = {})
+    {
+        namespace te = tracktion::engine;
+        if (isActive())
+            return juce::Result::fail ("A film cue render is already running.");
+        // Clear any previous finished jobs before referencing a new Edit.
+        clear();
+
+        if (source.getTransport().isRecording() || source.getTransport().isPlaying())
+            return juce::Result::fail ("Stop playback and recording before exporting a cue.");
+        const auto range = deliveryRange (project, cue);
+        if (! range)
+            return juce::Result::fail ("The cue needs a valid start and end within the Studio timeline.");
+        if (! chosenDirectory.isDirectory())
+            return juce::Result::fail ("Choose an existing output directory.");
+
+        // Per-track jobs temporarily mute routing dependencies. Apply those
+        // changes to an offline Edit so the live project stays safe to save.
+        auto renderEdit = studio::bounce::createRenderSnapshot (source);
+        if (renderEdit == nullptr)
+            return juce::Result::fail ("Could not create the offline cue render graph.");
+        auto& edit = *renderEdit;
+
+        const juce::String stem (deliveryStem (cue));
+        const juce::String folderName = stem + (mode == Mode::individualTracks ? "-Tracks"
+                                             : mode == Mode::familyStems ? "-Family-Stems" : "-Mix");
+        const auto folder = chosenDirectory.getNonexistentChildFile (folderName, {}, true);
+        te::RenderSpecification base;
+        base.format = te::RenderFormat::wav;
+        base.sampleRate = 48000.0;
+        base.bitDepth = 24;
+        base.channelLayout = "stereo";
+        base.time = tracktion::TimeRange {
+            tracktion::TimePosition::fromSeconds (range->timelineStart),
+            tracktion::TimePosition::fromSeconds (range->timelineEnd)
+        };
+        // Fixed length cue start and end, for sample-aligned delivery.
+        // Reverb tails are deliberately not appended to these outputs.
+        base.includeTails = false;
+        base.trimSilence = false;
+        base.normalise = false;
+        base.dither = false;
+        base.usePlugins = true;
+        base.useMasterPlugins = mode == Mode::stereoMix;
+
+        std::vector<te::RenderSpecification> specifications;
+        if (mode == Mode::stereoMix)
+        {
+            base.destination = folder.getChildFile (stem + "-Stereo.wav");
+            specifications.push_back (base);
+        }
+        else if (mode == Mode::individualTracks)
+        {
+            const auto tracks = te::getAudioTracks (edit);
+            if (tracks.isEmpty() || tracks.size() > 128)
+                return juce::Result::fail ("Track delivery supports 1 to 128 audio tracks.");
+            // Each track is rendered separately. Tracktion maintains required
+            // sidechain, rack and aux source dependencies where possible.
+            base.includeSourceTracks = true;
+            specifications = te::createPerTrackSpecifications (edit, base, folder);
+            if (specifications.empty())
+                return juce::Result::fail ("No tracks could be selected for cue delivery.");
+        }
+        if (mode == Mode::familyStems)
+        {
+            const auto tracks = te::getAudioTracks (edit);
+            std::vector<std::string> liveIDs;
+            liveIDs.reserve (static_cast<size_t> (tracks.size()));
+            for (auto* track : tracks)
+                liveIDs.push_back (track->itemID.toString().toStdString());
+
+            const auto groups = planFamilyStems (assignments, liveIDs);
+            if (groups.empty())
+                return juce::Result::fail ("Assign at least one live track to an orchestral family first.");
+
+            // Explicit group rendering: never use empty tracks (which means
+            // render the entire edit). Preserve routing sources required for
+            // aux, sidechain, shared rack and stage effects where supported.
+            for (const auto& group : groups)
+            {
+                te::RenderSpecification spec = base;
+                spec.includeSourceTracks = true;
+                spec.useMasterPlugins = false; // Keep families independently mixable.
+                for (auto* track : tracks)
+                    if (std::find (group.trackIds.begin(), group.trackIds.end(),
+                                   track->itemID.toString().toStdString()) != group.trackIds.end())
+                        spec.tracks.add (track->itemID);
+                if (spec.tracks.isEmpty())
+                    return juce::Result::fail ("An assigned family has no available tracks.");
+                spec.destination = folder.getChildFile (stem + "-"
+                    + juce::String (stemFamilyFileName (group.family)) + ".wav");
+                specifications.push_back (std::move (spec));
+            }
+        }
+
+        // Validate the whole batch before starting so an invalid spec can't
+        // leave half of a cue's outputs delivered.
+        std::vector<te::PlannedRenderJob> planned;
+        planned.reserve (specifications.size());
+        for (const auto& spec : specifications)
+        {
+            if (spec.destination.exists())
+                return juce::Result::fail ("Refusing to overwrite " + spec.destination.getFileName());
+            auto valid = te::validateRenderSpecification (edit, spec);
+            if (valid.failed()) return valid;
+            auto job = te::createRenderJob (edit, spec);
+            if (! job)
+                return juce::Result::fail ("Unable to prepare Tracktion rendering for "
+                                           + spec.destination.getFileName());
+            planned.push_back (std::move (*job));
+        }
+
+        if (auto makeFolder = folder.createDirectory(); makeFolder.failed()) return makeFolder;
+        snapshot = std::move (renderEdit);
+        queue = std::make_unique<te::RenderQueue>();
+        queue->onJobFinished = [this] (te::RenderQueue::Job&) { notify(); };
+        queue->onFinished = [this]
+        {
+            writeDeliveryReport();
+            finished = true;
+            notify();
+        };
+        queue->addJobs (std::move (planned));
+        renderedDirectory = folder;
+        currentCue = cue;
+        currentRange = *range;
+        currentRate = project.rate;
+        message = "Cue delivery rendering started.";
+        queue->start();
+        notify();
+        return juce::Result::ok();
+    }
+
+private:
+    void notify() { if (onUpdate) onUpdate(); }
+
+    void writeDeliveryReport()
+    {
+        if (! queue || renderedDirectory == juce::File()) return;
+        std::ostringstream csv;
+        csv << "Cue ID,Cue Title,Picture Start SMPTE,Picture End SMPTE,Start Timeline Seconds,"
+               "End Timeline Seconds,Output File,Result,Error\r\n";
+        for (const auto& job : queue->getJobs())
+        {
+            using State = tracktion::engine::RenderQueue::Job::State;
+            std::string result = "pending";
+            switch (job->getState())
+            {
+                case State::active: result = "active"; break;
+                case State::completed: result = "completed"; break;
+                case State::failed: result = "failed"; break;
+                case State::cancelled: result = "cancelled"; break;
+                default: break;
+            }
+            csv << csvText (currentCue.id) << ','
+                << csvText (currentCue.title) << ','
+                << cueTimecode (currentRange.startFrame, currentRate) << ','
+                << cueTimecode (currentRange.endFrame, currentRate) << ','
+                << std::fixed << std::setprecision (6) << currentRange.timelineStart << ','
+                << std::fixed << std::setprecision (6) << currentRange.timelineEnd << ','
+                << csvText (job->getParameters().destFile.getFileName().toStdString()) << ','
+                << result << ',' << csvText (job->getError().toStdString()) << "\r\n";
+        }
+        const auto file = renderedDirectory.getChildFile ("Delivery-Report.csv");
+        if (! file.replaceWithText (juce::String (csv.str())))
+            message = "Cue WAVs rendered; unable to write delivery report.";
+    }
+
+    std::unique_ptr<tracktion::Edit> snapshot;
+    std::unique_ptr<tracktion::engine::RenderQueue> queue;
+    Cue currentCue;
+    DeliveryRange currentRange;
+    Rate currentRate = Rate::fps24;
+    juce::File renderedDirectory;
+    juce::String message;
+    bool finished = false;
+};
+} // namespace studio::film

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../ComposerBounce.h"
+#include "../FilmCueRender.h"
 #include "../SpatialRouting.h"
 #include "../StudioSynth.h"
 
@@ -39,6 +40,49 @@ Result readWave (const File& file, int channels, int rate, int depth, double sec
     if (! read->read (&samples, 0, samples.getNumSamples(), 0, true, channels > 1)
         || samples.getMagnitude (0, samples.getNumSamples()) < 0.0001f)
         return Result::fail ("WAV rendered silently: " + file.getFileName());
+    return Result::ok();
+}
+
+Result verifyFilmDelivery (te::Edit& edit, te::AudioTrack& track, const File& folder)
+{
+    using Mode = film::CueRenderSession::Mode;
+    constexpr double duration = 0.5;
+    film::Project picture;
+    picture.rate = film::Rate::fps24;
+    picture.pictureStartFrame = -24;
+    const film::Cue cue { "1M1", "Test cue", "", 27, 39 };
+    const std::vector<film::StemAssignment> assignments {
+        { track.itemID.toString().toStdString(), film::StemFamily::strings }
+    };
+    film::CueRenderSession session;
+    for (const auto mode : { Mode::stereoMix, Mode::individualTracks, Mode::familyStems })
+    {
+        if (auto result = session.start (edit, picture, cue, folder, mode, assignments); result.failed())
+            return result;
+        const auto deadline = Time::getMillisecondCounterHiRes() + 10000;
+        while (session.isActive() && Time::getMillisecondCounterHiRes() < deadline)
+            MessageManager::getInstance()->runDispatchLoopUntil (10);
+        if (session.isActive())
+            return Result::fail ("film cue render timed out");
+
+        session.releaseFinishedRender();
+        if (session.hasStarted()
+            || (mode != Mode::individualTracks && ! session.description().contains ("1 complete")))
+            return Result::fail ("release the offline graph after cue delivery");
+        const auto delivery = session.outputDirectory();
+        const String stem (film::deliveryStem (cue));
+        const auto filename = mode == Mode::stereoMix ? stem + "-Stereo.wav"
+                            : mode == Mode::individualTracks ? track.getName() + ".wav"
+                            : stem + "-Strings.wav";
+        AudioBuffer<float> samples;
+        if (auto result = readWave (delivery.getChildFile (filename), 2, 48000, 24, duration, samples); result.failed())
+            return result;
+        const auto outputs = delivery.findChildFiles (File::findFiles, false, "*.wav");
+        if (mode == Mode::individualTracks ? outputs.size() < 2 : outputs.size() != 1)
+            return Result::fail ("film delivery rendered an incorrect set of tracks");
+        if (! delivery.getChildFile ("Delivery-Report.csv").loadFileAsString().contains (",completed,"))
+            return Result::fail ("film delivery receipt missing completed output");
+    }
     return Result::ok();
 }
 
@@ -126,6 +170,8 @@ Result verify (te::Engine& engine, const File& folder)
     if (error > 0.002f)
         return Result::fail ("dry and wet stems do not reconstruct the unity-master mix (error " + String (error) + ")");
 
+    if (auto result = verifyFilmDelivery (*edit, *track, folder); result.failed()) return result;
+
     options.stems = false;
     options.tail = 5;
     options.destination = folder.getChildFile ("Cancel.wav");
@@ -176,7 +222,7 @@ int runComposerBounceTest (const juce::File& artifacts)
         std::fprintf (stderr, "Composer bounce: %s\n", result.getErrorMessage().toRawUTF8());
         return 1;
     }
-    std::puts ("Composer stereo, mono, dry stems, single room return, and cancellation passed.");
+    std::puts ("Composer bounce and Film Scoring stereo, track and family WAV delivery passed.");
     return 0;
 }
 }

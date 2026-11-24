@@ -45,6 +45,25 @@ bool tooLarge (const Options& options)
 }
 }
 
+std::unique_ptr<tracktion::Edit> createRenderSnapshot (tracktion::Edit& source)
+{
+    source.flushState();
+    auto snapshot = te::Edit::createEdit ({ .engine = source.engine,
+        .editState = source.state.createCopy(),
+        .editProjectItemID = source.getProjectItemRef(),
+        .role = te::Edit::forRendering,
+        .numUndoLevelsToStore = 0,
+        .editFileRetriever = source.editFileRetriever,
+        .filePathResolver = source.filePathResolver,
+        .numAudioTracks = 0 });
+    if (snapshot != nullptr)
+    {
+        spatial::prepareRoomPlayback (*snapshot);
+        snapshot->clickTrackEnabled = false;
+    }
+    return snapshot;
+}
+
 Result Job::create (te::Edit& source, const Options& options, std::unique_ptr<Job>& job)
 {
     if (! transportSettled (source) || source.getTransport().isPlaying())
@@ -62,20 +81,10 @@ Result Job::create (te::Edit& source, const Options& options, std::unique_ptr<Jo
         return result;
 
     auto next = std::make_unique<Job>();
-    source.flushState();
-    next->snapshot = te::Edit::createEdit ({ .engine = source.engine,
-        .editState = source.state.createCopy(),
-        .editProjectItemID = source.getProjectItemRef(),
-        .role = te::Edit::forRendering,
-        .numUndoLevelsToStore = 0,
-        .editFileRetriever = source.editFileRetriever,
-        .filePathResolver = source.filePathResolver,
-        .numAudioTracks = 0 });
+    next->snapshot = createRenderSnapshot (source);
     if (next->snapshot == nullptr)
         return Result::fail ("Could not create the offline render graph.");
     auto& edit = *next->snapshot;
-    spatial::prepareRoomPlayback (edit);
-    edit.clickTrackEnabled = false;
 
     // End the source at the requested boundary on the render copy. Keep the
     // graph clock running for an exact, common decay window across all outputs.

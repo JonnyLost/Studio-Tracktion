@@ -1,0 +1,53 @@
+name: Film Scoring Portable Core Checks
+
+on:
+  push:
+    paths:
+      - 'FilmScoringCore.h'
+      - 'FilmScoringCueSheet.h'
+      - 'FilmPictureSync.h'
+      - 'FilmCueDelivery.h'
+      - 'FilmCueRender.h'
+      - 'FilmStemDelivery.h'
+      - 'FilmStemState.h'
+      - 'tests/FilmStemDeliveryTests.cpp'
+      - 'tests/FilmCueSheetTests.cpp'
+      - 'tests/FilmPictureSyncTests.cpp'
+      - 'tests/FilmCueDeliveryTests.cpp'
+      - '.github/workflows/film-scoring-portable.yml'
+  pull_request:
+    paths:
+      - 'FilmScoringCore.h'
+      - 'FilmScoringCueSheet.h'
+      - 'FilmPictureSync.h'
+      - 'FilmCueDelivery.h'
+      - 'FilmCueRender.h'
+      - 'FilmStemDelivery.h'
+      - 'FilmStemState.h'
+      - 'tests/FilmStemDeliveryTests.cpp'
+      - 'tests/FilmCueSheetTests.cpp'
+      - 'tests/FilmPictureSyncTests.cpp'
+      - 'tests/FilmCueDeliveryTests.cpp'
+      - '.github/workflows/film-scoring-portable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  portable-cpp20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and exercise header-only cue and sync models
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmCueSheetTests.cpp -o /tmp/studio-film-cues
+          /tmp/studio-film-cues
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmPictureSyncTests.cpp -o /tmp/studio-film-sync
+          /tmp/studio-film-sync
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmCueDeliveryTests.cpp -o /tmp/studio-film-delivery
+          /tmp/studio-film-delivery
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmStemDeliveryTests.cpp -o /tmp/studio-film-stems
+          /tmp/studio-film-stems
