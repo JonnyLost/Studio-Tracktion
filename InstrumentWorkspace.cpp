@@ -236,6 +236,7 @@ bool InstrumentWorkspace::openAtelier (te::Plugin& candidate, te::AudioTrack& tr
     if (plugin.get() != &candidate || ! atelierMode)
     {
         auto component = std::make_unique<AtelierInstrumentEditor> (candidate, track);
+        component->isFloatingWindow = [this] { return window != nullptr; };
         component->onArticulations = [this] (te::EditItemID id)
         {
             if (onArticulations) onArticulations (id);
