@@ -336,7 +336,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (workspaceHeight != genericDockHeight || workspacePanel.getHeight() != fixedDockHeight)
         return fail ("Instrument divider cannot resize or change other workspaces");
     setSize (1536, 960);
-    if (workspacePanel.getHeight() != jmin (studio::appearance.px (640), splitLimit))
+    if (workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
         return fail ("Atelier Split uses its fixed screenshot height when room permits");
     if (! snapshot (*this, "14-atelier-fixed-1536x960"))
         return fail ("capture fixed Atelier dock");
@@ -348,7 +348,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         return fail ("Other workspace dividers still change their height");
     showWorkspace (Workspace::instrumentEditor);
     if (! workspaceDivider.isResizeLocked()
-        || workspacePanel.getHeight() != jmin (studio::appearance.px (640), splitLimit))
+        || workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
         return fail ("Returning to Atelier restores fixed size without changing the Piano Roll preference");
     workspaceHeight = genericDockHeight;
     setSize (1280, 800);
