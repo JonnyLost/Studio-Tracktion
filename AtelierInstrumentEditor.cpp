@@ -1504,6 +1504,39 @@ bool AtelierInstrumentEditor::reviewKeyboardHitMap() const
         && keyboardNoteAt ({ keys.getX(), keys.getY() - 1 }) == -1;
 }
 
+bool AtelierInstrumentEditor::reviewMIDIControllers()
+{
+    if (page != 4 || controllerBounds.isEmpty() || ! ccTab.getToggleState()
+        || ! sendAllCC.isVisible() || ! previewChannel.isVisible()
+        || ! controllerBounds.contains (previewChannel.getBounds())
+        || ! controllerBounds.contains (sendAllCC.getBounds())
+        || liveCC[0].number != 1 || liveCC[2].number != 7
+        || liveCC[3].number != 11 || liveCC[4].number != 64
+        || liveCC[6].number != 74 || liveCC[7].number != 91)
+        return false;
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+        if (! ccKnobs[i].isVisible() || ! ccLabels[i].isVisible()
+            || ccKnobs[i].getBounds().isEmpty()
+            || ! controllerBounds.contains (ccKnobs[i].getBounds())
+            || ! controllerBounds.contains (ccLabels[i].getBounds()))
+            return false;
+
+    const auto before = viewState();
+    auto* fader = volumePlugin();
+    const auto trackLevel = fader != nullptr ? fader->getVolumeDb() : 0.0f;
+    ccKnobs[0].setValue (83, dontSendNotification);
+    ccKnobs[3].setValue (37, dontSendNotification);
+    ccKnobs[4].setValue (127, dontSendNotification);
+    const auto saved = viewState();
+    restoreView (saved);
+    const bool roundtrip = saved.startsWith ("atelier-v5|")
+        && ccKnobs[0].getValue() == 83 && ccKnobs[3].getValue() == 37
+        && ccKnobs[4].getValue() == 0 // Sustain is never latched on restore.
+        && (fader == nullptr || std::abs (fader->getVolumeDb() - trackLevel) < .001);
+    restoreView (before);
+    return roundtrip;
+}
+
 bool AtelierInstrumentEditor::verifyBindings()
 {
     if (auto* fader = volumePlugin())
