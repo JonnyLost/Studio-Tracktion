@@ -642,6 +642,11 @@ void InspectorDrawer::appearanceChanged()
     repaint();
 }
 
+void InspectorDrawer::suspendAtelier()
+{
+    if (atelier != nullptr) atelier->suspend();
+}
+
 void InspectorDrawer::setDetailsExpanded (bool expanded)
 {
     detailsOpen = expanded;
