@@ -1459,6 +1459,10 @@ bool AtelierInstrumentEditor::reviewPage (int requested, bool shouldBeFull)
     if (requested == 3)
         if (routingBounds.isEmpty() || ! original.isVisible() || ! frame.contains (original.getBounds()))
             return false;
+    if (requested == 4)
+        if (controllerBounds.isEmpty() || ! controllerBounds.contains (ccKnobs[0].getBounds())
+            || ! frame.contains (controllerBounds) || ! sendAllCC.isVisible())
+            return false;
     return true;
 }
 
