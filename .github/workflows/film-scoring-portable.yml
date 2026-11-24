@@ -8,6 +8,12 @@ on:
       - 'FilmPictureSync.h'
       - 'FilmCueDelivery.h'
       - 'FilmCueRender.h'
+      - 'FilmStemDelivery.h'
+      - 'FilmStemState.h'
+      - 'tests/FilmStemDeliveryTests.cpp'
+      - 'FilmStemDelivery.h'
+      - 'FilmStemState.h'
+      - 'tests/FilmStemDeliveryTests.cpp'
       - 'tests/FilmCueSheetTests.cpp'
       - 'tests/FilmPictureSyncTests.cpp'
       - 'tests/FilmCueDeliveryTests.cpp'
@@ -43,3 +49,5 @@ jobs:
           /tmp/studio-film-sync
           g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmCueDeliveryTests.cpp -o /tmp/studio-film-delivery
           /tmp/studio-film-delivery
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmStemDeliveryTests.cpp -o /tmp/studio-film-stems
+          /tmp/studio-film-stems
