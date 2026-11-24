@@ -28,6 +28,7 @@ public:
 
     std::function<void (tracktion::EditItemID)> onArticulations, onStage;
     std::function<void()> onFullView;
+    std::function<bool()> isFloatingWindow;
 
    #if STUDIO_SPATIAL_TESTS
     bool verifyBindings();
