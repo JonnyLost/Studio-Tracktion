@@ -17,6 +17,20 @@ const Colour ivory  { 0xfff1e2c7 };
 const Colour muted  { 0xffc5b49d };
 const Colour blue   { 0xff294660 };
 
+// MIDI 1.0 channel controllers sent to the hosted instrument, not host
+// parameters. CC7 is different from track fader; CC91 is not Stage reverb.
+struct CCSlot { const char* name; int number, initialValue; const char* meaning; };
+constexpr std::array<CCSlot, 8> liveCC {
+    CCSlot { "Modulation", 1, 0, "Mod wheel; often vibrato or orchestral dynamics" },
+    CCSlot { "Breath", 2, 0, "Breath controller; patch support varies" },
+    CCSlot { "MIDI Volume", 7, 100, "MIDI channel volume, not Studio's track fader" },
+    CCSlot { "Expression", 11, 127, "MIDI expression, separate from AU automation" },
+    CCSlot { "Sustain", 64, 0, "Damper pedal: 0 off / 127 on" },
+    CCSlot { "Resonance", 71, 64, "Resonance; only works when the patch implements CC71" },
+    CCSlot { "Brightness", 74, 64, "Filter cutoff / brightness; patch support varies" },
+    CCSlot { "Reverb", 91, 40, "MIDI reverb send, not Studio's native Stage reverb" }
+};
+
 // Portraits are the user's independent artwork collection. Audio Unit patch
 // names cannot be reliably inferred from an ARIA Player instance, so the
 // portrait is selected explicitly and stored with this instrument view.
@@ -224,6 +238,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     previewChannel.onChange = [this]
     {
         stopKeyboardNote();
+        releaseSustain();
         if (onSizePreferenceChanged) onSizePreferenceChanged();
     };
     addAndMakeVisible (previewChannel);
@@ -237,7 +252,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     articulation.setTooltip ("Open Studio's existing articulation mappings for this instrument");
     stage.setTooltip ("Open the existing Stage placement and reverb-send workspace");
 
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &ccTab, &advancedTab })
     {
         addAndMakeVisible (*tab);
         initButton (*tab);
@@ -247,10 +262,53 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     articulationTab.onClick = [this] { setPage (1); };
     mixerTab.onClick = [this] { setPage (2); };
     advancedTab.onClick = [this] { setPage (3); };
+    ccTab.onClick = [this] { setPage (4); };
     addAndMakeVisible (fullView);
     initButton (fullView);
     fullView.setTooltip ("Enlarge this editor to show the full Cinematic Atelier layout");
     fullView.onClick = [this] { if (onFullView) onFullView(); };
+
+    initLabel (ccStatus, "Live MIDI controllers  •  select a channel and turn a knob", 11.0f, muted);
+    addAndMakeVisible (ccStatus);
+    addAndMakeVisible (sendAllCC);
+    initButton (sendAllCC);
+    sendAllCC.setTooltip ("Send all eight displayed MIDI CC values to the loaded Audio Unit. Does not write MIDI clips.");
+    sendAllCC.onClick = [this] { sendAllLiveCC(); };
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+    {
+        auto& slider = ccKnobs[i];
+        auto& label = ccLabels[i];
+        addAndMakeVisible (slider);
+        addAndMakeVisible (label);
+        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 12.4f, ivory);
+        label.setJustificationType (Justification::centred);
+        slider.setName (String (liveCC[i].name) + " (CC" + String (liveCC[i].number) + ")");
+        slider.setTooltip (String (liveCC[i].meaning) + ". Sends MIDI CC" + String (liveCC[i].number)
+            + " (0–127) on the preview channel. Requires a loaded Audio Unit.");
+        slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
+        slider.setTextBoxStyle (Slider::TextBoxBelow, false, 60, 19);
+        slider.setColour (Slider::rotarySliderFillColourId, amber);
+        slider.setColour (Slider::rotarySliderOutlineColourId, wood);
+        slider.setColour (Slider::thumbColourId, ivory);
+        slider.setColour (Slider::textBoxTextColourId, ivory);
+        slider.setColour (Slider::textBoxBackgroundColourId, walnut);
+        slider.setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.3f));
+        slider.setRange (0, 127, i == 4 ? 127 : 1);
+        slider.setValue (liveCC[i].initialValue, dontSendNotification);
+        slider.onValueChange = [this, i]
+        {
+            if (restoring) return;
+            sendLiveCC ((int) i);
+            // Persist once after editing a textbox or keyboard value; a drag
+            // persists only when released, not on every real-time CC event.
+            if (! ccKnobs[i].isMouseButtonDown() && onSizePreferenceChanged)
+                onSizePreferenceChanged();
+        };
+        slider.onDragEnd = [this]
+        {
+            if (onSizePreferenceChanged) onSizePreferenceChanged();
+        };
+    }
 
     for (size_t i = 0; i < mappingPads.size(); ++i)
     {
@@ -388,6 +446,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     expressionHeading.setVisible (hasExpression);
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     setPage (0);
     startTimerHz (6);  // GUI-only polling; never touches the audio thread.
 }
@@ -396,6 +455,7 @@ AtelierInstrumentEditor::~AtelierInstrumentEditor()
 {
     stopTimer();
     stopKeyboardNote();
+    releaseSustain();
     // JUCE's children outlive the function body but not the editor. Return
     // them to the inherited LookAndFeel before the owned style is destroyed.
     setLookAndFeel (nullptr);
@@ -484,6 +544,7 @@ void AtelierInstrumentEditor::timerCallback()
     }
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
                                             : "KEYBOARD  •  load an active Audio Unit to audition";
     if (keyboardSummary.getText() != help)
@@ -517,10 +578,62 @@ void AtelierInstrumentEditor::editStage (int field)
     refreshControls();
 }
 
+void AtelierInstrumentEditor::releaseSustain()
+{
+    if (activeSustainChannel > 0)
+        if (auto* source = track())
+            source->injectLiveMidiMessage (MidiMessage::controllerEvent (
+                activeSustainChannel, 64, 0), {});
+    activeSustainChannel = -1;
+    // Never restore a visually latched pedal without a matching CC-on message.
+    ccKnobs[4].setValue (0, dontSendNotification);
+}
+
+void AtelierInstrumentEditor::sendLiveCC (int slot)
+{
+    if (restoring || ! isPositiveAndBelow (slot, (int) liveCC.size())
+        || ! canPreviewKeyboard()) return;
+    auto* source = track();
+    if (source == nullptr) return;
+    const int channel = jlimit (1, 16, previewChannel.getSelectedId());
+    const auto& definition = liveCC[(size_t) slot];
+    int value = jlimit (0, 127, roundToInt (ccKnobs[(size_t) slot].getValue()));
+    if (definition.number == 64)
+    {
+        value = value >= 64 ? 127 : 0;
+        if (activeSustainChannel > 0 && activeSustainChannel != channel)
+            releaseSustain();
+        activeSustainChannel = value == 127 ? channel : -1;
+    }
+    source->injectLiveMidiMessage (MidiMessage::controllerEvent (
+        channel, definition.number, value), {});
+}
+
+void AtelierInstrumentEditor::sendAllLiveCC()
+{
+    if (! canPreviewKeyboard()) return;
+    for (int i = 0; i < (int) ccKnobs.size(); ++i)
+        sendLiveCC (i);
+    if (onSizePreferenceChanged) onSizePreferenceChanged();
+}
+
+void AtelierInstrumentEditor::updateMIDIControls()
+{
+    const bool available = canPreviewKeyboard();
+    if (! available && activeSustainChannel > 0) releaseSustain();
+    for (auto& knob : ccKnobs) knob.setEnabled (available);
+    sendAllCC.setEnabled (available);
+    const String message = available
+        ? "LIVE MIDI  •  CC values go to the hosted instrument. Patch support varies; not MIDI clip automation."
+        : "MIDI unavailable  •  load/enable an Audio Unit with an active playback context.";
+    if (ccStatus.getText() != message) ccStatus.setText (message, dontSendNotification);
+}
+
 void AtelierInstrumentEditor::setPage (int next)
 {
     stopKeyboardNote();
-    next = jlimit (0, 3, next);
+    if (page == 4 && next != 4) releaseSustain();
+    next = jlimit (0, 4, next);
     if (page == next && ! restoring)
     {
         updatePageVisibility();
@@ -536,9 +649,9 @@ void AtelierInstrumentEditor::setPage (int next)
 
 void AtelierInstrumentEditor::updatePageVisibility()
 {
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
-        auto* tab = std::array<TextButton*, 4> { &mainTab, &articulationTab, &mixerTab, &advancedTab }[(size_t) i];
+        auto* tab = std::array<TextButton*, 5> { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab }[(size_t) i];
         tab->setToggleState (page == i, dontSendNotification);
     }
     const bool mixing = page == 0 || page == 2;
@@ -549,7 +662,15 @@ void AtelierInstrumentEditor::updatePageVisibility()
     volumeLabel.setVisible (mixing);
     panLabel.setVisible (mixing);
     expressionHeading.setVisible (mixing && expressionParameter != nullptr);
-    mixHeading.setVisible (mixing);
+    // The gold panel is already titled "Volume & Expression" in paint().
+    // The legacy CHANNEL heading visibly overlapped that title.
+    mixHeading.setVisible (false);
+    const bool showingControllers = page == 4;
+    ccStatus.setVisible (showingControllers);
+    sendAllCC.setVisible (showingControllers);
+    for (auto& knob : ccKnobs) knob.setVisible (showingControllers);
+    for (auto& label : ccLabels) label.setVisible (showingControllers);
+    previewChannel.setVisible (fullPresentation || showingControllers);
     stageHeading.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     const bool editableStage = fullPresentation && page == 0;
     for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
@@ -694,14 +815,38 @@ void AtelierInstrumentEditor::changePortrait()
 
 String AtelierInstrumentEditor::viewState() const
 {
-    return "atelier-v4|" + portraitName + "|" + String (page)
-        + "|" + String (jlimit (1, 16, previewChannel.getSelectedId()));
+    String values;
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+    {
+        if (i != 0) values << ",";
+        // A latch is transient MIDI state: never reopen with Sustain active.
+        values << String (i == 4 ? 0 : jlimit (0, 127, roundToInt (ccKnobs[i].getValue())));
+    }
+    return "atelier-v5|" + portraitName + "|" + String (page)
+        + "|" + String (jlimit (1, 16, previewChannel.getSelectedId())) + "|" + values;
 }
 
 void AtelierInstrumentEditor::restoreView (const String& saved)
 {
     const ScopedValueSetter<bool> restoringState (restoring, true);
-    if (saved.startsWith ("atelier-v4|"))
+    releaseSustain();
+    if (saved.startsWith ("atelier-v5|"))
+    {
+        auto fields = StringArray::fromTokens (saved, "|", "");
+        if (fields.size() == 5)
+        {
+            portraitName = fields[1];
+            page = jlimit (0, 4, fields[2].getIntValue());
+            previewChannel.setSelectedId (jlimit (1, 16, fields[3].getIntValue()), dontSendNotification);
+            auto values = StringArray::fromTokens (fields[4], ",", "");
+            if (values.size() == (int) ccKnobs.size())
+                for (int i = 0; i < values.size(); ++i)
+                    ccKnobs[(size_t) i].setValue (
+                        i == 4 ? 0 : jlimit (0, 127, values[i].getIntValue()),
+                        dontSendNotification);
+        }
+    }
+    else if (saved.startsWith ("atelier-v4|"))
     {
         const auto rest = saved.fromFirstOccurrenceOf ("|", false, false);
         const auto preceding = rest.upToLastOccurrenceOf ("|", false, false);
@@ -730,6 +875,7 @@ void AtelierInstrumentEditor::restoreView (const String& saved)
     loadPortrait();
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     updatePageVisibility();
     resized();
 }
@@ -947,6 +1093,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
     drawAtelierSurface (g, mixerBounds, page == 2 ? "Channel Mixer" : "Volume & Expression");
     drawAtelierSurface (g, stageBounds, "Stage & Room");
     drawAtelierSurface (g, routingBounds, page == 3 ? "Instrument & Routing" : "Routing");
+    drawAtelierSurface (g, controllerBounds, "MIDI Controllers  •  Live CC");
     paintKeyboardReference (g);
 
     // Read-only placement overview is derived from the actual saved seat,
@@ -1039,18 +1186,18 @@ void AtelierInstrumentEditor::resized()
         && area.getHeight() >= m.px (625);
     if (fullPresentation && ! nextFull) stopKeyboardNote();
     fullPresentation = nextFull;
-    previewChannel.setVisible (fullPresentation);
+    previewChannel.setVisible (fullPresentation || page == 4);
 
     portraitBounds = controlBounds = stageBounds = mappingBounds = keyboardBounds
-        = instrumentHeaderBounds = mixerBounds = routingBounds = {};
+        = instrumentHeaderBounds = mixerBounds = routingBounds = controllerBounds = {};
 
     const auto headerHeight = m.control (fullPresentation ? 84 : 69, 14);
     instrumentHeaderBounds = area.removeFromTop (headerHeight).expanded (m.px (3));
     auto row = instrumentHeaderBounds.reduced (m.px (11), m.px (5));
     auto titleRow = row.removeFromTop (m.control (42, 12));
-    const int tabWidth = jmin (m.span (99), jmax (m.span (52), titleRow.getWidth() / 9));
-    auto tabArea = titleRow.removeFromRight (tabWidth * 4);
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+    const int tabWidth = jmin (m.span (105), jmax (m.span (58), titleRow.getWidth() / 11));
+    auto tabArea = titleRow.removeFromRight (tabWidth * 5);
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &ccTab, &advancedTab })
         tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
     const bool offerFullView = ! fullPresentation && isFloatingWindow && isFloatingWindow();
     fullView.setBounds (offerFullView
@@ -1109,6 +1256,7 @@ void AtelierInstrumentEditor::resized()
             body.removeFromTop (m.px (8));
             stageBounds = body;
         }
+        else if (page == 4) controllerBounds = body;
         else routingBounds = body;
     }
     else
@@ -1121,6 +1269,7 @@ void AtelierInstrumentEditor::resized()
         }
         else if (page == 1) mappingBounds = body;
         else if (page == 2) mixerBounds = body;
+        else if (page == 4) controllerBounds = body;
         else routingBounds = body;
     }
 
@@ -1160,7 +1309,8 @@ void AtelierInstrumentEditor::resized()
     if (! mixerBounds.isEmpty())
     {
         auto content = mixerBounds.reduced (m.px (15));
-        mixHeading.setBounds (content.removeFromTop (m.control (28, 10)));
+        // The panel title is drawn by paint(); no duplicate CHANNEL label.
+        content.removeFromTop (m.control (28, 10));
         if (page == 0 && ! fullPresentation)
         {
             // Compact Main gets a small, genuine Stage status line below
@@ -1174,6 +1324,40 @@ void AtelierInstrumentEditor::resized()
         for (auto* component : std::initializer_list<Component*> { &volume, &pan, &expression,
                                  &volumeLabel, &panLabel, &expressionHeading })
             component->setBounds ({});
+
+    ccStatus.setBounds ({});
+    sendAllCC.setBounds ({});
+    for (auto& knob : ccKnobs) knob.setBounds ({});
+    for (auto& label : ccLabels) label.setBounds ({});
+    if (! controllerBounds.isEmpty())
+    {
+        auto ccArea = controllerBounds.reduced (m.px (15));
+        ccArea.removeFromTop (m.control (29, 10)); // Shared vector panel heading.
+        auto tools = ccArea.removeFromTop (m.control (32, 11));
+        const int sendW = jmin (m.span (135), tools.getWidth() / 3);
+        sendAllCC.setBounds (tools.removeFromRight (sendW));
+        tools.removeFromRight (jmin (m.px (9), tools.getWidth()));
+        previewChannel.setBounds (tools.removeFromLeft (jmin (m.span (175), tools.getWidth())));
+        ccArea.removeFromTop (m.px (5));
+        ccStatus.setBounds (ccArea.removeFromBottom (m.control (31, 9)));
+        ccArea.removeFromBottom (m.px (5));
+
+        const int columns = ccArea.getWidth() >= m.span (450) ? 4 : 2;
+        const int rows = (int) ccKnobs.size() / columns;
+        const int gap = m.px (7);
+        const int cellW = jmax (1, (ccArea.getWidth() - (columns - 1) * gap) / columns);
+        const int cellH = jmax (1, (ccArea.getHeight() - (rows - 1) * gap) / rows);
+        for (size_t i = 0; i < ccKnobs.size(); ++i)
+        {
+            auto cell = Rectangle<int> (
+                ccArea.getX() + (int) (i % (size_t) columns) * (cellW + gap),
+                ccArea.getY() + (int) (i / (size_t) columns) * (cellH + gap),
+                cellW, cellH);
+            auto labelH = jmin (m.control (22, 9), cell.getHeight() / 3);
+            ccLabels[i].setBounds (cell.removeFromTop (labelH));
+            ccKnobs[i].setBounds (cell.reduced (m.px (3), m.px (2)));
+        }
+    }
 
     stageHeading.setBounds ({});
     for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
@@ -1275,6 +1459,10 @@ bool AtelierInstrumentEditor::reviewPage (int requested, bool shouldBeFull)
     if (requested == 3)
         if (routingBounds.isEmpty() || ! original.isVisible() || ! frame.contains (original.getBounds()))
             return false;
+    if (requested == 4)
+        if (controllerBounds.isEmpty() || ! controllerBounds.contains (ccKnobs[0].getBounds())
+            || ! frame.contains (controllerBounds) || ! sendAllCC.isVisible())
+            return false;
     return true;
 }
 
@@ -1318,6 +1506,39 @@ bool AtelierInstrumentEditor::reviewKeyboardHitMap() const
     return keyboardNoteAt ({ left, y }) == 36
         && keyboardNoteAt ({ right, y }) == 107
         && keyboardNoteAt ({ keys.getX(), keys.getY() - 1 }) == -1;
+}
+
+bool AtelierInstrumentEditor::reviewMIDIControllers()
+{
+    if (page != 4 || controllerBounds.isEmpty() || ! ccTab.getToggleState()
+        || ! sendAllCC.isVisible() || ! previewChannel.isVisible()
+        || ! controllerBounds.contains (previewChannel.getBounds())
+        || ! controllerBounds.contains (sendAllCC.getBounds())
+        || liveCC[0].number != 1 || liveCC[2].number != 7
+        || liveCC[3].number != 11 || liveCC[4].number != 64
+        || liveCC[6].number != 74 || liveCC[7].number != 91)
+        return false;
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+        if (! ccKnobs[i].isVisible() || ! ccLabels[i].isVisible()
+            || ccKnobs[i].getBounds().isEmpty()
+            || ! controllerBounds.contains (ccKnobs[i].getBounds())
+            || ! controllerBounds.contains (ccLabels[i].getBounds()))
+            return false;
+
+    const auto before = viewState();
+    auto* fader = volumePlugin();
+    const auto trackLevel = fader != nullptr ? fader->getVolumeDb() : 0.0f;
+    ccKnobs[0].setValue (83, dontSendNotification);
+    ccKnobs[3].setValue (37, dontSendNotification);
+    ccKnobs[4].setValue (127, dontSendNotification);
+    const auto saved = viewState();
+    restoreView (saved);
+    const bool roundtrip = saved.startsWith ("atelier-v5|")
+        && ccKnobs[0].getValue() == 83 && ccKnobs[3].getValue() == 37
+        && ccKnobs[4].getValue() == 0 // Sustain is never latched on restore.
+        && (fader == nullptr || std::abs (fader->getVolumeDb() - trackLevel) < .001);
+    restoreView (before);
+    return roundtrip;
 }
 
 bool AtelierInstrumentEditor::verifyBindings()

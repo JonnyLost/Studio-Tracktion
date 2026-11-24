@@ -42,6 +42,7 @@ public:
     bool reviewSelectMappedArticulation();
     bool reviewStageEditing();
     bool reviewKeyboardHitMap() const;
+    bool reviewMIDIControllers();
    #endif
 
 private:
@@ -60,6 +61,10 @@ private:
     bool canPreviewKeyboard() const;
     void previewKeyboardNote (int);
     void stopKeyboardNote();
+    void sendLiveCC (int slot);
+    void sendAllLiveCC();
+    void releaseSustain();
+    void updateMIDIControls();
     void updatePageVisibility();
     void layoutSliders (juce::Rectangle<int> area, bool horizontal);
     void drawAtelierSurface (juce::Graphics&, juce::Rectangle<int>, const juce::String&) const;
@@ -75,18 +80,23 @@ private:
     juce::Label title, subtitle, mixHeading, volumeLabel, panLabel, expressionHeading, hint, sceneCaption;
     juce::Label stageHeading, stageSummary, routingSummary, mappingSummary, keyboardSummary;
     juce::Label stagePanLabel, stageDepthLabel, sendTrimLabel;
+    juce::Label ccStatus;
     juce::TextButton original { "Open Original Instrument" },
                      articulation { "Articulation Mappings..." }, stage { "Open Orchestral Stage..." },
                      mainTab { "Main" }, articulationTab { "Articulations" },
-                     mixerTab { "Mixer" }, advancedTab { "Advanced" }, fullView { "Full View" };
+                     mixerTab { "Mixer" }, advancedTab { "Advanced" },
+                     ccTab { "MIDI CC" }, fullView { "Full View" }, sendAllCC { "Send values" };
     juce::Slider volume, pan, expression, stagePan, stageDepth, sendTrim;
     std::array<juce::TextButton, 8> mappingPads;
+    std::array<juce::Slider, 8> ccKnobs;
+    std::array<juce::Label, 8> ccLabels;
     std::vector<ArticulationMapping> currentMappings;
     juce::String activeMappingId, mappingStamp;
     juce::Rectangle<int> portraitBounds, controlBounds, stageBounds, mappingBounds, keyboardBounds, instrumentHeaderBounds;
-    juce::Rectangle<int> mixerBounds, routingBounds;
-    int page = 0; // Main, Articulations, Mixer, Advanced. Saved per instrument.
+    juce::Rectangle<int> mixerBounds, routingBounds, controllerBounds;
+    int page = 0; // Main, Articulations, Mixer, Advanced, MIDI CC.
     int heldPreviewNote = -1, heldPreviewChannel = 1, heldKeyswitchNote = -1;
+    int activeSustainChannel = -1; // -1: no CC64-on sent by Atelier.
     bool fullPresentation = false, restoring = false;
 };
 }
