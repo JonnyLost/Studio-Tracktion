@@ -461,6 +461,15 @@ void AtelierInstrumentEditor::timerCallback()
 {
     if (heldPreviewNote >= 0 && ! canPreviewKeyboard())
         stopKeyboardNote();
+    // A keyswitch needs a short real note duration to work reliably in
+    // hosted AUs; release after one GUI tick, independently of the held key.
+    if (heldKeyswitchNote >= 0)
+    {
+        if (auto* source = track())
+            source->injectLiveMidiMessage (MidiMessage::noteOff (
+                heldPreviewChannel, heldKeyswitchNote), {});
+        heldKeyswitchNote = -1;
+    }
     refreshControls();
     refreshArticulations();
     const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
@@ -807,10 +816,15 @@ int AtelierInstrumentEditor::keyboardNoteAt (Point<int> position) const
 
 void AtelierInstrumentEditor::stopKeyboardNote()
 {
-    if (heldPreviewNote < 0) return;
+    if (heldPreviewNote < 0 && heldKeyswitchNote < 0) return;
     if (auto* source = track())
-        source->injectLiveMidiMessage (MidiMessage::noteOff (heldPreviewChannel, heldPreviewNote), {});
-    heldPreviewNote = -1;
+    {
+        if (heldPreviewNote >= 0)
+            source->injectLiveMidiMessage (MidiMessage::noteOff (heldPreviewChannel, heldPreviewNote), {});
+        if (heldKeyswitchNote >= 0)
+            source->injectLiveMidiMessage (MidiMessage::noteOff (heldPreviewChannel, heldKeyswitchNote), {});
+    }
+    heldPreviewNote = heldKeyswitchNote = -1;
 }
 
 void AtelierInstrumentEditor::previewKeyboardNote (int note)
@@ -821,6 +835,7 @@ void AtelierInstrumentEditor::previewKeyboardNote (int note)
     auto* source = track();
     if (source == nullptr) return;
     const int channel = jlimit (1, 16, previewChannel.getSelectedId());
+    heldPreviewChannel = channel;
 
     // The same verified, per-instrument active articulation is sent before a
     // preview note, using the same track injection route as Studio's palette.
@@ -831,11 +846,11 @@ void AtelierInstrumentEditor::previewKeyboardNote (int note)
             if (mapping.message == ArticulationMessage::controller)
                 source->injectLiveMidiMessage (MidiMessage::controllerEvent (
                     channel, mapping.number, mapping.value), {});
-            else
+            else if (mapping.number != note)
             {
                 source->injectLiveMidiMessage (MidiMessage::noteOn (
                     channel, mapping.number, (uint8) mapping.value), {});
-                source->injectLiveMidiMessage (MidiMessage::noteOff (channel, mapping.number), {});
+                heldKeyswitchNote = mapping.number;
             }
             break;
         }
