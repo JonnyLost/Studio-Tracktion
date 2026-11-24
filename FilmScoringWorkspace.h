@@ -5,6 +5,7 @@
 #include "FilmScoringState.h"
 #include "FilmScoringCueSheet.h"
 #include "FilmPictureSync.h"
+#include "FilmCueRender.h"
 #include <JuceHeader.h>
 #if JUCE_MAC
  #include <juce_video/juce_video.h>
@@ -115,7 +116,9 @@ public:
                          &applyHitButton, &quarterBeatsEdit, &timecode, &status, &timing,
                          &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                          &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
-                         &deleteCueButton, &exportCueButton, &cueSection })
+                         &deleteCueButton, &exportCueButton, &cueSection,
+                         &renderMixButton, &renderTracksButton, &cancelRenderButton,
+                         &renderStatus })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
         addAndMakeVisible (strip);
@@ -129,7 +132,7 @@ public:
         {
             if (! edit || edit->getTransport().isRecording()) return;
             if (const auto source = secondsToFrames (seconds, project.rate))
-                edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+                edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
                     juce::jmax (0.0, project.timelineSeconds (*source))));
         };
         timecode.setJustificationType (juce::Justification::centredLeft);
@@ -208,6 +211,14 @@ public:
         saveCueButton.onClick = [this] { applyCueChanges(); };
         deleteCueButton.onClick = [this] { deleteSelectedCue(); };
         exportCueButton.onClick = [this] { exportCueSheet(); };
+        renderMixButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::stereoMix); };
+        renderTracksButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::individualTracks); };
+        cancelRenderButton.onClick = [this] { cueRender.cancel(); };
+        cueRender.onUpdate = [this] { renderStatus.setText (cueRender.description(), juce::dontSendNotification); };
+        renderStatus.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        renderStatus.setText ("Cue WAV: 24-bit, 48 kHz, exact range, no tail.", juce::dontSendNotification);
+        renderMixButton.setTooltip ("Export the selected closed cue as a stereo WAV, through Studio's Tracktion engine");
+        renderTracksButton.setTooltip ("Export one WAV per existing audio track, including routing dependencies where possible");
 
        #if JUCE_MAC
         monitorHost.addAndMakeVisible (video);
@@ -226,6 +237,10 @@ public:
 
     ~Workspace() override
     {
+        // Members are destroyed after this body, in reverse declaration
+        // order. Disable callbacks before child controls start destructing.
+        cueRender.onUpdate = {};
+        cueRender.clear();
         setFloating (false);
        #if JUCE_MAC
         video.closeVideo();
@@ -236,6 +251,8 @@ public:
     void setEdit (tracktion::engine::Edit* next)
     {
         if (edit == next) return;
+        ++editGeneration;
+        cueRender.clear();
         setFloating (false);
         edit = next;
         pictureSync.reset();
@@ -254,12 +271,19 @@ public:
 
     int minimumContentHeight (int width) const
     {
-        return juce::jmax (630, 410 + juce::jmin (370, juce::jmax (150, width * 9 / 23)));
+        juce::ignoreUnused (width);
+        return 392;
     }
 
     void tick()
     {
         if (! edit) return;
+        if (cueRender.hasStarted())
+            renderStatus.setText (cueRender.description(), juce::dontSendNotification);
+        const bool rendering = cueRender.isActive();
+        renderMixButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        renderTracksButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        cancelRenderButton.setEnabled (rendering);
         // Undo/Redo swaps the versioned ValueTree subtree. Refresh our
         // message-thread snapshot before any future scoring edits can overwrite
         // an undone operation with stale local cue/spot data.
@@ -306,73 +330,75 @@ public:
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (10);
-        auto row = area.removeFromTop (30);
-        importButton.setBounds (row.removeFromLeft (108));
-        row.removeFromLeft (8);
-        floatButton.setBounds (row.removeFromLeft (72));
-        row.removeFromLeft (10);
-        timecode.setBounds (row.removeFromLeft (130));
-        ratePicker.setBounds (row.removeFromLeft (155));
-        row.removeFromLeft (8);
-        offsetEdit.setBounds (row.removeFromLeft (96));
-        applyOffsetButton.setBounds (row.removeFromLeft (88));
-        area.removeFromTop (5);
-        const auto monitorHeight = juce::jmin (370, juce::jmax (160, area.getWidth() * 9 / 23));
-        monitorHost.setBounds (area.removeFromTop (monitorHeight));
+        // The docked picture editor is a three-column console. Only the
+        // separate native PictureWindow is independently resizable.
+        auto area = getLocalBounds().reduced (8);
+        const int gutter = 9;
+        const int sideWidth = juce::jlimit (205, 290, area.getWidth() / 4);
+        auto left = area.removeFromLeft (sideWidth);
+        area.removeFromLeft (gutter);
+        auto right = area.removeFromRight (sideWidth);
+        area.removeFromRight (gutter);
+        auto centre = area;
+
+        const auto line = [] (juce::Rectangle<int>& panel, int height = 27)
+        {
+            auto result = panel.removeFromTop (height);
+            panel.removeFromTop (4);
+            return result;
+        };
+        const auto pair = [] (juce::Rectangle<int> row, juce::Component& first,
+                              juce::Component& second, int firstWidth)
+        {
+            first.setBounds (row.removeFromLeft (juce::jmin (firstWidth, row.getWidth())));
+            row.removeFromLeft (4);
+            second.setBounds (row);
+        };
+
+        pair (line (left), importButton, floatButton, 112);
+        pair (line (left), timecode, ratePicker, 118);
+        pair (line (left), offsetEdit, applyOffsetButton, 115);
+        pair (line (left), addHitButton, removeHitButton, 110);
+        auto row = line (left);
+        auto navigation = row.removeFromRight (108);
+        markerPicker.setBounds (row);
+        prevButton.setBounds (navigation.removeFromLeft (34));
+        nextButton.setBounds (navigation.removeFromLeft (34));
+        goButton.setBounds (navigation);
+        pair (line (left), cueEdit, nameEdit, 84);
+        notesEdit.setBounds (line (left));
+        pair (line (left), applyHitButton, quarterBeatsEdit, 108);
+        timing.setBounds (line (left, 38));
+
+        auto cueHeader = line (right);
+        cueSection.setBounds (cueHeader.removeFromLeft (juce::jmax (0, cueHeader.getWidth() - 104)));
+        exportCueButton.setBounds (cueHeader);
+        pair (line (right), newCueButton, outCueButton, 98);
+        pair (line (right), cuePicker, gotoCueButton, juce::jmax (0, right.getWidth() - 78));
+        pair (line (right), cueIdEdit, cueTitleEdit, 85);
+        cueNotesEdit.setBounds (line (right));
+        pair (line (right), saveCueButton, deleteCueButton, 84);
+        renderMixButton.setBounds (line (right));
+        renderTracksButton.setBounds (line (right));
+        cancelRenderButton.setBounds (line (right));
+        renderStatus.setBounds (line (right, 38));
+
+        // Reserve the picture-hit ruler directly under the centered monitor.
+        // A 16:9 surface prevents native AVKit video from covering dock controls.
+        const int monitorHeight = juce::jmax (1, juce::jmin (centre.getHeight() - 99,
+                                                       centre.getWidth() * 9 / 16));
+        auto monitorArea = centre.removeFromTop (monitorHeight);
+        const int monitorWidth = juce::jmin (monitorArea.getWidth(), monitorHeight * 16 / 9);
+        monitorHost.setBounds (monitorArea.withSizeKeepingCentre (monitorWidth, monitorHeight));
        #if JUCE_MAC
-        if (! isFloating()) video.setBounds (monitorHost.getLocalBounds());
+        if (! isFloating())
+            video.setBounds (monitorHost.getLocalBounds());
        #else
         noVideo.setBounds (monitorHost.getLocalBounds());
        #endif
-        area.removeFromTop (3);
-        status.setBounds (area.removeFromTop (26));
-        area.removeFromTop (4);
-        strip.setBounds (area.removeFromTop (59));
-        area.removeFromTop (5);
-        row = area.removeFromTop (30);
-        addHitButton.setBounds (row.removeFromLeft (115));
-        row.removeFromLeft (4);
-        removeHitButton.setBounds (row.removeFromLeft (65));
-        row.removeFromLeft (8);
-        markerPicker.setBounds (row.removeFromLeft (juce::jmax (140, row.getWidth() - 210)));
-        prevButton.setBounds (row.removeFromLeft (35));
-        nextButton.setBounds (row.removeFromLeft (35));
-        goButton.setBounds (row.removeFromLeft (55));
-        area.removeFromTop (4);
-        row = area.removeFromTop (30);
-        cueEdit.setBounds (row.removeFromLeft (110));
-        row.removeFromLeft (5);
-        nameEdit.setBounds (row.removeFromLeft (juce::jmax (150, row.getWidth() / 2)));
-        row.removeFromLeft (5);
-        notesEdit.setBounds (row.removeFromLeft (juce::jmax (120, row.getWidth() - 90)));
-        applyHitButton.setBounds (row.removeFromLeft (85));
-        area.removeFromTop (5);
-        row = area.removeFromTop (30);
-        quarterBeatsEdit.setBounds (row.removeFromLeft (55));
-        timing.setBounds (row);
-        area.removeFromTop (9);
-        row = area.removeFromTop (25);
-        cueSection.setBounds (row.removeFromLeft (120));
-        exportCueButton.setBounds (row.removeFromRight (116));
-        area.removeFromTop (2);
-        row = area.removeFromTop (30);
-        newCueButton.setBounds (row.removeFromLeft (92));
-        row.removeFromLeft (4);
-        outCueButton.setBounds (row.removeFromLeft (92));
-        row.removeFromLeft (5);
-        gotoCueButton.setBounds (row.removeFromRight (70));
-        cuePicker.setBounds (row);
-        area.removeFromTop (5);
-        row = area.removeFromTop (30);
-        cueIdEdit.setBounds (row.removeFromLeft (88));
-        row.removeFromLeft (5);
-        cueTitleEdit.setBounds (row.removeFromLeft (juce::jmax (130, row.getWidth() / 2)));
-        row.removeFromLeft (5);
-        saveCueButton.setBounds (row.removeFromRight (60));
-        cueNotesEdit.setBounds (row);
-        area.removeFromTop (4);
-        deleteCueButton.setBounds (area.removeFromTop (27).removeFromLeft (112));
+        centre.removeFromTop (4);
+        status.setBounds (line (centre, 23));
+        strip.setBounds (centre.removeFromTop (juce::jmin (65, centre.getHeight())));
     }
 
     void paint (juce::Graphics& g) override
@@ -440,8 +466,10 @@ private:
                                    &notesEdit, &applyHitButton, &quarterBeatsEdit,
                                    &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                                    &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
-                                   &deleteCueButton, &exportCueButton })
+                                   &deleteCueButton, &exportCueButton, &renderMixButton,
+                                   &renderTracksButton })
             c->setEnabled (enabled);
+        cancelRenderButton.setEnabled (enabled && cueRender.isActive());
     }
 
     void choosePicture()
@@ -587,7 +615,7 @@ private:
     {
         if (! edit || edit->getTransport().isRecording()) return;
         if (const auto* spot = project.find (activeId))
-            edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+            edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
                     juce::jmax (0.0, project.timelineSeconds (spot->pictureFrame))));
     }
 
@@ -620,9 +648,9 @@ private:
                     + "s  |  Suggested " + juce::String (*bpm, 2) + " BPM";
                 if (edit)
                 {
-                    const auto a = edit->tempoSequence.toBeats (tracktion::engine::TimePosition::fromSeconds (
+                    const auto a = edit->tempoSequence.toBeats (tracktion::TimePosition::fromSeconds (
                         project.timelineSeconds (first->pictureFrame))).inBeats();
-                    const auto b = edit->tempoSequence.toBeats (tracktion::engine::TimePosition::fromSeconds (
+                    const auto b = edit->tempoSequence.toBeats (tracktion::TimePosition::fromSeconds (
                         project.timelineSeconds (next->pictureFrame))).inBeats();
                     detail += "  |  Current " + juce::String (b - a, 2) + " beats";
                 }
@@ -740,8 +768,52 @@ private:
     {
         if (! edit || edit->getTransport().isRecording()) return;
         if (const auto* cue = project.findCue (activeCueId))
-            edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+            edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
                 juce::jmax (0.0, project.timelineSeconds (cue->startPictureFrame))));
+    }
+
+    void chooseCueDelivery (CueRenderSession::Mode mode)
+    {
+        if (! edit || cueRender.isActive())
+            return;
+        if (edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+        {
+            status.setText ("Stop transport before exporting.", juce::dontSendNotification);
+            return;
+        }
+        const auto* cue = project.findCue (activeCueId);
+        if (! cue || ! deliveryRange (project, *cue))
+        {
+            status.setText ("Choose a cue with a valid start and marked end.", juce::dontSendNotification);
+            return;
+        }
+        const auto version = editGeneration;
+        const auto pictureSnapshot = project;
+        const auto selectedCue = *cue;
+        deliveryChooser = std::make_unique<juce::FileChooser> ("Choose a destination for cue WAV delivery",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
+        deliveryChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                    | juce::FileBrowserComponent::canSelectDirectories,
+            [safe = juce::Component::SafePointer<Workspace> (this), version,
+             pictureSnapshot, selectedCue, mode] (const juce::FileChooser& dialog)
+            {
+                if (safe == nullptr) return;
+                if (safe->edit == nullptr || version != safe->editGeneration)
+                {
+                    safe->status.setText ("Project changed. Cue render cancelled.", juce::dontSendNotification);
+                    return;
+                }
+                const auto destination = dialog.getResult();
+                if (destination == juce::File()) return;
+                const auto result = safe->cueRender.start (*safe->edit, pictureSnapshot,
+                                                            selectedCue, destination, mode);
+                if (result.failed())
+                    safe->status.setText ("Cue render unavailable: " + result.getErrorMessage(),
+                                         juce::dontSendNotification);
+                else
+                    safe->status.setText ("Rendering cue " + juce::String (selectedCue.id)
+                                         + " into a new folder.", juce::dontSendNotification);
+            });
     }
 
     void exportCueSheet()
@@ -833,7 +905,9 @@ private:
     std::vector<std::string> sortedIds, sortedCueIds;
     std::string activeCueId;
     PictureSyncController pictureSync;
-    std::unique_ptr<juce::FileChooser> chooser, cueExportChooser;
+    CueRenderSession cueRender;
+    uint64_t editGeneration = 0;
+    std::unique_ptr<juce::FileChooser> chooser, cueExportChooser, deliveryChooser;
     juce::Component monitorHost;
     SpottingStrip strip;
     juce::Label timecode, status, timing;
@@ -849,5 +923,9 @@ private:
     juce::TextButton newCueButton { "+ Cue" }, outCueButton { "Mark End" },
                      gotoCueButton { "Go Cue" }, saveCueButton { "Apply" },
                      deleteCueButton { "Delete Cue" }, exportCueButton { "Export CSV" };
+    juce::TextButton renderMixButton { "Render Cue WAV" },
+                     renderTracksButton { "Render Track WAVs" },
+                     cancelRenderButton { "Cancel Render" };
+    juce::Label renderStatus;
 };
 } // namespace studio::film

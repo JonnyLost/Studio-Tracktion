@@ -6,16 +6,22 @@ on:
       - 'FilmScoringCore.h'
       - 'FilmScoringCueSheet.h'
       - 'FilmPictureSync.h'
+      - 'FilmCueDelivery.h'
+      - 'FilmCueRender.h'
       - 'tests/FilmCueSheetTests.cpp'
       - 'tests/FilmPictureSyncTests.cpp'
+      - 'tests/FilmCueDeliveryTests.cpp'
       - '.github/workflows/film-scoring-portable.yml'
   pull_request:
     paths:
       - 'FilmScoringCore.h'
       - 'FilmScoringCueSheet.h'
       - 'FilmPictureSync.h'
+      - 'FilmCueDelivery.h'
+      - 'FilmCueRender.h'
       - 'tests/FilmCueSheetTests.cpp'
       - 'tests/FilmPictureSyncTests.cpp'
+      - 'tests/FilmCueDeliveryTests.cpp'
       - '.github/workflows/film-scoring-portable.yml'
 
 permissions:
@@ -35,3 +41,5 @@ jobs:
           /tmp/studio-film-cues
           g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmPictureSyncTests.cpp -o /tmp/studio-film-sync
           /tmp/studio-film-sync
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -UNDEBUG tests/FilmCueDeliveryTests.cpp -o /tmp/studio-film-delivery
+          /tmp/studio-film-delivery

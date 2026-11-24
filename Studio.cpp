@@ -396,6 +396,7 @@ public:
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
+            if (workspace == Workspace::filmScoring) return; // Picture dock has a fixed height.
             const int nextHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
             if (dockMode != DockMode::split)
             {
@@ -1094,7 +1095,12 @@ private:
         const int dividerHeight = m.px (12);
         const auto room = m.dockRoom (available, workspaceHeight, dockMode);
         splitLimit = room.splitLimit;
-        const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
+        // Picture always occupies one fixed lower dock; never grow the native
+        // video surface into the arrangement when the user drags the divider.
+        const int panelHeight = workspace == Workspace::closed ? 0
+            : workspace == Workspace::filmScoring
+                ? juce::jmin (available, m.px (438))
+                : room.panelHeight;
         workspacePanel = arrangement.removeFromBottom (panelHeight);
         workspaceDivider.setBounds (panelHeight > 0 ? arrangement.removeFromBottom (dividerHeight) : Rectangle<int>());
         auto body = workspacePanel;
@@ -1187,6 +1193,7 @@ private:
 
     void setDockMode (DockMode mode)
     {
+        if (workspace == Workspace::filmScoring && mode != DockMode::split) return;
         if (dockMode == mode) return;
         rememberWorkspaceScroll();
         dockMode = mode;
@@ -1212,6 +1219,8 @@ private:
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
         workspace = next;
+        if (workspace == Workspace::filmScoring)
+            dockMode = DockMode::split;
         syncWorkspace();
         if (changing) restoreWorkspaceScroll();
     }
