@@ -52,6 +52,7 @@ private:
     void refreshControls();
     void loadPortrait();
     void changePortrait();
+    void syncInspectorControls();
     void refreshArticulations();
     void selectArticulation (int);
     void editStage (int field); // Pan, depth, send trim on an existing verified seat.
@@ -91,7 +92,7 @@ private:
     std::array<juce::Slider, 8> ccKnobs;
     std::array<juce::Label, 8> ccLabels;
     std::vector<ArticulationMapping> currentMappings;
-    juce::String activeMappingId, mappingStamp;
+    juce::String activeMappingId, mappingStamp, sharedCCStamp;
     juce::Rectangle<int> portraitBounds, controlBounds, stageBounds, mappingBounds, keyboardBounds, instrumentHeaderBounds;
     juce::Rectangle<int> mixerBounds, routingBounds, controllerBounds;
     int page = 0; // Main, Articulations, Mixer, Advanced, MIDI CC.
