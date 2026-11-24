@@ -375,6 +375,24 @@ void AtelierInstrumentEditor::refreshControls()
     }
     if (expressionParameter != nullptr && ! expression.isMouseButtonDown())
         expression.setValue (expressionParameter->getCurrentValue(), dontSendNotification);
+    if (auto* source = track())
+    {
+        const auto seat = source->state.getChildWithName (spatial::seatType);
+        const auto placed = seat.isValid();
+        String stageText = placed ? "Placed  •  " : "Not yet placed on the Stage";
+        if (placed)
+        {
+            const auto position = spatial::readSeat (seat).position;
+            stageText << "Pan " << String (roundToInt (position.x * 100)) << "  •  Depth "
+                      << String (roundToInt (position.depth * 100)) << "%";
+        }
+        const auto room = spatial::activeRoomSendDb (*source);
+        const String routeText = room.has_value()
+            ? "Shared room send  " + String (*room, 1) + " dB"
+            : "Shared room send off  •  Studio track output";
+        if (stageSummary.getText() != stageText) stageSummary.setText (stageText, dontSendNotification);
+        if (routingSummary.getText() != routeText) routingSummary.setText (routeText, dontSendNotification);
+    }
     restoring = false;
 }
 
@@ -382,6 +400,121 @@ void AtelierInstrumentEditor::timerCallback()
 {
     refreshControls();
     refreshArticulations();
+}
+
+
+void AtelierInstrumentEditor::setPage (int next)
+{
+    next = jlimit (0, 3, next);
+    if (page == next && ! restoring)
+    {
+        updatePageVisibility();
+        return;
+    }
+    page = next;
+    updatePageVisibility();
+    resized();
+    repaint();
+    if (! restoring && onSizePreferenceChanged)
+        onSizePreferenceChanged(); // Studio keeps the page per instrument.
+}
+
+void AtelierInstrumentEditor::updatePageVisibility()
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* tab = std::array<TextButton*, 4> { &mainTab, &articulationTab, &mixerTab, &advancedTab }[(size_t) i];
+        tab->setToggleState (page == i, dontSendNotification);
+    }
+    const bool mixing = page == 0 || page == 2;
+    const bool showPads = page == 0 || page == 1;
+    volume.setVisible (mixing);
+    pan.setVisible (mixing);
+    expression.setVisible (mixing && expressionParameter != nullptr);
+    volumeLabel.setVisible (mixing);
+    panLabel.setVisible (mixing);
+    expressionHeading.setVisible (mixing && expressionParameter != nullptr);
+    mixHeading.setVisible (mixing);
+    stageHeading.setVisible (page == 0 || page == 2 || page == 3);
+    stageSummary.setVisible (page == 0 || page == 2 || page == 3);
+    routingSummary.setVisible (page == 0 || page == 2 || page == 3);
+    mappingSummary.setVisible (showPads);
+    hint.setVisible (page == 3);
+    original.setVisible (page == 0 || page == 3);
+    articulation.setVisible (page == 1 || page == 3);
+    stage.setVisible (page == 0 || page == 2 || page == 3);
+    for (size_t i = 0; i < mappingPads.size(); ++i)
+        mappingPads[i].setVisible (showPads && i < currentMappings.size()
+                                      && (page == 1 || fullPresentation));
+}
+
+void AtelierInstrumentEditor::refreshArticulations()
+{
+    auto* source = track();
+    if (source == nullptr || instrument == nullptr) return;
+    const auto serialized = source->state.getProperty ("studioArticulationMappings").toString();
+    if (mappingStamp == serialized) return;
+    mappingStamp = serialized;
+    currentMappings.clear();
+    activeMappingId.clear();
+    if (auto root = parseXML (serialized); root != nullptr && root->hasTagName ("StudioArticulations"))
+        for (auto* profile : root->getChildWithTagNameIterator ("Instrument"))
+            if (profile->getStringAttribute ("instance") == instrument->itemID.toString())
+            {
+                currentMappings = readArticulations (*profile);
+                activeMappingId = profile->getStringAttribute ("active");
+                break;
+            }
+    mappingSummary.setText (currentMappings.empty()
+        ? "No verified articulations yet  •  Use Edit Mappings to assign them."
+        : String (currentMappings.size()) + " verified articulations"
+          + (currentMappings.size() > mappingPads.size() ? "  •  More in Mappings" : String()),
+        dontSendNotification);
+    for (size_t i = 0; i < mappingPads.size(); ++i)
+    {
+        auto& button = mappingPads[i];
+        if (i >= currentMappings.size()) continue;
+        const auto& mapping = currentMappings[i];
+        button.setButtonText (mapping.name);
+        button.setTooltip ("Select " + mapping.name + "  •  " + (mapping.message == ArticulationMessage::keyswitch
+            ? "note " : "CC ") + String (mapping.number) + "  •  channel " + String (mapping.channel)
+            + ". Selection does not send a MIDI audition.");
+        button.setToggleState (mapping.id == activeMappingId, dontSendNotification);
+    }
+    updatePageVisibility();
+    resized();
+}
+
+void AtelierInstrumentEditor::selectArticulation (int index)
+{
+    auto* source = track();
+    if (instrument == nullptr || source == nullptr
+        || ! isPositiveAndBelow (index, (int) currentMappings.size())
+        || source->edit.getTransport().isRecording()
+        || source->isFrozen (te::Track::anyFreeze)
+        || ! instrument->isEnabled())
+        return;
+    // Use the existing Studio Articulation Palette's canonical track property,
+    // instrument-instance ID and undo semantics; never synthesize mapping data.
+    const auto serialized = source->state.getProperty ("studioArticulationMappings").toString();
+    auto root = parseXML (serialized);
+    if (root == nullptr || ! root->hasTagName ("StudioArticulations")) return;
+    for (auto* profile : root->getChildWithTagNameIterator ("Instrument"))
+        if (profile->getStringAttribute ("instance") == instrument->itemID.toString())
+        {
+            const auto& selected = currentMappings[(size_t) index];
+            if (profile->getStringAttribute ("active") == selected.id)
+                profile->removeAttribute ("active");
+            else
+                profile->setAttribute ("active", selected.id);
+            auto& history = source->edit.getUndoManager();
+            history.beginNewTransaction ("Select Atelier articulation");
+            source->state.setProperty ("studioArticulationMappings",
+                root->toString (XmlElement::TextFormat().singleLine()), &history);
+            history.beginNewTransaction();
+            refreshArticulations();
+            return;
+        }
 }
 
 int AtelierInstrumentEditor::minimumDockHeight() const
@@ -438,13 +571,24 @@ void AtelierInstrumentEditor::changePortrait()
 
 String AtelierInstrumentEditor::viewState() const
 {
-    return "atelier-v2|" + portraitName;
+    return "atelier-v3|" + portraitName + "|" + String (page);
 }
 
 void AtelierInstrumentEditor::restoreView (const String& saved)
 {
-    portraitName = saved.startsWith ("atelier-v2|")
-        ? saved.fromFirstOccurrenceOf ("|", false, false) : String();
+    const ScopedValueSetter<bool> restoringState (restoring, true);
+    if (saved.startsWith ("atelier-v3|"))
+    {
+        const auto rest = saved.fromFirstOccurrenceOf ("|", false, false);
+        portraitName = rest.upToLastOccurrenceOf ("|", false, false);
+        page = jlimit (0, 3, rest.fromLastOccurrenceOf ("|", false, false).getIntValue());
+    }
+    else
+    {
+        portraitName = saved.startsWith ("atelier-v2|")
+            ? saved.fromFirstOccurrenceOf ("|", false, false) : String();
+        page = 0;
+    }
     int chosen = 1;
     for (int i = 1; i < portraitChoice.getNumItems(); ++i)
         if (portraitChoice.getItemText (i) == portraitName)
@@ -452,6 +596,9 @@ void AtelierInstrumentEditor::restoreView (const String& saved)
     portraitChoice.setSelectedId (chosen, dontSendNotification);
     loadPortrait();
     refreshControls();
+    refreshArticulations();
+    updatePageVisibility();
+    resized();
 }
 
 void AtelierInstrumentEditor::appearanceChanged()
