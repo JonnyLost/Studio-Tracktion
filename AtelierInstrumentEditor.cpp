@@ -802,14 +802,38 @@ void AtelierInstrumentEditor::changePortrait()
 
 String AtelierInstrumentEditor::viewState() const
 {
-    return "atelier-v4|" + portraitName + "|" + String (page)
-        + "|" + String (jlimit (1, 16, previewChannel.getSelectedId()));
+    String values;
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+    {
+        if (i != 0) values << ",";
+        // A latch is transient MIDI state: never reopen with Sustain active.
+        values << String (i == 4 ? 0 : jlimit (0, 127, roundToInt (ccKnobs[i].getValue())));
+    }
+    return "atelier-v5|" + portraitName + "|" + String (page)
+        + "|" + String (jlimit (1, 16, previewChannel.getSelectedId())) + "|" + values;
 }
 
 void AtelierInstrumentEditor::restoreView (const String& saved)
 {
     const ScopedValueSetter<bool> restoringState (restoring, true);
-    if (saved.startsWith ("atelier-v4|"))
+    releaseSustain();
+    if (saved.startsWith ("atelier-v5|"))
+    {
+        auto fields = StringArray::fromTokens (saved, "|", "");
+        if (fields.size() == 5)
+        {
+            portraitName = fields[1];
+            page = jlimit (0, 4, fields[2].getIntValue());
+            previewChannel.setSelectedId (jlimit (1, 16, fields[3].getIntValue()), dontSendNotification);
+            auto values = StringArray::fromTokens (fields[4], ",", "");
+            if (values.size() == (int) ccKnobs.size())
+                for (int i = 0; i < values.size(); ++i)
+                    ccKnobs[(size_t) i].setValue (
+                        i == 4 ? 0 : jlimit (0, 127, values[i].getIntValue()),
+                        dontSendNotification);
+        }
+    }
+    else if (saved.startsWith ("atelier-v4|"))
     {
         const auto rest = saved.fromFirstOccurrenceOf ("|", false, false);
         const auto preceding = rest.upToLastOccurrenceOf ("|", false, false);
