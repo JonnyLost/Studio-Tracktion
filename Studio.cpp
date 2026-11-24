@@ -2005,13 +2005,11 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
-        // Mixer and docked Cinematic Atelier already provide their own
-        // controls. Do not reserve a second Performance panel underneath the
-        // editor: doing so steals height from both the timeline and the fixed
-        // Instrument View, particularly at 1280 x 800.
+        // Mixer, Picture and docked Cinematic Atelier need the dock height
+        // for their own console. The right Inspector remains available.
         const bool dockedAtelier = workspace == Workspace::instrumentEditor
             && instrumentWorkspace.isAtelier() && ! instrumentWorkspace.isFloating();
-        if (workspace == Workspace::mix || dockedAtelier)
+        if (workspace == Workspace::mix || workspace == Workspace::filmScoring || dockedAtelier)
         {
             performance.setVisible (false);
             articulationStrip.setVisible (false);
@@ -4737,23 +4735,31 @@ int StudioView::runFilmScoringReview (const File& output)
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
     if (! edit) return fail ("create film scoring project");
-    const auto trackCount = te::getAudioTracks (*edit).size();
+    const auto tracks = te::getAudioTracks (*edit);
+    const auto trackCount = tracks.size();
+    auto* score = tracks.getFirst();
+    if (score == nullptr) return fail ("create a score track");
+    score->setName ("Opening score");
+    auto clip = score->insertMIDIClip ("Opening theme",
+        { te::TimePosition(), te::TimePosition::fromSeconds (10) }, nullptr);
+    if (clip == nullptr) return fail ("create an arrangement region");
     setDockMode (DockMode::expanded);
     setInspectorOpen (true, false);
     pictureButton.onClick();
     if (! filmWorkspace.isVisible() || ! workspaceViewport.isVisible()
         || workspacePanel.getRight() != inspectorDrawer.getX() || timeline.getBounds().isEmpty()
-        || workspacePanel.intersects (timeline.getBounds()) || ! isWorkspaceDividerLocked())
+        || workspacePanel.intersects (timeline.getBounds()) || ! isWorkspaceDividerLocked()
+        || performance.isVisible() || articulationStrip.isVisible())
         return fail ("Picture shares the lower dock with a separate timeline and Inspector column");
 
     studio::film::Project picture;
     picture.rate = studio::film::Rate::fps2997DF;
-    picture.pictureStartFrame = 0;
-    if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 17982 })
-        || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 21582 }))
+    picture.pictureStartFrame = 6;
+    if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 12 })
+        || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 45 }))
         return fail ("create picture-anchored hits");
-    if (! picture.addCue ({ "1M1", "Opening score", "Transition", 17982, 21582 })
-        || ! picture.addCue ({ "1M2", "Next sequence", "", 30000, std::nullopt }))
+    if (! picture.addCue ({ "1M1", "Opening score", "Transition", 12, 45 })
+        || ! picture.addCue ({ "1M2", "Next sequence", "", 54, std::nullopt }))
         return fail ("create frame-anchored film cues");
     studio::film::store (edit->state, picture, &edit->getUndoManager());
     filmWorkspace.setEdit (nullptr);
@@ -4811,12 +4817,24 @@ int StudioView::runFilmScoringReview (const File& output)
         || assignments.front().family != studio::film::StemFamily::strings)
         return fail ("restore picture scoring metadata and track stem family");
     if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().find ("test-1") == nullptr
-        || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 17982
+        || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 12
         || filmWorkspace.snapshot().findCue ("1M1") == nullptr
-        || filmWorkspace.snapshot().findCue ("1M1")->endPictureFrame != 21582
+        || filmWorkspace.snapshot().findCue ("1M1")->endPictureFrame != 45
         || te::getAudioTracks (*edit).size() != trackCount)
         return fail ("restore exact source frame anchors without altering tracks");
     showWorkspace (Workspace::filmScoring);
+    auto* restoredTrack = te::getAudioTracks (*edit).getFirst();
+    if (restoredTrack == nullptr || restoredTrack->getClips().isEmpty())
+        return fail ("restore the live timeline alongside picture");
+    auto* restoredClip = restoredTrack->getClips().getFirst();
+    selection.selectOnly (restoredClip);
+    edit->dispatchPendingUpdatesSynchronously();
+    MessageManager::getInstance()->runDispatchLoopUntil (50);
+    timerCallback();
+    if (workspace != Workspace::filmScoring || ! filmWorkspace.isVisible())
+        return fail ("selecting a MIDI region does not close Picture");
+    selection.selectOnly (restoredTrack);
+    timerCallback();
     if (output != File())
     {
         if (output.createDirectory().failed()) return fail ("create screenshot folder");

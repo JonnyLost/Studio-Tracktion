@@ -519,6 +519,10 @@ public:
     {
         loadPicture (file, true);
         if (! video.isVideoOpen() || ! isShowing()) return false;
+        for (int i = 0; i < 150 && ! (video.getVideoDuration() > 1.0); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        if (! (video.getVideoDuration() > 1.0) || video.getAudioVolume() != 0.0f)
+            return false;
         setFloating (true);
         if (! isFloating() || ! video.isShowing()) return false;
         setFloating (false);
