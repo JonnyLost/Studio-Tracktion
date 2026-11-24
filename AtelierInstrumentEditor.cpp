@@ -435,17 +435,17 @@ void AtelierInstrumentEditor::updatePageVisibility()
     panLabel.setVisible (mixing);
     expressionHeading.setVisible (mixing && expressionParameter != nullptr);
     mixHeading.setVisible (mixing);
-    stageHeading.setVisible (page == 0 || page == 2 || page == 3);
+    stageHeading.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     stageSummary.setVisible (page == 0 || page == 2 || page == 3);
-    routingSummary.setVisible (page == 0 || page == 2 || page == 3);
+    routingSummary.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     mappingSummary.setVisible (showPads);
     hint.setVisible (page == 3);
-    original.setVisible (page == 0 || page == 3);
+    original.setVisible ((page == 0 && fullPresentation) || page == 3);
     articulation.setVisible (page == 1 || page == 3);
-    stage.setVisible (page == 0 || page == 2 || page == 3);
+    stage.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     for (size_t i = 0; i < mappingPads.size(); ++i)
         mappingPads[i].setVisible (showPads && i < currentMappings.size()
-                                      && (page == 1 || fullPresentation));
+                                      && (page == 1 || fullPresentation || i < 4));
 }
 
 void AtelierInstrumentEditor::refreshArticulations()
