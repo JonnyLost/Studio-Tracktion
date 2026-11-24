@@ -253,7 +253,7 @@ bool InstrumentWorkspace::openAtelier (te::Plugin& candidate, te::AudioTrack& tr
                 // windows to the full Atelier canvas. The saved floating
                 // geometry remains the user's choice until they change it.
                 const auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (window->getBounds());
-                const auto available = display != nullptr ? display->userArea
+                const auto available = display != nullptr ? display->userBounds
                     : Rectangle<int> (0, 0, appearance.px (1300), appearance.px (850));
                 const auto width = jmin (appearance.px (1240), jmax (440, available.getWidth() - appearance.px (40)));
                 const auto height = jmin (appearance.px (830), jmax (340, available.getHeight() - appearance.px (40)));
