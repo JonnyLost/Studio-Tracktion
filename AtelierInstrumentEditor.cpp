@@ -1079,6 +1079,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
     drawAtelierSurface (g, mixerBounds, page == 2 ? "Channel Mixer" : "Volume & Expression");
     drawAtelierSurface (g, stageBounds, "Stage & Room");
     drawAtelierSurface (g, routingBounds, page == 3 ? "Instrument & Routing" : "Routing");
+    drawAtelierSurface (g, controllerBounds, "MIDI Controllers  •  Live CC");
     paintKeyboardReference (g);
 
     // Read-only placement overview is derived from the actual saved seat,
@@ -1171,17 +1172,17 @@ void AtelierInstrumentEditor::resized()
         && area.getHeight() >= m.px (625);
     if (fullPresentation && ! nextFull) stopKeyboardNote();
     fullPresentation = nextFull;
-    previewChannel.setVisible (fullPresentation);
+    previewChannel.setVisible (fullPresentation || page == 4);
 
     portraitBounds = controlBounds = stageBounds = mappingBounds = keyboardBounds
-        = instrumentHeaderBounds = mixerBounds = routingBounds = {};
+        = instrumentHeaderBounds = mixerBounds = routingBounds = controllerBounds = {};
 
     const auto headerHeight = m.control (fullPresentation ? 84 : 69, 14);
     instrumentHeaderBounds = area.removeFromTop (headerHeight).expanded (m.px (3));
     auto row = instrumentHeaderBounds.reduced (m.px (11), m.px (5));
     auto titleRow = row.removeFromTop (m.control (42, 12));
-    const int tabWidth = jmin (m.span (99), jmax (m.span (52), titleRow.getWidth() / 9));
-    auto tabArea = titleRow.removeFromRight (tabWidth * 4);
+    const int tabWidth = jmin (m.span (105), jmax (m.span (58), titleRow.getWidth() / 11));
+    auto tabArea = titleRow.removeFromRight (tabWidth * 5);
     for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab })
         tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
     const bool offerFullView = ! fullPresentation && isFloatingWindow && isFloatingWindow();
@@ -1241,6 +1242,7 @@ void AtelierInstrumentEditor::resized()
             body.removeFromTop (m.px (8));
             stageBounds = body;
         }
+        else if (page == 4) controllerBounds = body;
         else routingBounds = body;
     }
     else
@@ -1253,6 +1255,7 @@ void AtelierInstrumentEditor::resized()
         }
         else if (page == 1) mappingBounds = body;
         else if (page == 2) mixerBounds = body;
+        else if (page == 4) controllerBounds = body;
         else routingBounds = body;
     }
 
@@ -1292,7 +1295,8 @@ void AtelierInstrumentEditor::resized()
     if (! mixerBounds.isEmpty())
     {
         auto content = mixerBounds.reduced (m.px (15));
-        mixHeading.setBounds (content.removeFromTop (m.control (28, 10)));
+        // The panel title is drawn by paint(); no duplicate CHANNEL label.
+        content.removeFromTop (m.control (28, 10));
         if (page == 0 && ! fullPresentation)
         {
             // Compact Main gets a small, genuine Stage status line below
@@ -1306,6 +1310,40 @@ void AtelierInstrumentEditor::resized()
         for (auto* component : std::initializer_list<Component*> { &volume, &pan, &expression,
                                  &volumeLabel, &panLabel, &expressionHeading })
             component->setBounds ({});
+
+    ccStatus.setBounds ({});
+    sendAllCC.setBounds ({});
+    for (auto& knob : ccKnobs) knob.setBounds ({});
+    for (auto& label : ccLabels) label.setBounds ({});
+    if (! controllerBounds.isEmpty())
+    {
+        auto ccArea = controllerBounds.reduced (m.px (15));
+        ccArea.removeFromTop (m.control (29, 10)); // Shared vector panel heading.
+        auto tools = ccArea.removeFromTop (m.control (32, 11));
+        const int sendW = jmin (m.span (135), tools.getWidth() / 3);
+        sendAllCC.setBounds (tools.removeFromRight (sendW));
+        tools.removeFromRight (jmin (m.px (9), tools.getWidth()));
+        previewChannel.setBounds (tools.removeFromLeft (jmin (m.span (175), tools.getWidth())));
+        ccArea.removeFromTop (m.px (5));
+        ccStatus.setBounds (ccArea.removeFromBottom (m.control (31, 9)));
+        ccArea.removeFromBottom (m.px (5));
+
+        const int columns = ccArea.getWidth() >= m.span (450) ? 4 : 2;
+        const int rows = (int) ccKnobs.size() / columns;
+        const int gap = m.px (7);
+        const int cellW = jmax (1, (ccArea.getWidth() - (columns - 1) * gap) / columns);
+        const int cellH = jmax (1, (ccArea.getHeight() - (rows - 1) * gap) / rows);
+        for (size_t i = 0; i < ccKnobs.size(); ++i)
+        {
+            auto cell = Rectangle<int> (
+                ccArea.getX() + (int) (i % (size_t) columns) * (cellW + gap),
+                ccArea.getY() + (int) (i / (size_t) columns) * (cellH + gap),
+                cellW, cellH);
+            auto labelH = jmin (m.control (22, 9), cell.getHeight() / 3);
+            ccLabels[i].setBounds (cell.removeFromTop (labelH));
+            ccKnobs[i].setBounds (cell.reduced (m.px (3), m.px (2)));
+        }
+    }
 
     stageHeading.setBounds ({});
     for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
