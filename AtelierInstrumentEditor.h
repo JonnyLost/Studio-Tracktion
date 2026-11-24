@@ -86,7 +86,7 @@ private:
     juce::Rectangle<int> portraitBounds, controlBounds, stageBounds, mappingBounds, keyboardBounds, instrumentHeaderBounds;
     juce::Rectangle<int> mixerBounds, routingBounds;
     int page = 0; // Main, Articulations, Mixer, Advanced. Saved per instrument.
-    int heldPreviewNote = -1, heldPreviewChannel = 1;
+    int heldPreviewNote = -1, heldPreviewChannel = 1, heldKeyswitchNote = -1;
     bool fullPresentation = false, restoring = false;
 };
 }
