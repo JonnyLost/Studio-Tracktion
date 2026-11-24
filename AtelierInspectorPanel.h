@@ -16,6 +16,7 @@ public:
     void setEdit (tracktion::Edit*);
     void refresh (tracktion::AudioTrack*, bool editable);
     void appearanceChanged();
+    void suspend() { releaseSustain(); }
     int desiredHeight (int width) const;
     void resized() override;
     void paint (juce::Graphics&) override;
