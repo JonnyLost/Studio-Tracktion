@@ -13,6 +13,7 @@ class AtelierInspectorPanel final : public juce::Component
 {
 public:
     explicit AtelierInspectorPanel (TrackActions&);
+    ~AtelierInspectorPanel() override;
     void setEdit (tracktion::Edit*);
     void refresh (tracktion::AudioTrack*, bool editable);
     void appearanceChanged();
