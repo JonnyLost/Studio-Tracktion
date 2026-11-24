@@ -607,149 +607,384 @@ void AtelierInstrumentEditor::appearanceChanged()
     repaint();
 }
 
+void AtelierInstrumentEditor::drawAtelierSurface (Graphics& g, Rectangle<int> bounds, const String& caption) const
+{
+    if (bounds.isEmpty()) return;
+    const auto card = bounds.toFloat().reduced (1.0f);
+    g.setGradientFill (ColourGradient (Colour (0xff32231b), card.getTopLeft(),
+                                      Colour (0xff1a1515), card.getBottomRight(), false));
+    g.fillRoundedRectangle (card, 8.0f);
+    g.setColour (amber.withAlpha (.47f));
+    g.drawRoundedRectangle (card.reduced (.5f), 8.0f, .8f);
+    g.setColour (amber.withAlpha (.17f));
+    g.drawLine (card.getX() + 13, card.getY() + 28,
+                card.getRight() - 13, card.getY() + 28, .8f);
+    if (caption.isNotEmpty())
+    {
+        g.setColour (amber);
+        g.setFont (FontOptions (Font::getDefaultSerifFontName(), appearance.fontSize (13.0f), Font::plain));
+        g.drawFittedText (caption.toUpperCase(), bounds.reduced (appearance.px (14))
+              .removeFromTop (appearance.control (23, 10)), Justification::centredLeft, 1, .85f);
+    }
+}
+
+void AtelierInstrumentEditor::paintKeyboardReference (Graphics& g) const
+{
+    if (keyboardBounds.isEmpty()) return;
+    auto background = keyboardBounds.toFloat();
+    g.setGradientFill (ColourGradient (Colour (0xff432918), background.getTopLeft(),
+                                       Colour (0xff130f12), background.getBottomLeft(), false));
+    g.fillRoundedRectangle (background.reduced (1), 8.0f);
+    g.setColour (amber.withAlpha (.65f));
+    g.drawRoundedRectangle (background.reduced (1.5f), 8.0f, 1.1f);
+    auto keys = keyboardBounds.reduced (appearance.px (12), appearance.px (7));
+    keys.removeFromTop (appearance.control (18, 9));
+    constexpr int whiteCount = 42;
+    if (keys.getWidth() < whiteCount) return;
+    const float keyW = (float) keys.getWidth() / whiteCount;
+    for (int index = 0; index < whiteCount; ++index)
+    {
+        auto key = Rectangle<float> (keys.getX() + keyW * index, (float) keys.getY(),
+                                     keyW - .6f, (float) keys.getHeight());
+        g.setGradientFill (ColourGradient (Colour (0xfffff5db), key.getTopLeft(),
+                                           Colour (0xffba916a), key.getBottomLeft(), false));
+        g.fillRoundedRectangle (key, 2.5f);
+        g.setColour (Colour (0xff5a3825));
+        g.drawRoundedRectangle (key, 2.5f, .65f);
+    }
+    constexpr std::array<bool, 7> blackAfter { true, true, false, true, true, true, false };
+    for (int index = 0; index < whiteCount - 1; ++index)
+        if (blackAfter[(size_t) (index % 7)])
+        {
+            auto key = Rectangle<float> (keys.getX() + keyW * (index + 1) - keyW * .31f,
+                (float) keys.getY(), keyW * .62f, (float) keys.getHeight() * .62f);
+            g.setGradientFill (ColourGradient (Colour (0xff45332b), key.getTopLeft(),
+                                               Colour (0xff0c0b0f), key.getBottomLeft(), false));
+            g.fillRoundedRectangle (key, 2.0f);
+            g.setColour (amber.withAlpha (.52f));
+            g.drawRoundedRectangle (key, 2.0f, .6f);
+        }
+}
+
 void AtelierInstrumentEditor::paint (Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat();
-    g.setGradientFill (ColourGradient (Colour (0xff171719), bounds.getTopLeft(), walnut,
-                                        bounds.getBottomRight(), false));
-    g.fillRect (bounds);
+    auto canvas = getLocalBounds().toFloat();
+    g.setGradientFill (ColourGradient (Colour (0xff171317), canvas.getTopLeft(),
+                                        Colour (0xff312019), canvas.getBottomRight(), false));
+    g.fillRect (canvas);
 
-    // The calm photographic mood is confined to the portrait. Functional
-    // controls live on opaque surfaces so text remains readable.
+    // Fine wood-grain lines are deterministic vector paint, not bitmap assets
+    // or any additional DSP/audio work.
+    g.setColour (amber.withAlpha (.018f));
+    for (int y = 0; y < getHeight(); y += 11)
+        g.drawHorizontalLine (y, 0.0f, (float) getWidth());
+
+    if (! instrumentHeaderBounds.isEmpty())
+    {
+        const auto bar = instrumentHeaderBounds.toFloat();
+        g.setGradientFill (ColourGradient (Colour (0xff3f291b), bar.getTopLeft(),
+                                            Colour (0xff1b1516), bar.getBottomRight(), false));
+        g.fillRect (bar);
+        g.setColour (amber.withAlpha (.46f));
+        g.drawHorizontalLine (instrumentHeaderBounds.getBottom() - 1, bar.getX(), bar.getRight());
+    }
+
     if (! portraitBounds.isEmpty())
     {
+        auto outer = portraitBounds.toFloat().reduced (.5f);
+        g.setColour (Colour (0xff120f12));
+        g.fillRoundedRectangle (outer, 11.0f);
+        g.setColour (amber.withAlpha (.87f));
+        g.drawRoundedRectangle (outer.reduced (1.0f), 10.0f, 1.4f);
+        g.setColour (amber.withAlpha (.27f));
+        g.drawRoundedRectangle (outer.reduced (3.4f), 8.0f, .8f);
         Graphics::ScopedSaveState state (g);
-        g.reduceClipRegion (portraitBounds);
-        const bool artworkInstalled = portraitImage.isValid();
-        g.setColour (wood.darker (0.15f));
-        g.fillRect (portraitBounds);
-        // Reserve a caption footer outside the art; even the bottom of a
-        // violin/cello image stays visible in the reduced 425-point dock.
+        g.reduceClipRegion (portraitBounds.reduced (appearance.px (5)));
         auto imageArea = portraitBounds.reduced (appearance.px (6));
         imageArea.removeFromBottom (appearance.control (24, 10));
-        drawContained (g, artworkInstalled ? portraitImage : blueHour, imageArea);
-        if (! artworkInstalled)
+        g.setColour (Colour (0xff332219));
+        g.fillRect (imageArea);
+        drawContained (g, portraitImage.isValid() ? portraitImage : blueHour, imageArea);
+    }
+
+    drawAtelierSurface (g, mappingBounds, page == 1 ? "Articulation Palette" : "Articulations");
+    drawAtelierSurface (g, mixerBounds, page == 2 ? "Channel Mixer" : "Volume & Expression");
+    drawAtelierSurface (g, stageBounds, "Stage & Room");
+    drawAtelierSurface (g, routingBounds, page == 3 ? "Instrument & Routing" : "Routing");
+    paintKeyboardReference (g);
+
+    // Read-only placement overview is derived from the actual saved seat,
+    // not an imaginary stage control or a fake active reverb.
+    if (fullPresentation && ! stageBounds.isEmpty())
+        if (auto* source = track())
         {
-            g.setColour (walnut.withAlpha (0.20f));
-            g.fillRect (imageArea);
+            auto seat = source->state.getChildWithName (spatial::seatType);
+            auto field = stageBounds.reduced (appearance.px (24));
+            field.removeFromTop (appearance.px (55));
+            field.removeFromBottom (appearance.px (26));
+            if (seat.isValid() && field.getWidth() > 75 && field.getHeight() > 45)
+            {
+                const auto position = spatial::readSeat (seat).position;
+                auto plot = field.toFloat().withSizeKeepingCentre (
+                    jmin ((float) field.getWidth(), 260.0f),
+                    jmin ((float) field.getHeight(), 90.0f));
+                g.setColour (amber.withAlpha (.32f));
+                Path arc;
+                arc.addCentredArc (plot.getCentreX(), plot.getBottom(),
+                                  plot.getWidth() * .5f, plot.getHeight() * .9f,
+                                  0, -MathConstants<float>::pi * .99f, 0, true);
+                g.strokePath (arc, PathStrokeType (1.0f));
+                const float x = plot.getCentreX() + position.x * plot.getWidth() * .43f;
+                const float y = plot.getBottom() - (1.0f - position.depth) * plot.getHeight() * .83f;
+                g.setColour (amber);
+                g.fillEllipse (x - 4.0f, y - 4.0f, 8.0f, 8.0f);
+            }
         }
-        auto rect = portraitBounds.toFloat().reduced (1);
-        g.setColour (amber.withAlpha (0.54f));
-        g.drawRoundedRectangle (rect, 8.0f, 0.85f);
-    }
 
-    if (! controlBounds.isEmpty())
+    auto bottomLine = getLocalBounds().toFloat().reduced (appearance.px (8));
+    g.setColour (amber.withAlpha (.38f));
+    g.drawHorizontalLine ((int) bottomLine.getBottom() - 1,
+                          bottomLine.getX(), bottomLine.getRight());
+}
+
+void AtelierInstrumentEditor::layoutSliders (Rectangle<int> area, bool horizontal)
+{
+    const auto& m = appearance;
+    const bool hasExpression = expressionParameter != nullptr;
+    const int count = hasExpression ? 3 : 2;
+    const auto layoutOne = [&] (Label& label, Slider& slider, Rectangle<int> cell)
     {
-        auto card = controlBounds.toFloat().reduced (1);
-        g.setColour (walnut);
-        g.fillRoundedRectangle (card, 10.0f);
-        g.setColour (amber.withAlpha (0.45f));
-        g.drawRoundedRectangle (card, 10.0f, 1.0f);
-
-        auto base = controlBounds.toFloat().reduced (17.0f);
-        const auto midY = (float) mixHeading.getY() - 8;
-        g.setColour (amber.withAlpha (0.27f));
-        g.drawHorizontalLine ((int) midY, base.getX(), base.getRight());
+        if (horizontal)
+        {
+            if (slider.getSliderStyle() != Slider::LinearHorizontal)
+                slider.setSliderStyle (Slider::LinearHorizontal);
+            slider.setTextBoxStyle (Slider::TextBoxRight, false, m.span (82), m.control (20, 11));
+            label.setJustificationType (Justification::centredLeft);
+            label.setBounds (cell.removeFromLeft (jmin (m.span (103), cell.getWidth() / 3))
+                                  .reduced (m.px (2), 0));
+            slider.setBounds (cell.reduced (m.px (6), m.px (2)));
+        }
+        else
+        {
+            if (slider.getSliderStyle() != Slider::RotaryHorizontalVerticalDrag)
+                slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
+            slider.setTextBoxStyle (Slider::TextBoxBelow, false, m.span (78), m.control (20, 11));
+            label.setJustificationType (Justification::centred);
+            const int labelH = jmin (m.control (22, 9), cell.getHeight());
+            const int sliderH = jmax (0, jmin (m.px (160), cell.getHeight() - labelH));
+            const int sliderW = jmax (0, jmin (m.span (142), cell.getWidth() - m.px (8)));
+            const auto centreX = cell.getCentreX();
+            const int top = cell.getY() + jmax (0, (cell.getHeight() - labelH - sliderH) / 2);
+            label.setBounds (centreX - sliderW / 2, top, sliderW, labelH);
+            slider.setBounds (centreX - sliderW / 2, top + labelH, sliderW, sliderH);
+        }
+    };
+    if (horizontal)
+    {
+        const int rowHeight = jmax (1, area.getHeight() / count);
+        layoutOne (volumeLabel, volume, area.removeFromTop (rowHeight));
+        layoutOne (panLabel, pan, area.removeFromTop (rowHeight));
+        if (hasExpression) layoutOne (expressionHeading, expression, area);
     }
-
-    const auto line = getLocalBounds().toFloat().reduced (13);
-    g.setColour (blue.withAlpha (0.7f));
-    g.drawLine (line.getX(), line.getBottom(), line.getRight(), line.getBottom(), 2.0f);
+    else
+    {
+        const int cellWidth = jmax (1, area.getWidth() / count);
+        layoutOne (volumeLabel, volume, area.removeFromLeft (cellWidth));
+        layoutOne (panLabel, pan, area.removeFromLeft (hasExpression ? cellWidth : area.getWidth()));
+        if (hasExpression) layoutOne (expressionHeading, expression, area);
+    }
 }
 
 void AtelierInstrumentEditor::resized()
 {
     const auto& m = appearance;
-    auto area = getLocalBounds().reduced (m.px (13));
+    auto area = getLocalBounds().reduced (m.px (11));
+    const bool nextFull = area.getWidth() >= m.span (875)
+        && area.getHeight() >= m.px (625);
+    fullPresentation = nextFull;
 
-    // One consistent hierarchy in both docking modes: instrument name first,
-    // actual AU name beneath it. Do not scatter the two labels horizontally.
-    auto header = area.removeFromTop (m.control (70, 17));
-    auto titleRow = header.removeFromTop (m.control (37, 10));
-    const int portraitMenuW = jmin (m.span (175), jmax (m.span (105), titleRow.getWidth() / 3));
-    portraitChoice.setBounds (titleRow.removeFromRight (portraitMenuW).reduced (m.px (2), m.px (1)));
-    title.setBounds (titleRow);
-    subtitle.setBounds (header.removeFromTop (m.control (23, 9)));
-    area.removeFromTop (m.px (6));
+    portraitBounds = controlBounds = stageBounds = mappingBounds = keyboardBounds
+        = instrumentHeaderBounds = mixerBounds = routingBounds = {};
 
-    const int gap = m.px (12);
-    const bool sideBySide = area.getWidth() >= m.span (680);
-    if (sideBySide)
+    const auto headerHeight = m.control (fullPresentation ? 84 : 69, 14);
+    instrumentHeaderBounds = area.removeFromTop (headerHeight).expanded (m.px (3));
+    auto row = instrumentHeaderBounds.reduced (m.px (11), m.px (5));
+    auto titleRow = row.removeFromTop (m.control (42, 12));
+    const int tabWidth = jmin (m.span (99), jmax (m.span (52), titleRow.getWidth() / 9));
+    auto tabArea = titleRow.removeFromRight (tabWidth * 4);
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+        tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
+    fullView.setBounds (titleRow.removeFromRight (jmin (m.span (90), titleRow.getWidth() / 4))
+                               .reduced (m.px (3), m.px (2)));
+    portraitChoice.setBounds (titleRow.removeFromRight (jmin (m.span (175), titleRow.getWidth() / 2))
+                                     .reduced (m.px (4), m.px (2)));
+    title.setBounds (titleRow.reduced (m.px (3), 0));
+    subtitle.setBounds (row.removeFromTop (m.control (23, 9)).reduced (m.px (3), 0));
+    fullView.setVisible (! fullPresentation);
+
+    area.removeFromTop (m.px (7));
+    if (fullPresentation)
     {
-        // A narrow portrait column matches the original paintings' vertical
-        // aspect better than a 30%-wide landscape crop. More room for controls.
-        portraitBounds = area.removeFromLeft (jlimit (m.span (170), m.span (245),
-                                                     area.getWidth() * 23 / 100));
-        area.removeFromLeft (gap);
+        keyboardBounds = area.removeFromBottom (m.px (105));
+        area.removeFromBottom (m.px (9));
     }
-    else
-    {
-        portraitBounds = area.removeFromTop (jmin (m.control (150), area.getHeight() / 3));
-        area.removeFromTop (gap);
-    }
+    const int artWidth = fullPresentation ? jmin (m.span (360), area.getWidth() * 31 / 100)
+                                           : jlimit (m.span (165), m.span (255), area.getWidth() * 23 / 100);
+    portraitBounds = area.removeFromLeft (artWidth);
+    area.removeFromLeft (m.px (13));
     controlBounds = area;
-
-    sceneCaption.setBounds (portraitBounds.reduced (m.px (6))
+    sceneCaption.setBounds (portraitBounds.reduced (m.px (7))
                                .removeFromBottom (m.control (24, 10)));
+    keyboardSummary.setBounds (keyboardBounds.isEmpty() ? Rectangle<int>()
+        : keyboardBounds.reduced (m.px (14), m.px (4)).removeFromTop (m.control (20, 9)));
 
-    auto controls = controlBounds.reduced (m.px (17));
-    const int commandHeight = m.control (32, 11);
-    auto commands = controls.removeFromBottom (commandHeight);
-    const int commandGap = m.px (7);
-    if (commands.getWidth() >= m.span (550))
+    auto body = controlBounds;
+    if (fullPresentation)
     {
-        original.setBounds (commands.removeFromRight (jmin (m.span (205), commands.getWidth() / 3)));
-        commands.removeFromRight (commandGap);
-        stage.setBounds (commands.removeFromRight (jmin (m.span (170), commands.getWidth() / 2)));
-        commands.removeFromRight (commandGap);
-        articulation.setBounds (commands);
+        if (page == 0)
+        {
+            auto top = body.removeFromTop (body.getHeight() * 55 / 100);
+            mappingBounds = top.removeFromLeft (top.getWidth() * 52 / 100);
+            top.removeFromLeft (m.px (8));
+            mixerBounds = top;
+            body.removeFromTop (m.px (9));
+            stageBounds = body.removeFromLeft (body.getWidth() * 55 / 100);
+            body.removeFromLeft (m.px (8));
+            routingBounds = body;
+        }
+        else if (page == 1) mappingBounds = body;
+        else if (page == 2)
+        {
+            mixerBounds = body.removeFromTop (body.getHeight() * 67 / 100);
+            body.removeFromTop (m.px (8));
+            stageBounds = body;
+        }
+        else routingBounds = body;
     }
     else
     {
-        // At narrow widths the dock keeps the original editor accessible.
-        // Stage and articulation remain reachable through Studio's sidebar.
-        original.setBounds (commands);
-        articulation.setBounds ({});
+        if (page == 0)
+        {
+            mappingBounds = body.removeFromTop (jmin (m.px (98), body.getHeight() / 3));
+            body.removeFromTop (m.px (7));
+            mixerBounds = body;
+        }
+        else if (page == 1) mappingBounds = body;
+        else if (page == 2) mixerBounds = body;
+        else routingBounds = body;
+    }
+
+    // Every page has a real destination; never display a control surface
+    // without corresponding real backing state or an explicit status label.
+    mappingSummary.setBounds ({});
+    for (auto& pad : mappingPads) pad.setBounds ({});
+    if (! mappingBounds.isEmpty())
+    {
+        auto content = mappingBounds.reduced (m.px (15));
+        content.removeFromTop (m.control (28, 10));
+        mappingSummary.setBounds (content.removeFromTop (m.control (26, 10)));
+        const bool editorPage = page == 1;
+        const int footer = editorPage ? m.control (34, 11) : 0;
+        if (footer > 0)
+        {
+            content.removeFromBottom (m.px (4));
+            articulation.setBounds (content.removeFromBottom (footer));
+        }
+        const int maxPads = page == 0 && ! fullPresentation ? 4 : 8;
+        const int columns = 4;
+        const int rows = page == 0 && ! fullPresentation ? 1 : 2;
+        const int gap = m.px (5);
+        auto padsArea = content.reduced (0, m.px (3));
+        if (! currentMappings.empty())
+        {
+            const int cellW = jmax (1, (padsArea.getWidth() - (columns - 1) * gap) / columns);
+            const int cellH = jmax (1, (padsArea.getHeight() - (rows - 1) * gap) / rows);
+            for (int i = 0; i < jmin (maxPads, (int) currentMappings.size()); ++i)
+                mappingPads[(size_t) i].setBounds (padsArea.getX() + (i % columns) * (cellW + gap),
+                    padsArea.getY() + (i / columns) * (cellH + gap), cellW, cellH);
+        }
+    }
+    else articulation.setBounds ({});
+
+    mixHeading.setBounds ({});
+    if (! mixerBounds.isEmpty())
+    {
+        auto content = mixerBounds.reduced (m.px (15));
+        mixHeading.setBounds (content.removeFromTop (m.control (28, 10)));
+        if (page == 0 && ! fullPresentation)
+        {
+            // Compact Main gets a small, genuine Stage status line below
+            // the volume/pan/Expression controls rather than extra buttons.
+            stageSummary.setBounds (content.removeFromBottom (m.control (24, 9)));
+        }
+        content.removeFromTop (m.px (4));
+        layoutSliders (content, fullPresentation && page == 0);
+    }
+    else
+        for (auto* component : { static_cast<Component*> (&volume), &pan, &expression,
+                                 &volumeLabel, &panLabel, &expressionHeading })
+            component->setBounds ({});
+
+    stageHeading.setBounds ({});
+    if (! stageBounds.isEmpty())
+    {
+        auto content = stageBounds.reduced (m.px (14));
+        content.removeFromTop (m.control (29, 10));
+        stageHeading.setBounds (content.removeFromTop (m.control (22, 9)));
+        stageSummary.setBounds (content.removeFromTop (m.control (26, 10)));
+        if (page == 2)
+            stage.setBounds (content.removeFromBottom (m.control (34, 11)));
+    }
+    if (! routingBounds.isEmpty())
+    {
+        auto content = routingBounds.reduced (m.px (15));
+        content.removeFromTop (m.control (30, 10));
+        if (page == 3)
+        {
+            stageHeading.setBounds (content.removeFromTop (m.control (25, 10)));
+            stageSummary.setBounds (content.removeFromTop (m.control (28, 10)));
+        }
+        routingSummary.setBounds (content.removeFromTop (m.control (38, 10)));
+        content.removeFromTop (m.px (6));
+        if (page == 3)
+        {
+            hint.setBounds (content.removeFromTop (m.control (38, 10)));
+            content.removeFromTop (m.px (7));
+        }
+        const int buttonH = m.control (34, 11);
+        const int gap = m.px (7);
+        if (page == 3)
+        {
+            auto actions = content.removeFromBottom (buttonH);
+            const int width = jmax (1, (actions.getWidth() - 2 * gap) / 3);
+            articulation.setBounds (actions.removeFromLeft (width));
+            actions.removeFromLeft (gap);
+            stage.setBounds (actions.removeFromLeft (width));
+            actions.removeFromLeft (gap);
+            original.setBounds (actions);
+        }
+        else
+        {
+            original.setBounds (content.removeFromBottom (buttonH));
+            if (page == 0)
+                stage.setBounds (content.removeFromBottom (buttonH + gap).withTrimmedBottom (gap));
+        }
+    }
+    else if (page != 2)
+    {
+        original.setBounds ({});
         stage.setBounds ({});
     }
 
-    controls.removeFromBottom (m.px (9));
-    hint.setBounds (controls.removeFromBottom (m.control (35, 12)));
-    auto mix = controls;
-    mixHeading.setBounds (mix.removeFromTop (m.control (28, 10)));
-    mix.removeFromTop (m.px (5));
-
-    const bool hasExpression = expressionParameter != nullptr;
-    const int count = hasExpression ? 3 : 2;
-    const int cellWidth = jmax (1, mix.getWidth() / count);
-
-    // Keep the controls *physically sized*, rather than stretching JUCE
-    // rotary sliders to fill an 800px-wide floating editor. Textbox positions
-    // and the underlying Tracktion parameter bindings are unchanged.
-    const auto placeDial = [&] (Label& heading, Slider& slider, Rectangle<int> cell)
+    if (page != 3) hint.setBounds ({});
+    if (page == 2 && stageBounds.isEmpty()) // compact Mixer
     {
-        const int labelH = jmin (m.control (24, 9), cell.getHeight());
-        const int sliderH = jmax (0, jmin (m.control (145, 14), cell.getHeight() - labelH));
-        const int sliderW = jmax (0, jmin (m.span (125), cell.getWidth() - m.px (10)));
-        const int totalH = labelH + sliderH;
-        const int top = cell.getY() + jmax (0, (cell.getHeight() - totalH) / 2);
-        const int left = cell.getCentreX() - sliderW / 2;
-        heading.setBounds (left, top, sliderW, labelH);
-        slider.setBounds (left, top + labelH, sliderW, sliderH);
-    };
-
-    placeDial (volumeLabel, volume, mix.removeFromLeft (cellWidth));
-    if (hasExpression)
-    {
-        placeDial (panLabel, pan, mix.removeFromLeft (cellWidth));
-        placeDial (expressionHeading, expression, mix);
+        auto line = mixerBounds.reduced (m.px (15)).removeFromBottom (m.control (24, 9));
+        stageSummary.setBounds (line);
     }
-    else
-    {
-        placeDial (panLabel, pan, mix);
-        expressionHeading.setBounds ({});
-        expression.setBounds ({});
-    }
+
+    updatePageVisibility();
+    repaint();
 }
 
 #if STUDIO_SPATIAL_TESTS
