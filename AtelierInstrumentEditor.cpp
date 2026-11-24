@@ -531,6 +531,7 @@ void AtelierInstrumentEditor::timerCallback()
     }
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
                                             : "KEYBOARD  •  load an active Audio Unit to audition";
     if (keyboardSummary.getText() != help)
@@ -564,10 +565,62 @@ void AtelierInstrumentEditor::editStage (int field)
     refreshControls();
 }
 
+void AtelierInstrumentEditor::releaseSustain()
+{
+    if (activeSustainChannel > 0)
+        if (auto* source = track())
+            source->injectLiveMidiMessage (MidiMessage::controllerEvent (
+                activeSustainChannel, 64, 0), {});
+    activeSustainChannel = -1;
+    // Never restore a visually latched pedal without a matching CC-on message.
+    ccKnobs[4].setValue (0, dontSendNotification);
+}
+
+void AtelierInstrumentEditor::sendLiveCC (int slot)
+{
+    if (restoring || ! isPositiveAndBelow (slot, (int) liveCC.size())
+        || ! canPreviewKeyboard()) return;
+    auto* source = track();
+    if (source == nullptr) return;
+    const int channel = jlimit (1, 16, previewChannel.getSelectedId());
+    const auto& definition = liveCC[(size_t) slot];
+    int value = jlimit (0, 127, roundToInt (ccKnobs[(size_t) slot].getValue()));
+    if (definition.number == 64)
+    {
+        value = value >= 64 ? 127 : 0;
+        if (activeSustainChannel > 0 && activeSustainChannel != channel)
+            releaseSustain();
+        activeSustainChannel = value == 127 ? channel : -1;
+    }
+    source->injectLiveMidiMessage (MidiMessage::controllerEvent (
+        channel, definition.number, value), {});
+}
+
+void AtelierInstrumentEditor::sendAllLiveCC()
+{
+    if (! canPreviewKeyboard()) return;
+    for (int i = 0; i < (int) ccKnobs.size(); ++i)
+        sendLiveCC (i);
+    if (onSizePreferenceChanged) onSizePreferenceChanged();
+}
+
+void AtelierInstrumentEditor::updateMIDIControls()
+{
+    const bool available = canPreviewKeyboard();
+    if (! available && activeSustainChannel > 0) releaseSustain();
+    for (auto& knob : ccKnobs) knob.setEnabled (available);
+    sendAllCC.setEnabled (available);
+    const String message = available
+        ? "LIVE MIDI  •  CC values go to the hosted instrument. Patch support varies; not MIDI clip automation."
+        : "MIDI unavailable  •  load/enable an Audio Unit with an active playback context.";
+    if (ccStatus.getText() != message) ccStatus.setText (message, dontSendNotification);
+}
+
 void AtelierInstrumentEditor::setPage (int next)
 {
     stopKeyboardNote();
-    next = jlimit (0, 3, next);
+    if (page == 4 && next != 4) releaseSustain();
+    next = jlimit (0, 4, next);
     if (page == next && ! restoring)
     {
         updatePageVisibility();
@@ -583,9 +636,9 @@ void AtelierInstrumentEditor::setPage (int next)
 
 void AtelierInstrumentEditor::updatePageVisibility()
 {
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
-        auto* tab = std::array<TextButton*, 4> { &mainTab, &articulationTab, &mixerTab, &advancedTab }[(size_t) i];
+        auto* tab = std::array<TextButton*, 5> { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab }[(size_t) i];
         tab->setToggleState (page == i, dontSendNotification);
     }
     const bool mixing = page == 0 || page == 2;
@@ -596,7 +649,15 @@ void AtelierInstrumentEditor::updatePageVisibility()
     volumeLabel.setVisible (mixing);
     panLabel.setVisible (mixing);
     expressionHeading.setVisible (mixing && expressionParameter != nullptr);
-    mixHeading.setVisible (mixing);
+    // The gold panel is already titled "Volume & Expression" in paint().
+    // The legacy CHANNEL heading visibly overlapped that title.
+    mixHeading.setVisible (false);
+    const bool showingControllers = page == 4;
+    ccStatus.setVisible (showingControllers);
+    sendAllCC.setVisible (showingControllers);
+    for (auto& knob : ccKnobs) knob.setVisible (showingControllers);
+    for (auto& label : ccLabels) label.setVisible (showingControllers);
+    previewChannel.setVisible (fullPresentation || showingControllers);
     stageHeading.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     const bool editableStage = fullPresentation && page == 0;
     for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
