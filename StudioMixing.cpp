@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioMixing.h"
+#include "AtelierInspectorPanel.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
 
@@ -540,7 +541,9 @@ private:
 };
 
 InspectorDrawer::InspectorDrawer (TrackActions& actions)
-    : actions (actions), inspector (actions), channelStrip (std::make_unique<InspectorChannelStrip> (actions))
+    : actions (actions), inspector (actions),
+      channelStrip (std::make_unique<InspectorChannelStrip> (actions)),
+      atelier (std::make_unique<AtelierInspectorPanel> (actions))
 {
     setOpaque (true);
     setRepaintsOnMouseActivity (true);
@@ -559,6 +562,11 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     scroll.setViewedComponent (&inspector, false);
     addAndMakeVisible (scroll);
     addAndMakeVisible (*channelStrip);
+    atelierScroll.setScrollBarsShown (true, false);
+    atelierScroll.setScrollBarThickness (appearance.scrollbar());
+    atelierScroll.setViewedComponent (atelier.get(), false);
+    addAndMakeVisible (atelierScroll);
+    atelierScroll.setVisible (false);
     addAndMakeVisible (details);
     addAndMakeVisible (quickFx);
     quickFx.setTooltip ("Open, edit or safely remove the selected track's instrument and effects");
@@ -577,20 +585,43 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
 InspectorDrawer::~InspectorDrawer()
 {
     scroll.setViewedComponent (nullptr);
+    atelierScroll.setViewedComponent (nullptr);
 }
 
 void InspectorDrawer::setEdit (te::Edit* next)
 {
     inspector.setEdit (next);
     channelStrip->setEdit (next);
+    atelier->setEdit (next);
+    selectedTrackId = {};
     scroll.setViewPosition (0, 0);
+    atelierScroll.setViewPosition (0, 0);
 }
 
 void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
-    inspector.refresh (track, ready, canRoute, recovery, selectedClip);
-    channelStrip->refresh (track, ready, selectedClip);
+    selectedTrackId = track != nullptr ? track->itemID : te::EditItemID {};
+    const bool needsAtelier = track != nullptr
+        && dynamic_cast<te::ExternalPlugin*> (findInstrument (*track)) != nullptr;
+    if (needsAtelier)
+    {
+        // Avoid an unused meter client and non-visible channel Inspector
+        // work while Cinematic Atelier owns the right sidebar.
+        channelStrip->refresh (nullptr, false, nullptr);
+    }
+    else
+    {
+        inspector.refresh (track, ready, canRoute, recovery, selectedClip);
+        channelStrip->refresh (track, ready, selectedClip);
+    }
+    if (atelierMode != needsAtelier)
+    {
+        atelierMode = needsAtelier;
+        atelierScroll.setViewPosition (0, 0);
+        resized();
+    }
+    if (atelierMode) atelier->refresh (track, ready);
     quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
@@ -600,15 +631,22 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
 
 te::EditItemID InspectorDrawer::inspectedTrack() const
 {
-    return inspector.inspectedTrack();
+    return selectedTrackId;
 }
 
 void InspectorDrawer::appearanceChanged()
 {
     scroll.setScrollBarThickness (appearance.scrollbar());
+    atelierScroll.setScrollBarThickness (appearance.scrollbar());
     inspector.appearanceChanged();
+    atelier->appearanceChanged();
     resized();
     repaint();
+}
+
+void InspectorDrawer::suspendAtelier()
+{
+    if (atelier != nullptr) atelier->suspend();
 }
 
 void InspectorDrawer::setDetailsExpanded (bool expanded)
@@ -625,6 +663,23 @@ void InspectorDrawer::resized()
     close.setBounds (header.removeFromRight (m.span (60)).reduced (m.px (2), 0));
     title.setBounds (header);
     area.removeFromTop (m.px (5));
+    if (atelierMode)
+    {
+        channelStrip->setVisible (false);
+        scroll.setVisible (false);
+        details.setVisible (false);
+        quickFx.setVisible (false);
+        atelierScroll.setVisible (true);
+        atelierScroll.setBounds (area);
+        const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (1));
+        atelier->setSize (width, jmax (area.getHeight(), atelier->desiredHeight (width)));
+        return;
+    }
+    channelStrip->setVisible (true);
+    details.setVisible (true);
+    quickFx.setVisible (true);
+    atelierScroll.setVisible (false);
+    atelierScroll.setBounds ({});
     const int channelHeight = jmin (m.span (278), jmax (m.span (223), area.getHeight() * 61 / 100));
     channelStrip->setBounds (area.removeFromTop (jmin (channelHeight, area.getHeight())));
     area.removeFromTop (m.px (4));
@@ -643,6 +698,14 @@ void InspectorDrawer::resized()
         inspector.setSize (width, height);
     }
 }
+
+#if STUDIO_SPATIAL_TESTS
+bool InspectorDrawer::verifyAtelierInspector()
+{
+    return atelierMode && atelierScroll.isVisible() && ! channelStrip->isVisible()
+        && atelier->verifyInspectorBindings();
+}
+#endif
 
 void InspectorDrawer::paint (Graphics& g)
 {

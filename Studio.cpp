@@ -353,7 +353,7 @@ public:
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
-        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 270);
+        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 375);
         showTransportCycle = prefs.getBoolValue ("studio.transportCycle", true);
         showTransportClick = prefs.getBoolValue ("studio.transportClick", true);
         showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
@@ -485,6 +485,15 @@ public:
         instrumentWorkspace.onExpand = [this] { setDockMode (DockMode::expanded); };
         instrumentWorkspace.onDock = [this]
         {
+            if (instrumentWorkspace.isAtelier())
+            {
+                // The full Audio Unit window returns to the performance
+                // Inspector, never steals the lower production workspace.
+                if (workspace == Workspace::instrumentEditor)
+                    showWorkspace (Workspace::closed);
+                setInspectorOpen (true);
+                return;
+            }
             if (dockMode == DockMode::compact) setDockMode (DockMode::split);
             showWorkspace (Workspace::instrumentEditor);
         };
@@ -1253,9 +1262,17 @@ public:
         for (const auto& item : railItems())
             item.button->setBounds (destinations.removeFromTop (tileHeight).reduced (0, m.px (1)));
 
-        // On a MacBook, the right Inspector is an overlay: hiding it always
-        // returns the complete arrangement and lower editor width.
-        const auto inspectorRegion = area;
+        // The right Inspector owns an actual column, never an overlay. Both
+        // arrangement and lower production workspace receive the same
+        // reduced width before any layout or ruler calculations.
+        const bool performanceInspector = inspectorOpen && workflowTrack() != nullptr
+            && dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*workflowTrack())) != nullptr;
+        const int minInspector = m.span (performanceInspector ? 365 : 205);
+        const int visibleInspectorWidth = jlimit (minInspector,
+            jmax (minInspector, jmin (m.span (510), area.getWidth() - m.span (265))),
+            jmax (inspectorWidth, minInspector));
+        const auto inspectorRegion = inspectorOpen ? area.removeFromRight (visibleInspectorWidth)
+                                                   : Rectangle<int>();
         layoutPerformance (area);
         layoutDock (area);
         arrangementTools = area.removeFromTop (m.control (29));
@@ -1296,14 +1313,9 @@ public:
             ? m.trackFooter() : 0;
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
-        const int visibleInspectorWidth = jlimit (m.span (205),
-            jmax (m.span (205), jmin (m.span (510), inspectorRegion.getWidth() - m.span (190))), inspectorWidth);
-        // Keep timeline zoom and track actions accessible above the overlay.
-        const int inspectorTop = arrangementTools.getBottom();
-        inspectorDrawer.setBounds (inspectorOpen
-            ? Rectangle<int> (inspectorRegion.getRight() - visibleInspectorWidth, inspectorTop,
-                              visibleInspectorWidth, jmax (0, inspectorRegion.getBottom() - inspectorTop))
-            : Rectangle<int>());
+        // The Inspector starts below the transport and runs beside the full
+        // arrangement and lower workspace. Nothing is painted underneath it.
+        inspectorDrawer.setBounds (inspectorRegion);
         inspectorDrawer.setVisible (inspectorOpen);
         if (inspectorOpen) inspectorDrawer.toFront (false);
         environmentWelcome.setBounds (getLocalBounds());
@@ -1378,6 +1390,7 @@ public:
 
     void setInspectorOpen (bool value, bool persist = true)
     {
+        if (! value) inspectorDrawer.suspendAtelier();
         inspectorOpen = value;
         if (value && workspace == Workspace::channel)
             showWorkspace (Workspace::closed); // Don't display duplicate Channel controls.
@@ -2870,8 +2883,11 @@ private:
                                             : "ARIA recovery | Verify sound before saving")
                     : "ARIA recovery | No verification pending";
                 const auto* clip = selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr;
+                const bool priorAtelier = inspectorDrawer.isShowingAtelier();
                 inspectorDrawer.refresh (context, ready, canEditRegions(), recovery,
                     clip != nullptr && context != nullptr && clip->getAudioTrack() == context ? clip : nullptr);
+                if (priorAtelier != inspectorDrawer.isShowingAtelier())
+                    resized(); // Reclaim or reserve the appropriate sidebar width.
             }
             if (articulation.isShowing() || articulationStrip.isVisible())
             {
@@ -3433,13 +3449,22 @@ private:
         const auto lastInstrument = instrumentWorkspace.rememberedInstrument();
         if (! create && lastInstrument.isValid())
             if (auto savedPlugin = te::findPluginForID (*edit, lastInstrument); savedPlugin != nullptr)
-                if ((instrumentWorkspace.rememberedAtelier() && ! ariaReviewPending
-                        && showAtelierInstrument (*savedPlugin)) || showNativeInstrument (*savedPlugin))
+            {
+                const bool savedAtelier = instrumentWorkspace.rememberedAtelier() && ! ariaReviewPending;
+                const bool restoreFloating = instrumentWorkspace.rememberedFloating();
+                if (savedAtelier)
                 {
-                    const bool floating = instrumentWorkspace.rememberedFloating();
-                    setDockMode (instrumentWorkspace.rememberedLayout());
-                    if (floating) instrumentWorkspace.setFloating (true);
+                    // Restore a hosted instrument to its Inspector, preserving
+                    // an explicitly floating full editor only when requested.
+                    if (restoreFloating) showFullAtelierInstrument (*savedPlugin);
+                    else showAtelierInstrument (*savedPlugin);
                 }
+                else if (showNativeInstrument (*savedPlugin))
+                {
+                    setDockMode (instrumentWorkspace.rememberedLayout());
+                    if (restoreFloating) instrumentWorkspace.setFloating (true);
+                }
+            }
         if (create)
             save();
         else if (ariaReviewPending)
@@ -3718,17 +3743,36 @@ private:
 
     bool showAtelierInstrument (te::Plugin& plug)
     {
-        // The Atelier UI is opt-in for hosted AU instruments. Studio Synth
-        // and Studio Sampler retain their existing, fully functional editors.
+        // For hosted Audio Units, the always-available performance panel is
+        // the right Inspector. The lower workspace belongs to production
+        // tools, except for native Studio Synth and Studio Sampler editors.
         if (edit == nullptr || &plug.edit != edit.get()
             || dynamic_cast<te::ExternalPlugin*> (&plug) == nullptr)
             return false;
         auto* target = dynamic_cast<te::AudioTrack*> (plug.getOwnerTrack());
-        if (target == nullptr || ! instrumentWorkspace.openAtelier (plug, *target))
-            return false;
+        if (target == nullptr) return false;
         if (workflowTrack() != target) selection.selectOnly (target);
-        if (dockMode == DockMode::compact) setDockMode (DockMode::split);
-        showWorkspace (Workspace::instrumentEditor);
+        if (workspace == Workspace::instrumentEditor && instrumentWorkspace.isAtelier()
+            && ! instrumentWorkspace.isFloating())
+            showWorkspace (Workspace::closed);
+        setInspectorOpen (true);
+        return true;
+    }
+
+    bool showFullAtelierInstrument (te::Plugin& plug)
+    {
+        if (edit == nullptr || &plug.edit != edit.get()
+            || dynamic_cast<te::ExternalPlugin*> (&plug) == nullptr)
+            return false;
+        auto* target = dynamic_cast<te::AudioTrack*> (plug.getOwnerTrack());
+        if (target == nullptr || ! instrumentWorkspace.openAtelier (plug, *target)) return false;
+        if (workflowTrack() != target) selection.selectOnly (target);
+        // Floating opens the same original instrument. Do not reveal a
+        // second docked Atelier underneath the Inspector.
+        instrumentWorkspace.setFloating (true);
+        if (workspace == Workspace::instrumentEditor)
+            showWorkspace (Workspace::closed);
+        setInspectorOpen (true);
         return true;
     }
 
@@ -3870,6 +3914,23 @@ private:
                     if (auto* instrument = studio::findInstrument (*track); instrument != nullptr
                         && ! showNativeInstrument (*instrument) && ! showAtelierInstrument (*instrument))
                         instrument->showWindowExplicitly();
+        };
+        trackActions.openFullInstrument = [this] (te::EditItemID id)
+        {
+            if (! busy)
+                if (auto* selected = trackById (id))
+                    if (auto* instrument = studio::findInstrument (*selected))
+                        if (! showFullAtelierInstrument (*instrument))
+                            showNativeInstrument (*instrument);
+        };
+        trackActions.openArticulations = [this] (te::EditItemID id)
+        {
+            if (auto* selected = trackById (id))
+            {
+                selection.selectOnly (selected);
+                if (dockMode == DockMode::compact) setDockMode (DockMode::split);
+                showWorkspace (Workspace::articulations);
+            }
         };
         trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
         {
@@ -5095,15 +5156,19 @@ int StudioView::runInterfaceReview (const File& output)
     if (! capture ("mixer-focused-1280x800.png"))
         return fail ("write Mixer-first arrangement screenshot");
     setDockMode (DockMode::expanded);
-    // The Inspector follows the selected track while leaving the arrangement
-    // geometry untouched; closing it must restore a full-width work surface.
+    // The Inspector owns a right-hand column instead of covering either
+    // arrangement or lower workspace. Closing returns the full available width.
     const auto unclippedRuler = ruler;
+    const int timelineRightBefore = timeline.getRight();
     setInspectorOpen (true, false);
     timerCallback();
     timerCallback();
     if (! inspectorDrawer.isVisible() || inspectorDrawer.getWidth() < studio::appearance.span (225)
-        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID || ruler != unclippedRuler)
-        return fail ("right Inspector follows selected channel without changing ruler");
+        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID
+        || timeline.getRight() > inspectorDrawer.getX()
+        || workspacePanel.getRight() > inspectorDrawer.getX()
+        || timeline.getRight() >= timelineRightBefore || ruler == unclippedRuler)
+        return fail ("right Inspector owns a column without covering timeline or lower workspace");
     if (! capture ("right-inspector-1280x800.png")) return fail ("write right Inspector screenshot");
     inspectorDrawer.setDetailsExpanded (true);
     if (! inspectorDrawer.areDetailsExpanded())
@@ -5121,7 +5186,8 @@ int StudioView::runInterfaceReview (const File& output)
         return fail ("right Inspector fits compact MacBook");
     if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
     setInspectorOpen (false, false);
-    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty())
+    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty()
+        || ruler != unclippedRuler || timeline.getRight() != timelineRightBefore)
         return fail ("hiding Inspector restores full-width arrangement");
     setSize (1280, 800);
     trackActions.selectTrack (tracks[1]->itemID);

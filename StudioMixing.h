@@ -17,6 +17,7 @@ struct TrackActions
     std::function<void(tracktion::EditItemID)> selectTrack;
     std::function<void(tracktion::EditItemID, TrackMenu, juce::Component&)> showMenu;
     std::function<void(tracktion::EditItemID)> openInstrument;
+    std::function<void(tracktion::EditItemID)> openFullInstrument, openArticulations;
     std::function<void(tracktion::EditItemID, bool solo)> toggleTrackState;
     std::function<void(tracktion::EditItemID)> toggleArm;
     std::function<void(tracktion::EditItemID)> toggleMonitoring;
@@ -77,6 +78,7 @@ private:
 };
 
 class InspectorChannelStrip;
+class AtelierInspectorPanel;
 
 // A lightweight, non-modal right-side drawer. It reuses the existing
 // ChannelInspector controls and selected-track model, avoiding a second set
@@ -95,6 +97,11 @@ public:
     tracktion::EditItemID inspectedTrack() const;
     void setDetailsExpanded (bool expanded);
     bool areDetailsExpanded() const noexcept { return detailsOpen; }
+    bool isShowingAtelier() const noexcept { return atelierMode; }
+    void suspendAtelier();
+   #if STUDIO_SPATIAL_TESTS
+    bool verifyAtelierInspector();
+   #endif
     void resized() override;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -109,10 +116,12 @@ private:
     TrackActions& actions;
     ChannelInspector inspector;
     std::unique_ptr<InspectorChannelStrip> channelStrip;
-    juce::Viewport scroll;
+    std::unique_ptr<AtelierInspectorPanel> atelier;
+    juce::Viewport scroll, atelierScroll;
     juce::Label title;
     juce::TextButton close { "Close" }, details { "Track Settings" }, quickFx { "FX..." };
-    bool detailsOpen = false;
+    tracktion::EditItemID selectedTrackId;
+    bool detailsOpen = false, atelierMode = false;
 };
 
 class StudioMixer final : public juce::Component

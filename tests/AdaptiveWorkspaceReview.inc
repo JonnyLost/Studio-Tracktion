@@ -335,7 +335,23 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
             { { -.25f, .45f }, studio::spatial::Section::strings, -18.0f }),
             -1, &edit->getUndoManager());
         if (! showAtelierInstrument (*hosted))
-            return fail ("open hosted instrument in the Atelier dock");
+            return fail ("hosted Audio Unit opens in the right Inspector");
+        timerCallback();
+        timerCallback();
+        if (! inspectorDrawer.isVisible() || ! inspectorDrawer.isShowingAtelier()
+            || inspectorDrawer.inspectedTrack() != external->itemID
+            || ! inspectorDrawer.verifyAtelierInspector()
+            || timeline.getRight() > inspectorDrawer.getX()
+            || workspacePanel.getRight() > inspectorDrawer.getX())
+            return fail ("Atelier Inspector is bound and reserves its own column");
+        if (! snapshot (*this, "13-atelier-performance-inspector"))
+            return fail ("capture instrument performance sidebar");
+        // Retain full-editor regression coverage, but access it explicitly:
+        // normal hosted-AU selection must NOT use the lower workspace.
+        setInspectorOpen (false, false);
+        if (! instrumentWorkspace.openAtelier (*hosted, *external))
+            return fail ("explicit Full Instrument creates an Atelier editor");
+        showWorkspace (Workspace::instrumentEditor);
     }
     else return fail ("locate hosted AU fixture");
     auto* atelierEditor = dynamic_cast<studio::AtelierInstrumentEditor*> (instrumentWorkspace.getEditor());
@@ -439,6 +455,9 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
             || preferences.getValue ("studio.instrumentEditorWindow") != nativeWindowState)
             return fail ("Floating Atelier saves its size independently of native windows");
         instrumentWorkspace.setFloating (false);
+        // Closing a full Atelier window intentionally returns to Inspector;
+        // only the legacy regression fixture explicitly reopens a lower dock.
+        showWorkspace (Workspace::instrumentEditor);
     }
     if (instrumentWorkspace.isFloating() || ! workspaceDivider.isResizeLocked()
         || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
