@@ -2,6 +2,9 @@ name: Intel macOS build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - integration/studio-0.2-integrated-alpha
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
@@ -42,7 +45,7 @@ jobs:
           "$RUNNER_TEMP/studio-seating-tests"
   build:
     runs-on: macos-15-intel
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,7 +67,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests --parallel 4
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
@@ -73,6 +76,7 @@ jobs:
           STUDIO_UNIFIED_STAGE_SCREENSHOTS: ${{ runner.temp }}/studio-unified-stage
           STUDIO_SYNTH_SCREENSHOTS: ${{ runner.temp }}/studio-synth-review
           STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
+          STUDIO_FILM_SCORING_SCREENSHOTS: ${{ runner.temp }}/studio-film-scoring
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
           STUDIO_M9_SCREENSHOTS: ${{ runner.temp }}/studio-m9-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
@@ -89,6 +93,7 @@ jobs:
           name: Studio-composer-intel-macos
           path: |
             ${{ runner.temp }}/studio-interface-review/composer-*.png
+            ${{ runner.temp }}/studio-film-scoring/
             ${{ runner.temp }}/studio-composer-audio/
             ${{ runner.temp }}/ctest-intel-macos.xml
       - uses: actions/upload-artifact@v4
@@ -129,9 +134,31 @@ jobs:
           name: Studio-M7-unified-stage-macOS
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
+      - name: Package integrated Intel Studio application
+        if: github.ref == 'refs/heads/integration/studio-0.2-integrated-alpha'
+        id: integrated-app
+        shell: bash
+        run: |
+          archive=Studio-0.2-Integrated-Alpha-Intel
+          if [[ ! -f assets/Studio.png ]]; then
+            archive=Studio-0.2-Integrated-Alpha-Intel-preview
+            echo "::warning::Approved assets/Studio.png is pending. This archive is a preview."
+          else
+            test -s build/Studio_artefacts/Debug/Studio.app/Contents/Resources/Icon.icns
+          fi
+          tools/package-intel-studio.sh build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/$archive.zip"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.integrated-app.outputs.archive != ''
+        with:
+          name: ${{ steps.integrated-app.outputs.archive }}
+          path: ${{ runner.temp }}/${{ steps.integrated-app.outputs.archive }}.zip
+          if-no-files-found: error
       - name: Package Intel Studio application
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
         run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
       - uses: actions/upload-artifact@v4
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
         with:
           name: Studio-M13-Intel-app
           path: ${{ runner.temp }}/Studio-M13-Intel.zip

@@ -510,7 +510,18 @@ juce_add_binary_data(StudioSynthData
     HEADER_NAME StudioSynthData.h NAMESPACE StudioSynthData
     SOURCES SynthDSP/data/StudioSynthFactory.json)
 
+set(STUDIO_ICON_FILE "" CACHE FILEPATH "Approved 1024 x 1024 Studio icon PNG")
+set(studio_icon_args)
+if(APPLE)
+    if(NOT STUDIO_ICON_FILE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/Studio.png")
+        set(STUDIO_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/Studio.png")
+    endif()
+    if(STUDIO_ICON_FILE)
+        list(APPEND studio_icon_args ICON_BIG "${STUDIO_ICON_FILE}")
+    endif()
+endif()
 juce_add_gui_app(Studio
+    ${studio_icon_args}
     COMPANY_NAME "Studio"
     BUNDLE_ID "org.studioproject.tracktion"
     PRODUCT_NAME "Studio"
