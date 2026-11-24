@@ -25,6 +25,11 @@ public:
     void restoreView (const juce::String&) override;
     void resized() override;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void focusLost (FocusChangeType) override;
 
     std::function<void (tracktion::EditItemID)> onArticulations, onStage;
     std::function<void()> onFullView;
@@ -48,6 +53,10 @@ private:
     void selectArticulation (int);
     void setPage (int);
     void paintKeyboardReference (juce::Graphics&) const;
+    int keyboardNoteAt (juce::Point<int>) const;
+    bool canPreviewKeyboard() const;
+    void previewKeyboardNote (int);
+    void stopKeyboardNote();
     void updatePageVisibility();
     void layoutSliders (juce::Rectangle<int> area, bool horizontal);
     void drawAtelierSurface (juce::Graphics&, juce::Rectangle<int>, const juce::String&) const;
@@ -57,7 +66,7 @@ private:
     tracktion::AutomatableParameter::Ptr expressionParameter;
     juce::Image blueHour, portraitImage;
     juce::String portraitName;
-    juce::ComboBox portraitChoice;
+    juce::ComboBox portraitChoice, previewChannel;
     juce::ComponentBoundsConstrainer limits;
     std::unique_ptr<juce::LookAndFeel_V4> atelierStyle;
     juce::Label title, subtitle, mixHeading, volumeLabel, panLabel, expressionHeading, hint, sceneCaption;
@@ -73,6 +82,7 @@ private:
     juce::Rectangle<int> portraitBounds, controlBounds, stageBounds, mappingBounds, keyboardBounds, instrumentHeaderBounds;
     juce::Rectangle<int> mixerBounds, routingBounds;
     int page = 0; // Main, Articulations, Mixer, Advanced. Saved per instrument.
+    int heldPreviewNote = -1, heldPreviewChannel = 1;
     bool fullPresentation = false, restoring = false;
 };
 }
