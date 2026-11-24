@@ -331,6 +331,9 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         });
         external->state.setProperty ("studioArticulationMappings",
             root.toString (XmlElement::TextFormat().singleLine()), &edit->getUndoManager());
+        external->state.addChild (studio::spatial::writeSeat (external->itemID.toString(),
+            { { -.25f, .45f }, studio::spatial::Section::strings, -18.0f }),
+            -1, &edit->getUndoManager());
         if (! showAtelierInstrument (*hosted))
             return fail ("open hosted instrument in the Atelier dock");
     }
@@ -410,8 +413,10 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         atelierEditor->onFullView();
         if (floating != instrumentWorkspace.getEditor()->getTopLevelComponent()
             || ! atelierEditor->reviewPage (0, true)
+            || ! atelierEditor->reviewKeyboardHitMap()
+            || ! atelierEditor->reviewStageEditing()
             || ! snapshot (*floating, "16-atelier-full-main"))
-            return fail ("Atelier Full View opens the complete Main page");
+            return fail ("Atelier Full View opens Main, keyboard and undoable Stage editing");
         if (! atelierEditor->reviewPage (1, true)
             || ! snapshot (*floating, "17-atelier-full-articulations")
             || ! atelierEditor->reviewPage (2, true)
