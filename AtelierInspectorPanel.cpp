@@ -199,7 +199,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         if (updating || ! editing) return;
         if (auto* t = track())
         {
-            const auto seat = t->state.getChildWithName (spatial::seatType);
+            auto seat = t->state.getChildWithName (spatial::seatType);
             if (! seat.isValid() || ! spatial::hasRoomSend (*t)) return;
             if (! roomSend.isMouseButtonDown())
                 t->edit.getUndoManager().beginNewTransaction ("Inspector room send");
