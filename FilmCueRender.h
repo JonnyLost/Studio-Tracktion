@@ -127,7 +127,7 @@ public:
             base.destination = folder.getChildFile (stem + "-Stereo.wav");
             specifications.push_back (base);
         }
-        else
+        else if (mode == Mode::individualTracks)
         {
             const auto tracks = te::getAudioTracks (edit);
             if (tracks.isEmpty() || tracks.size() > 128)
