@@ -521,6 +521,60 @@ private:
         cancelRenderButton.setEnabled (enabled && cueRender.isActive());
     }
 
+    void refreshStemTracks()
+    {
+        juce::StringArray names;
+        std::vector<std::string> ids;
+        if (edit)
+            for (auto* track : tracktion::engine::getAudioTracks (*edit))
+            {
+                names.add (track->getName());
+                ids.push_back (track->itemID.toString().toStdString());
+            }
+        if (names == stemTrackNames && ids == liveStemTrackIDs) return;
+        std::string previous;
+        const auto selected = stemTrackPicker.getSelectedItemIndex();
+        if (juce::isPositiveAndBelow (selected, (int) liveStemTrackIDs.size()))
+            previous = liveStemTrackIDs[(size_t) selected];
+        stemTrackNames = names;
+        liveStemTrackIDs = std::move (ids);
+        stemTrackPicker.clear (juce::dontSendNotification);
+        int selectedId = 0;
+        for (int i = 0; i < names.size(); ++i)
+        {
+            stemTrackPicker.addItem (names[i], i + 1);
+            if (liveStemTrackIDs[(size_t) i] == previous)
+                selectedId = i + 1;
+        }
+        if (! selectedId && ! liveStemTrackIDs.empty()) selectedId = 1;
+        stemTrackPicker.setSelectedId (selectedId, juce::dontSendNotification);
+        showSelectedStemFamily();
+    }
+
+    void showSelectedStemFamily()
+    {
+        const int index = stemTrackPicker.getSelectedItemIndex();
+        const auto family = juce::isPositiveAndBelow (index, (int) liveStemTrackIDs.size())
+            ? familyForTrack (stemAssignments, liveStemTrackIDs[(size_t) index])
+            : StemFamily::unassigned;
+        stemFamilyPicker.setSelectedId ((int) family + 1, juce::dontSendNotification);
+    }
+
+    void saveSelectedStemFamily()
+    {
+        if (! edit || cueRender.isActive()) return;
+        const int index = stemTrackPicker.getSelectedItemIndex();
+        const int familyCode = stemFamilyPicker.getSelectedId() - 1;
+        if (! juce::isPositiveAndBelow (index, (int) liveStemTrackIDs.size())
+            || ! validStemFamily (familyCode))
+            return;
+        if (! setStemFamily (stemAssignments, liveStemTrackIDs[(size_t) index],
+                             (StemFamily) familyCode)) return;
+        saveStemAssignments (edit->state, stemAssignments, &edit->getUndoManager());
+        knownStemNode = edit->state.getChildWithName ("STUDIO_FILM_STEMS");
+        status.setText ("Stem family assigned; saved with this project.", juce::dontSendNotification);
+    }
+
     void choosePicture()
     {
         if (! edit) return;
@@ -839,12 +893,13 @@ private:
         const auto version = editGeneration;
         const auto pictureSnapshot = project;
         const auto selectedCue = *cue;
+        const auto stemSnapshot = stemAssignments;
         deliveryChooser = std::make_unique<juce::FileChooser> ("Choose a destination for cue WAV delivery",
             juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
         deliveryChooser->launchAsync (juce::FileBrowserComponent::openMode
                                     | juce::FileBrowserComponent::canSelectDirectories,
             [safe = juce::Component::SafePointer<Workspace> (this), version,
-             pictureSnapshot, selectedCue, mode] (const juce::FileChooser& dialog)
+             pictureSnapshot, selectedCue, stemSnapshot, mode] (const juce::FileChooser& dialog)
             {
                 if (safe == nullptr) return;
                 if (safe->edit == nullptr || version != safe->editGeneration)
@@ -855,7 +910,7 @@ private:
                 const auto destination = dialog.getResult();
                 if (destination == juce::File()) return;
                 const auto result = safe->cueRender.start (*safe->edit, pictureSnapshot,
-                                                            selectedCue, destination, mode);
+                                                            selectedCue, destination, mode, stemSnapshot);
                 if (result.failed())
                     safe->status.setText ("Cue render unavailable: " + result.getErrorMessage(),
                                          juce::dontSendNotification);
