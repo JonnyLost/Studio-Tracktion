@@ -295,7 +295,19 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         slider.setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.3f));
         slider.setRange (0, 127, i == 4 ? 127 : 1);
         slider.setValue (liveCC[i].initialValue, dontSendNotification);
-        slider.onValueChange = [this, i] { if (! restoring) sendLiveCC ((int) i); };
+        slider.onValueChange = [this, i]
+        {
+            if (restoring) return;
+            sendLiveCC ((int) i);
+            // Persist once after editing a textbox or keyboard value; a drag
+            // persists only when released, not on every real-time CC event.
+            if (! ccKnobs[i].isMouseButtonDown() && onSizePreferenceChanged)
+                onSizePreferenceChanged();
+        };
+        slider.onDragEnd = [this]
+        {
+            if (onSizePreferenceChanged) onSizePreferenceChanged();
+        };
     }
 
     for (size_t i = 0; i < mappingPads.size(); ++i)
@@ -434,6 +446,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     expressionHeading.setVisible (hasExpression);
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     setPage (0);
     startTimerHz (6);  // GUI-only polling; never touches the audio thread.
 }
@@ -862,6 +875,7 @@ void AtelierInstrumentEditor::restoreView (const String& saved)
     loadPortrait();
     refreshControls();
     refreshArticulations();
+    updateMIDIControls();
     updatePageVisibility();
     resized();
 }
