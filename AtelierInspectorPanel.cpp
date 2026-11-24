@@ -210,6 +210,11 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     };
 }
 
+AtelierInspectorPanel::~AtelierInspectorPanel()
+{
+    releaseSustain();
+}
+
 te::AudioTrack* AtelierInspectorPanel::track() const
 {
     return edit != nullptr && trackId.isValid() ? te::findAudioTrackForID (*edit, trackId) : nullptr;
