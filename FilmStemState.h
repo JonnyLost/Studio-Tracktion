@@ -42,8 +42,10 @@ inline void saveStemAssignments (juce::ValueTree editState,
         item.setProperty ("family", (int) entry.family, nullptr);
         node.addChild (item, -1, nullptr);
     }
+    if (undo) undo->beginNewTransaction ("Assign Orchestral Stem Family");
     const auto old = editState.getChildWithName ("STUDIO_FILM_STEMS");
+    const auto index = old.isValid() ? editState.indexOf (old) : editState.getNumChildren();
     if (old.isValid()) editState.removeChild (old, undo);
-    editState.addChild (node, -1, undo);
+    editState.addChild (node, index, undo);
 }
 } // namespace studio::film
