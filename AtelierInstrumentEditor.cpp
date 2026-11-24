@@ -491,8 +491,7 @@ void AtelierInstrumentEditor::selectArticulation (int index)
     if (instrument == nullptr || source == nullptr
         || ! isPositiveAndBelow (index, (int) currentMappings.size())
         || source->edit.getTransport().isRecording()
-        || source->isFrozen (te::Track::anyFreeze)
-        || ! instrument->isEnabled())
+        || source->isFrozen (te::Track::anyFreeze))
         return;
     // Use the existing Studio Articulation Palette's canonical track property,
     // instrument-instance ID and undo semantics; never synthesize mapping data.
@@ -814,13 +813,15 @@ void AtelierInstrumentEditor::resized()
     auto tabArea = titleRow.removeFromRight (tabWidth * 4);
     for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
         tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
-    fullView.setBounds (titleRow.removeFromRight (jmin (m.span (90), titleRow.getWidth() / 4))
-                               .reduced (m.px (3), m.px (2)));
+    const bool offerFullView = ! fullPresentation && isFloatingWindow && isFloatingWindow();
+    fullView.setBounds (offerFullView
+        ? titleRow.removeFromRight (jmin (m.span (90), titleRow.getWidth() / 4)).reduced (m.px (3), m.px (2))
+        : Rectangle<int>());
     portraitChoice.setBounds (titleRow.removeFromRight (jmin (m.span (175), titleRow.getWidth() / 2))
                                      .reduced (m.px (4), m.px (2)));
     title.setBounds (titleRow.reduced (m.px (3), 0));
     subtitle.setBounds (row.removeFromTop (m.control (23, 9)).reduced (m.px (3), 0));
-    fullView.setVisible (! fullPresentation);
+    fullView.setVisible (offerFullView);
 
     area.removeFromTop (m.px (7));
     if (fullPresentation)
@@ -1037,13 +1038,17 @@ bool AtelierInstrumentEditor::verifyBindings()
 bool AtelierInstrumentEditor::essentialControlsFit() const
 {
     const auto bounds = getLocalBounds();
-    return ! portraitBounds.isEmpty() && ! controlBounds.isEmpty()
-        && bounds.contains (title.getBounds()) && bounds.contains (portraitChoice.getBounds())
-        && bounds.contains (original.getBounds())
-        && bounds.contains (volumeLabel.getBounds()) && bounds.contains (panLabel.getBounds())
-        && bounds.contains (volume.getBounds()) && bounds.contains (pan.getBounds())
-        && volume.getWidth() <= appearance.span (125)
-        && pan.getWidth() <= appearance.span (125);
+    if (portraitBounds.isEmpty() || controlBounds.isEmpty()
+        || ! bounds.contains (title.getBounds()) || ! bounds.contains (portraitChoice.getBounds())
+        || ! bounds.contains (portraitBounds)) return false;
+    if (page == 0 || page == 2)
+        return ! mixerBounds.isEmpty() && bounds.contains (volume.getBounds())
+            && bounds.contains (pan.getBounds()) && volume.getWidth() <= appearance.span (142)
+            && pan.getWidth() <= appearance.span (142);
+    if (page == 1)
+        return ! mappingBounds.isEmpty() && bounds.contains (articulation.getBounds());
+    return ! routingBounds.isEmpty() && bounds.contains (original.getBounds())
+        && bounds.contains (stage.getBounds());
 }
 #endif
 }
