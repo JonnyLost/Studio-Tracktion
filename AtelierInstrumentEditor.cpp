@@ -200,6 +200,18 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     portraitChoice.onChange = [this] { changePortrait(); };
     addAndMakeVisible (portraitChoice);
 
+    previewChannel.setTitle ("MIDI preview channel");
+    previewChannel.setTooltip ("Audition channel only. Does not change the track's MIDI channel, clips or ARIA patch.");
+    for (int channel = 1; channel <= 16; ++channel)
+        previewChannel.addItem ("MIDI Ch " + String (channel), channel);
+    previewChannel.setSelectedId (1, dontSendNotification);
+    previewChannel.onChange = [this]
+    {
+        stopKeyboardNote();
+        if (onSizePreferenceChanged) onSizePreferenceChanged();
+    };
+    addAndMakeVisible (previewChannel);
+
     for (auto* button : { &original, &articulation, &stage })
     {
         addAndMakeVisible (*button);
@@ -337,6 +349,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
 AtelierInstrumentEditor::~AtelierInstrumentEditor()
 {
     stopTimer();
+    stopKeyboardNote();
     // JUCE's children outlive the function body but not the editor. Return
     // them to the inherited LookAndFeel before the owned style is destroyed.
     setLookAndFeel (nullptr);
@@ -398,13 +411,20 @@ void AtelierInstrumentEditor::refreshControls()
 
 void AtelierInstrumentEditor::timerCallback()
 {
+    if (heldPreviewNote >= 0 && ! canPreviewKeyboard())
+        stopKeyboardNote();
     refreshControls();
     refreshArticulations();
+    const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
+                                            : "KEYBOARD  •  load an active Audio Unit to audition";
+    if (keyboardSummary.getText() != help)
+        keyboardSummary.setText (help, dontSendNotification);
 }
 
 
 void AtelierInstrumentEditor::setPage (int next)
 {
+    stopKeyboardNote();
     next = jlimit (0, 3, next);
     if (page == next && ! restoring)
     {
@@ -570,13 +590,23 @@ void AtelierInstrumentEditor::changePortrait()
 
 String AtelierInstrumentEditor::viewState() const
 {
-    return "atelier-v3|" + portraitName + "|" + String (page);
+    return "atelier-v4|" + portraitName + "|" + String (page)
+        + "|" + String (jlimit (1, 16, previewChannel.getSelectedId()));
 }
 
 void AtelierInstrumentEditor::restoreView (const String& saved)
 {
     const ScopedValueSetter<bool> restoringState (restoring, true);
-    if (saved.startsWith ("atelier-v3|"))
+    if (saved.startsWith ("atelier-v4|"))
+    {
+        const auto rest = saved.fromFirstOccurrenceOf ("|", false, false);
+        const auto preceding = rest.upToLastOccurrenceOf ("|", false, false);
+        portraitName = preceding.upToLastOccurrenceOf ("|", false, false);
+        page = jlimit (0, 3, preceding.fromLastOccurrenceOf ("|", false, false).getIntValue());
+        previewChannel.setSelectedId (jlimit (1, 16,
+            rest.fromLastOccurrenceOf ("|", false, false).getIntValue()), dontSendNotification);
+    }
+    else if (saved.startsWith ("atelier-v3|"))
     {
         const auto rest = saved.fromFirstOccurrenceOf ("|", false, false);
         portraitName = rest.upToLastOccurrenceOf ("|", false, false);
@@ -800,7 +830,9 @@ void AtelierInstrumentEditor::resized()
     auto area = getLocalBounds().reduced (m.px (11));
     const bool nextFull = area.getWidth() >= m.span (875)
         && area.getHeight() >= m.px (625);
+    if (fullPresentation && ! nextFull) stopKeyboardNote();
     fullPresentation = nextFull;
+    previewChannel.setVisible (fullPresentation);
 
     portraitBounds = controlBounds = stageBounds = mappingBounds = keyboardBounds
         = instrumentHeaderBounds = mixerBounds = routingBounds = {};
@@ -836,8 +868,18 @@ void AtelierInstrumentEditor::resized()
     controlBounds = area;
     sceneCaption.setBounds (portraitBounds.reduced (m.px (7))
                                .removeFromBottom (m.control (24, 10)));
-    keyboardSummary.setBounds (keyboardBounds.isEmpty() ? Rectangle<int>()
-        : keyboardBounds.reduced (m.px (14), m.px (4)).removeFromTop (m.control (20, 9)));
+    if (keyboardBounds.isEmpty())
+    {
+        keyboardSummary.setBounds ({});
+        previewChannel.setBounds ({});
+    }
+    else
+    {
+        auto captionRow = keyboardBounds.reduced (m.px (14), m.px (4))
+                                        .removeFromTop (m.control (23, 10));
+        previewChannel.setBounds (captionRow.removeFromRight (m.span (142)));
+        keyboardSummary.setBounds (captionRow);
+    }
 
     auto body = controlBounds;
     if (fullPresentation)
