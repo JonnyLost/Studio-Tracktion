@@ -353,7 +353,7 @@ public:
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
-        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 345);
+        inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 375);
         showTransportCycle = prefs.getBoolValue ("studio.transportCycle", true);
         showTransportClick = prefs.getBoolValue ("studio.transportClick", true);
         showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
@@ -1267,7 +1267,7 @@ public:
         // reduced width before any layout or ruler calculations.
         const bool performanceInspector = inspectorOpen && workflowTrack() != nullptr
             && dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*workflowTrack())) != nullptr;
-        const int minInspector = m.span (performanceInspector ? 320 : 205);
+        const int minInspector = m.span (performanceInspector ? 365 : 205);
         const int visibleInspectorWidth = jlimit (minInspector,
             jmax (minInspector, jmin (m.span (510), area.getWidth() - m.span (265))),
             jmax (inspectorWidth, minInspector));
