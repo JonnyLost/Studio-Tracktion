@@ -120,6 +120,7 @@ private:
     juce::Viewport scroll, atelierScroll;
     juce::Label title;
     juce::TextButton close { "Close" }, details { "Track Settings" }, quickFx { "FX..." };
+    tracktion::EditItemID selectedTrackId;
     bool detailsOpen = false, atelierMode = false;
 };
 
