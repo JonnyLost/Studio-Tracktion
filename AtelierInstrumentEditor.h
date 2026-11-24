@@ -53,6 +53,7 @@ private:
     void loadPortrait();
     void changePortrait();
     void syncInspectorControls();
+    void persistInspectorControls();
     void refreshArticulations();
     void selectArticulation (int);
     void editStage (int field); // Pan, depth, send trim on an existing verified seat.
