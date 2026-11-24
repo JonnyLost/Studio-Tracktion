@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AtelierInstrumentEditor.h"
+#include "SpatialState.h"
+#include "SpatialRouting.h"
 #include <StudioEnvironmentData.h>
 
 namespace studio
@@ -69,6 +71,89 @@ void initButton (TextButton& button)
     button.setColour (TextButton::buttonOnColourId, amber.darker (0.45f));
     button.setColour (TextButton::textColourOnId, ivory);
 }
+
+// Atelier-only visual vocabulary. It is owned by this editor so the rest of
+// Studio (and the original Audio Unit) retains its existing LookAndFeel.
+class AtelierLookAndFeel final : public LookAndFeel_V4
+{
+public:
+    Font getTextButtonFont (TextButton&, int height) override
+    {
+        return FontOptions (Font::getDefaultSerifFontName(), jmin (16.0f, (float) height * .48f), Font::plain);
+    }
+
+    void drawButtonBackground (Graphics& g, Button& button, const Colour&, bool hovered, bool down) override
+    {
+        const auto r = button.getLocalBounds().toFloat().reduced (1.0f);
+        if (r.isEmpty()) return;
+        const bool active = button.getToggleState();
+        const auto top = active ? Colour (0xff75451d) : down ? Colour (0xff51321f)
+                     : hovered ? Colour (0xff483023) : Colour (0xff261b17);
+        const auto bottom = active ? Colour (0xff372117) : Colour (0xff171315);
+        g.setGradientFill (ColourGradient (top, r.getTopLeft(), bottom, r.getBottomLeft(), false));
+        g.fillRoundedRectangle (r, 7.0f);
+        g.setColour (active ? amber : amber.withAlpha (hovered ? .76f : .32f));
+        g.drawRoundedRectangle (r.reduced (.5f), 7.0f, active ? 1.6f : .9f);
+        if (active)
+        {
+            g.setColour (amber.withAlpha (.28f));
+            g.drawRoundedRectangle (r.reduced (2.5f), 5.0f, .8f);
+        }
+        if (button.hasKeyboardFocus (false))
+        {
+            g.setColour (Colour (0xffffdeaa));
+            g.drawRoundedRectangle (r.reduced (3.0f), 5.0f, 1.0f);
+        }
+    }
+
+    void drawRotarySlider (Graphics& g, int x, int y, int width, int height, float sliderPos,
+                           float startAngle, float endAngle, Slider& slider) override
+    {
+        auto circle = Rectangle<float> ((float) x, (float) y, (float) width, (float) height);
+        const float diameter = jmin (circle.getWidth(), circle.getHeight()) * .75f;
+        circle = circle.withSizeKeepingCentre (diameter, diameter);
+        const auto centre = circle.getCentre();
+        const float radius = circle.getWidth() * .5f;
+        const float angle = startAngle + sliderPos * (endAngle - startAngle);
+        Path track;
+        track.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, endAngle, true);
+        g.setColour (Colour (0xff6c5240));
+        g.strokePath (track, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
+        Path value;
+        value.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, angle, true);
+        g.setColour (slider.isEnabled() ? amber : muted.withAlpha (.5f));
+        g.strokePath (value, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
+        circle = circle.reduced (radius * .22f);
+        g.setGradientFill (ColourGradient (Colour (0xffbc884a), circle.getTopLeft(),
+                                           Colour (0xff50301b), circle.getBottomRight(), false));
+        g.fillEllipse (circle);
+        g.setColour (Colour (0xffffd08a).withAlpha (.65f));
+        g.drawEllipse (circle.reduced (.5f), 1.3f);
+        const auto hand = Point<float> (centre.x + std::sin (angle) * radius * .42f,
+                                        centre.y - std::cos (angle) * radius * .42f);
+        g.setColour (Colour (0xfffce2ad));
+        g.drawLine (centre.x, centre.y, hand.x, hand.y, 2.3f);
+        g.fillEllipse (centre.x - 2.0f, centre.y - 2.0f, 4.0f, 4.0f);
+    }
+
+    void drawComboBox (Graphics& g, int width, int height, bool, int, int, int, int, ComboBox&) override
+    {
+        auto r = Rectangle<float> (0.0f, 0.0f, (float) width, (float) height).reduced (.75f);
+        g.setGradientFill (ColourGradient (Colour (0xff39271b), r.getTopLeft(),
+                                           Colour (0xff1e1716), r.getBottomRight(), false));
+        g.fillRoundedRectangle (r, 7.0f);
+        g.setColour (amber.withAlpha (.48f));
+        g.drawRoundedRectangle (r, 7.0f, 1.0f);
+        g.setColour (amber);
+        Path arrow;
+        const float cx = r.getRight() - 17.0f, cy = r.getCentreY();
+        arrow.startNewSubPath (cx - 5, cy - 2);
+        arrow.lineTo (cx, cy + 3);
+        arrow.lineTo (cx + 5, cy - 2);
+        g.strokePath (arrow, PathStrokeType (1.6f));
+    }
+};
+
 }
 
 AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioTrack& audioTrack)
@@ -76,11 +161,14 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
 {
     setName ("Cinematic Atelier");
     setTitle ("Studio Instrument - " + audioTrack.getName());
+    atelierStyle = std::make_unique<AtelierLookAndFeel>();
+    setLookAndFeel (atelierStyle.get());
     limits.setSizeLimits (440, 340, 1600, 1000);
     setWantsKeyboardFocus (true);
 
     for (auto* label : { &title, &subtitle, &mixHeading, &volumeLabel, &panLabel,
-                         &expressionHeading, &hint, &sceneCaption })
+                         &expressionHeading, &hint, &sceneCaption, &stageHeading,
+                         &stageSummary, &routingSummary, &mappingSummary, &keyboardSummary })
         addAndMakeVisible (*label);
 
     initLabel (title, audioTrack.getName(), 23.0f, ivory, true);
@@ -96,6 +184,11 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
                10.5f, muted);
     initLabel (sceneCaption, "BLUE-HOUR STUDY", 11.0f, ivory, true);
     sceneCaption.setJustificationType (Justification::centred);
+    initLabel (stageHeading, "ORCHESTRAL STAGE", 12.0f, amber, true);
+    initLabel (stageSummary, "Stage placement is not set", 12.0f, ivory);
+    initLabel (routingSummary, "Audio routing follows the Studio mixer", 11.0f, muted);
+    initLabel (mappingSummary, "No verified mappings for this instrument", 12.0f, ivory);
+    initLabel (keyboardSummary, "KEYBOARD REFERENCE  •  Use MIDI input to play", 10.5f, amber);
 
     portraitChoice.setTitle ("Instrument artwork");
     portraitChoice.setTooltip ("Choose the artwork for this instrument. The image does not change its patch.");
@@ -115,6 +208,31 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     original.setTooltip ("Open the original Audio Unit editor for this same instrument instance");
     articulation.setTooltip ("Open Studio's existing articulation mappings for this instrument");
     stage.setTooltip ("Open the existing Stage placement and reverb-send workspace");
+
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+    {
+        addAndMakeVisible (*tab);
+        initButton (*tab);
+        tab->setClickingTogglesState (false);
+    }
+    mainTab.onClick = [this] { setPage (0); };
+    articulationTab.onClick = [this] { setPage (1); };
+    mixerTab.onClick = [this] { setPage (2); };
+    advancedTab.onClick = [this] { setPage (3); };
+    addAndMakeVisible (fullView);
+    initButton (fullView);
+    fullView.setTooltip ("Enlarge this editor to show the full Cinematic Atelier layout");
+    fullView.onClick = [this] { if (onFullView) onFullView(); };
+
+    for (size_t i = 0; i < mappingPads.size(); ++i)
+    {
+        auto& pad = mappingPads[i];
+        addAndMakeVisible (pad);
+        initButton (pad);
+        pad.setClickingTogglesState (false);
+        pad.onClick = [this, i] { selectArticulation ((int) i); };
+        pad.setVisible (false);
+    }
 
     original.onClick = [this]
     {
@@ -211,12 +329,17 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     expression.setVisible (hasExpression);
     expressionHeading.setVisible (hasExpression);
     refreshControls();
+    refreshArticulations();
+    setPage (0);
     startTimerHz (6);  // GUI-only polling; never touches the audio thread.
 }
 
 AtelierInstrumentEditor::~AtelierInstrumentEditor()
 {
     stopTimer();
+    // JUCE's children outlive the function body but not the editor. Return
+    // them to the inherited LookAndFeel before the owned style is destroyed.
+    setLookAndFeel (nullptr);
 }
 
 te::AudioTrack* AtelierInstrumentEditor::track() const
@@ -258,6 +381,7 @@ void AtelierInstrumentEditor::refreshControls()
 void AtelierInstrumentEditor::timerCallback()
 {
     refreshControls();
+    refreshArticulations();
 }
 
 int AtelierInstrumentEditor::minimumDockHeight() const
