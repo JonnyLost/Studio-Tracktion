@@ -6,6 +6,7 @@
 #include "FilmScoringCueSheet.h"
 #include "FilmPictureSync.h"
 #include "FilmCueRender.h"
+#include "FilmStemState.h"
 #include <JuceHeader.h>
 #if JUCE_MAC
  #include <juce_video/juce_video.h>
@@ -117,8 +118,9 @@ public:
                          &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                          &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
                          &deleteCueButton, &exportCueButton, &cueSection,
-                         &renderMixButton, &renderTracksButton, &cancelRenderButton,
-                         &renderStatus })
+                         &renderMixButton, &renderTracksButton, &renderStemsButton,
+                         &cancelRenderButton, &renderStatus, &stemSection,
+                         &stemTrackPicker, &stemFamilyPicker, &syncStatus, &resyncButton })
             addAndMakeVisible (*c);
         addAndMakeVisible (monitorHost);
         addAndMakeVisible (strip);
@@ -213,6 +215,20 @@ public:
         exportCueButton.onClick = [this] { exportCueSheet(); };
         renderMixButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::stereoMix); };
         renderTracksButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::individualTracks); };
+        renderStemsButton.onClick = [this] { chooseCueDelivery (CueRenderSession::Mode::familyStems); };
+        stemSection.setText ("ORCHESTRAL STEMS", juce::dontSendNotification);
+        stemSection.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        stemTrackPicker.setTextWhenNothingSelected ("Select instrument track");
+        stemTrackPicker.setTooltip ("Select a Studio track to assign to a stem family");
+        for (int i = 0; i <= (int) StemFamily::other; ++i)
+            stemFamilyPicker.addItem (stemFamilyName ((StemFamily) i), i + 1);
+        stemFamilyPicker.onChange = [this] { saveSelectedStemFamily(); };
+        stemTrackPicker.onChange = [this] { showSelectedStemFamily(); };
+        renderStemsButton.setTooltip ("Export a WAV per assigned orchestral family. Unassigned tracks are excluded.");
+        resyncButton.setTooltip ("Re-align the native picture player to the Studio transport immediately");
+        resyncButton.onClick = [this] { pictureSync.reset(); tick(); };
+        syncStatus.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        syncStatus.setText ("Picture sync: waiting for media", juce::dontSendNotification);
         cancelRenderButton.onClick = [this] { cueRender.cancel(); };
         cueRender.onUpdate = [this] { renderStatus.setText (cueRender.description(), juce::dontSendNotification); };
         renderStatus.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
@@ -257,6 +273,10 @@ public:
         edit = next;
         pictureSync.reset();
         project = edit ? decode (edit->state) : Project {};
+        stemAssignments = edit ? readStemAssignments (edit->state) : std::vector<StemAssignment> {};
+        knownStemNode = edit ? edit->state.getChildWithName ("STUDIO_FILM_STEMS") : juce::ValueTree {};
+        stemTrackNames.clear();
+        liveStemTrackIDs.clear();
         knownScoringNode = edit ? edit->state.getChildWithName ("STUDIO_FILM_SCORING") : juce::ValueTree {};
         activeId.clear();
         ratePicker.setSelectedId ((int) project.rate + 1, juce::dontSendNotification);
@@ -265,6 +285,7 @@ public:
         refreshMarkerPicker();
         activeCueId.clear();
         refreshCuePicker();
+        refreshStemTracks();
         loadSavedPicture();
         strip.update (&project, 0, 0);
     }
@@ -283,7 +304,18 @@ public:
         const bool rendering = cueRender.isActive();
         renderMixButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
         renderTracksButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        renderStemsButton.setEnabled (! rendering && ! edit->getTransport().isRecording());
+        stemTrackPicker.setEnabled (! rendering);
+        stemFamilyPicker.setEnabled (! rendering);
         cancelRenderButton.setEnabled (rendering);
+        refreshStemTracks();
+        const auto newStemNode = edit->state.getChildWithName ("STUDIO_FILM_STEMS");
+        if (newStemNode != knownStemNode)
+        {
+            stemAssignments = readStemAssignments (edit->state);
+            knownStemNode = newStemNode;
+            showSelectedStemFamily();
+        }
         // Undo/Redo swaps the versioned ValueTree subtree. Refresh our
         // message-thread snapshot before any future scoring edits can overwrite
         // an undone operation with stale local cue/spot data.
@@ -325,6 +357,11 @@ public:
         if (command.stop) video.stop();
         if (command.seek) video.setPlayPosition (command.targetSeconds);
         if (command.play) video.play();
+        syncStatus.setText (observed.videoOpen && observed.visible
+            ? (command.stop && ! observed.transportPlaying ? "Picture sync: paused"
+               : command.discontinuity ? "Picture sync: re-aligning"
+               : "Picture drift: " + juce::String (command.driftFrames, 1) + " frames")
+            : "Picture sync: waiting for media", juce::dontSendNotification);
        #endif
     }
 
@@ -369,19 +406,30 @@ public:
         notesEdit.setBounds (line (left));
         pair (line (left), applyHitButton, quarterBeatsEdit, 108);
         timing.setBounds (line (left, 38));
+        pair (line (left), resyncButton, syncStatus, 82);
 
-        auto cueHeader = line (right);
+        const auto rightLine = [] (juce::Rectangle<int>& panel, int height = 23)
+        {
+            auto result = panel.removeFromTop (height);
+            panel.removeFromTop (2);
+            return result;
+        };
+        auto cueHeader = rightLine (right);
         cueSection.setBounds (cueHeader.removeFromLeft (juce::jmax (0, cueHeader.getWidth() - 104)));
         exportCueButton.setBounds (cueHeader);
-        pair (line (right), newCueButton, outCueButton, 98);
-        pair (line (right), cuePicker, gotoCueButton, juce::jmax (0, right.getWidth() - 78));
-        pair (line (right), cueIdEdit, cueTitleEdit, 85);
-        cueNotesEdit.setBounds (line (right));
-        pair (line (right), saveCueButton, deleteCueButton, 84);
-        renderMixButton.setBounds (line (right));
-        renderTracksButton.setBounds (line (right));
-        cancelRenderButton.setBounds (line (right));
-        renderStatus.setBounds (line (right, 38));
+        pair (rightLine (right), newCueButton, outCueButton, 98);
+        pair (rightLine (right), cuePicker, gotoCueButton, juce::jmax (0, right.getWidth() - 78));
+        pair (rightLine (right), cueIdEdit, cueTitleEdit, 85);
+        cueNotesEdit.setBounds (rightLine (right));
+        pair (rightLine (right), saveCueButton, deleteCueButton, 84);
+        stemSection.setBounds (rightLine (right, 22));
+        stemTrackPicker.setBounds (rightLine (right));
+        stemFamilyPicker.setBounds (rightLine (right));
+        renderMixButton.setBounds (rightLine (right));
+        renderTracksButton.setBounds (rightLine (right));
+        renderStemsButton.setBounds (rightLine (right));
+        cancelRenderButton.setBounds (rightLine (right));
+        renderStatus.setBounds (rightLine (right, 34));
 
         // Reserve the picture-hit ruler directly under the centered monitor.
         // A 16:9 surface prevents native AVKit video from covering dock controls.
@@ -467,7 +515,8 @@ private:
                                    &cuePicker, &newCueButton, &outCueButton, &gotoCueButton,
                                    &cueIdEdit, &cueTitleEdit, &cueNotesEdit, &saveCueButton,
                                    &deleteCueButton, &exportCueButton, &renderMixButton,
-                                   &renderTracksButton })
+                                   &renderTracksButton, &renderStemsButton,
+                                   &stemTrackPicker, &stemFamilyPicker, &resyncButton })
             c->setEnabled (enabled);
         cancelRenderButton.setEnabled (enabled && cueRender.isActive());
     }
@@ -900,7 +949,10 @@ private:
 
     tracktion::engine::Edit* edit = nullptr;
     Project project;
-    juce::ValueTree knownScoringNode;
+    juce::ValueTree knownScoringNode, knownStemNode;
+    std::vector<StemAssignment> stemAssignments;
+    juce::StringArray stemTrackNames;
+    std::vector<std::string> liveStemTrackIDs;
     std::string activeId;
     std::vector<std::string> sortedIds, sortedCueIds;
     std::string activeCueId;
@@ -910,22 +962,23 @@ private:
     std::unique_ptr<juce::FileChooser> chooser, cueExportChooser, deliveryChooser;
     juce::Component monitorHost;
     SpottingStrip strip;
-    juce::Label timecode, status, timing;
+    juce::Label timecode, status, timing, syncStatus;
     juce::TextButton importButton { "Import Picture" }, floatButton { "Float" };
     juce::ComboBox ratePicker;
     juce::TextEditor offsetEdit, cueEdit, nameEdit, notesEdit, quarterBeatsEdit;
     juce::TextButton applyOffsetButton { "Set Offset" }, addHitButton { "Add Hit" },
                      removeHitButton { "Remove" }, prevButton { "<" }, nextButton { ">" },
                      goButton { "Go To" }, applyHitButton { "Apply Hit" };
-    juce::ComboBox markerPicker, cuePicker;
-    juce::Label cueSection;
+    juce::ComboBox markerPicker, cuePicker, stemTrackPicker, stemFamilyPicker;
+    juce::Label cueSection, stemSection;
     juce::TextEditor cueIdEdit, cueTitleEdit, cueNotesEdit;
     juce::TextButton newCueButton { "+ Cue" }, outCueButton { "Mark End" },
                      gotoCueButton { "Go Cue" }, saveCueButton { "Apply" },
                      deleteCueButton { "Delete Cue" }, exportCueButton { "Export CSV" };
     juce::TextButton renderMixButton { "Render Cue WAV" },
                      renderTracksButton { "Render Track WAVs" },
-                     cancelRenderButton { "Cancel Render" };
+                     renderStemsButton { "Render Family Stems" },
+                     cancelRenderButton { "Cancel Render" }, resyncButton { "Resync" };
     juce::Label renderStatus;
 };
 } // namespace studio::film
