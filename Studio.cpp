@@ -3445,13 +3445,22 @@ private:
         const auto lastInstrument = instrumentWorkspace.rememberedInstrument();
         if (! create && lastInstrument.isValid())
             if (auto savedPlugin = te::findPluginForID (*edit, lastInstrument); savedPlugin != nullptr)
-                if ((instrumentWorkspace.rememberedAtelier() && ! ariaReviewPending
-                        && showAtelierInstrument (*savedPlugin)) || showNativeInstrument (*savedPlugin))
+            {
+                const bool savedAtelier = instrumentWorkspace.rememberedAtelier() && ! ariaReviewPending;
+                const bool restoreFloating = instrumentWorkspace.rememberedFloating();
+                if (savedAtelier)
                 {
-                    const bool floating = instrumentWorkspace.rememberedFloating();
-                    setDockMode (instrumentWorkspace.rememberedLayout());
-                    if (floating) instrumentWorkspace.setFloating (true);
+                    // Restore a hosted instrument to its Inspector, preserving
+                    // an explicitly floating full editor only when requested.
+                    if (restoreFloating) showFullAtelierInstrument (*savedPlugin);
+                    else showAtelierInstrument (*savedPlugin);
                 }
+                else if (showNativeInstrument (*savedPlugin))
+                {
+                    setDockMode (instrumentWorkspace.rememberedLayout());
+                    if (restoreFloating) instrumentWorkspace.setFloating (true);
+                }
+            }
         if (create)
             save();
         else if (ariaReviewPending)
