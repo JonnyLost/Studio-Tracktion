@@ -1256,6 +1256,38 @@ bool AtelierInstrumentEditor::reviewSelectMappedArticulation()
     return activeMappingId == id && mappingPads.front().getToggleState();
 }
 
+bool AtelierInstrumentEditor::reviewStageEditing()
+{
+    auto* source = track();
+    if (source == nullptr) return false;
+    auto seat = source->state.getChildWithName (spatial::seatType);
+    if (! seat.isValid()) return false;
+    const float original = spatial::readSeat (seat).position.x;
+    const double next = original < .6f ? original + .13f : original - .13f;
+    stagePan.setValue (next, sendNotificationSync);
+    const auto after = spatial::readSeat (seat).position.x;
+    const bool worked = std::abs (after - next) < .011f;
+    source->edit.undo();
+    refreshControls();
+    return worked && std::abs (spatial::readSeat (seat).position.x - original) < .011f;
+}
+
+bool AtelierInstrumentEditor::reviewKeyboardHitMap() const
+{
+    if (! fullPresentation || keyboardBounds.isEmpty()) return false;
+    auto keys = keyboardBounds.reduced (appearance.px (12), appearance.px (7));
+    keys.removeFromTop (appearance.control (18, 9));
+    if (keys.getWidth() < 42) return false;
+    const float keyWidth = (float) keys.getWidth() / 42.0f;
+    const int left = keys.getX() + roundToInt (keyWidth * .4f);
+    const int y = keys.getBottom() - 4;
+    const int right = keys.getX() + roundToInt (keyWidth * 41.4f);
+    // Bottom halves are white keys: 36 is C2 and the far right is B7.
+    return keyboardNoteAt ({ left, y }) == 36
+        && keyboardNoteAt ({ right, y }) == 107
+        && keyboardNoteAt ({ keys.getX(), keys.getY() - 1 }) == -1;
+}
+
 bool AtelierInstrumentEditor::verifyBindings()
 {
     if (auto* fader = volumePlugin())
