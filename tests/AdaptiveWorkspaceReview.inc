@@ -344,7 +344,9 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         return fail ("Atelier Main presents verified mappings and stores undoable selection");
     if (! atelierEditor->reviewPage (1, false) || ! atelierEditor->reviewPage (2, false)
         || ! atelierEditor->reviewPage (3, false) || ! atelierEditor->reviewPage (4, false)
-        || ! atelierEditor->reviewMIDIControllers() || ! atelierEditor->reviewPage (0, false))
+        || ! atelierEditor->reviewMIDIControllers()
+        || ! snapshot (*this, "13a-atelier-compact-midi-cc")
+        || ! atelierEditor->reviewPage (0, false))
         return fail ("Atelier compact pages and MIDI CC knobs fit in the fixed 425-point dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
         || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
