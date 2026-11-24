@@ -2009,11 +2009,11 @@ private:
         const int dividerHeight = m.px (12);
         const bool fixedInstrument = workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating();
         workspaceDivider.setResizeLocked (fixedInstrument);
-        // Screenshot-approved Instrument View at 100%: a 640-point lower dock
+        // Revised MacBook screenshot: the fixed Instrument View is 425 points
         // including its header. On shorter MacBooks, dockRoom clamps this to
         // retain the arrangement; only the Instrument View is fixed.
         const int requestedHeight = fixedInstrument && dockMode == DockMode::split
-            ? jmax (m.px (640), instrumentWorkspace.minimumContentHeight() + headerHeight)
+            ? jmax (m.px (425), instrumentWorkspace.minimumContentHeight() + headerHeight)
             : workspaceHeight;
         const auto room = m.dockRoom (available, requestedHeight, dockMode);
         splitLimit = room.splitLimit;
