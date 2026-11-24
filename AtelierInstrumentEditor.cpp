@@ -239,6 +239,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     {
         stopKeyboardNote();
         releaseSustain();
+        persistInspectorControls();
         if (onSizePreferenceChanged) onSizePreferenceChanged();
     };
     addAndMakeVisible (previewChannel);
@@ -301,11 +302,15 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
             sendLiveCC ((int) i);
             // Persist once after editing a textbox or keyboard value; a drag
             // persists only when released, not on every real-time CC event.
-            if (! ccKnobs[i].isMouseButtonDown() && onSizePreferenceChanged)
-                onSizePreferenceChanged();
+            if (! ccKnobs[i].isMouseButtonDown())
+            {
+                persistInspectorControls();
+                if (onSizePreferenceChanged) onSizePreferenceChanged();
+            }
         };
         slider.onDragEnd = [this]
         {
+            persistInspectorControls();
             if (onSizePreferenceChanged) onSizePreferenceChanged();
         };
     }
@@ -544,6 +549,7 @@ void AtelierInstrumentEditor::timerCallback()
     }
     refreshControls();
     refreshArticulations();
+    syncInspectorControls();
     updateMIDIControls();
     const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
                                             : "KEYBOARD  •  load an active Audio Unit to audition";
@@ -808,9 +814,71 @@ void AtelierInstrumentEditor::changePortrait()
 {
     const int id = portraitChoice.getSelectedId();
     portraitName = id <= 1 ? String() : portraitChoice.getText();
+    if (auto* t = track())
+        t->state.setProperty ("studioAtelierPortrait", portraitName, nullptr);
     loadPortrait();
     if (onSizePreferenceChanged)
         onSizePreferenceChanged(); // Persist per-instance visual state via InstrumentWorkspace.
+}
+
+void AtelierInstrumentEditor::persistInspectorControls()
+{
+    if (restoring) return;
+    auto* t = track();
+    if (t == nullptr) return;
+    String values;
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+    {
+        if (i) values << ",";
+        values << String (i == 4 ? 0 : jlimit (0, 127, roundToInt (ccKnobs[i].getValue())));
+    }
+    if (t->state.getProperty ("studioAtelierCCState").toString() != values)
+        t->state.setProperty ("studioAtelierCCState", values, nullptr);
+    sharedCCStamp = values;
+    const int channel = jlimit (1, 16, previewChannel.getSelectedId());
+    if ((int) t->state.getProperty ("studioAtelierPreviewChannel", 1) != channel)
+        t->state.setProperty ("studioAtelierPreviewChannel", channel, nullptr);
+}
+
+void AtelierInstrumentEditor::syncInspectorControls()
+{
+    auto* t = track();
+    if (t == nullptr) return;
+    const auto newPortrait = t->state.getProperty ("studioAtelierPortrait").toString();
+    if (newPortrait.isNotEmpty() && newPortrait != portraitName)
+    {
+        for (int i = 0; i < portraitChoice.getNumItems(); ++i)
+            if (portraitChoice.getItemText (i) == newPortrait)
+            {
+                const ScopedValueSetter<bool> hold (restoring, true);
+                portraitName = newPortrait;
+                portraitChoice.setSelectedId (portraitChoice.getItemId (i), dontSendNotification);
+                loadPortrait();
+                break;
+            }
+    }
+    const int sharedChannel = jlimit (1, 16,
+        (int) t->state.getProperty ("studioAtelierPreviewChannel", previewChannel.getSelectedId()));
+    if (sharedChannel != previewChannel.getSelectedId())
+    {
+        stopKeyboardNote();
+        releaseSustain();
+        previewChannel.setSelectedId (sharedChannel, dontSendNotification);
+    }
+    const auto state = t->state.getProperty ("studioAtelierCCState").toString();
+    if (state.isNotEmpty() && state != sharedCCStamp)
+    {
+        sharedCCStamp = state;
+        const auto values = StringArray::fromTokens (state, ",", "");
+        if (values.size() == (int) ccKnobs.size())
+        {
+            const ScopedValueSetter<bool> hold (restoring, true);
+            for (size_t i = 0; i < ccKnobs.size(); ++i)
+                if (! ccKnobs[i].isMouseButtonDown())
+                    ccKnobs[i].setValue (i == 4 ? 0
+                        : jlimit (0, 127, values[(int) i].getIntValue()), dontSendNotification);
+        }
+    }
 }
 
 String AtelierInstrumentEditor::viewState() const
@@ -873,6 +941,8 @@ void AtelierInstrumentEditor::restoreView (const String& saved)
             chosen = portraitChoice.getItemId (i);
     portraitChoice.setSelectedId (chosen, dontSendNotification);
     loadPortrait();
+    sharedCCStamp.clear();
+    syncInspectorControls();
     refreshControls();
     refreshArticulations();
     updateMIDIControls();
