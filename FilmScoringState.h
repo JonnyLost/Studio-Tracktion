@@ -51,6 +51,7 @@ inline Project decode (const juce::ValueTree& root)
 
 inline void store (juce::ValueTree editRoot, const Project& project, juce::UndoManager* undo)
 {
+    if (undo != nullptr) undo->beginNewTransaction ("Edit Film Scoring");
     const auto existing = editRoot.getChildWithName ("STUDIO_FILM_SCORING");
     const auto index = existing.isValid() ? editRoot.indexOf (existing) : editRoot.getNumChildren();
     if (existing.isValid()) editRoot.removeChild (existing, undo);

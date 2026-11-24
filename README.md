@@ -10,6 +10,10 @@ Standalone JUCE/Tracktion Engine DAW for Intel macOS, based on the Mac-verified 
 - **Studio Environments** opens a rotating illustrated welcome screen on launch. Choose **New Project**, **Open Project**, or **Continue to Studio**; browse five original scenes, choose favourites and rotation, or disable **Show at startup**. Reopen it from **View... → Studio Environments...**. Artwork settings are independent of project files. See [the Studio Environments guide](docs/studio-environments.md).
 - **Planned workspaces** are labeled in the dock. **More** lists additional destinations. Stage, Rooms, and Microphones link to one another, and Channel opens the Studio Sampler or the installed hosted instrument. The existing arrangement Inserts and Plugin Manager are also available.
 
+## Picture and film scoring
+
+Choose **Picture** from the left rail to open Studio's docked Picture workspace. The initial scoring workflow provides native macOS video preview (muted), a floating/dockable monitor, SMPTE source timecode, adjustable picture-to-timeline frame offset, an interactive frame-based spotting strip, named hit points with cue IDs and notes, and non-destructive tempo suggestions between hits. See [Film Scoring Workspace](docs/film-scoring-workspace.md) for usage, Mac testing and limitations. This feature is on a separate draft PR stack and does not yet guarantee frame-perfect preview timing.
+
 ## Appearance and readability
 
 Open **View...** in the top row. **Interface Scale** offers 100%, 110%, 125%, 150%, and 175%. **Text Size** offers Standard, Large (115%), and Extra Large (130%). Both apply immediately and are stored in Studio's application preferences. **Reset Appearance** restores both defaults. **Command–Option–=** and **Command–Option–−** step through interface sizes. **Command–Option–0** resets interface scale and keeps the text setting.
