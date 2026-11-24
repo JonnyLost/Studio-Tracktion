@@ -194,8 +194,10 @@ public:
         };
 
         const auto preferred = placeIn (available);
+        if (nativeVideoTooltipAvoidance.isEmpty())
+            return preferred;
         const auto excluded = nativeVideoTooltipAvoidance.expanded (appearance.px (6));
-        if (excluded.isEmpty() || ! preferred.intersects (excluded))
+        if (! preferred.intersects (excluded))
             return preferred;
 
         auto left = juce::Rectangle<int> (available.getX(), available.getY(),
