@@ -34,6 +34,7 @@ using namespace tracktion::literals;
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
 #include "Seating/SeatingWorkspace.h"
+#include "FilmScoringWorkspace.h"
 
 class StudioPluginWindows final : public ExtendedUIBehaviour
 {
@@ -339,6 +340,7 @@ public:
     int runAdaptiveWorkspaceReview (const File& output);
     int runSeatingProjectReview (const File& output);
     int runUnifiedStageReview (const File& output);
+    int runFilmScoringReview (const File& output);
    #endif
 
     StudioView()
@@ -476,6 +478,8 @@ public:
         for (auto* indicator : { &resources.audio, &resources.ram, &resources.dropouts })
             addAndMakeVisible (*indicator);
         workspaceBody.addChildComponent (resources);
+        workspaceBody.addChildComponent (filmWorkspace);
+        filmWorkspace.canRenderAudio = [this] { return canStartAudioExport() && bounce == nullptr; };
         workspaceBody.addChildComponent (instrumentWorkspace);
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = [this] (te::Plugin& plug)
         {
@@ -645,9 +649,7 @@ public:
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
-            // Ignore even programmatic resize attempts while an instrument is
-            // docked; dragging cannot accidentally rewrite another view's size.
-            if (workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating())
+            if (isWorkspaceDividerLocked())
                 return;
             const int nextHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
             if (dockMode != DockMode::split)
@@ -831,6 +833,7 @@ public:
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
        #if JUCE_MAC
         seatingWorkspace.setEdit (nullptr);
        #endif
@@ -1884,6 +1887,7 @@ private:
     StringArray trackNames;
     TextButton arrangementZoomOut { "-" }, arrangementZoomIn { "+" };
     studio::RailButton instrumentsButton { "Instruments", studio::RailIcon::instruments },
+                       pictureButton { "Picture", studio::RailIcon::picture },
                        pianoButton { "Piano Roll", studio::RailIcon::piano },
                        articulationsButton { "Articulations", studio::RailIcon::articulations },
                        stageButton { "Stage", studio::RailIcon::stage },
@@ -1902,6 +1906,7 @@ private:
     studio::StudioMixer mixer { trackActions };
     studio::StudioResources resources { engine.getDeviceManager() };
     studio::spatial::SpatialWorkspace spatialWorkspace;
+    studio::film::Workspace filmWorkspace;
    #if JUCE_MAC
     studio::seating::Workspace seatingWorkspace;
    #endif
@@ -1945,11 +1950,11 @@ private:
     struct DockItem { DockMode mode; TextButton* button; };
     struct WorkspaceEntry { Workspace destination; const char* name; };
 
-    std::array<RailItem, 5> railItems()
+    std::array<RailItem, 6> railItems()
     {
         return {{ { Workspace::instruments, &instrumentsButton }, { Workspace::piano, &pianoButton },
                   { Workspace::articulations, &articulationsButton }, { Workspace::stage, &stageButton },
-                  { Workspace::mix, &mixButton } }};
+                  { Workspace::filmScoring, &pictureButton }, { Workspace::mix, &mixButton } }};
     }
 
     std::array<DockItem, 3> dockItems()
@@ -2018,6 +2023,12 @@ private:
             performance.setBounds (area.removeFromBottom (panelHeight));
     }
 
+    bool isWorkspaceDividerLocked() const
+    {
+        return workspace == Workspace::filmScoring
+            || (workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating());
+    }
+
     void layoutDock (Rectangle<int>& arrangement)
     {
         const auto& m = studio::appearance;
@@ -2028,13 +2039,15 @@ private:
         const int headerHeight = m.control (unifiedInstrumentHeader ? 42 : 34);
         const int dividerHeight = m.px (12);
         const bool fixedInstrument = workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating();
-        workspaceDivider.setResizeLocked (fixedInstrument);
+        workspaceDivider.setResizeLocked (isWorkspaceDividerLocked());
         // Revised MacBook screenshot: the fixed Instrument View is 425 points
         // including its header. On shorter MacBooks, dockRoom clamps this to
         // retain the arrangement; only the Instrument View is fixed.
-        const int requestedHeight = fixedInstrument && dockMode == DockMode::split
-            ? jmax (m.px (425), instrumentWorkspace.minimumContentHeight() + headerHeight)
-            : workspaceHeight;
+        int requestedHeight = workspaceHeight;
+        if (workspace == Workspace::filmScoring)
+            requestedHeight = m.px (438);
+        else if (fixedInstrument && dockMode == DockMode::split)
+            requestedHeight = jmax (m.px (425), instrumentWorkspace.minimumContentHeight() + headerHeight);
         const auto room = m.dockRoom (available, requestedHeight, dockMode);
         splitLimit = room.splitLimit;
         const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
@@ -2095,6 +2108,7 @@ private:
             if (piano.isVisible()) return piano.minimumContentHeight (width);
             if (resources.isVisible()) return resources.minimumContentHeight (width);
             if (spatialWorkspace.isVisible()) return spatialWorkspace.minimumContentHeight (width);
+            if (filmWorkspace.isVisible()) return filmWorkspace.minimumContentHeight (width);
             if (articulationWindow == nullptr && articulation.isVisible()) return articulation.minimumContentHeight (width);
             return dockedMonitor ? monitor.minimumContentHeight (width) : 0;
         };
@@ -2108,10 +2122,11 @@ private:
             height = minimumContentHeight (width);
         }
         workspaceBody.setSize (width, jmax (height, body.getHeight()));
-        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace })
+        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace, &filmWorkspace })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
+        style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
     }
 
    #if JUCE_MAC
@@ -2129,6 +2144,7 @@ private:
 
     void setDockMode (DockMode mode)
     {
+        if (workspace == Workspace::filmScoring && mode != DockMode::split) return;
         if (dockMode == mode) return;
         rememberWorkspaceScroll();
         dockMode = mode;
@@ -2173,6 +2189,8 @@ private:
                            getHeight() * 57 / 100));
         }
         workspace = next;
+        if (workspace == Workspace::filmScoring)
+            dockMode = DockMode::split;
         syncWorkspace();
         if (changing) restoreWorkspaceScroll();
     }
@@ -2187,6 +2205,7 @@ private:
         const bool browsing = workspace == Workspace::instruments;
         const bool inspecting = workspace == Workspace::channel;
         const bool checkingResources = workspace == Workspace::resources;
+        const bool scoringPicture = workspace == Workspace::filmScoring;
         const bool showingArticulation = workspace == Workspace::articulations;
         const bool showingSpatial = workspace == Workspace::stage || workspace == Workspace::rooms
                                  || workspace == Workspace::microphones;
@@ -2223,6 +2242,7 @@ private:
         browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
+        filmWorkspace.setVisible (scoringPicture && ! compact);
         spatialWorkspace.setVisible (showingSpatial && (! compact || workspace == Workspace::stage));
         if (showingSpatial)
         {
@@ -2238,6 +2258,7 @@ private:
         for (const auto& item : dockItems())
         {
             item.button->setVisible (open);
+            item.button->setEnabled (! scoringPicture || item.mode == DockMode::split);
             item.button->setToggleState (dockMode == item.mode, dontSendNotification);
         }
         const auto links = contextLinks();
@@ -2752,6 +2773,9 @@ private:
         maybeAutoRestoreAria();
         completePendingPlugin();
         updateWavExport();
+        filmWorkspace.tick();
+        // AVKit is embedded as a native view. Track its screen bounds for tooltips.
+        style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
@@ -2776,7 +2800,7 @@ private:
         clickButton.setToggleState (edit != nullptr && edit->clickTrackEnabled, dontSendNotification);
         importMidi.setEnabled (transportReady && ! playing);
         exportMidi.setEnabled (transportReady && ! playing);
-        exportWav.setEnabled (transportReady && ! playing && ! ariaReviewPending);
+        exportWav.setEnabled (canStartAudioExport() && ! filmWorkspace.isRendering());
         rewind.setEnabled (transportReady);
         play.setEnabled (transportReady || (ready && recording));
         play.setToggleState (playing && ! recording, dontSendNotification);
@@ -2835,7 +2859,8 @@ private:
             {
                 piano.setClip (primary);
                 if (workspace != Workspace::closed && workspace != Workspace::articulations
-                    && workspace != Workspace::mix && dockMode != DockMode::compact)
+                    && workspace != Workspace::mix && workspace != Workspace::filmScoring
+                    && dockMode != DockMode::compact)
                     showWorkspace (Workspace::piano);
             }
             piano.setComparisonClips (selectedMidiClips);
@@ -3367,6 +3392,7 @@ private:
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         performance.clear();
        #if JUCE_MAC
@@ -3381,6 +3407,7 @@ private:
         inspectorDrawer.setEdit (edit.get());
         resources.setEdit (edit.get());
         spatialWorkspace.setEdit (edit.get());
+        filmWorkspace.setEdit (edit.get());
        #if JUCE_MAC
         seatingWorkspace.setEdit (edit.get());
        #endif
@@ -3587,9 +3614,14 @@ private:
             });
     }
 
+    bool canStartAudioExport() const
+    {
+        return canTransferMidi() && ! ariaReviewPending;
+    }
+
     void chooseWavExport()
     {
-        if (! canTransferMidi() || ariaReviewPending) return;
+        if (! canStartAudioExport() || filmWorkspace.isRendering()) return;
         Array<te::EditItemID> ids;
         for (const auto* track : selection.getItemsOfType<te::AudioTrack>())
             ids.add (track->itemID);
@@ -3601,7 +3633,7 @@ private:
         studio::bounce::showOptions (*this, *edit, ids, [safe, generation] (Result result, studio::bounce::Options options)
         {
             if (safe == nullptr || generation != safe->projectGeneration || ! safe->canTransferMidi()
-                || safe->ariaReviewPending)
+                || safe->ariaReviewPending || safe->filmWorkspace.isRendering())
                 return;
             if (result.failed())
                 safe->message.setText (result.getErrorMessage(), dontSendNotification);
@@ -3622,7 +3654,7 @@ private:
         chooser->launchAsync (flags, [safe, generation, options = std::move (options)] (const FileChooser& dialog) mutable
         {
             if (safe == nullptr || safe->projectGeneration != generation || dialog.getResult() == File()
-                || ! safe->canTransferMidi() || safe->ariaReviewPending)
+                || ! safe->canStartAudioExport() || safe->filmWorkspace.isRendering())
                 return;
             options.destination = options.stems ? dialog.getResult() : dialog.getResult().withFileExtension (".wav");
             safe->startWavExport (options);
@@ -4661,6 +4693,81 @@ int StudioView::runSeatingProjectReview (const File& output)
     return 0;
 }
 
+int StudioView::runFilmScoringReview (const File& output)
+{
+    stopTimer();
+    environmentWelcome.dismiss();
+    setSize (1280, 800);
+    const auto fail = [] (const char* message)
+    {
+        std::fprintf (stderr, "Film Scoring workspace review failed: %s\n", message);
+        return 1;
+    };
+    TemporaryFile fixture (".tracktionedit");
+    loadProject (fixture.getFile(), true);
+    if (! edit) return fail ("create film scoring project");
+    const auto trackCount = te::getAudioTracks (*edit).size();
+    setDockMode (DockMode::expanded);
+    showWorkspace (Workspace::filmScoring);
+    if (! filmWorkspace.isVisible() || ! workspaceViewport.isVisible())
+        return fail ("Film Scoring is accessible from the existing dock");
+
+    studio::film::Project picture;
+    picture.rate = studio::film::Rate::fps2997DF;
+    picture.pictureStartFrame = 107892;
+    if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 17982 })
+        || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 21582 }))
+        return fail ("create picture-anchored hits");
+    if (! picture.addCue ({ "1M1", "Opening score", "Transition", 17982, 21582 })
+        || ! picture.addCue ({ "1M2", "Next sequence", "", 30000, std::nullopt }))
+        return fail ("create frame-anchored film cues");
+    studio::film::store (edit->state, picture, &edit->getUndoManager());
+    filmWorkspace.setEdit (nullptr);
+    filmWorkspace.setEdit (edit.get());
+    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().cues.size() != 2
+        || filmWorkspace.snapshot().pictureStartFrame != 107892
+        || filmWorkspace.snapshot().rate != studio::film::Rate::fps2997DF)
+        return fail ("dock reads versioned picture metadata");
+    if (te::getAudioTracks (*edit).size() != trackCount)
+        return fail ("spotting modified audio tracks");
+    if (! edit->getUndoManager().undo()) return fail ("undo spotting metadata");
+    filmWorkspace.tick();
+    if (! filmWorkspace.snapshot().cues.empty() || ! filmWorkspace.snapshot().spots.empty())
+        return fail ("workspace did not reconcile project Undo");
+    if (! edit->getUndoManager().redo()) return fail ("redo spotting metadata");
+    filmWorkspace.tick();
+    if (filmWorkspace.snapshot().cues.size() != 2 || filmWorkspace.snapshot().spots.size() != 2)
+        return fail ("workspace did not reconcile project Redo");
+
+    const auto saved = studio::film::decode (edit->state);
+    if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false))
+        return fail ("save project with film scoring metadata");
+    const auto generation = projectGeneration;
+    loadProject (fixture.getFile(), false);
+    if (projectGeneration != generation + 1 || edit == nullptr
+        || studio::film::decode (edit->state).spots.size() != 2
+        || studio::film::decode (edit->state).pictureStartFrame != saved.pictureStartFrame
+        || studio::film::decode (edit->state).cues.size() != 2)
+        return fail ("reopen picture scoring metadata and offset");
+    if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().find ("test-1") == nullptr
+        || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 17982
+        || filmWorkspace.snapshot().findCue ("1M1") == nullptr
+        || filmWorkspace.snapshot().findCue ("1M1")->endPictureFrame != 21582
+        || te::getAudioTracks (*edit).size() != trackCount)
+        return fail ("restore exact source frame anchors without altering tracks");
+    showWorkspace (Workspace::filmScoring);
+    if (output != File())
+    {
+        if (output.createDirectory().failed()) return fail ("create screenshot folder");
+        FileOutputStream stream (output.getChildFile ("film-scoring-workspace.png"));
+        if (! stream.openedOk() || ! PNGImageFormat().writeImageToStream (
+                createComponentSnapshot (getLocalBounds()), stream))
+            return fail ("render workspace screenshot");
+    }
+    std::puts ("Film Scoring workspace, frame anchors, project isolation and reload passed.");
+    return 0;
+}
+
 int StudioView::runInstrumentWorkspaceReview (const File& output)
 {
     stopTimer();
@@ -4693,6 +4800,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         channelInspector.setEdit (nullptr);
         inspectorDrawer.setEdit (nullptr);
         spatialWorkspace.setEdit (nullptr);
+        filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
         edit.reset();
         devices.deviceManager.closeAudioDevice();
@@ -5052,7 +5160,7 @@ int StudioView::runInterfaceReview (const File& output)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {
             applyAppearance (scale, text, false);
-            for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1600, 960) })
+            for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1536, 960) })
             {
                 setSize (size.x, size.y);
                 auto previous = Rectangle<int>();
@@ -5063,11 +5171,15 @@ int StudioView::runInterfaceReview (const File& output)
                         return fail ("transport controls overlap or clip");
                     previous = key->getBounds();
                 }
+                setInspectorOpen (true, false);
                 showWorkspace (Workspace::mix);
                 setDockMode (DockMode::compact);
                 if (! workspaceSummary.isVisible() || mixer.isVisible()) return fail ("compact Mixer");
                 setDockMode (DockMode::split);
-                if (! workspaceViewport.isVisible() || ! mixer.isVisible() || ruler.getWidth() < 200)
+                const int contentRight = inspectorOpen ? inspectorDrawer.getX() : getWidth();
+                if (! workspaceViewport.isVisible() || ! mixer.isVisible() || ruler.isEmpty()
+                    || timeline.getRight() != contentRight || workspacePanel.getRight() != contentRight
+                    || ! rulerRow.contains (ruler) || timeline.getBounds().intersects (workspacePanel))
                     return fail ("split arrangement and Mixer");
                 if (performance.isVisible() || articulationStrip.isVisible())
                     return fail ("Mixer cannot share lower space with instrument or articulation panels");
@@ -5100,8 +5212,13 @@ int StudioView::runInterfaceReview (const File& output)
                         return fail ("Split divider keyboard resize does not resize");
                 }
                 setDockMode (DockMode::expanded);
-                if (workspaceViewport.getHeight() == 0 || mixer.getWidth() <= 2 * studio::appearance.mixerStripWidth (mixer.getWidth()))
-                    return fail ("expanded mixer width");
+                if (workspaceViewport.getHeight() == 0 || mixer.getWidth() != workspaceBody.getWidth()
+                    || mixer.getWidth() < workspaceViewport.getWidth() - workspaceViewport.getScrollBarThickness())
+                    return fail ("expanded mixer uses the available workspace width");
+                setInspectorOpen (false, false);
+                if (timeline.getRight() != getWidth() || workspacePanel.getRight() != getWidth()
+                    || mixer.getWidth() <= 2 * studio::appearance.mixerStripWidth (mixer.getWidth()))
+                    return fail ("closing Inspector restores the full arrangement and Mixer widths");
                 showWorkspace (Workspace::closed);
                 if (workspaceViewport.isVisible()) return fail ("hide workspace");
             }
@@ -5158,6 +5275,7 @@ int StudioView::runInterfaceReview (const File& output)
     setDockMode (DockMode::expanded);
     // The Inspector owns a right-hand column instead of covering either
     // arrangement or lower workspace. Closing returns the full available width.
+    setInspectorOpen (false, false);
     const auto unclippedRuler = ruler;
     const int timelineRightBefore = timeline.getRight();
     setInspectorOpen (true, false);
@@ -5185,6 +5303,7 @@ int StudioView::runInterfaceReview (const File& output)
     if (! inspectorDrawer.isVisible() || ! getLocalBounds().contains (inspectorDrawer.getBounds()))
         return fail ("right Inspector fits compact MacBook");
     if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
+    setSize (1280, 800);
     setInspectorOpen (false, false);
     if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty()
         || ruler != unclippedRuler || timeline.getRight() != timelineRightBefore)
@@ -5320,6 +5439,14 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-film-scoring-workspace")
+        {
+            StudioView view;
+            const auto path = SystemStats::getEnvironmentVariable ("STUDIO_FILM_SCORING_SCREENSHOTS", {});
+            setApplicationReturnValue (view.runFilmScoringReview (path.isEmpty() ? File() : File (path)));
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-unified-stage")
         {
             StudioView view;

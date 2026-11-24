@@ -534,7 +534,10 @@ target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
-    StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h)
+    StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
+    FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
+    FilmPictureSync.h FilmScoringCueSheet.h FilmCueDelivery.h FilmCueRender.h
+    FilmStemDelivery.h FilmStemState.h)
 target_include_directories(Studio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${common}")
 target_compile_features(Studio PRIVATE cxx_std_20)
 target_compile_definitions(Studio PRIVATE
@@ -554,7 +557,7 @@ if(APPLE)
     add_library(StudioSeatingUI STATIC ${studio_seating_model} Seating/SeatingEditor.swift Seating/SeatingBridge.swift)
     set_target_properties(StudioSeatingUI PROPERTIES Swift_LANGUAGE_VERSION 5)
     target_sources(Studio PRIVATE Seating/SeatingWorkspace.cpp)
-    target_link_libraries(Studio PRIVATE StudioSeatingUI "-framework SwiftUI" "-framework AppKit")
+    target_link_libraries(Studio PRIVATE StudioSeatingUI juce::juce_video "-framework SwiftUI" "-framework AppKit")
     if(CMAKE_GENERATOR STREQUAL "Xcode")
         set_target_properties(Studio PROPERTIES XCODE_ATTRIBUTE_ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES YES)
         target_link_directories(Studio PRIVATE "$(TOOLCHAIN_DIR)/usr/lib/swift/macosx" "$(SDKROOT)/usr/lib/swift")
@@ -568,6 +571,33 @@ if(BUILD_TESTING)
     add_executable(StudioEnvironmentTests tests/EnvironmentSelectionTests.cpp)
     target_compile_features(StudioEnvironmentTests PRIVATE cxx_std_20)
     add_test(NAME StudioEnvironmentSelection COMMAND StudioEnvironmentTests)
+
+    add_executable(StudioFilmScoringTests tests/FilmScoringTests.cpp)
+    target_compile_features(StudioFilmScoringTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmScoringTests PRIVATE -UNDEBUG)
+    target_compile_definitions(StudioFilmScoringTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioFilmScoringTests PRIVATE juce::juce_data_structures)
+    add_test(NAME StudioFilmScoringCore COMMAND StudioFilmScoringTests)
+
+    add_executable(StudioFilmCueSheetTests tests/FilmCueSheetTests.cpp)
+    target_compile_features(StudioFilmCueSheetTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmCueSheetTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmCueSheet COMMAND StudioFilmCueSheetTests)
+
+    add_executable(StudioFilmPictureSyncTests tests/FilmPictureSyncTests.cpp)
+    target_compile_features(StudioFilmPictureSyncTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmPictureSyncTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmPictureSync COMMAND StudioFilmPictureSyncTests)
+
+    add_executable(StudioFilmCueDeliveryTests tests/FilmCueDeliveryTests.cpp)
+    target_compile_features(StudioFilmCueDeliveryTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmCueDeliveryTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmCueDelivery COMMAND StudioFilmCueDeliveryTests)
+
+    add_executable(StudioFilmStemDeliveryTests tests/FilmStemDeliveryTests.cpp)
+    target_compile_features(StudioFilmStemDeliveryTests PRIVATE cxx_std_20)
+    target_compile_options(StudioFilmStemDeliveryTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioFilmStemDelivery COMMAND StudioFilmStemDeliveryTests)
 
     add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
     target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)
@@ -638,6 +668,8 @@ if(BUILD_TESTING)
     set_tests_properties(StudioInstrumentWorkspace PROPERTIES TIMEOUT 120)
     add_test(NAME StudioInterfaceReview COMMAND $<TARGET_FILE:Studio> --studio-interface-review)
     set_tests_properties(StudioInterfaceReview PROPERTIES TIMEOUT 120)
+    add_test(NAME StudioFilmScoringWorkspace COMMAND $<TARGET_FILE:Studio> --studio-test-film-scoring-workspace)
+    set_tests_properties(StudioFilmScoringWorkspace PROPERTIES TIMEOUT 90)
     add_test(NAME StudioSeatingProject COMMAND $<TARGET_FILE:Studio> --studio-test-seating-project)
     set_tests_properties(StudioSeatingProject PROPERTIES TIMEOUT 60)
     add_test(NAME StudioUnifiedStage COMMAND $<TARGET_FILE:Studio> --studio-test-unified-stage)
