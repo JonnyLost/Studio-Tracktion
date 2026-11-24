@@ -24,8 +24,16 @@ public:
 
     ~CueRenderSession() { cancel(); queue.reset(); }
 
-    bool isActive() const { return queue != nullptr && ! queue->hasFinished(); }
+    bool isActive() const { return queue != nullptr && ! finished; }
     bool hasStarted() const { return queue != nullptr; }
+
+    void releaseFinishedRender()
+    {
+        if (queue == nullptr || ! finished) return;
+        message = description();
+        queue.reset();
+        snapshot.reset();
+    }
 
     void cancel()
     {
@@ -46,6 +54,7 @@ public:
         renderedDirectory = juce::File();
         currentCue = {};
         currentRange = {};
+        finished = false;
     }
 
     float progress() const
@@ -201,6 +210,7 @@ public:
         queue->onFinished = [this]
         {
             writeDeliveryReport();
+            finished = true;
             notify();
         };
         queue->addJobs (std::move (planned));
@@ -256,5 +266,6 @@ private:
     Rate currentRate = Rate::fps24;
     juce::File renderedDirectory;
     juce::String message;
+    bool finished = false;
 };
 } // namespace studio::film

@@ -65,6 +65,10 @@ Result verifyFilmDelivery (te::Edit& edit, te::AudioTrack& track, const File& fo
         if (session.isActive())
             return Result::fail ("film cue render timed out");
 
+        session.releaseFinishedRender();
+        if (session.hasStarted()
+            || (mode != Mode::individualTracks && ! session.description().contains ("1 complete")))
+            return Result::fail ("release the offline graph after cue delivery");
         const auto delivery = session.outputDirectory();
         const String stem (film::deliveryStem (cue));
         const auto filename = mode == Mode::stereoMix ? stem + "-Stereo.wav"

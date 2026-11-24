@@ -304,7 +304,10 @@ public:
     {
         if (! edit) return;
         if (cueRender.hasStarted())
+        {
             renderStatus.setText (cueRender.description(), juce::dontSendNotification);
+            cueRender.releaseFinishedRender();
+        }
         const bool rendering = cueRender.isActive();
         const bool canRender = ! rendering && canRenderAudio && canRenderAudio();
         renderMixButton.setEnabled (canRender);
