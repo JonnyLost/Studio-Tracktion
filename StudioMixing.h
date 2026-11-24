@@ -98,6 +98,7 @@ public:
     void setDetailsExpanded (bool expanded);
     bool areDetailsExpanded() const noexcept { return detailsOpen; }
     bool isShowingAtelier() const noexcept { return atelierMode; }
+    void suspendAtelier();
    #if STUDIO_SPATIAL_TESTS
     bool verifyAtelierInspector();
    #endif
