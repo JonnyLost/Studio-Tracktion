@@ -244,6 +244,24 @@ bool InstrumentWorkspace::openAtelier (te::Plugin& candidate, te::AudioTrack& tr
         {
             if (onStage) onStage (id);
         };
+        component->onFullView = [this]
+        {
+            if (window)
+            {
+                // A separate, explicit action enlarges legacy 960x510 floating
+                // windows to the full Atelier canvas. The saved floating
+                // geometry remains the user's choice until they change it.
+                const auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (window->getBounds());
+                const auto available = display != nullptr ? display->userArea
+                    : Rectangle<int> (0, 0, appearance.px (1300), appearance.px (850));
+                const auto width = jmin (appearance.px (1240), jmax (440, available.getWidth() - appearance.px (40)));
+                const auto height = jmin (appearance.px (830), jmax (340, available.getHeight() - appearance.px (40)));
+                window->centreWithSize (width, height);
+                window->resized();
+                preferences.setValue (windowStateKey(), window->getWindowStateAsString());
+            }
+            else if (onExpand) onExpand();
+        };
         releaseEditor();
         plugin = &candidate;
         atelierMode = true;
