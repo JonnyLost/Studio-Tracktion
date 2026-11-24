@@ -17,6 +17,20 @@ const Colour ivory  { 0xfff1e2c7 };
 const Colour muted  { 0xffc5b49d };
 const Colour blue   { 0xff294660 };
 
+// MIDI 1.0 channel controllers sent to the hosted instrument, not host
+// parameters. CC7 is different from track fader; CC91 is not Stage reverb.
+struct CCSlot { const char* name; int number, initialValue; const char* meaning; };
+constexpr std::array<CCSlot, 8> liveCC {
+    CCSlot { "Modulation", 1, 0, "Mod wheel; often vibrato or orchestral dynamics" },
+    CCSlot { "Breath", 2, 0, "Breath controller; patch support varies" },
+    CCSlot { "MIDI Volume", 7, 100, "MIDI channel volume, not Studio's track fader" },
+    CCSlot { "Expression", 11, 127, "MIDI expression, separate from AU automation" },
+    CCSlot { "Sustain", 64, 0, "Damper pedal: 0 off / 127 on" },
+    CCSlot { "Resonance", 71, 64, "Resonance; only works when the patch implements CC71" },
+    CCSlot { "Brightness", 74, 64, "Filter cutoff / brightness; patch support varies" },
+    CCSlot { "Reverb", 91, 40, "MIDI reverb send, not Studio's native Stage reverb" }
+};
+
 // Portraits are the user's independent artwork collection. Audio Unit patch
 // names cannot be reliably inferred from an ARIA Player instance, so the
 // portrait is selected explicitly and stored with this instrument view.
@@ -224,6 +238,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     previewChannel.onChange = [this]
     {
         stopKeyboardNote();
+        releaseSustain();
         if (onSizePreferenceChanged) onSizePreferenceChanged();
     };
     addAndMakeVisible (previewChannel);
@@ -237,7 +252,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     articulation.setTooltip ("Open Studio's existing articulation mappings for this instrument");
     stage.setTooltip ("Open the existing Stage placement and reverb-send workspace");
 
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab })
     {
         addAndMakeVisible (*tab);
         initButton (*tab);
@@ -247,10 +262,41 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     articulationTab.onClick = [this] { setPage (1); };
     mixerTab.onClick = [this] { setPage (2); };
     advancedTab.onClick = [this] { setPage (3); };
+    ccTab.onClick = [this] { setPage (4); };
     addAndMakeVisible (fullView);
     initButton (fullView);
     fullView.setTooltip ("Enlarge this editor to show the full Cinematic Atelier layout");
     fullView.onClick = [this] { if (onFullView) onFullView(); };
+
+    initLabel (ccStatus, "Live MIDI controllers  •  select a channel and turn a knob", 11.0f, muted);
+    addAndMakeVisible (ccStatus);
+    addAndMakeVisible (sendAllCC);
+    initButton (sendAllCC);
+    sendAllCC.setTooltip ("Send all eight displayed MIDI CC values to the loaded Audio Unit. Does not write MIDI clips.");
+    sendAllCC.onClick = [this] { sendAllLiveCC(); };
+    for (size_t i = 0; i < ccKnobs.size(); ++i)
+    {
+        auto& slider = ccKnobs[i];
+        auto& label = ccLabels[i];
+        addAndMakeVisible (slider);
+        addAndMakeVisible (label);
+        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 11.0f, ivory);
+        label.setJustificationType (Justification::centred);
+        slider.setName (String (liveCC[i].name) + " (CC" + String (liveCC[i].number) + ")");
+        slider.setTooltip (String (liveCC[i].meaning) + ". Sends MIDI CC" + String (liveCC[i].number)
+            + " (0–127) on the preview channel. Requires a loaded Audio Unit.");
+        slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
+        slider.setTextBoxStyle (Slider::TextBoxBelow, false, 60, 19);
+        slider.setColour (Slider::rotarySliderFillColourId, amber);
+        slider.setColour (Slider::rotarySliderOutlineColourId, wood);
+        slider.setColour (Slider::thumbColourId, ivory);
+        slider.setColour (Slider::textBoxTextColourId, ivory);
+        slider.setColour (Slider::textBoxBackgroundColourId, walnut);
+        slider.setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.3f));
+        slider.setRange (0, 127, i == 4 ? 127 : 1);
+        slider.setValue (liveCC[i].initialValue, dontSendNotification);
+        slider.onValueChange = [this, i] { if (! restoring) sendLiveCC ((int) i); };
+    }
 
     for (size_t i = 0; i < mappingPads.size(); ++i)
     {
@@ -396,6 +442,7 @@ AtelierInstrumentEditor::~AtelierInstrumentEditor()
 {
     stopTimer();
     stopKeyboardNote();
+    releaseSustain();
     // JUCE's children outlive the function body but not the editor. Return
     // them to the inherited LookAndFeel before the owned style is destroyed.
     setLookAndFeel (nullptr);
@@ -1050,7 +1097,7 @@ void AtelierInstrumentEditor::resized()
     auto titleRow = row.removeFromTop (m.control (42, 12));
     const int tabWidth = jmin (m.span (99), jmax (m.span (52), titleRow.getWidth() / 9));
     auto tabArea = titleRow.removeFromRight (tabWidth * 4);
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab })
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab })
         tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
     const bool offerFullView = ! fullPresentation && isFloatingWindow && isFloatingWindow();
     fullView.setBounds (offerFullView
