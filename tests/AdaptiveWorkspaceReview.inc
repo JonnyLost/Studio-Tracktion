@@ -318,8 +318,30 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     setDockMode (DockMode::split);
     workspaceHeight = studio::appearance.px (270);
     resized();
-    if (auto* hosted = studio::findInstrument (*external); hosted == nullptr || ! showAtelierInstrument (*hosted))
-        return fail ("open hosted instrument in the Atelier dock");
+    // This fixture contains only verified message mappings, never invented
+    // patch/program labels or audible articulation behavior.
+    if (auto* hosted = studio::findInstrument (*external); hosted != nullptr)
+    {
+        XmlElement root ("StudioArticulations");
+        auto* profile = root.createNewChildElement ("Instrument");
+        profile->setAttribute ("instance", hosted->itemID.toString());
+        studio::writeArticulations (*profile, {
+            { "test-legato", "Legato", studio::ArticulationMessage::controller, 1, 20, 127 },
+            { "test-staccato", "Staccato", studio::ArticulationMessage::keyswitch, 1, 24, 100 }
+        });
+        external->state.setProperty ("studioArticulationMappings",
+            root.toString (XmlElement::TextFormat().singleLine()), &edit->getUndoManager());
+        if (! showAtelierInstrument (*hosted))
+            return fail ("open hosted instrument in the Atelier dock");
+    }
+    else return fail ("locate hosted AU fixture");
+    auto* atelierEditor = dynamic_cast<studio::AtelierInstrumentEditor*> (instrumentWorkspace.getEditor());
+    if (atelierEditor == nullptr || ! atelierEditor->reviewPage (0, false)
+        || ! atelierEditor->reviewSelectMappedArticulation())
+        return fail ("Atelier Main presents verified mappings and stores undoable selection");
+    if (! atelierEditor->reviewPage (1, false) || ! atelierEditor->reviewPage (2, false)
+        || ! atelierEditor->reviewPage (3, false) || ! atelierEditor->reviewPage (0, false))
+        return fail ("Atelier compact pages fit without resizing the 425-point dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
         || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
         || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
@@ -380,6 +402,24 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
             return fail ("Atelier opens at the approved 960x510 floating size");
         if (! snapshot (*floating, "15-atelier-floating-960x510"))
             return fail ("capture screenshot-sized floating Atelier");
+        if (! atelierEditor->reviewPage (0, false))
+            return fail ("Atelier starts in the compact floating presentation");
+        // Full View enlarges the SAME editor, not a duplicate AU instance.
+        if (atelierEditor->onFullView == nullptr)
+            return fail ("Atelier Full View is connected to floating window");
+        atelierEditor->onFullView();
+        if (floating != instrumentWorkspace.getEditor()->getTopLevelComponent()
+            || ! atelierEditor->reviewPage (0, true)
+            || ! snapshot (*floating, "16-atelier-full-main"))
+            return fail ("Atelier Full View opens the complete Main page");
+        if (! atelierEditor->reviewPage (1, true)
+            || ! snapshot (*floating, "17-atelier-full-articulations")
+            || ! atelierEditor->reviewPage (2, true)
+            || ! snapshot (*floating, "18-atelier-full-mixer")
+            || ! atelierEditor->reviewPage (3, true)
+            || ! snapshot (*floating, "19-atelier-full-advanced"))
+            return fail ("Atelier full pages remain in the same floating editor");
+        atelierEditor->reviewPage (0, true);
         floating->setSize (1050, 570);
         instrumentWorkspace.setFloating (false);
         instrumentWorkspace.setFloating (true);
