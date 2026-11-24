@@ -144,9 +144,26 @@ public:
     std::function<int()> getSize;
     std::function<void(int)> resizePane;
 
+    // The Instrument Editor has a deliberate, fixed Split height. Other
+    // lower workspaces continue to use the same draggable/keyboard divider.
+    void setResizeLocked (bool shouldLock)
+    {
+        if (locked == shouldLock) return;
+        locked = shouldLock;
+        setMouseCursor (locked ? MouseCursor::NormalCursor : MouseCursor::UpDownResizeCursor);
+        setWantsKeyboardFocus (! locked);
+        if (locked) giveAwayKeyboardFocus();
+        setTitle (locked ? "Instrument workspace divider" : "Resize lower workspace");
+        setDescription (locked ? "Instrument workspace height is fixed."
+                               : "Press Up or Down to resize the lower workspace.");
+        repaint();
+    }
+    bool isResizeLocked() const { return locked; }
+
     void paint (Graphics& g) override
     {
         g.fillAll (studio::colours::divider);
+        if (locked) return; // A divider line, not a misleading drag handle.
         g.setColour (hasKeyboardFocus (false) || isMouseOverOrDragging()
                          ? studio::colours::focus : studio::colours::secondary);
         for (int offset : { -10, -5, 0, 5, 10 })
@@ -155,15 +172,18 @@ public:
 
     void mouseEnter (const MouseEvent&) override { repaint(); }
     void mouseExit (const MouseEvent&) override { repaint(); }
-    void mouseDown (const MouseEvent&) override { initialSize = getSize(); }
+    void mouseDown (const MouseEvent&) override
+    {
+        if (! locked) initialSize = getSize();
+    }
     void mouseDrag (const MouseEvent& e) override
     {
-        resizePane (initialSize - e.getDistanceFromDragStartY());
+        if (! locked) resizePane (initialSize - e.getDistanceFromDragStartY());
     }
 
     bool keyPressed (const KeyPress& key) override
     {
-        if (key != KeyPress::upKey && key != KeyPress::downKey)
+        if (locked || (key != KeyPress::upKey && key != KeyPress::downKey))
             return false;
         resizePane (getSize() + studio::appearance.px (key == KeyPress::upKey ? 16 : -16));
         return true;
@@ -173,6 +193,7 @@ private:
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
     int initialSize = 0;
+    bool locked = false;
 };
 
 class AudioSettingsView final : public Viewport
@@ -614,6 +635,10 @@ public:
         workspaceDivider.getSize = [this] { return workspacePanel.getHeight(); };
         workspaceDivider.resizePane = [this] (int size)
         {
+            // Ignore even programmatic resize attempts while an instrument is
+            // docked; dragging cannot accidentally rewrite another view's size.
+            if (workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating())
+                return;
             const int nextHeight = jlimit (jmin (studio::appearance.px (minimumSplitHeight), splitLimit), splitLimit, size);
             if (dockMode != DockMode::split)
             {
@@ -1982,7 +2007,15 @@ private:
         const int available = arrangement.getHeight();
         const int headerHeight = m.control (34);
         const int dividerHeight = m.px (12);
-        const auto room = m.dockRoom (available, workspaceHeight, dockMode);
+        const bool fixedInstrument = workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating();
+        workspaceDivider.setResizeLocked (fixedInstrument);
+        // Screenshot-approved Instrument View at 100%: a 640-point lower dock
+        // including its header. On shorter MacBooks, dockRoom clamps this to
+        // retain the arrangement; only the Instrument View is fixed.
+        const int requestedHeight = fixedInstrument && dockMode == DockMode::split
+            ? jmax (m.px (640), instrumentWorkspace.minimumContentHeight() + headerHeight)
+            : workspaceHeight;
+        const auto room = m.dockRoom (available, requestedHeight, dockMode);
         splitLimit = room.splitLimit;
         const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
         workspacePanel = arrangement.removeFromBottom (panelHeight);
@@ -2060,21 +2093,6 @@ private:
         showWorkspace (workspace == destination ? Workspace::closed : destination);
     }
 
-    void fitInstrumentDockOnOpen()
-    {
-        if (instrumentWorkspace.getEditor() == nullptr || instrumentWorkspace.isFloating())
-            return;
-
-        // Atelier and native editor heights differ. At first open choose a
-        // useful dock height instead of inheriting the generic 270-point Split.
-        // Limit the preference on shorter MacBooks; layoutDock() will still
-        // clamp it to the actual available window space.
-        const auto& m = studio::appearance;
-        const int required = instrumentWorkspace.minimumContentHeight() + m.control (34);
-        const int preferred = jmin (m.px (525), getHeight() * 62 / 100);
-        workspaceHeight = jmax (workspaceHeight, jmax (required, preferred));
-    }
-
     void setDockMode (DockMode mode)
     {
         if (dockMode == mode) return;
@@ -2087,8 +2105,6 @@ private:
             workspaceHeight = jmax (workspaceHeight,
                 jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
                        getHeight() * 57 / 100));
-        if (mode == DockMode::split && workspace == Workspace::instrumentEditor)
-            fitInstrumentDockOnOpen();
         syncWorkspace();
         restoreWorkspaceScroll();
     }
@@ -2110,8 +2126,6 @@ private:
         if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
             && dockMode == DockMode::compact)
             dockMode = DockMode::split;
-        if (next == Workspace::instrumentEditor && dockMode == DockMode::split)
-            fitInstrumentDockOnOpen();
         if (next == Workspace::mix && changing)
         {
             // A click on Mixer is a change of task, not an attempt to stack a
