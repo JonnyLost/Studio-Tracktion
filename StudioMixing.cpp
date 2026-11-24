@@ -600,17 +600,26 @@ void InspectorDrawer::setEdit (te::Edit* next)
 void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
-    inspector.refresh (track, ready, canRoute, recovery, selectedClip);
-    channelStrip->refresh (track, ready, selectedClip);
     const bool needsAtelier = track != nullptr
         && dynamic_cast<te::ExternalPlugin*> (findInstrument (*track)) != nullptr;
+    if (needsAtelier)
+    {
+        // Avoid an unused meter client and non-visible channel Inspector
+        // work while Cinematic Atelier owns the right sidebar.
+        channelStrip->refresh (nullptr, false, nullptr);
+    }
+    else
+    {
+        inspector.refresh (track, ready, canRoute, recovery, selectedClip);
+        channelStrip->refresh (track, ready, selectedClip);
+    }
     if (atelierMode != needsAtelier)
     {
         atelierMode = needsAtelier;
         atelierScroll.setViewPosition (0, 0);
         resized();
     }
-    if (atelierMode) atelier->refresh (track, ready && canRoute);
+    if (atelierMode) atelier->refresh (track, ready);
     quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
