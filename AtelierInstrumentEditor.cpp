@@ -252,7 +252,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     articulation.setTooltip ("Open Studio's existing articulation mappings for this instrument");
     stage.setTooltip ("Open the existing Stage placement and reverb-send workspace");
 
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab })
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &ccTab, &advancedTab })
     {
         addAndMakeVisible (*tab);
         initButton (*tab);
@@ -280,7 +280,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         auto& label = ccLabels[i];
         addAndMakeVisible (slider);
         addAndMakeVisible (label);
-        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 11.0f, ivory);
+        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 12.4f, ivory);
         label.setJustificationType (Justification::centred);
         slider.setName (String (liveCC[i].name) + " (CC" + String (liveCC[i].number) + ")");
         slider.setTooltip (String (liveCC[i].meaning) + ". Sends MIDI CC" + String (liveCC[i].number)
@@ -1197,7 +1197,7 @@ void AtelierInstrumentEditor::resized()
     auto titleRow = row.removeFromTop (m.control (42, 12));
     const int tabWidth = jmin (m.span (105), jmax (m.span (58), titleRow.getWidth() / 11));
     auto tabArea = titleRow.removeFromRight (tabWidth * 5);
-    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &advancedTab, &ccTab })
+    for (auto* tab : { &mainTab, &articulationTab, &mixerTab, &ccTab, &advancedTab })
         tab->setBounds (tabArea.removeFromLeft (tabWidth).reduced (m.px (2), m.px (1)));
     const bool offerFullView = ! fullPresentation && isFloatingWindow && isFloatingWindow();
     fullView.setBounds (offerFullView
