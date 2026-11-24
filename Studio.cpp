@@ -4740,9 +4740,9 @@ int StudioView::runFilmScoringReview (const File& output)
     auto* score = tracks.getFirst();
     if (score == nullptr) return fail ("create a score track");
     score->setName ("Opening score");
-    auto clip = score->insertMIDIClip ("Opening theme",
-        { te::TimePosition(), te::TimePosition::fromSeconds (10) }, nullptr);
-    if (clip == nullptr) return fail ("create an arrangement region");
+    if (score->insertMIDIClip ("Opening theme",
+            { te::TimePosition(), te::TimePosition::fromSeconds (10) }, nullptr) == nullptr)
+        return fail ("create an arrangement region");
     setDockMode (DockMode::expanded);
     setInspectorOpen (true, false);
     pictureButton.onClick();
