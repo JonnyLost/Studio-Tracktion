@@ -40,7 +40,7 @@ public:
         cancel();
         queue.reset();  // Tracktion joins/cancels the render before Edit release.
         message.clear();
-        renderedDirectory = {};
+        renderedDirectory = juce::File();
         currentCue = {};
         currentRange = {};
     }
@@ -105,9 +105,9 @@ public:
         base.sampleRate = 48000.0;
         base.bitDepth = 24;
         base.channelLayout = "stereo";
-        base.time = te::TimeRange {
-            te::TimePosition::fromSeconds (range->timelineStart),
-            te::TimePosition::fromSeconds (range->timelineEnd)
+        base.time = tracktion::TimeRange {
+            tracktion::TimePosition::fromSeconds (range->timelineStart),
+            tracktion::TimePosition::fromSeconds (range->timelineEnd)
         };
         // Fixed length cue start and end, for sample-aligned delivery.
         // Reverb tails are deliberately not appended to these outputs.
