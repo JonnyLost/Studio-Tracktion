@@ -1390,6 +1390,7 @@ public:
 
     void setInspectorOpen (bool value, bool persist = true)
     {
+        if (! value) inspectorDrawer.suspendAtelier();
         inspectorOpen = value;
         if (value && workspace == Workspace::channel)
             showWorkspace (Workspace::closed); // Don't display duplicate Channel controls.
