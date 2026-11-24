@@ -2008,7 +2008,10 @@ private:
     {
         const auto& m = studio::appearance;
         const int available = arrangement.getHeight();
-        const int headerHeight = m.control (34);
+        const bool unifiedInstrumentHeader = workspace == Workspace::instrumentEditor
+            && dockMode != DockMode::compact && ! instrumentWorkspace.isFloating()
+            && instrumentWorkspace.getEditor() != nullptr;
+        const int headerHeight = m.control (unifiedInstrumentHeader ? 42 : 34);
         const int dividerHeight = m.px (12);
         const bool fixedInstrument = workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating();
         workspaceDivider.setResizeLocked (fixedInstrument);
@@ -2047,7 +2050,21 @@ private:
             if (it->isVisible())
                 it->setBounds (header.removeFromRight (m.span (94)).reduced (m.px (2), 0));
         }
-        workspaceTitle.setBounds (header);
+        if (unifiedInstrumentHeader)
+        {
+            // One compact bar: the real instrument selector and Float action
+            // sit beside the existing Browser/Inspector/layout controls.
+            // Remove the duplicate Instrument Editor label and second row.
+            workspaceTitle.setVisible (false);
+            workspaceTitle.setBounds ({});
+            instrumentWorkspace.layoutDockedHeader (this, header.withWidth (jmin (header.getWidth(), m.span (450))));
+        }
+        else
+        {
+            instrumentWorkspace.layoutDockedHeader (nullptr, {});
+            workspaceTitle.setVisible (workspace != Workspace::closed);
+            workspaceTitle.setBounds (header);
+        }
         workspaceSummary.setBounds (body.reduced (m.px (9), m.px (1)));
        #if JUCE_MAC
         seatingWorkspace.setBounds (body);
