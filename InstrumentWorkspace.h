@@ -37,6 +37,7 @@ public:
     void appearanceChanged();
     void setFloating (bool);
     bool isFloating() const { return window != nullptr; }
+    bool isAtelier() const { return atelierMode; }
     NativeInstrumentEditor* getEditor() const { return editor.get(); }
     tracktion::Plugin* getPlugin() const { return plugin.get(); }
     void resized() override;
@@ -69,6 +70,7 @@ private:
     void rememberView();
     void releaseEditor();
     void populateChoices (tracktion::AudioTrack*);
+    const char* windowStateKey() const;
     int editorHeight() const;
 };
 }

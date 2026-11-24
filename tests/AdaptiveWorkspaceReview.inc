@@ -321,16 +321,72 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (auto* hosted = studio::findInstrument (*external); hosted == nullptr || ! showAtelierInstrument (*hosted))
         return fail ("open hosted instrument in the Atelier dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
+        || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
+        || performance.isVisible() || articulationStrip.isVisible()
         || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
-        return fail ("Atelier opens without mandatory vertical scrolling at 1280 x 800");
+        return fail ("Atelier uses one fixed, readable dock without a duplicate Performance panel at 1280 x 800");
     if (! snapshot (*this, "13-atelier-no-scroll-1280x800"))
         return fail ("capture Atelier default dock height");
-    instrumentWorkspace.setFloating (true);
-    if (! instrumentWorkspace.isFloating())
-        return fail ("Atelier opens a floating window");
-    instrumentWorkspace.setFloating (false);
-    if (instrumentWorkspace.isFloating() || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
-        return fail ("Atelier docks at a readable height without a scrollbar");
+
+    // The screenshot-approved Instrument View is fixed in Split, unlike the
+    // resizable Piano Roll and other workspaces. Test the callback as well as
+    // the displayed divider lock: no stale drag may alter a future workspace.
+    if (! workspaceDivider.isResizeLocked()) return fail ("Instrument divider is locked");
+    const int genericDockHeight = workspaceHeight;
+    const int fixedDockHeight = workspacePanel.getHeight();
+    workspaceDivider.resizePane (studio::appearance.px (240));
+    if (workspaceHeight != genericDockHeight || workspacePanel.getHeight() != fixedDockHeight)
+        return fail ("Instrument divider cannot resize or change other workspaces");
+    setSize (1536, 960);
+    if (workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
+        return fail ("Atelier Split uses its fixed screenshot height when room permits");
+    if (! snapshot (*this, "14-atelier-fixed-1536x960"))
+        return fail ("capture fixed Atelier dock");
+
+    showWorkspace (Workspace::piano);
+    if (workspaceDivider.isResizeLocked()) return fail ("Piano Roll divider stays resizable");
+    workspaceDivider.resizePane (studio::appearance.px (320));
+    if (workspaceHeight == genericDockHeight)
+        return fail ("Other workspace dividers still change their height");
+    showWorkspace (Workspace::instrumentEditor);
+    if (! workspaceDivider.isResizeLocked()
+        || workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
+        return fail ("Returning to Atelier restores fixed size without changing the Piano Roll preference");
+    workspaceHeight = genericDockHeight;
+    setSize (1280, 800);
+
+    // Isolate Atelier geometry from Synth/Sampler preferences, verify the
+    // screenshot-sized first float, and preserve the user's resized window.
+    {
+        const String key = "studio.atelierInstrumentWindow";
+        const String saved = preferences.getValue (key);
+        const String nativeWindowState = preferences.getValue ("studio.instrumentEditorWindow");
+        const ScopeGuard restoreAtelierState { [&]
+        {
+            if (saved.isEmpty()) preferences.removeValue (key);
+            else preferences.setValue (key, saved);
+        } };
+        preferences.removeValue (key);
+        instrumentWorkspace.setFloating (true);
+        auto* floating = instrumentWorkspace.getEditor()->getTopLevelComponent();
+        if (! instrumentWorkspace.isFloating() || floating == nullptr
+            || floating->getWidth() != studio::appearance.px (960)
+            || floating->getHeight() != studio::appearance.px (510))
+            return fail ("Atelier opens at the approved 960x510 floating size");
+        if (! snapshot (*floating, "15-atelier-floating-960x510"))
+            return fail ("capture screenshot-sized floating Atelier");
+        floating->setSize (1050, 570);
+        instrumentWorkspace.setFloating (false);
+        instrumentWorkspace.setFloating (true);
+        floating = instrumentWorkspace.getEditor()->getTopLevelComponent();
+        if (floating == nullptr || floating->getWidth() != 1050 || floating->getHeight() != 570
+            || preferences.getValue ("studio.instrumentEditorWindow") != nativeWindowState)
+            return fail ("Floating Atelier saves its size independently of native windows");
+        instrumentWorkspace.setFloating (false);
+    }
+    if (instrumentWorkspace.isFloating() || ! workspaceDivider.isResizeLocked()
+        || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
+        return fail ("Atelier redocks at its fixed, readable height without a scrollbar");
 
     for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1600, 960) })
         for (const auto scale : studio::AppearanceMetrics::interfaceOptions)
