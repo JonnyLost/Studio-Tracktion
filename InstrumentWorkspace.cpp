@@ -119,6 +119,13 @@ InstrumentWorkspace::InstrumentWorkspace (PropertiesFile& settings) : preference
 
 InstrumentWorkspace::~InstrumentWorkspace() { clear(); }
 
+const char* InstrumentWorkspace::windowStateKey() const
+{
+    // Native Synth/Sampler geometry must not override the screenshot-approved
+    // Cinematic Atelier opening size, or vice versa.
+    return atelierMode ? "studio.atelierInstrumentWindow" : "studio.instrumentEditorWindow";
+}
+
 void InstrumentWorkspace::setProject (const File& file)
 {
     clear();
@@ -150,7 +157,7 @@ void InstrumentWorkspace::clear()
 {
     if (window)
     {
-        preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+        preferences.setValue (windowStateKey(), window->getWindowStateAsString());
         window.reset();
     }
     addAndMakeVisible (content);
@@ -263,7 +270,7 @@ void InstrumentWorkspace::updateSelection (te::AudioTrack* selected, const Array
     {
         if (window)
         {
-            preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+            preferences.setValue (windowStateKey(), window->getWindowStateAsString());
             window.reset();
             addAndMakeVisible (content);
         }
@@ -304,7 +311,7 @@ void InstrumentWorkspace::saveSession (bool open, DockMode mode)
     session.setProperty ("floating", window != nullptr, nullptr);
     session.setProperty ("atelier", atelierMode, nullptr);
     session.setProperty ("layout", static_cast<int> (mode), nullptr);
-    if (window) preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+    if (window) preferences.setValue (windowStateKey(), window->getWindowStateAsString());
     if (const auto xml = session.createXml())
         preferences.setValue (projectKey, xml->toString (XmlElement::TextFormat().singleLine()));
 }
@@ -346,8 +353,12 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     {
         window = std::make_unique<Window> (*this);
         window->setName (plugin->getName());
-        window->centreWithSize (820, 620);
-        window->restoreWindowStateFromString (preferences.getValue ("studio.instrumentEditorWindow"));
+        // The MacBook-approved Atelier composition uses a wide, low window
+        // (about 960 x 510 logical points at 100%); a user's later resize is
+        // restored independently of the native Synth/Sampler window size.
+        window->centreWithSize (atelierMode ? appearance.px (960) : 820,
+                                atelierMode ? appearance.px (510) : 620);
+        window->restoreWindowStateFromString (preferences.getValue (windowStateKey()));
         if (atelierMode)
         {
             // The saved window geometry may predate the Atelier layout.
@@ -360,7 +371,7 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     }
     else
     {
-        preferences.setValue ("studio.instrumentEditorWindow", window->getWindowStateAsString());
+        preferences.setValue (windowStateKey(), window->getWindowStateAsString());
         window.reset();
         addAndMakeVisible (content);
         if (onDock) onDock();
