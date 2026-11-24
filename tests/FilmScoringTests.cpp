@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../FilmScoringCore.h"
 #include "../FilmScoringState.h"
+#include "../FilmStemState.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -103,5 +104,21 @@ int main()
     assert (decode (reloaded).find ("hit1")->pictureFrame == 300);
     assert (decode (reloaded).findCue ("1M1")->startPictureFrame == 0);
     assert (decode (reloaded).findCue ("1M2") != nullptr);
+    // Family mappings are separate, undoable and included in saved Edit XML.
+    std::vector<StemAssignment> stemMap;
+    assert (setStemFamily (stemMap, "1001", StemFamily::strings));
+    assert (setStemFamily (stemMap, "1002", StemFamily::woodwinds));
+    saveStemAssignments (root, stemMap, &undo);
+    assert (readStemAssignments (root).size() == 2);
+    assert (undo.undo());
+    assert (readStemAssignments (root).empty());
+    assert (undo.redo());
+    assert (familyForTrack (readStemAssignments (root), "1002") == StemFamily::woodwinds);
+    const auto withStemXML = root.createXml();
+    assert (withStemXML != nullptr);
+    const auto withStems = juce::ValueTree::fromXml (*withStemXML);
+    assert (familyForTrack (readStemAssignments (withStems), "1001") == StemFamily::strings);
+    assert (decode (withStems).findCue ("1M1") != nullptr);
+
     std::cout << "Film scoring timing, spotting, and persistence passed\n";
 }
