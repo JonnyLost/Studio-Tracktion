@@ -436,6 +436,28 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
                                 dontSendNotification);
         loadArtwork();
     }
+    // A floating full editor can change the same art, CC values, and
+    // audition channel. Poll only the tiny saved-state strings: images are
+    // decoded only when the selected portrait actually changes.
+    const auto sharedPortrait = chosen->state.getProperty (portraitProperty).toString();
+    if (sharedPortrait != portraitName)
+    {
+        int selection = 1;
+        for (int i = 0; i < artworkPicker.getNumItems(); ++i)
+            if (artworkPicker.getItemText (i) == sharedPortrait)
+                selection = artworkPicker.getItemId (i);
+        const ScopedValueSetter<bool> hold (updating, true);
+        portraitName = selection == 1 ? String() : sharedPortrait;
+        artworkPicker.setSelectedId (selection, dontSendNotification);
+        loadArtwork();
+    }
+    const int updatedChannel = jlimit (1, 16,
+        (int) chosen->state.getProperty (channelProperty, midiChannel.getSelectedId()));
+    if (updatedChannel != midiChannel.getSelectedId())
+    {
+        releaseSustain();
+        midiChannel.setSelectedId (updatedChannel, dontSendNotification);
+    }
     const auto saved = chosen->state.getProperty (ccProperty).toString();
     if (saved != cachedCCState)
     {
