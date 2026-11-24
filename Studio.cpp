@@ -5153,15 +5153,19 @@ int StudioView::runInterfaceReview (const File& output)
     if (! capture ("mixer-focused-1280x800.png"))
         return fail ("write Mixer-first arrangement screenshot");
     setDockMode (DockMode::expanded);
-    // The Inspector follows the selected track while leaving the arrangement
-    // geometry untouched; closing it must restore a full-width work surface.
+    // The Inspector owns a right-hand column instead of covering either
+    // arrangement or lower workspace. Closing returns the full available width.
     const auto unclippedRuler = ruler;
+    const int timelineRightBefore = timeline.getRight();
     setInspectorOpen (true, false);
     timerCallback();
     timerCallback();
     if (! inspectorDrawer.isVisible() || inspectorDrawer.getWidth() < studio::appearance.span (225)
-        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID || ruler != unclippedRuler)
-        return fail ("right Inspector follows selected channel without changing ruler");
+        || inspectorDrawer.inspectedTrack() != tracks[1]->itemID
+        || timeline.getRight() > inspectorDrawer.getX()
+        || workspacePanel.getRight() > inspectorDrawer.getX()
+        || timeline.getRight() >= timelineRightBefore || ruler == unclippedRuler)
+        return fail ("right Inspector owns a column without covering timeline or lower workspace");
     if (! capture ("right-inspector-1280x800.png")) return fail ("write right Inspector screenshot");
     inspectorDrawer.setDetailsExpanded (true);
     if (! inspectorDrawer.areDetailsExpanded())
@@ -5179,7 +5183,8 @@ int StudioView::runInterfaceReview (const File& output)
         return fail ("right Inspector fits compact MacBook");
     if (! capture ("right-inspector-1024x640.png")) return fail ("write compact Inspector screenshot");
     setInspectorOpen (false, false);
-    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty())
+    if (inspectorDrawer.isVisible() || ! inspectorDrawer.getBounds().isEmpty()
+        || ruler != unclippedRuler || timeline.getRight() != timelineRightBefore)
         return fail ("hiding Inspector restores full-width arrangement");
     setSize (1280, 800);
     trackActions.selectTrack (tracks[1]->itemID);
