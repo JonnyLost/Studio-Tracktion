@@ -40,6 +40,8 @@ public:
     bool essentialControlsFit() const;
     bool reviewPage (int requested, bool shouldBeFull);
     bool reviewSelectMappedArticulation();
+    bool reviewStageEditing();
+    bool reviewKeyboardHitMap() const;
    #endif
 
 private:
