@@ -593,6 +593,7 @@ void InspectorDrawer::setEdit (te::Edit* next)
     inspector.setEdit (next);
     channelStrip->setEdit (next);
     atelier->setEdit (next);
+    selectedTrackId = {};
     scroll.setViewPosition (0, 0);
     atelierScroll.setViewPosition (0, 0);
 }
@@ -600,6 +601,7 @@ void InspectorDrawer::setEdit (te::Edit* next)
 void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
+    selectedTrackId = track != nullptr ? track->itemID : te::EditItemID {};
     const bool needsAtelier = track != nullptr
         && dynamic_cast<te::ExternalPlugin*> (findInstrument (*track)) != nullptr;
     if (needsAtelier)
@@ -629,7 +631,7 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
 
 te::EditItemID InspectorDrawer::inspectedTrack() const
 {
-    return inspector.inspectedTrack();
+    return selectedTrackId;
 }
 
 void InspectorDrawer::appearanceChanged()
