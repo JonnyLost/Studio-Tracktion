@@ -74,5 +74,42 @@ int main()
     sync.reset();
     sample.videoDurationSeconds = 0;
     assert (sync.update (picture, sample).seek);
+    // At 24 fps, a six-frame lag is measured in signed source frames.
+    sync.reset();
+    sample.videoOpen = true;
+    sample.visible = true;
+    sample.videoDurationSeconds = 0;
+    sample.transportPlaying = false;
+    sample.videoPlaying = false;
+    sample.timelineSeconds = 12.0;
+    sample.videoSeconds = 1.75;
+    sample.tickMillis = 3000;
+    auto behind = sync.update (picture, sample);
+    assert (behind.seek);
+    assert (std::abs (behind.driftFrames + 6.0) < 1e-7);
+
+    // A manual re-align bypasses the throttle, including while stopped.
+    sample.videoSeconds = behind.targetSeconds;
+    sample.tickMillis = 3010;
+    assert (! sync.update (picture, sample).seek);
+    sync.reset();
+    sample.tickMillis = 3020;
+    assert (sync.update (picture, sample).seek);
+
+    // Duration metadata must be finite before seeking the native player.
+    sample.videoDurationSeconds = std::numeric_limits<double>::infinity();
+    sample.tickMillis = 3100;
+    assert (! sync.update (picture, sample).seek);
+
+    // 29.97 drop-frame preview uses the exact rational frame rate, not 30.
+    picture.rate = Rate::fps2997DF;
+    picture.pictureStartFrame = 0;
+    sample.videoDurationSeconds = 0;
+    sample.timelineSeconds = frameSeconds (17982, picture.rate);
+    sample.videoSeconds = sample.timelineSeconds;
+    sync.reset();
+    const auto df = sync.update (picture, sample);
+    assert (df.seek && std::abs (df.driftFrames) < 1.0);
+
     std::cout << "Picture sync state, loop, drift, stop and seek checks passed\n";
 }
