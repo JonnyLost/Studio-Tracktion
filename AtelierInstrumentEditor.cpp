@@ -988,6 +988,39 @@ void AtelierInstrumentEditor::resized()
 }
 
 #if STUDIO_SPATIAL_TESTS
+bool AtelierInstrumentEditor::reviewPage (int requested, bool shouldBeFull)
+{
+    setPage (requested);
+    if (page != requested || fullPresentation != shouldBeFull) return false;
+    const auto frame = getLocalBounds();
+    if (! frame.contains (portraitBounds) || portraitBounds.isEmpty()
+        || ! frame.contains (title.getBounds()) || ! frame.contains (mainTab.getBounds())
+        || ! frame.contains (advancedTab.getBounds()))
+        return false;
+    if (shouldBeFull != ! keyboardBounds.isEmpty()) return false;
+    if (requested == 0 || requested == 2)
+        if (mixerBounds.isEmpty() || ! volume.isVisible() || ! frame.contains (volume.getBounds())
+            || ! frame.contains (pan.getBounds()))
+            return false;
+    if (requested == 1)
+        if (mappingBounds.isEmpty() || ! articulation.isVisible() || ! frame.contains (articulation.getBounds()))
+            return false;
+    if (requested == 3)
+        if (routingBounds.isEmpty() || ! original.isVisible() || ! frame.contains (original.getBounds()))
+            return false;
+    return true;
+}
+
+bool AtelierInstrumentEditor::reviewSelectMappedArticulation()
+{
+    refreshArticulations();
+    if (currentMappings.empty() || instrument == nullptr || track() == nullptr)
+        return false;
+    const auto id = currentMappings.front().id;
+    selectArticulation (0);
+    return activeMappingId == id && mappingPads.front().getToggleState();
+}
+
 bool AtelierInstrumentEditor::verifyBindings()
 {
     if (auto* fader = volumePlugin())
