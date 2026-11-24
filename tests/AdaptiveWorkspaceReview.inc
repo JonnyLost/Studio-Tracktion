@@ -321,8 +321,10 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (auto* hosted = studio::findInstrument (*external); hosted == nullptr || ! showAtelierInstrument (*hosted))
         return fail ("open hosted instrument in the Atelier dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
+        || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
+        || performance.isVisible() || articulationStrip.isVisible()
         || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
-        return fail ("Atelier opens without mandatory vertical scrolling at 1280 x 800");
+        return fail ("Atelier uses one fixed, readable dock without a duplicate Performance panel at 1280 x 800");
     if (! snapshot (*this, "13-atelier-no-scroll-1280x800"))
         return fail ("capture Atelier default dock height");
 
