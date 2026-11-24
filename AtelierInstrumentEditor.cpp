@@ -695,6 +695,103 @@ void AtelierInstrumentEditor::paintKeyboardReference (Graphics& g) const
         }
 }
 
+bool AtelierInstrumentEditor::canPreviewKeyboard() const
+{
+    auto* source = track();
+    auto* hosted = dynamic_cast<te::ExternalPlugin*> (instrument.get());
+    return source != nullptr && hosted != nullptr && hosted->getAudioPluginInstance() != nullptr
+        && instrument->isEnabled() && ! source->isFrozen (te::Track::anyFreeze)
+        && ! source->edit.getTransport().isRecording()
+        && source->edit.getCurrentPlaybackContext() != nullptr;
+}
+
+int AtelierInstrumentEditor::keyboardNoteAt (Point<int> position) const
+{
+    if (! fullPresentation || keyboardBounds.isEmpty()) return -1;
+    auto keys = keyboardBounds.reduced (appearance.px (12), appearance.px (7));
+    keys.removeFromTop (appearance.control (18, 9));
+    if (! keys.contains (position) || keys.getWidth() < 42) return -1;
+    constexpr std::array<int, 7> step { 0, 2, 4, 5, 7, 9, 11 };
+    constexpr std::array<bool, 7> blackAfter { true, true, false, true, true, true, false };
+    const float keyWidth = (float) keys.getWidth() / 42.0f;
+    // Black keys are painted above white keys, so hit-test them first.
+    if (position.y < keys.getY() + keys.getHeight() * .62f)
+        for (int i = 0; i < 41; ++i)
+            if (blackAfter[(size_t) (i % 7)])
+            {
+                const float left = keys.getX() + keyWidth * (i + 1) - keyWidth * .31f;
+                if (position.x >= left && position.x < left + keyWidth * .62f)
+                    return 36 + (i / 7) * 12 + step[(size_t) (i % 7)] + 1;
+            }
+    const int white = jlimit (0, 41, (int) ((position.x - keys.getX()) / keyWidth));
+    return 36 + (white / 7) * 12 + step[(size_t) (white % 7)];
+}
+
+void AtelierInstrumentEditor::stopKeyboardNote()
+{
+    if (heldPreviewNote < 0) return;
+    if (auto* source = track())
+        source->injectLiveMidiMessage (MidiMessage::noteOff (heldPreviewChannel, heldPreviewNote), {});
+    heldPreviewNote = -1;
+}
+
+void AtelierInstrumentEditor::previewKeyboardNote (int note)
+{
+    if (note == heldPreviewNote) return;
+    stopKeyboardNote();
+    if (note < 0 || note > 127 || ! canPreviewKeyboard()) return;
+    auto* source = track();
+    if (source == nullptr) return;
+    const int channel = jlimit (1, 16, previewChannel.getSelectedId());
+
+    // The same verified, per-instrument active articulation is sent before a
+    // preview note, using the same track injection route as Studio's palette.
+    // No guessed CC1/CC11 or instrument-specific keyswitch is synthesized.
+    for (const auto& mapping : currentMappings)
+        if (mapping.id == activeMappingId && mapping.channel == channel)
+        {
+            if (mapping.message == ArticulationMessage::controller)
+                source->injectLiveMidiMessage (MidiMessage::controllerEvent (
+                    channel, mapping.number, mapping.value), {});
+            else
+            {
+                source->injectLiveMidiMessage (MidiMessage::noteOn (
+                    channel, mapping.number, (uint8) mapping.value), {});
+                source->injectLiveMidiMessage (MidiMessage::noteOff (channel, mapping.number), {});
+            }
+            break;
+        }
+    source->injectLiveMidiMessage (MidiMessage::noteOn (channel, note, (uint8) 100), {});
+    heldPreviewNote = note;
+    heldPreviewChannel = channel;
+}
+
+void AtelierInstrumentEditor::mouseDown (const MouseEvent& event)
+{
+    previewKeyboardNote (keyboardNoteAt (event.getPosition()));
+}
+
+void AtelierInstrumentEditor::mouseDrag (const MouseEvent& event)
+{
+    if (event.mods.isAnyMouseButtonDown())
+        previewKeyboardNote (keyboardNoteAt (event.getPosition()));
+}
+
+void AtelierInstrumentEditor::mouseUp (const MouseEvent&)
+{
+    stopKeyboardNote();
+}
+
+void AtelierInstrumentEditor::mouseExit (const MouseEvent&)
+{
+    stopKeyboardNote();
+}
+
+void AtelierInstrumentEditor::focusLost (FocusChangeType)
+{
+    stopKeyboardNote();
+}
+
 void AtelierInstrumentEditor::paint (Graphics& g)
 {
     auto canvas = getLocalBounds().toFloat();
