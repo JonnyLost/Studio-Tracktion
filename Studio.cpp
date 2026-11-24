@@ -31,6 +31,7 @@ using namespace tracktion::literals;
 #include "SamplerReviewCapture.h"
 #include "StudioSynth.h"
 #include "InstrumentWorkspace.h"
+#include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
 #include "Seating/SeatingWorkspace.h"
 
