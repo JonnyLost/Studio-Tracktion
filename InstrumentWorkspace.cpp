@@ -97,13 +97,18 @@ InstrumentWorkspace::Content::Content (InstrumentWorkspace& workspace) : host (w
 void InstrumentWorkspace::Content::resized()
 {
     auto area = getLocalBounds();
-    const auto rowHeight = appearance.control (30, 12);
-    auto toolbar = area.removeFromTop (rowHeight + appearance.px (6)).reduced (appearance.px (12), appearance.px (3));
-    const auto actionWidth = jmin (appearance.span (88), toolbar.getWidth() / 4);
-    if (expand.isVisible())
-        expand.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
-    floating.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
-    choice.setBounds (toolbar.withWidth (jmin (toolbar.getWidth(), appearance.span (390))));
+    if (! host.dockedHeader)
+    {
+        // Floating windows retain their compact selector/Dock toolbar. Studio
+        // provides these same controls in its own header when docked.
+        const auto rowHeight = appearance.control (30, 12);
+        auto toolbar = area.removeFromTop (rowHeight + appearance.px (6)).reduced (appearance.px (12), appearance.px (3));
+        const auto actionWidth = jmin (appearance.span (88), toolbar.getWidth() / 4);
+        if (expand.isVisible())
+            expand.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
+        floating.setBounds (toolbar.removeFromRight (actionWidth).reduced (appearance.px (2), 0));
+        choice.setBounds (toolbar.withWidth (jmin (toolbar.getWidth(), appearance.span (390))));
+    }
     if (host.editor) host.editor->setBounds (area);
 }
 
@@ -155,6 +160,7 @@ void InstrumentWorkspace::releaseEditor()
 
 void InstrumentWorkspace::clear()
 {
+    layoutDockedHeader (nullptr, {});
     if (window)
     {
         preferences.setValue (windowStateKey(), window->getWindowStateAsString());
@@ -330,7 +336,9 @@ bool InstrumentWorkspace::rememberedAtelier() const { return static_cast<bool> (
 int InstrumentWorkspace::minimumContentHeight() const
 {
     if (! editor || window) return appearance.control (48, 13);
-    return editorHeight();
+    // Docked selector and Float now live in the host header; do not reserve
+    // a second invisible toolbar before checking for vertical overflow.
+    return editor->minimumDockHeight();
 }
 
 int InstrumentWorkspace::editorHeight() const
@@ -351,6 +359,9 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     if (makeWindow == isFloating() || ! editor) return;
     if (makeWindow)
     {
+        // Reparent selector and Float/Dock to the content before that content
+        // moves into the top-level window's Viewport.
+        layoutDockedHeader (nullptr, {});
         window = std::make_unique<Window> (*this);
         window->setName (plugin->getName());
         // The MacBook-approved Atelier composition uses a wide, low window
@@ -382,10 +393,37 @@ void InstrumentWorkspace::setFloating (bool makeWindow)
     if (onPreferenceChange) onPreferenceChange();
 }
 
+void InstrumentWorkspace::layoutDockedHeader (Component* parent, Rectangle<int> bounds)
+{
+    const bool useDockHeader = parent != nullptr && window == nullptr && editor != nullptr;
+    Component* owner = useDockHeader ? parent : static_cast<Component*> (&content);
+
+    // The controls themselves move, not the instrument/plugin or any state.
+    // Reparent only when necessary: resizing must not dismiss an open menu.
+    if (content.choice.getParentComponent() != owner)
+        owner->addAndMakeVisible (content.choice);
+    if (content.floating.getParentComponent() != owner)
+        owner->addAndMakeVisible (content.floating);
+    dockedHeader = useDockHeader;
+    content.expand.setVisible (! useDockHeader && window == nullptr);
+
+    if (useDockHeader)
+    {
+        const auto gap = appearance.px (7);
+        const auto buttonWidth = jmin (appearance.span (76), bounds.getWidth() / 3);
+        auto floatArea = bounds.removeFromRight (buttonWidth);
+        bounds.removeFromRight (jmin (gap, bounds.getWidth()));
+        content.floating.setBounds (floatArea.reduced (appearance.px (2), 0));
+        content.choice.setBounds (bounds.withWidth (jmin (bounds.getWidth(), appearance.span (350)))
+                                      .reduced (appearance.px (2), 0));
+    }
+    content.resized();
+}
+
 void InstrumentWorkspace::resized()
 {
     content.floating.setButtonText (window ? "Dock" : "Float");
-    content.expand.setVisible (! window);
+    content.expand.setVisible (! window && ! dockedHeader);
     auto area = getLocalBounds();
     if (! window)
     {

@@ -322,6 +322,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         return fail ("open hosted instrument in the Atelier dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
         || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
+        || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
         || performance.isVisible() || articulationStrip.isVisible()
         || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
         return fail ("Atelier uses one fixed, readable dock without a duplicate Performance panel at 1280 x 800");
@@ -344,12 +345,14 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         return fail ("capture fixed Atelier dock");
 
     showWorkspace (Workspace::piano);
+    if (instrumentWorkspace.hasDockedHeader() || ! workspaceTitle.isVisible())
+        return fail ("Piano Roll restores its own header without floating instrument controls");
     if (workspaceDivider.isResizeLocked()) return fail ("Piano Roll divider stays resizable");
     workspaceDivider.resizePane (studio::appearance.px (320));
     if (workspaceHeight == genericDockHeight)
         return fail ("Other workspace dividers still change their height");
     showWorkspace (Workspace::instrumentEditor);
-    if (! workspaceDivider.isResizeLocked()
+    if (! workspaceDivider.isResizeLocked() || ! instrumentWorkspace.hasDockedHeader()
         || workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
         return fail ("Returning to Atelier restores fixed size without changing the Piano Roll preference");
     workspaceHeight = genericDockHeight;
@@ -368,6 +371,8 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         } };
         preferences.removeValue (key);
         instrumentWorkspace.setFloating (true);
+        if (instrumentWorkspace.hasDockedHeader())
+            return fail ("Floating Atelier returns selector and Dock button to its own toolbar");
         auto* floating = instrumentWorkspace.getEditor()->getTopLevelComponent();
         if (! instrumentWorkspace.isFloating() || floating == nullptr
             || floating->getWidth() != studio::appearance.px (960)
@@ -385,6 +390,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         instrumentWorkspace.setFloating (false);
     }
     if (instrumentWorkspace.isFloating() || ! workspaceDivider.isResizeLocked()
+        || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
         || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
         return fail ("Atelier redocks at its fixed, readable height without a scrollbar");
 

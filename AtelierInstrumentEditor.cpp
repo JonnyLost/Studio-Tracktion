@@ -40,23 +40,18 @@ Image loadStudy()
     return {};
 }
 
-void drawCover (Graphics& g, const Image& image, Rectangle<int> destination)
+void drawContained (Graphics& g, const Image& image, Rectangle<int> destination)
 {
+    // The entire approved instrument portrait must remain visible: never
+    // crop scrolls, scroll heads, bows, bells, instrument feet or borders.
     if (! image.isValid() || destination.isEmpty()) return;
-    const auto ratio = static_cast<float> (destination.getWidth()) / destination.getHeight();
-    int sx = 0, sy = 0, sw = image.getWidth(), sh = image.getHeight();
-    if (static_cast<float> (sw) / sh > ratio)
-    {
-        sw = jmax (1, roundToInt (sh * ratio));
-        sx = (image.getWidth() - sw) / 2;
-    }
-    else
-    {
-        sh = jmax (1, roundToInt (sw / ratio));
-        sy = (image.getHeight() - sh) / 2;
-    }
-    g.drawImage (image, destination.getX(), destination.getY(), destination.getWidth(), destination.getHeight(),
-                 sx, sy, sw, sh);
+    const float scale = jmin ((float) destination.getWidth() / image.getWidth(),
+                              (float) destination.getHeight() / image.getHeight());
+    const int width = jmax (1, roundToInt (image.getWidth() * scale));
+    const int height = jmax (1, roundToInt (image.getHeight() * scale));
+    auto fitted = Rectangle<int> (width, height).withCentre (destination.getCentre());
+    g.drawImage (image, fitted.getX(), fitted.getY(), fitted.getWidth(), fitted.getHeight(),
+                 0, 0, image.getWidth(), image.getHeight());
 }
 
 void initLabel (Label& label, const String& text, float size, Colour colour, bool bold = false)
@@ -280,7 +275,21 @@ void AtelierInstrumentEditor::loadPortrait()
     {
         const auto artwork = portraitDirectory().getChildFile (portraitName + ".jpg");
         if (artwork.existsAsFile())
+        {
             portraitImage = ImageFileFormat::loadFrom (artwork);
+            if (portraitImage.isValid())
+            {
+                // Cap cached decoded art to a generous instrument-card size,
+                // never resample on the audio callback or every paint.
+                const float scale = jmin (1.0f, jmin (900.0f / portraitImage.getWidth(),
+                                                       1100.0f / portraitImage.getHeight()));
+                if (scale < 1.0f)
+                    portraitImage = portraitImage.rescaled (
+                        jmax (1, roundToInt (portraitImage.getWidth() * scale)),
+                        jmax (1, roundToInt (portraitImage.getHeight() * scale)),
+                        Graphics::ResamplingQuality::mediumResamplingQuality);
+            }
+        }
     }
 
     sceneCaption.setText (portraitName.isEmpty() ? "BLUE-HOUR STUDY"
@@ -341,16 +350,21 @@ void AtelierInstrumentEditor::paint (Graphics& g)
         Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (portraitBounds);
         const bool artworkInstalled = portraitImage.isValid();
-        drawCover (g, artworkInstalled ? portraitImage : blueHour, portraitBounds);
-        // Retain the Blue-Hour palette but do not obscure the instrument.
-        g.setGradientFill (ColourGradient (artworkInstalled ? Colour (0x08100808) : Colour (0x50100808),
-                                            portraitBounds.getTopLeft().toFloat(),
-                                            artworkInstalled ? Colour (0x89160d0a) : Colour (0xdd160d0a),
-                                            portraitBounds.getBottomRight().toFloat(), false));
+        g.setColour (wood.darker (0.15f));
         g.fillRect (portraitBounds);
+        // Reserve a caption footer outside the art; even the bottom of a
+        // violin/cello image stays visible in the reduced 425-point dock.
+        auto imageArea = portraitBounds.reduced (appearance.px (6));
+        imageArea.removeFromBottom (appearance.control (24, 10));
+        drawContained (g, artworkInstalled ? portraitImage : blueHour, imageArea);
+        if (! artworkInstalled)
+        {
+            g.setColour (walnut.withAlpha (0.20f));
+            g.fillRect (imageArea);
+        }
         auto rect = portraitBounds.toFloat().reduced (1);
-        g.setColour (amber.withAlpha (0.80f));
-        g.drawRoundedRectangle (rect, 9.0f, 1.0f);
+        g.setColour (amber.withAlpha (0.54f));
+        g.drawRoundedRectangle (rect, 8.0f, 0.85f);
     }
 
     if (! controlBounds.isEmpty())
@@ -391,8 +405,10 @@ void AtelierInstrumentEditor::resized()
     const bool sideBySide = area.getWidth() >= m.span (680);
     if (sideBySide)
     {
-        portraitBounds = area.removeFromLeft (jlimit (m.span (170), m.span (290),
-                                                     area.getWidth() * 30 / 100));
+        // A narrow portrait column matches the original paintings' vertical
+        // aspect better than a 30%-wide landscape crop. More room for controls.
+        portraitBounds = area.removeFromLeft (jlimit (m.span (170), m.span (245),
+                                                     area.getWidth() * 23 / 100));
         area.removeFromLeft (gap);
     }
     else
@@ -402,8 +418,8 @@ void AtelierInstrumentEditor::resized()
     }
     controlBounds = area;
 
-    sceneCaption.setBounds (portraitBounds.reduced (m.px (8))
-                               .removeFromBottom (m.control (32)));
+    sceneCaption.setBounds (portraitBounds.reduced (m.px (6))
+                               .removeFromBottom (m.control (24, 10)));
 
     auto controls = controlBounds.reduced (m.px (17));
     const int commandHeight = m.control (32, 11);
