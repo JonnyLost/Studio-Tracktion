@@ -124,7 +124,7 @@ public:
         {
             if (! edit || edit->getTransport().isRecording()) return;
             if (const auto source = secondsToFrames (seconds, project.rate))
-                edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+                edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
                     juce::jmax (0.0, project.timelineSeconds (*source))));
         };
         timecode.setJustificationType (juce::Justification::centredLeft);
@@ -523,7 +523,7 @@ private:
     {
         if (! edit || edit->getTransport().isRecording()) return;
         if (const auto* spot = project.find (activeId))
-            edit->getTransport().setPosition (tracktion::engine::TimePosition::fromSeconds (
+            edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
                     juce::jmax (0.0, project.timelineSeconds (spot->pictureFrame))));
     }
 
@@ -556,9 +556,9 @@ private:
                     + "s  |  Suggested " + juce::String (*bpm, 2) + " BPM";
                 if (edit)
                 {
-                    const auto a = edit->tempoSequence.toBeats (tracktion::engine::TimePosition::fromSeconds (
+                    const auto a = edit->tempoSequence.toBeats (tracktion::TimePosition::fromSeconds (
                         project.timelineSeconds (first->pictureFrame))).inBeats();
-                    const auto b = edit->tempoSequence.toBeats (tracktion::engine::TimePosition::fromSeconds (
+                    const auto b = edit->tempoSequence.toBeats (tracktion::TimePosition::fromSeconds (
                         project.timelineSeconds (next->pictureFrame))).inBeats();
                     detail += "  |  Current " + juce::String (b - a, 2) + " beats";
                 }
