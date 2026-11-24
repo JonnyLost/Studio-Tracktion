@@ -343,8 +343,9 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         || ! atelierEditor->reviewSelectMappedArticulation())
         return fail ("Atelier Main presents verified mappings and stores undoable selection");
     if (! atelierEditor->reviewPage (1, false) || ! atelierEditor->reviewPage (2, false)
-        || ! atelierEditor->reviewPage (3, false) || ! atelierEditor->reviewPage (0, false))
-        return fail ("Atelier compact pages fit without resizing the 425-point dock");
+        || ! atelierEditor->reviewPage (3, false) || ! atelierEditor->reviewPage (4, false)
+        || ! atelierEditor->reviewMIDIControllers() || ! atelierEditor->reviewPage (0, false))
+        return fail ("Atelier compact pages and MIDI CC knobs fit in the fixed 425-point dock");
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
         || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
         || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
@@ -422,8 +423,11 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
             || ! atelierEditor->reviewPage (2, true)
             || ! snapshot (*floating, "18-atelier-full-mixer")
             || ! atelierEditor->reviewPage (3, true)
-            || ! snapshot (*floating, "19-atelier-full-advanced"))
-            return fail ("Atelier full pages remain in the same floating editor");
+            || ! snapshot (*floating, "19-atelier-full-advanced")
+            || ! atelierEditor->reviewPage (4, true)
+            || ! atelierEditor->reviewMIDIControllers()
+            || ! snapshot (*floating, "20-atelier-full-midi-cc"))
+            return fail ("Atelier full pages and MIDI CC knobs remain in the same floating editor");
         atelierEditor->reviewPage (0, true);
         floating->setSize (1050, 570);
         instrumentWorkspace.setFloating (false);
