@@ -1061,7 +1061,7 @@ void AtelierInstrumentEditor::resized()
         layoutSliders (content, fullPresentation && page == 0);
     }
     else
-        for (auto* component : { static_cast<Component*> (&volume), &pan, &expression,
+        for (auto* component : std::initializer_list<Component*> { &volume, &pan, &expression,
                                  &volumeLabel, &panLabel, &expressionHeading })
             component->setBounds ({});
 
