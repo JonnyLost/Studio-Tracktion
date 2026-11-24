@@ -2883,8 +2883,11 @@ private:
                                             : "ARIA recovery | Verify sound before saving")
                     : "ARIA recovery | No verification pending";
                 const auto* clip = selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr;
+                const bool priorAtelier = inspectorDrawer.isShowingAtelier();
                 inspectorDrawer.refresh (context, ready, canEditRegions(), recovery,
                     clip != nullptr && context != nullptr && clip->getAudioTrack() == context ? clip : nullptr);
+                if (priorAtelier != inspectorDrawer.isShowingAtelier())
+                    resized(); // Reclaim or reserve the appropriate sidebar width.
             }
             if (articulation.isShowing() || articulationStrip.isVisible())
             {
