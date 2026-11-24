@@ -168,7 +168,8 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
 
     for (auto* label : { &title, &subtitle, &mixHeading, &volumeLabel, &panLabel,
                          &expressionHeading, &hint, &sceneCaption, &stageHeading,
-                         &stageSummary, &routingSummary, &mappingSummary, &keyboardSummary })
+                         &stageSummary, &routingSummary, &mappingSummary, &keyboardSummary,
+                         &stagePanLabel, &stageDepthLabel, &sendTrimLabel })
         addAndMakeVisible (*label);
 
     initLabel (title, audioTrack.getName(), 23.0f, ivory, true);
@@ -188,7 +189,10 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     initLabel (stageSummary, "Stage placement is not set", 12.0f, ivory);
     initLabel (routingSummary, "Audio routing follows the Studio mixer", 11.0f, muted);
     initLabel (mappingSummary, "No verified mappings for this instrument", 12.0f, ivory);
-    initLabel (keyboardSummary, "KEYBOARD REFERENCE  •  Use MIDI input to play", 10.5f, amber);
+    initLabel (keyboardSummary, "LIVE KEYBOARD  •  click to audition", 10.5f, amber);
+    initLabel (stagePanLabel, "PAN", 10.5f, muted);
+    initLabel (stageDepthLabel, "DEPTH", 10.5f, muted);
+    initLabel (sendTrimLabel, "ROOM SEND", 10.5f, muted);
 
     portraitChoice.setTitle ("Instrument artwork");
     portraitChoice.setTooltip ("Choose the artwork for this instrument. The image does not change its patch.");
@@ -281,6 +285,36 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     pan.setRange (-1.0, 1.0, 0.01);
     pan.setDoubleClickReturnValue (true, 0.0);
     configureSlider (expression, "Expression");
+
+    for (auto* slider : { &stagePan, &stageDepth, &sendTrim })
+    {
+        addAndMakeVisible (*slider);
+        slider->setSliderStyle (Slider::LinearHorizontal);
+        slider->setTextBoxStyle (Slider::TextBoxRight, false, 74, 20);
+        slider->setColour (Slider::trackColourId, amber);
+        slider->setColour (Slider::thumbColourId, Colour (0xfff3ce8a));
+        slider->setColour (Slider::backgroundColourId, Colour (0xff3f2b22));
+        slider->setColour (Slider::textBoxTextColourId, ivory);
+        slider->setColour (Slider::textBoxBackgroundColourId, walnut);
+        slider->setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.24f));
+    }
+    stagePan.setRange (-1.0, 1.0, 0.01);
+    stagePan.setDoubleClickReturnValue (true, 0);
+    stageDepth.setRange (0.0, 1.0, 0.01);
+    sendTrim.setRange (-60.0, 0.0, 0.1);
+    sendTrim.setTextValueSuffix (" dB");
+    stagePan.setTooltip ("Stage seat left/right. Edits the same saved seat as Orchestral Stage.");
+    stageDepth.setTooltip ("Stage seat front/back. Zero is front, one is back.");
+    sendTrim.setTooltip ("Shared room send trim. Changes live audio only when Stage audio is enabled.");
+    stagePan.onValueChange = [this] { if (! restoring) editStage (0); };
+    stageDepth.onValueChange = [this] { if (! restoring) editStage (1); };
+    sendTrim.onValueChange = [this] { if (! restoring) editStage (2); };
+    for (auto* slider : { &stagePan, &stageDepth, &sendTrim })
+        slider->onDragStart = [this]
+        {
+            if (auto* source = track())
+                source->edit.getUndoManager().beginNewTransaction ("Atelier stage position");
+        };
 
     volume.setTooltip ("Track volume. This is the same fader as Studio's Mixer.");
     pan.setTooltip ("Track stereo balance. This is the same pan as Studio's Mixer.");
@@ -392,6 +426,20 @@ void AtelierInstrumentEditor::refreshControls()
     {
         const auto seat = source->state.getChildWithName (spatial::seatType);
         const auto placed = seat.isValid();
+        const bool canChange = placed && ! source->isFrozen (te::Track::anyFreeze)
+            && ! source->edit.getTransport().isRecording();
+        for (auto* slider : { &stagePan, &stageDepth, &sendTrim })
+            slider->setEnabled (canChange);
+        if (placed)
+        {
+            const auto value = spatial::readSeat (seat);
+            if (! stagePan.isMouseButtonDown())
+                stagePan.setValue (value.position.x, dontSendNotification);
+            if (! stageDepth.isMouseButtonDown())
+                stageDepth.setValue (value.position.depth, dontSendNotification);
+            if (! sendTrim.isMouseButtonDown())
+                sendTrim.setValue (value.sendTrim, dontSendNotification);
+        }
         String stageText = placed ? "Placed  •  " : "Not yet placed on the Stage";
         if (placed)
         {
@@ -421,6 +469,32 @@ void AtelierInstrumentEditor::timerCallback()
         keyboardSummary.setText (help, dontSendNotification);
 }
 
+
+void AtelierInstrumentEditor::editStage (int field)
+{
+    auto* source = track();
+    if (source == nullptr || source->isFrozen (te::Track::anyFreeze)
+        || source->edit.getTransport().isRecording()) return;
+    auto savedSeat = source->state.getChildWithName (spatial::seatType);
+    if (! savedSeat.isValid()) return; // Placement must be explicit in Stage.
+
+    const auto key = field == 0 ? Identifier ("x")
+                   : field == 1 ? Identifier ("depth") : Identifier ("trim");
+    const float value = field == 0 ? (float) stagePan.getValue()
+                     : field == 1 ? (float) stageDepth.getValue()
+                                  : (float) sendTrim.getValue();
+    const auto old = (float) savedSeat.getProperty (key);
+    if (std::abs (value - old) < 0.0001f) return;
+
+    auto& history = source->edit.getUndoManager();
+    if (! stagePan.isMouseButtonDown() && ! stageDepth.isMouseButtonDown()
+        && ! sendTrim.isMouseButtonDown())
+        history.beginNewTransaction ("Atelier stage seat");
+    savedSeat.setProperty (key, value, &history);
+    const auto updated = spatial::readSeat (savedSeat);
+    spatial::updateRoomSend (*source, updated.position, updated.sendTrim);
+    refreshControls();
+}
 
 void AtelierInstrumentEditor::setPage (int next)
 {
@@ -456,6 +530,10 @@ void AtelierInstrumentEditor::updatePageVisibility()
     expressionHeading.setVisible (mixing && expressionParameter != nullptr);
     mixHeading.setVisible (mixing);
     stageHeading.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
+    const bool editableStage = fullPresentation && page == 0;
+    for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
+                                                            &stagePanLabel, &stageDepthLabel, &sendTrimLabel })
+        item->setVisible (editableStage);
     stageSummary.setVisible (page == 0 || page == 2 || page == 3);
     routingSummary.setVisible ((page == 0 && fullPresentation) || (page == 2 && fullPresentation) || page == 3);
     mappingSummary.setVisible (showPads);
@@ -1066,13 +1144,30 @@ void AtelierInstrumentEditor::resized()
             component->setBounds ({});
 
     stageHeading.setBounds ({});
+    for (auto* item : std::initializer_list<Component*> { &stagePan, &stageDepth, &sendTrim,
+                                                            &stagePanLabel, &stageDepthLabel, &sendTrimLabel })
+        item->setBounds ({});
     if (! stageBounds.isEmpty())
     {
         auto content = stageBounds.reduced (m.px (14));
         content.removeFromTop (m.control (29, 10));
-        stageHeading.setBounds (content.removeFromTop (m.control (22, 9)));
         stageSummary.setBounds (content.removeFromTop (m.control (26, 10)));
-        if (page == 2)
+        if (page == 0 && fullPresentation)
+        {
+            stage.setBounds (content.removeFromBottom (m.control (32, 11)));
+            content.removeFromBottom (m.px (4));
+            const int rows = 3;
+            const int rowHeight = jmax (1, content.getHeight() / rows);
+            for (auto [label, slider] : std::initializer_list<std::pair<Label*, Slider*>> {
+                     { &stagePanLabel, &stagePan }, { &stageDepthLabel, &stageDepth },
+                     { &sendTrimLabel, &sendTrim } })
+            {
+                auto line = content.removeFromTop (rowHeight);
+                label->setBounds (line.removeFromLeft (jmin (m.span (92), line.getWidth() / 3)));
+                slider->setBounds (line.reduced (m.px (3), m.px (2)));
+            }
+        }
+        else if (page == 2)
             stage.setBounds (content.removeFromBottom (m.control (34, 11)));
     }
     if (! routingBounds.isEmpty())
