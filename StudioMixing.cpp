@@ -703,7 +703,7 @@ void InspectorDrawer::resized()
 bool InspectorDrawer::verifyAtelierInspector()
 {
     return atelierMode && atelierScroll.isVisible() && ! channelStrip->isVisible()
-        && atelier->verifyInspectorBindings()
+        && atelier->verifyInspectorBindings();
 }
 #endif
 
