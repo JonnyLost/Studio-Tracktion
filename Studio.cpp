@@ -1971,10 +1971,13 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
-        // The selected instrument remains loaded, playable and editable, but
-        // the Mixer owns its entire lower workspace: no stacked Performance
-        // controls or articulation strip below the faders.
-        if (workspace == Workspace::mix)
+        // Mixer and docked Cinematic Atelier already provide their own
+        // controls. Do not reserve a second Performance panel underneath the
+        // editor: doing so steals height from both the timeline and the fixed
+        // Instrument View, particularly at 1280 x 800.
+        const bool dockedAtelier = workspace == Workspace::instrumentEditor
+            && instrumentWorkspace.isAtelier() && ! instrumentWorkspace.isFloating();
+        if (workspace == Workspace::mix || dockedAtelier)
         {
             performance.setVisible (false);
             articulationStrip.setVisible (false);
