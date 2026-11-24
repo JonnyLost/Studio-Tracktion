@@ -844,18 +844,21 @@ void AtelierInstrumentEditor::syncInspectorControls()
 {
     auto* t = track();
     if (t == nullptr) return;
-    const auto newPortrait = t->state.getProperty ("studioAtelierPortrait").toString();
-    if (newPortrait.isNotEmpty() && newPortrait != portraitName)
+    const Identifier portraitKey ("studioAtelierPortrait");
+    const auto newPortrait = t->state.getProperty (portraitKey).toString();
+    if (t->state.hasProperty (portraitKey) && newPortrait != portraitName)
     {
+        int chosen = newPortrait.isEmpty() ? 1 : 0;
         for (int i = 0; i < portraitChoice.getNumItems(); ++i)
             if (portraitChoice.getItemText (i) == newPortrait)
-            {
-                const ScopedValueSetter<bool> hold (restoring, true);
-                portraitName = newPortrait;
-                portraitChoice.setSelectedId (portraitChoice.getItemId (i), dontSendNotification);
-                loadPortrait();
-                break;
-            }
+                chosen = portraitChoice.getItemId (i);
+        if (chosen != 0)
+        {
+            const ScopedValueSetter<bool> hold (restoring, true);
+            portraitName = newPortrait;
+            portraitChoice.setSelectedId (chosen, dontSendNotification);
+            loadPortrait();
+        }
     }
     const int sharedChannel = jlimit (1, 16,
         (int) t->state.getProperty ("studioAtelierPreviewChannel", previewChannel.getSelectedId()));
