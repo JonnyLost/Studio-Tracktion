@@ -3902,6 +3902,23 @@ private:
                         && ! showNativeInstrument (*instrument) && ! showAtelierInstrument (*instrument))
                         instrument->showWindowExplicitly();
         };
+        trackActions.openFullInstrument = [this] (te::EditItemID id)
+        {
+            if (! busy)
+                if (auto* selected = trackById (id))
+                    if (auto* instrument = studio::findInstrument (*selected))
+                        if (! showFullAtelierInstrument (*instrument))
+                            showNativeInstrument (*instrument);
+        };
+        trackActions.openArticulations = [this] (te::EditItemID id)
+        {
+            if (auto* selected = trackById (id))
+            {
+                selection.selectOnly (selected);
+                if (dockMode == DockMode::compact) setDockMode (DockMode::split);
+                showWorkspace (Workspace::articulations);
+            }
+        };
         trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
         {
             if (! busy)
