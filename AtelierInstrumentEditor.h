@@ -51,6 +51,7 @@ private:
     void changePortrait();
     void refreshArticulations();
     void selectArticulation (int);
+    void editStage (int field); // Pan, depth, send trim on an existing verified seat.
     void setPage (int);
     void paintKeyboardReference (juce::Graphics&) const;
     int keyboardNoteAt (juce::Point<int>) const;
@@ -71,11 +72,12 @@ private:
     std::unique_ptr<juce::LookAndFeel_V4> atelierStyle;
     juce::Label title, subtitle, mixHeading, volumeLabel, panLabel, expressionHeading, hint, sceneCaption;
     juce::Label stageHeading, stageSummary, routingSummary, mappingSummary, keyboardSummary;
+    juce::Label stagePanLabel, stageDepthLabel, sendTrimLabel;
     juce::TextButton original { "Open Original Instrument" },
                      articulation { "Articulation Mappings..." }, stage { "Open Orchestral Stage..." },
                      mainTab { "Main" }, articulationTab { "Articulations" },
                      mixerTab { "Mixer" }, advancedTab { "Advanced" }, fullView { "Full View" };
-    juce::Slider volume, pan, expression;
+    juce::Slider volume, pan, expression, stagePan, stageDepth, sendTrim;
     std::array<juce::TextButton, 8> mappingPads;
     std::vector<ArticulationMapping> currentMappings;
     juce::String activeMappingId, mappingStamp;
