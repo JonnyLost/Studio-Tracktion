@@ -198,7 +198,19 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     portraitChoice.setTooltip ("Choose the artwork for this instrument. The image does not change its patch.");
     portraitChoice.addItem ("Composer Study", 1);
     int portraitItem = 2;
-    for (const auto* name : { "Violin", "Cello", "Flute", "Clarinet", "Horn", "Oboe" })
+    StringArray availablePortraits { "Violin", "Cello", "Flute", "Clarinet", "Horn", "Oboe" };
+    // A user can add independently created instrument art without recompiling
+    // Studio. No bundle downloads, network calls or dependence on paid packs.
+    Array<File> artFiles;
+    for (const auto* pattern : { "*.jpg", "*.jpeg", "*.png" })
+        portraitDirectory().findChildFiles (artFiles, File::findFiles, false, pattern);
+    for (const auto& image : artFiles)
+    {
+        const auto name = image.getFileNameWithoutExtension();
+        if (name.isNotEmpty() && ! name.containsChar ('|') && name.length() <= 64)
+            availablePortraits.addIfNotAlreadyThere (name);
+    }
+    for (const auto& name : availablePortraits)
         portraitChoice.addItem (name, portraitItem++);
     portraitChoice.setSelectedId (1, dontSendNotification);
     portraitChoice.onChange = [this] { changePortrait(); };
@@ -636,7 +648,12 @@ void AtelierInstrumentEditor::loadPortrait()
     portraitImage = {};
     if (portraitName.isNotEmpty())
     {
-        const auto artwork = portraitDirectory().getChildFile (portraitName + ".jpg");
+        File artwork;
+        for (const auto* suffix : { ".jpg", ".jpeg", ".png" })
+        {
+            auto candidate = portraitDirectory().getChildFile (portraitName + suffix);
+            if (candidate.existsAsFile()) { artwork = candidate; break; }
+        }
         if (artwork.existsAsFile())
         {
             portraitImage = ImageFileFormat::loadFrom (artwork);
