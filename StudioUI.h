@@ -172,15 +172,45 @@ public:
                           juce::Justification::centred, 1, 1.0f);
     }
 
+    // In Picture view the embedded AVKit NSView renders above JUCE's ordinary
+    // tooltip peer. Keep help bubbles entirely in the side consoles instead.
+    void setNativeVideoTooltipAvoidance (juce::Rectangle<int> screenBounds)
+    {
+        nativeVideoTooltipAvoidance = screenBounds;
+    }
+
     juce::Rectangle<int> getTooltipBounds (const juce::String& text, juce::Point<int> position,
                                            juce::Rectangle<int> available) override
     {
         const int inset = appearance.px (7);
-        const auto width = juce::jmax (1, juce::jmin (available.getWidth() - 2 * inset, appearance.span (355)));
-        auto layout = tooltipLayout (text, width);
-        return juce::Rectangle<int> (position.x + inset, position.y + appearance.px (16),
-            juce::roundToInt (std::ceil (layout.getWidth())) + 2 * inset,
-            juce::roundToInt (std::ceil (layout.getHeight())) + 2 * inset).constrainedWithin (available);
+        const auto placeIn = [&] (juce::Rectangle<int> bounds)
+        {
+            const int contentWidth = juce::jmax (1, juce::jmin (bounds.getWidth() - 2 * inset,
+                                                                appearance.span (355)));
+            auto layout = tooltipLayout (text, contentWidth);
+            return juce::Rectangle<int> (position.x + inset, position.y + appearance.px (16),
+                juce::roundToInt (std::ceil (layout.getWidth())) + 2 * inset,
+                juce::roundToInt (std::ceil (layout.getHeight())) + 2 * inset).constrainedWithin (bounds);
+        };
+
+        const auto preferred = placeIn (available);
+        if (nativeVideoTooltipAvoidance.isEmpty())
+            return preferred;
+        const auto excluded = nativeVideoTooltipAvoidance.expanded (appearance.px (6));
+        if (! preferred.intersects (excluded))
+            return preferred;
+
+        auto left = juce::Rectangle<int> (available.getX(), available.getY(),
+            juce::jmax (0, excluded.getX() - available.getX()), available.getHeight());
+        auto right = juce::Rectangle<int> (excluded.getRight(), available.getY(),
+            juce::jmax (0, available.getRight() - excluded.getRight()), available.getHeight());
+
+        // Prefer the side with the hovered control. Constrain and reflow long
+        // descriptions instead of drawing them underneath the native picture.
+        auto safe = position.x < excluded.getCentreX() ? left : right;
+        if (safe.getWidth() < appearance.span (125))
+            safe = left.getWidth() > right.getWidth() ? left : right;
+        return safe.getWidth() >= 2 * inset + 1 ? placeIn (safe) : preferred;
     }
 
     void drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height) override
@@ -228,6 +258,8 @@ public:
     }
 
 private:
+    juce::Rectangle<int> nativeVideoTooltipAvoidance;
+
     static juce::TextLayout tooltipLayout (const juce::String& text, int width)
     {
         juce::AttributedString content;

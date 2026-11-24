@@ -25,6 +25,7 @@ struct PreviewCommand
     bool play = false;
     bool discontinuity = false;
     double targetSeconds = 0;
+    double driftFrames = 0; // Signed: positive means picture is ahead of audio.
 };
 
 // Decision-only model, with no JUCE, AVFoundation, clock reads or allocations.
@@ -55,7 +56,11 @@ public:
         const auto frame = project.pictureFrameAt (observation.timelineSeconds);
         if (! frame) { result.stop = observation.videoPlaying; reset(); return result; }
         result.targetSeconds = frameSeconds (*frame, project.rate);
-        if (result.targetSeconds < 0
+        const auto fps = info (project.rate);
+        const double frameDuration = double (fps.denominator) / fps.numerator;
+        if (! std::isfinite (result.targetSeconds)
+            || ! std::isfinite (observation.videoDurationSeconds)
+            || result.targetSeconds < 0
             || (observation.videoDurationSeconds > 0
                 && result.targetSeconds >= observation.videoDurationSeconds))
         {
@@ -78,7 +83,13 @@ public:
         const bool playbackStopped = ! observation.transportPlaying && hasPrevious && previousPlaying;
         const bool mustAlign = forceAlignment || result.discontinuity || playbackStarted || playbackStopped;
 
-        const double tolerance = observation.transportPlaying ? 0.16 : 0.04;
+        // Limit visible drift in picture frames, not a hard-coded number of
+        // seconds. AVKit is a preview player, not an audio-clock slave:
+        // tolerate brief decode jitter and correct sustained drift in batches.
+        result.driftFrames = (observation.videoSeconds - result.targetSeconds) / frameDuration;
+        const double tolerance = observation.transportPlaying
+            ? std::max (0.045, frameDuration * 1.5)
+            : std::max (0.018, frameDuration * 0.50);
         const bool drift = std::abs (observation.videoSeconds - result.targetSeconds) > tolerance;
         const bool throttleElapsed = ! hasPrevious || observation.tickMillis < lastSeekMillis
                                   || observation.tickMillis - lastSeekMillis >= 350;

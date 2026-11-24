@@ -1162,6 +1162,7 @@ private:
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
+        style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
     }
 
    #if JUCE_MAC
@@ -1654,6 +1655,9 @@ private:
         maybeAutoRestoreAria();
         completePendingPlugin();
         filmWorkspace.tick();
+        // AVKit is an embedded NSView; refresh its screen rect after moving,
+        // docking, opening video or resizing the Studio window.
+        style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })

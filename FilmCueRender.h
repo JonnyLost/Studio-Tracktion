@@ -2,6 +2,7 @@
 #pragma once
 
 #include "FilmCueDelivery.h"
+#include "FilmStemDelivery.h"
 #include "FilmScoringCueSheet.h"
 #include <sstream>
 #include <iomanip>
@@ -17,7 +18,7 @@ namespace studio::film
 class CueRenderSession final
 {
 public:
-    enum class Mode { stereoMix, individualTracks };
+    enum class Mode { stereoMix, individualTracks, familyStems };
     std::function<void()> onUpdate;
 
     ~CueRenderSession() { cancel(); queue.reset(); }
@@ -78,7 +79,8 @@ public:
                         const Project& project,
                         const Cue& cue,
                         const juce::File& chosenDirectory,
-                        Mode mode)
+                        Mode mode,
+                        const std::vector<StemAssignment>& assignments = {})
     {
         namespace te = tracktion::engine;
         if (isActive())
@@ -95,7 +97,8 @@ public:
             return juce::Result::fail ("Choose an existing output directory.");
 
         const juce::String stem (deliveryStem (cue));
-        const juce::String folderName = stem + (mode == Mode::individualTracks ? "-Tracks" : "-Mix");
+        const juce::String folderName = stem + (mode == Mode::individualTracks ? "-Tracks"
+                                             : mode == Mode::familyStems ? "-Family-Stems" : "-Mix");
         const auto folder = chosenDirectory.getNonexistentChildFile (folderName, {}, true);
         const auto makeFolder = folder.createDirectory();
         if (makeFolder.failed()) return makeFolder;
@@ -124,7 +127,7 @@ public:
             base.destination = folder.getChildFile (stem + "-Stereo.wav");
             specifications.push_back (base);
         }
-        else
+        else if (mode == Mode::individualTracks)
         {
             const auto tracks = te::getAudioTracks (edit);
             if (tracks.isEmpty() || tracks.size() > 128)
@@ -135,6 +138,37 @@ public:
             specifications = te::createPerTrackSpecifications (edit, base, folder);
             if (specifications.empty())
                 return juce::Result::fail ("No tracks could be selected for cue delivery.");
+        }
+        if (mode == Mode::familyStems)
+        {
+            const auto tracks = te::getAudioTracks (edit);
+            std::vector<std::string> liveIDs;
+            liveIDs.reserve (static_cast<size_t> (tracks.size()));
+            for (auto* track : tracks)
+                liveIDs.push_back (track->itemID.toString().toStdString());
+
+            const auto groups = planFamilyStems (assignments, liveIDs);
+            if (groups.empty())
+                return juce::Result::fail ("Assign at least one live track to an orchestral family first.");
+
+            // Explicit group rendering: never use empty tracks (which means
+            // render the entire edit). Preserve routing sources required for
+            // aux, sidechain, shared rack and stage effects where supported.
+            for (const auto& group : groups)
+            {
+                te::RenderSpecification spec = base;
+                spec.includeSourceTracks = true;
+                spec.useMasterPlugins = false; // Keep families independently mixable.
+                for (auto* track : tracks)
+                    if (std::find (group.trackIds.begin(), group.trackIds.end(),
+                                   track->itemID.toString().toStdString()) != group.trackIds.end())
+                        spec.tracks.add (track->itemID);
+                if (spec.tracks.isEmpty())
+                    return juce::Result::fail ("An assigned family has no available tracks.");
+                spec.destination = folder.getChildFile (stem + "-"
+                    + juce::String (stemFamilyFileName (group.family)) + ".wav");
+                specifications.push_back (std::move (spec));
+            }
         }
 
         // Validate the whole batch before starting so an invalid spec can't
