@@ -36,6 +36,10 @@ public:
     int minimumContentHeight() const;
     void appearanceChanged();
     void setFloating (bool);
+    // Reuse the actual instrument selector and Float control in Studio's one-row
+    // dock header; floating windows keep their own compact toolbar.
+    void layoutDockedHeader (juce::Component* parent, juce::Rectangle<int> bounds);
+    bool hasDockedHeader() const { return dockedHeader; }
     bool isFloating() const { return window != nullptr; }
     bool isAtelier() const { return atelierMode; }
     NativeInstrumentEditor* getEditor() const { return editor.get(); }
@@ -63,6 +67,7 @@ private:
     juce::TextButton bringBack { "Dock Instrument" };
     std::unique_ptr<Window> window;
     bool atelierMode = false;
+    bool dockedHeader = false;
     tracktion::Plugin::Ptr plugin;
     std::unique_ptr<NativeInstrumentEditor> editor;
     juce::Array<tracktion::EditItemID> choices;
