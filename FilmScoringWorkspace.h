@@ -467,6 +467,18 @@ public:
         return false;
        #endif
     }
+    // The docked macOS AVKit view is a native child surface. JUCE tooltips
+    // painted behind it become invisible; tell the host where that surface is.
+    // Floating video has its own window and must not reserve an avoidance area.
+    juce::Rectangle<int> dockedVideoScreenBounds() const
+    {
+       #if JUCE_MAC
+        if (isShowing() && ! isFloating() && video.isVideoOpen())
+            return monitorHost.getScreenBounds();
+       #endif
+        return {};
+    }
+
     size_t spotCount() const { return project.spots.size(); }
     const Project& snapshot() const { return project; }
 
