@@ -479,6 +479,7 @@ public:
             addAndMakeVisible (*indicator);
         workspaceBody.addChildComponent (resources);
         workspaceBody.addChildComponent (filmWorkspace);
+        workspaceViewport.onScroll = [this] { fitDockedPicture(); };
         filmWorkspace.canRenderAudio = [this] { return canStartAudioExport() && bounce == nullptr; };
         workspaceBody.addChildComponent (instrumentWorkspace);
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = [this] (te::Plugin& plug)
@@ -844,6 +845,7 @@ public:
             articulationWindow->setLookAndFeel (nullptr);
         }
         articulationWindow.reset();
+        workspaceViewport.onScroll = {};
         workspaceViewport.setViewedComponent (nullptr);
         railViewport.setViewedComponent (nullptr);
         LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -1339,7 +1341,7 @@ public:
             prefs.setValue ("studio.textScale", m.textPercent());
             prefs.saveIfNeeded();
         }
-        for (auto* view : { &timeline, &railViewport, &workspaceViewport })
+        for (Viewport* view : std::initializer_list<Viewport*> { &timeline, &railViewport, &workspaceViewport })
             view->setScrollBarThickness (m.scrollbar());
         browser.appearanceChanged();
         channelInspector.appearanceChanged();
@@ -1583,7 +1585,7 @@ public:
     // Native macOS menus use the existing action handlers; no duplicate DAW logic.
     enum MenuAction
     {
-        mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
+        mPicture = 2000, mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
         mMidiExport, mAudioExport, mAudioSettings, mPluginManager, mUndo, mRedo,
         mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
@@ -1638,6 +1640,7 @@ public:
                 add (mBrowser, "Instrument Browser");
                 add (mPiano, "Piano Roll");
                 add (mStage, "Stage");
+                add (mPicture, "Picture");
                 add (mMixer, "Mixer");
                 break;
             case 4: // Record
@@ -1672,9 +1675,9 @@ public:
                 add (mScaleReset, "Reset Appearance");
                 break;
             case 7: // Window
-                add (mCompact, "Compact Workspace", true, dockMode == DockMode::compact);
+                add (mCompact, "Compact Workspace", workspace != Workspace::filmScoring, dockMode == DockMode::compact);
                 add (mSplit, "Split Workspace", true, dockMode == DockMode::split);
-                add (mExpanded, "Expanded Workspace", true, dockMode == DockMode::expanded);
+                add (mExpanded, "Expanded Workspace", workspace != Workspace::filmScoring, dockMode == DockMode::expanded);
                 menu.addSeparator();
                 add (mPerformanceFull, "Performance Panel", true, performanceMode.getSelectedId() == 1);
                 add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
@@ -1733,6 +1736,7 @@ public:
             case mBrowser: showWorkspace (Workspace::instruments); break;
             case mPiano: showWorkspace (Workspace::piano); break;
             case mStage: showWorkspace (Workspace::stage); break;
+            case mPicture: showWorkspace (Workspace::filmScoring); break;
             case mMixer: showWorkspace (Workspace::mix); break;
             case mInspector: setInspectorOpen (! inspectorOpen); break;
             case mEnvironments: environmentWelcome.open (false); break;
@@ -1823,7 +1827,18 @@ private:
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
-    Viewport railViewport, workspaceViewport;
+    class WorkspaceViewport final : public Viewport
+    {
+    public:
+        std::function<void()> onScroll;
+        void visibleAreaChanged (const Rectangle<int>&) override
+        {
+            if (onScroll) onScroll();
+        }
+    };
+
+    Viewport railViewport;
+    WorkspaceViewport workspaceViewport;
     bool collapsedDockLinks = false;
     TextButton viewButton { "View..." }, inspectorButton { "Inspector" }, projectMenu { "Project..." },
                trackMenu { "Tracks..." }, dockMenu { "Layout..." };
@@ -2126,6 +2141,13 @@ private:
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
+        fitDockedPicture();
+    }
+
+    void fitDockedPicture()
+    {
+        if (filmWorkspace.isVisible())
+            filmWorkspace.setDockedVideoViewport (workspaceViewport.getScreenBounds());
         style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
     }
 
@@ -2775,7 +2797,7 @@ private:
         updateWavExport();
         filmWorkspace.tick();
         // AVKit is embedded as a native view. Track its screen bounds for tooltips.
-        style.setNativeVideoTooltipAvoidance (filmWorkspace.dockedVideoScreenBounds());
+        fitDockedPicture();
         const bool ready = edit != nullptr && ! busy;
         const bool recording = edit != nullptr && edit->getTransport().isRecording();
         for (auto* button : { &newProject, &openProject, &audioSettings, &plugins })
@@ -4697,7 +4719,16 @@ int StudioView::runFilmScoringReview (const File& output)
 {
     stopTimer();
     environmentWelcome.dismiss();
+    const ScopedValueSetter<studio::AppearanceMetrics> appearanceScope (studio::appearance, studio::appearance);
+    applyAppearance (100, 100, false);
     setSize (1280, 800);
+   #if JUCE_MAC
+    DocumentWindow pictureReview ("Studio Picture review", studio::colours::canvas, 0);
+    pictureReview.setUsingNativeTitleBar (true);
+    pictureReview.setContentNonOwned (this, true);
+    pictureReview.centreWithSize (1280, 800);
+    pictureReview.setVisible (true);
+   #endif
     const auto fail = [] (const char* message)
     {
         std::fprintf (stderr, "Film Scoring workspace review failed: %s\n", message);
@@ -4708,13 +4739,16 @@ int StudioView::runFilmScoringReview (const File& output)
     if (! edit) return fail ("create film scoring project");
     const auto trackCount = te::getAudioTracks (*edit).size();
     setDockMode (DockMode::expanded);
-    showWorkspace (Workspace::filmScoring);
-    if (! filmWorkspace.isVisible() || ! workspaceViewport.isVisible())
-        return fail ("Film Scoring is accessible from the existing dock");
+    setInspectorOpen (true, false);
+    pictureButton.onClick();
+    if (! filmWorkspace.isVisible() || ! workspaceViewport.isVisible()
+        || workspacePanel.getRight() != inspectorDrawer.getX() || timeline.getBounds().isEmpty()
+        || workspacePanel.intersects (timeline.getBounds()) || ! isWorkspaceDividerLocked())
+        return fail ("Picture shares the lower dock with a separate timeline and Inspector column");
 
     studio::film::Project picture;
     picture.rate = studio::film::Rate::fps2997DF;
-    picture.pictureStartFrame = 107892;
+    picture.pictureStartFrame = 0;
     if (! picture.addSpot ({ "test-1", "1M1", "Door closes", "Sync exactly", 17982 })
         || ! picture.addSpot ({ "test-2", "1M1", "Music ends", "Hold end", 21582 }))
         return fail ("create picture-anchored hits");
@@ -4725,7 +4759,7 @@ int StudioView::runFilmScoringReview (const File& output)
     filmWorkspace.setEdit (nullptr);
     filmWorkspace.setEdit (edit.get());
     if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().cues.size() != 2
-        || filmWorkspace.snapshot().pictureStartFrame != 107892
+        || filmWorkspace.snapshot().pictureStartFrame != picture.pictureStartFrame
         || filmWorkspace.snapshot().rate != studio::film::Rate::fps2997DF)
         return fail ("dock reads versioned picture metadata");
     if (te::getAudioTracks (*edit).size() != trackCount)
@@ -4739,16 +4773,43 @@ int StudioView::runFilmScoringReview (const File& output)
     if (filmWorkspace.snapshot().cues.size() != 2 || filmWorkspace.snapshot().spots.size() != 2)
         return fail ("workspace did not reconcile project Redo");
 
-    const auto saved = studio::film::decode (edit->state);
-    if (! te::EditFileOperations (*edit).writeToFile (fixture.getFile(), false))
+   #if JUCE_MAC
+    const auto videoFixture = SystemStats::getEnvironmentVariable ("STUDIO_FILM_TEST_VIDEO", {});
+    if (videoFixture.isNotEmpty() && ! filmWorkspace.testImportAndResync (File (videoFixture)))
+        return fail ("import synthetic picture, float, redock and seek the native AVKit player");
+   #endif
+
+    const auto expected = edit->state.getChildWithName ("STUDIO_FILM_SCORING").createXml();
+    const auto trackID = te::getAudioTracks (*edit).getFirst()->itemID.toString().toStdString();
+    studio::film::saveStemAssignments (edit->state, {{ trackID, studio::film::StemFamily::strings }},
+                                      &edit->getUndoManager());
+    {
+        te::EditFileOperations project (*edit);
+        if (! project.saveTempVersion (true))
+            return fail ("write recovery snapshot with Film Scoring changes");
+        const auto recoveryXml = XmlDocument::parse (project.getTempVersionFile());
+        project.deleteTempVersion();
+        const auto* recoveryPicture = recoveryXml != nullptr
+            ? recoveryXml->getChildByName ("STUDIO_FILM_SCORING") : nullptr;
+        if (recoveryPicture == nullptr || ! recoveryPicture->isEquivalentTo (expected.get(), true))
+            return fail ("recovery snapshot preserves Film Scoring state");
+    }
+    const auto saved = std::make_shared<std::optional<bool>>();
+    save ([saved] (bool ok) { *saved = ok; });
+    for (int i = 0; i < 100 && ! saved->has_value(); ++i)
+        MessageManager::getInstance()->runDispatchLoopUntil (20);
+    if (! saved->value_or (false))
         return fail ("save project with film scoring metadata");
     const auto generation = projectGeneration;
     loadProject (fixture.getFile(), false);
-    if (projectGeneration != generation + 1 || edit == nullptr
-        || studio::film::decode (edit->state).spots.size() != 2
-        || studio::film::decode (edit->state).pictureStartFrame != saved.pictureStartFrame
-        || studio::film::decode (edit->state).cues.size() != 2)
-        return fail ("reopen picture scoring metadata and offset");
+    if (projectGeneration != generation + 1 || edit == nullptr)
+        return fail ("reopen film scoring project");
+    const auto restored = edit->state.getChildWithName ("STUDIO_FILM_SCORING").createXml();
+    const auto assignments = studio::film::readStemAssignments (edit->state);
+    if (restored == nullptr || ! restored->isEquivalentTo (expected.get(), true)
+        || assignments.size() != 1 || assignments.front().trackId != trackID
+        || assignments.front().family != studio::film::StemFamily::strings)
+        return fail ("restore picture scoring metadata and track stem family");
     if (filmWorkspace.spotCount() != 2 || filmWorkspace.snapshot().find ("test-1") == nullptr
         || filmWorkspace.snapshot().find ("test-1")->pictureFrame != 17982
         || filmWorkspace.snapshot().findCue ("1M1") == nullptr
@@ -4759,10 +4820,14 @@ int StudioView::runFilmScoringReview (const File& output)
     if (output != File())
     {
         if (output.createDirectory().failed()) return fail ("create screenshot folder");
-        FileOutputStream stream (output.getChildFile ("film-scoring-workspace.png"));
-        if (! stream.openedOk() || ! PNGImageFormat().writeImageToStream (
-                createComponentSnapshot (getLocalBounds()), stream))
-            return fail ("render workspace screenshot");
+        for (const auto width : { 1280, 1536 })
+        {
+            setSize (width, width == 1280 ? 800 : 960);
+            FileOutputStream stream (output.getChildFile ("film-scoring-" + String (width) + ".png"));
+            if (! stream.openedOk() || ! PNGImageFormat().writeImageToStream (
+                    createComponentSnapshot (getLocalBounds()), stream))
+                return fail ("render workspace screenshot");
+        }
     }
     std::puts ("Film Scoring workspace, frame anchors, project isolation and reload passed.");
     return 0;

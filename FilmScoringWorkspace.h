@@ -296,8 +296,8 @@ public:
 
     int minimumContentHeight (int width) const
     {
-        juce::ignoreUnused (width);
-        return 392;
+        if (width >= 600) return 392;
+        return width >= 445 ? 640 : 980;
     }
 
     void tick()
@@ -376,12 +376,32 @@ public:
         // separate native PictureWindow is independently resizable.
         auto area = getLocalBounds().reduced (8);
         const int gutter = 9;
-        const int sideWidth = juce::jlimit (205, 290, area.getWidth() / 4);
-        auto left = area.removeFromLeft (sideWidth);
-        area.removeFromLeft (gutter);
-        auto right = area.removeFromRight (sideWidth);
-        area.removeFromRight (gutter);
-        auto centre = area;
+        juce::Rectangle<int> left, right, centre;
+        if (getWidth() >= 600)
+        {
+            const int sideWidth = juce::jlimit (205, 290, area.getWidth() / 4);
+            left = area.removeFromLeft (sideWidth);
+            area.removeFromLeft (gutter);
+            right = area.removeFromRight (sideWidth);
+            area.removeFromRight (gutter);
+            centre = area;
+        }
+        else
+        {
+            centre = area.removeFromTop (240);
+            area.removeFromTop (gutter);
+            if (getWidth() >= 445)
+            {
+                left = area.removeFromLeft ((area.getWidth() - gutter) / 2);
+                area.removeFromLeft (gutter);
+            }
+            else
+            {
+                left = area.removeFromTop (340);
+                area.removeFromTop (gutter);
+            }
+            right = area;
+        }
 
         const auto line = [] (juce::Rectangle<int>& panel, int height = 27)
         {
@@ -444,8 +464,7 @@ public:
         const int monitorWidth = juce::jmin (monitorArea.getWidth(), monitorHeight * 16 / 9);
         monitorHost.setBounds (monitorArea.withSizeKeepingCentre (monitorWidth, monitorHeight));
        #if JUCE_MAC
-        if (! isFloating())
-            video.setBounds (monitorHost.getLocalBounds());
+        fitDockedVideo();
        #else
         noVideo.setBounds (monitorHost.getLocalBounds());
        #endif
@@ -464,6 +483,16 @@ public:
         g.drawRoundedRectangle (r, 5.0f, 1.0f);
     }
 
+    void setDockedVideoViewport (juce::Rectangle<int> screenBounds)
+    {
+       #if JUCE_MAC
+        dockedVideoViewport = screenBounds;
+        fitDockedVideo();
+       #else
+        juce::ignoreUnused (screenBounds);
+       #endif
+    }
+
     bool isFloating() const
     {
        #if JUCE_MAC
@@ -479,16 +508,54 @@ public:
     {
        #if JUCE_MAC
         // The native child surface can occlude popups even before media loads.
-        if (isShowing() && ! isFloating())
-            return monitorHost.getScreenBounds();
+        if (isShowing() && ! isFloating() && video.isVisible())
+            return video.getScreenBounds();
        #endif
         return {};
     }
+
+   #if JUCE_MAC && STUDIO_SPATIAL_TESTS
+    bool testImportAndResync (const juce::File& file)
+    {
+        loadPicture (file, true);
+        if (! video.isVideoOpen() || ! isShowing()) return false;
+        setFloating (true);
+        if (! isFloating() || ! video.isShowing()) return false;
+        setFloating (false);
+        edit->getTransport().setPosition (tracktion::TimePosition::fromSeconds (
+            project.timelineSeconds (24)));
+        resyncButton.onClick();
+        for (int i = 0; i < 60; ++i)
+        {
+            if (std::abs (video.getPlayPosition() - frameSeconds (24, project.rate)) < 0.06)
+                return true;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        }
+        return false;
+    }
+   #endif
 
     size_t spotCount() const { return project.spots.size(); }
     const Project& snapshot() const { return project; }
 
 private:
+   #if JUCE_MAC
+    void fitDockedVideo()
+    {
+        if (isFloating() || video.getParentComponent() != &monitorHost)
+            return;
+
+        // AVKit's native view is parented to the window's native peer, so
+        // JUCE's viewport alone cannot clip it while the dock scrolls.
+        const auto visible = monitorHost.getLocalArea (nullptr, dockedVideoViewport)
+                                         .getIntersection (monitorHost.getLocalBounds());
+        video.setVisible (! visible.isEmpty());
+        video.setBounds (visible);
+    }
+
+    juce::Rectangle<int> dockedVideoViewport;
+   #endif
+
     static juce::String rateName (Rate rate)
     {
         switch (rate)
@@ -598,10 +665,11 @@ private:
         if (! edit) return;
         chooser = std::make_unique<juce::FileChooser> ("Choose a picture reference",
                 juce::File::getSpecialLocation (juce::File::userMoviesDirectory), "*.mov;*.mp4;*.m4v");
+        const auto version = editGeneration;
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-            [safe = juce::Component::SafePointer<Workspace> (this)] (const juce::FileChooser& fc)
+            [safe = juce::Component::SafePointer<Workspace> (this), version] (const juce::FileChooser& fc)
             {
-                if (safe == nullptr) return;
+                if (safe == nullptr || safe->edit == nullptr || safe->editGeneration != version) return;
                 const auto file = fc.getResult();
                 if (file.existsAsFile()) safe->loadPicture (file, true);
             });
@@ -999,7 +1067,7 @@ private:
             floating->clearContentComponent();
             floating.reset();
             monitorHost.addAndMakeVisible (video);
-            video.setBounds (monitorHost.getLocalBounds());
+            fitDockedVideo();
             floatButton.setButtonText ("Float");
         }
        #else

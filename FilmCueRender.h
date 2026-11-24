@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "ComposerBounce.h"
 #include "FilmCueDelivery.h"
 #include "FilmStemDelivery.h"
 #include "FilmScoringCueSheet.h"
@@ -40,6 +41,7 @@ public:
     {
         cancel();
         queue.reset();  // Tracktion joins/cancels the render before Edit release.
+        snapshot.reset();
         message.clear();
         renderedDirectory = juce::File();
         currentCue = {};
@@ -75,7 +77,7 @@ public:
 
     juce::File outputDirectory() const { return renderedDirectory; }
 
-    juce::Result start (tracktion::engine::Edit& edit,
+    juce::Result start (tracktion::engine::Edit& source,
                         const Project& project,
                         const Cue& cue,
                         const juce::File& chosenDirectory,
@@ -88,7 +90,7 @@ public:
         // Clear any previous finished jobs before referencing a new Edit.
         clear();
 
-        if (edit.getTransport().isRecording() || edit.getTransport().isPlaying())
+        if (source.getTransport().isRecording() || source.getTransport().isPlaying())
             return juce::Result::fail ("Stop playback and recording before exporting a cue.");
         const auto range = deliveryRange (project, cue);
         if (! range)
@@ -96,13 +98,17 @@ public:
         if (! chosenDirectory.isDirectory())
             return juce::Result::fail ("Choose an existing output directory.");
 
+        // Per-track jobs temporarily mute routing dependencies. Apply those
+        // changes to an offline Edit so the live project stays safe to save.
+        auto renderEdit = studio::bounce::createRenderSnapshot (source);
+        if (renderEdit == nullptr)
+            return juce::Result::fail ("Could not create the offline cue render graph.");
+        auto& edit = *renderEdit;
+
         const juce::String stem (deliveryStem (cue));
         const juce::String folderName = stem + (mode == Mode::individualTracks ? "-Tracks"
                                              : mode == Mode::familyStems ? "-Family-Stems" : "-Mix");
         const auto folder = chosenDirectory.getNonexistentChildFile (folderName, {}, true);
-        const auto makeFolder = folder.createDirectory();
-        if (makeFolder.failed()) return makeFolder;
-
         te::RenderSpecification base;
         base.format = te::RenderFormat::wav;
         base.sampleRate = 48000.0;
@@ -188,6 +194,8 @@ public:
             planned.push_back (std::move (*job));
         }
 
+        if (auto makeFolder = folder.createDirectory(); makeFolder.failed()) return makeFolder;
+        snapshot = std::move (renderEdit);
         queue = std::make_unique<te::RenderQueue>();
         queue->onJobFinished = [this] (te::RenderQueue::Job&) { notify(); };
         queue->onFinished = [this]
@@ -241,6 +249,7 @@ private:
             message = "Cue WAVs rendered; unable to write delivery report.";
     }
 
+    std::unique_ptr<tracktion::Edit> snapshot;
     std::unique_ptr<tracktion::engine::RenderQueue> queue;
     Cue currentCue;
     DeliveryRange currentRange;

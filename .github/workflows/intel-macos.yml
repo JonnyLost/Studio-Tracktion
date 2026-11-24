@@ -144,7 +144,12 @@ jobs:
             archive=Studio-0.2-Integrated-Alpha-Intel-preview
             echo "::warning::Approved assets/Studio.png is pending. This archive is a preview."
           else
-            test -s build/Studio_artefacts/Debug/Studio.app/Contents/Resources/Icon.icns
+            bundle=build/Studio_artefacts/Debug/Studio.app/Contents
+            icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$bundle/Info.plist")
+            test "$icon" = AppIcon.icns
+            test -s "$bundle/Resources/$icon"
+            sips -g pixelWidth -g pixelHeight assets/Studio.png | grep -q 'pixelWidth: 1024'
+            sips -g pixelHeight assets/Studio.png | grep -q 'pixelHeight: 1024'
           fi
           tools/package-intel-studio.sh build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/$archive.zip"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"

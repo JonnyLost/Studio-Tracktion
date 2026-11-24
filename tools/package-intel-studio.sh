@@ -17,7 +17,7 @@ plutil -lint "$plist"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = org.studioproject.tracktion
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")" = Studio
 test "$(lipo -archs "$executable")" = x86_64
-test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")" = 14.0
+xcrun vtool -show-build "$executable" | grep -Eq '^[[:space:]]+minos 14\.0(\.0)?$'
 otool -L "$executable"
 if ! codesign --verify --deep --strict "$app"; then
     codesign --force --sign - "$app"
@@ -41,7 +41,7 @@ executable="$scratch/Studio.app/Contents/MacOS/Studio"
 codesign --verify --deep --strict "$scratch/Studio.app"
 open -n "$scratch/Studio.app"
 for (( attempt = 0; attempt < 15; ++attempt )); do
-    pid="$(pgrep -fx "$executable" || true)"
+    pid="$(pgrep -f "^${executable}([[:space:]]|$)" || true)"
     [[ -n "$pid" ]] && break
     sleep 1
 done

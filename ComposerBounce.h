@@ -5,6 +5,8 @@
 
 namespace studio::bounce
 {
+std::unique_ptr<tracktion::Edit> createRenderSnapshot (tracktion::Edit&);
+
 struct Options
 {
     tracktion::TimeRange range;
