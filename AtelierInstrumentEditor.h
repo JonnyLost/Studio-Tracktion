@@ -32,6 +32,8 @@ public:
    #if STUDIO_SPATIAL_TESTS
     bool verifyBindings();
     bool essentialControlsFit() const;
+    bool reviewPage (int requested, bool shouldBeFull);
+    bool reviewSelectMappedArticulation();
    #endif
 
 private:
