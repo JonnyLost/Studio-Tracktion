@@ -473,7 +473,8 @@ public:
     juce::Rectangle<int> dockedVideoScreenBounds() const
     {
        #if JUCE_MAC
-        if (isShowing() && ! isFloating() && video.isVideoOpen())
+        // The native child surface can occlude popups even before media loads.
+        if (isShowing() && ! isFloating())
             return monitorHost.getScreenBounds();
        #endif
         return {};
