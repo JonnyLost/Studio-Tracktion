@@ -5148,6 +5148,11 @@ int StudioView::runUnifiedStageReview (const File& output)
         return fail ("per-track height increases arrangement content size");
     const Array<te::AudioTrack*> members { legacy, sectionMate };
     auto group = studio::tracks::createSubmix (*edit, members, "Test Section");
+    // Tracktion caches FolderTrack's newly inserted fader after its pending
+    // plug-in listener dispatch. Let that normal UI update finish first.
+    if (group != nullptr)
+        for (int attempt = 0; attempt < 12 && group->getVolumePlugin() == nullptr; ++attempt)
+            MessageManager::getInstance()->runDispatchLoopUntil (25);
     if (group == nullptr || ! group->isSubmixFolder() || group->getVolumePlugin() == nullptr
         || legacy->getParentFolderTrack() != group.get()
         || sectionMate->getParentFolderTrack() != group.get() || ! hasRoomSend (*legacy))
