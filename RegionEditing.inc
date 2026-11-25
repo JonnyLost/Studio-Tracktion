@@ -54,6 +54,16 @@ void ClipComponent::mouseDown (const MouseEvent& event)
     regionDragPreview.reset();
 
     auto& selection = editViewState.selectionManager;
+    // A context click selects the clicked region without disturbing an
+    // existing multi-selection, and never initiates a trim or drag.
+    if (event.mods.isPopupMenu())
+    {
+        if (! selection.isSelected (clip.get()))
+            selection.selectOnly (clip.get());
+        if (editViewState.showStudioRegionMenu)
+            editViewState.showStudioRegionMenu (clip->itemID, *this);
+        return;
+    }
     if (event.mods.isShiftDown())
     {
         if (selection.isSelected (clip.get()))
