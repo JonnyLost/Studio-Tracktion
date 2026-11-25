@@ -817,15 +817,16 @@ public:
         }
         else if (track != nullptr)
         {
-            name.setButtonText (track->getName());
-            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
-            name.setTooltip ((icon.isNotEmpty() ? icon + " · " : String()) + track->getName()
-                             + " (select track)");
-            auto* instrument = findInstrument (*track);
             const bool wetReturn = spatial::isRoomReturn (*track);
+            name.setButtonText (wetReturn ? "Stage Reverb" : track->getName());
+            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+            name.setTooltip (wetReturn
+                ? "Studio Room Return · managed effects return. Select to control its wet volume, pan and output."
+                : (icon.isNotEmpty() ? icon + " · " : String()) + track->getName() + " (select track)");
+            auto* instrument = findInstrument (*track);
             const auto nextAccent = wetReturn ? colours::roomReturn : track->getColour().interpolatedWith (colours::action, 0.38f);
             if (accent != nextAccent) { accent = nextAccent; repaint(); }
-            identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
+            identity.setText (wetReturn ? "WET FX RETURN" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
             // Count only user-facing instruments/effects; do not count Studio's
@@ -842,8 +843,11 @@ public:
                     continue;
                 ++insertsCount;
             }
-            inserts.setButtonText (insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
-            inserts.setTooltip (insertsCount > 0
+            inserts.setButtonText (wetReturn ? "Managed Room FX"
+                : insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
+            inserts.setTooltip (wetReturn
+                ? "Studio owns the native room return. Adjust its wet level here and room sends on Stage."
+                : insertsCount > 0
                 ? String (insertsCount) + " instrument/effect insert(s). Open to edit or remove."
                 : "No instrument/effect inserts. Open to add an effect.");
             int inputCount = 0;
@@ -857,15 +861,19 @@ public:
             // Input routing lives in the selected-track Inspector or the
             // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
+            arm.setVisible (! wetReturn);
             arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
             room.setEnabled (! wetReturn && ready);
+            room.setVisible (! wetReturn);
             room.setToggleState (sending, dontSendNotification);
             room.setTooltip (sending ? "Room send enabled. Open this seat on Stage." : "Open Stage to set the room send");
             out.setButtonText (outputLabel (*track));
             out.setTooltip (out.getButtonText());
             out.setEnabled (editable);
-            inserts.setEnabled (editable);
+            // The shared room chain must remain managed by Studio: do not
+            // offer destructive insert editing on this special return strip.
+            inserts.setEnabled (editable && ! wetReturn);
             mute.setToggleState (track->isMuted (false), dontSendNotification);
             solo.setToggleState (track->isSolo (false), dontSendNotification);
             mute.setEnabled (ready);
