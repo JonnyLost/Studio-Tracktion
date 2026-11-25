@@ -262,7 +262,10 @@ if(track_header_geometry_match EQUAL -1)
 endif()
 string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appearance;
     auto r = getLocalBounds().reduced (m.px (7), m.px (3));
-    trackName.setBounds (r.removeFromTop (m.line (12, 2)));
+    auto nameRow = r.removeFromTop (m.line (12, 2));
+    if (track->isFolderTrack()) nameRow.removeFromLeft (m.px (16));
+    if (track->getParentFolderTrack() != nullptr) nameRow.removeFromLeft (m.px (9));
+    trackName.setBounds (nameRow);
 
     const bool showMini = (bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false)
                        || (bool) track->state.getProperty (Identifier ("studioHeaderPan"), false)
@@ -386,6 +389,16 @@ endif()
 string(REPLACE "${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mouseDown (const MouseEvent& event)
 {
     editViewState.selectionManager.selectOnly (track.get());
+    if (track->isFolderTrack() && event.mods.isLeftButtonDown()
+        && event.x < studio::appearance.px (25) && event.y < studio::appearance.px (27))
+    {
+        const bool wasCollapsed = (bool) track->state.getProperty ("studioFolderCollapsed", false);
+        auto& undo = track->edit.getUndoManager();
+        undo.beginNewTransaction (wasCollapsed ? "Expand folder" : "Collapse folder");
+        track->state.setProperty ("studioFolderCollapsed", ! wasCollapsed, &undo);
+        undo.beginNewTransaction();
+        return;
+    }
     if (event.mods.isPopupMenu() && editViewState.showStudioTrackMenu)
         editViewState.showStudioTrackMenu (track->itemID, *this);
     else if (event.mods.isLeftButtonDown() && event.y >= getHeight() - studio::appearance.px (7))
@@ -489,6 +502,15 @@ string(REPLACE "${studio_header_destructor}" [=[TrackHeaderComponent::~TrackHead
     track->state.removeListener (this);
 }]=] editor "${editor}")
 
+# Distinguish real Tracktion FolderTrack rows and provide a visible
+# collapse affordance without touching any audio graph or submix routing.
+string(REPLACE "    trackName.setText (t->getName(), dontSendNotification);"
+               [=[    trackName.setText ((t->isFolderTrack() ? "▾ " : "") + t->getName(), dontSendNotification);]=]
+               editor "${editor}")
+set(studio_folder_header_paint [=[    g.fillRect (area);]=])
+# The existing Studio-style track-header code chooses the appropriate colour.
+string(REPLACE "g.setColour (selected ? studio::colours::selected : studio::colours::panel);"
+               "g.setColour (selected ? studio::colours::selected : track->isFolderTrack() ? studio::colours::raised : studio::colours::panel);" editor "${editor}")
 # Keep renamed tracks in sync without recreating the arrangement row.
 set(studio_track_name_anchor [=[    if (te::TrackList::isTrack (v))
     {
@@ -499,9 +521,11 @@ if(studio_track_name_match EQUAL -1)
 endif()
 string(REPLACE "${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (v))
     {
-        if (i == te::IDs::name)
+        if (i == te::IDs::name || i == Identifier ("studioFolderCollapsed"))
         {
-            trackName.setText (track->getName(), dontSendNotification);
+            const bool collapsed = (bool) track->state.getProperty ("studioFolderCollapsed", false);
+            trackName.setText ((track->isFolderTrack() ? (collapsed ? "▸ " : "▾ ") : "")
+                + track->getName(), dontSendNotification);
             trackName.setTooltip (track->getName());
         }
         else if (i == Identifier ("studioHeaderVolume") || i == Identifier ("studioHeaderPan")
@@ -592,6 +616,15 @@ string(REPLACE "${studio_room_track_build_anchor}" [=[    for (auto t : getAllTr
             if (auto* audio = dynamic_cast<te::AudioTrack*> (t))
                 if (studio::spatial::isRoomReturn (*audio))
                     continue; // Mixer still sees this actual audio return track.
+        bool insideCollapsedFolder = false;
+        for (auto* parent = t->getParentFolderTrack(); parent != nullptr;
+             parent = parent->getParentFolderTrack())
+            if ((bool) parent->state.getProperty ("studioFolderCollapsed", false))
+            {
+                insideCollapsedFolder = true;
+                break;
+            }
+        if (insideCollapsedFolder) continue;
         TrackComponent* c = nullptr;]=] editor "${editor}")
 
 # Newly created Stage returns are inserted before Studio stamps their role.
