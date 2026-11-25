@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
+#include "ComposerFiles.h"
 #include <algorithm>
 #include <cmath>
 
@@ -575,6 +576,23 @@ void Plugin::rename (String name)
     auto next = model;
     next.name = std::move (name);
     change (std::move (next), true);
+}
+
+Result writeImportedPreset (Instrument model, const File& file, std::atomic<bool>& cancelled)
+{
+    prepareSamples (model, {}, &cancelled);
+    if (cancelled.load()) return Result::fail ("Import cancelled.");
+    for (const auto& zone : model.zones)
+        if (zone.problem.isNotEmpty() || ! zone.mapping.sample)
+            return Result::fail (zone.file.getFileName() + ": " + zone.problem);
+    if (model.zones.empty()) return Result::fail ("No playable sample zones.");
+    model.preset = model.name;
+    model.dirty = false;
+    TemporaryFile temporary (file);
+    if (! encode (model, file.getParentDirectory(), false).writeTo (temporary.getFile()))
+        return Result::fail ("Could not write the imported Studio Sampler instrument.");
+    if (cancelled.load()) return Result::fail ("Import cancelled.");
+    return publishNewFile (temporary.getFile(), file);
 }
 
 Result Plugin::savePreset (const File& file)

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - integration/studio-0.2-integrated-alpha
+      - feature/studio-garritan-library-import
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
@@ -135,12 +136,14 @@ jobs:
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
       - name: Package integrated Intel Studio application
-        if: github.ref == 'refs/heads/integration/studio-0.2-integrated-alpha'
+        if: github.ref == 'refs/heads/integration/studio-0.2-integrated-alpha' || github.ref == 'refs/heads/feature/studio-garritan-library-import'
         id: integrated-app
         shell: bash
         run: |
           archive=Studio-0.2-Integrated-Alpha-Intel
-          if [[ ! -f assets/Studio.png ]]; then
+          if [[ "$GITHUB_REF_NAME" == feature/studio-garritan-library-import ]]; then
+            archive=Studio-0.2-Garritan-Importer-Intel-preview
+          elif [[ ! -f assets/Studio.png ]]; then
             archive=Studio-0.2-Integrated-Alpha-Intel-preview
             echo "::warning::Approved assets/Studio.png is pending. This archive is a preview."
           else
@@ -160,10 +163,10 @@ jobs:
           path: ${{ runner.temp }}/${{ steps.integrated-app.outputs.archive }}.zip
           if-no-files-found: error
       - name: Package Intel Studio application
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import'
         run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
       - uses: actions/upload-artifact@v4
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import'
         with:
           name: Studio-M13-Intel-app
           path: ${{ runner.temp }}/Studio-M13-Intel.zip
