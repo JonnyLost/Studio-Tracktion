@@ -4000,6 +4000,13 @@ private:
                         && ! showNativeInstrument (*instrument) && ! showAtelierInstrument (*instrument))
                         instrument->showWindowExplicitly();
         };
+        trackActions.openOriginalInstrument = [this] (te::EditItemID id)
+        {
+            if (busy || edit == nullptr) return;
+            if (auto* chosen = trackById (id))
+                if (auto* plug = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*chosen)))
+                    plug->showWindowExplicitly(); // Reuses the existing AU; no extra instrument.
+        };
         trackActions.openFullInstrument = [this] (te::EditItemID id)
         {
             if (! busy)
