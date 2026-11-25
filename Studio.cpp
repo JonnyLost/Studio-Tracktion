@@ -33,6 +33,7 @@ using namespace tracktion::literals;
 #include "InstrumentWorkspace.h"
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
+#include "StudioAuditionKeyboard.h"
 #include "Seating/SeatingWorkspace.h"
 #include "FilmScoringWorkspace.h"
 
@@ -266,6 +267,13 @@ private:
             "Edit  |  Command-Z  |  Undo",
             "Edit  |  Shift-Command-Z  |  Redo",
             "MIDI  |  Command-J  |  Join Selected MIDI Regions",
+            "Keyboard  |  Shift-Command-K  |  On-Screen MIDI Keyboard",
+            "Track  |  Shift-Command-G  |  Group Selected Tracks",
+            "Workspace  |  Command-1  |  Piano Roll",
+            "Workspace  |  Command-2  |  Full Mixer",
+            "Workspace  |  Command-3  |  Orchestral Stage",
+            "Workspace  |  Command-4  |  Film Scoring",
+            "Inspector  |  Command-I  |  Show / Hide Selected Track Inspector",
             "Piano Roll  |  Delete  |  Delete Selected Notes",
             "Piano Roll  |  Escape  |  Clear Note Selection",
             "Transport  |  Return to Start",
@@ -459,6 +467,9 @@ public:
         addAndMakeVisible (music);
         addAndMakeVisible (transportOptions);
         addAndMakeVisible (flashbackButton);
+        addAndMakeVisible (keyboardButton);
+        keyboardButton.setTooltip ("Open the on-screen audition keyboard for the selected instrument (Shift-Command-K)");
+        keyboardButton.onClick = [this] { toggleAuditionKeyboard(); };
         flashbackButton.setTooltip ("Capture recently played MIDI from the selected track's assigned input, even if Record wasn't pressed");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
@@ -672,10 +683,12 @@ public:
         trackOptions.onClick = [this]
         {
             PopupMenu menu;
-            if (auto* track = workflowTrack())
+            if (auto* folder = selectedFolder())
+                populateFolderEditMenu (menu, *folder);
+            else if (auto* track = workflowTrack())
                 populateTrackEditMenu (menu, *track);
             else
-                menu.addSectionHeader ("Select a track in the arrangement first");
+                menu.addSectionHeader ("Select a track or folder in the arrangement first");
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&trackOptions));
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
@@ -783,6 +796,15 @@ public:
             {
                 if (safe != nullptr && safe->browser.loadSampler) safe->browser.loadSampler (true);
             });
+            menu.addSeparator();
+            menu.addItem ("New Submix Group...", [safe]
+            {
+                if (safe != nullptr) safe->createGroupDialog (false);
+            });
+            menu.addItem ("Group Selected Tracks...", [safe]
+            {
+                if (safe != nullptr) safe->createGroupDialog (true);
+            });
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (addMidi.isVisible() ? &addMidi : &trackMenu));
         };
         addSynthTrack.onClick = [this] { if (browser.loadSynth) browser.loadSynth ("analog", true); };
@@ -825,6 +847,13 @@ public:
             bounceWindow.deleteAndZero();
         bounce.reset();
         pendingPlugin.reset();
+        if (midiKeyboardWindow != nullptr)
+        {
+            midiKeyboardWindow->panel.releaseNotes();
+            midiKeyboardWindow->panel.send = {};
+            midiKeyboardWindow->setLookAndFeel (nullptr);
+            midiKeyboardWindow.reset();
+        }
         if (edit != nullptr) midiFocus.release (edit.get());
         rememberInstrumentWorkspace();
         performance.clear();
@@ -1098,6 +1127,32 @@ public:
             else play.onClick();
             return true;
         }
+        // Dedicated composition shortcuts, independent of fragile button order.
+        const auto mods = key.getModifiers();
+        if (mods.isCommandDown() && mods.isShiftDown()
+            && (key.getKeyCode() == 'K' || key.getKeyCode() == 'k'))
+        {
+            toggleAuditionKeyboard();
+            return true;
+        }
+        if (mods.isCommandDown() && mods.isShiftDown()
+            && (key.getKeyCode() == 'G' || key.getKeyCode() == 'g'))
+        {
+            createGroupDialog (true);
+            return true;
+        }
+        if (mods.isCommandDown() && ! mods.isShiftDown() && ! mods.isAltDown())
+        {
+            switch (key.getKeyCode())
+            {
+                case '1': showWorkspace (Workspace::piano); return true;
+                case '2': showWorkspace (Workspace::mix); return true;
+                case '3': showWorkspace (Workspace::stage); return true;
+                case '4': showWorkspace (Workspace::filmScoring); return true;
+                case 'i': case 'I': setInspectorOpen (! inspectorOpen); return true;
+                default: break;
+            }
+        }
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'J' || key.getKeyCode() == 'j')
             && canEditRegions())
         {
@@ -1173,7 +1228,8 @@ public:
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
         const int gap = m.px (6);
         const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
-        const int menuW = m.span (76), flashbackW = m.span (98), elapsedW = m.span (97);
+        const int menuW = m.span (76), flashbackW = m.span (98),
+                  keyboardW = m.span (86), elapsedW = m.span (97);
        #if JUCE_MAC
         const int customizeW = 0; // View menu owns transport customization.
        #else
@@ -1189,11 +1245,13 @@ public:
         const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
         const bool showMusicMenu = availableWidth >= m.span (610);
         const bool showFlashback = availableWidth >= m.span (830);
+        const bool showKeyboard = availableWidth >= m.span (1100);
         const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
         const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
         const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
         const int secondaryWidth = (showMusicMenu ? menuW + gap : 0)
                                  + (showFlashback ? flashbackW + gap : 0)
+                                 + (showKeyboard ? keyboardW + gap : 0)
                                  + (showCustomize ? customizeW : 0);
         const int fixed = readoutBase + secondaryWidth + 2 * gap;
         const int buttonCount = 4 + optionalButtons;
@@ -1208,6 +1266,7 @@ public:
         clickButton.setVisible (showClick);
         music.setVisible (showMusicMenu);
         flashbackButton.setVisible (showFlashback);
+        keyboardButton.setVisible (showKeyboard);
         const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
         const int totalWidth = fixed + buttonCount * key + (showElapsed ? elapsedW : 0);
         auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
@@ -1237,6 +1296,12 @@ public:
             flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
         }
         else flashbackButton.setBounds ({});
+        if (showKeyboard)
+        {
+            row.removeFromLeft (gap);
+            keyboardButton.setBounds (row.removeFromLeft (keyboardW).reduced (m.px (1), m.px (5)));
+        }
+        else keyboardButton.setBounds ({});
        #if JUCE_MAC
         transportOptions.setVisible (false);
        #else
@@ -1613,10 +1678,10 @@ public:
     {
         mPicture = 2000, mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
         mMidiExport, mAudioExport, mAudioSettings, mPluginManager, mUndo, mRedo,
-        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
+        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip, mNewGroup, mGroupSelected,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
-        mMidiMonitor, mResources, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
+        mMidiMonitor, mResources, mAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
@@ -1658,6 +1723,9 @@ public:
                 add (mAddSynth, "New Studio Synth Track", canInsertPlugin());
                 add (mAddSampler, "New Studio Sampler Track", canInsertPlugin());
                 add (mAddAudio, "New Audio Track", editable);
+                menu.addSeparator();
+                add (mNewGroup, "New Submix Folder...", editable);
+                add (mGroupSelected, "Group Selected Tracks...", editable);
                 add (mAddMidiClip, "New MIDI Clip", addMidiClip.isEnabled());
                 break;
             case 3: // Navigate
@@ -1690,6 +1758,7 @@ public:
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
                 add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
+                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
                 menu.addSeparator();
                 add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
                 add (mTransportClick, "Transport: Metronome", true, showTransportClick);
@@ -1711,6 +1780,7 @@ public:
                 add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
                 add (mPerformanceNone, "Hide Performance Panel", true, performanceMode.getSelectedId() == 3);
                 menu.addSeparator();
+                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
@@ -1754,6 +1824,8 @@ public:
             case mAddSynth: invoke (addSynthTrack); break;
             case mAddSampler: invoke (addSamplerTrack); break;
             case mAddAudio: invoke (addAudio); break;
+            case mNewGroup: createGroupDialog (false); break;
+            case mGroupSelected: createGroupDialog (true); break;
             case mAddMidiClip: invoke (addMidiClip); break;
             case mRegionActions: invoke (regionActions); break;
             case mRewind: invoke (rewind); break;
@@ -1769,6 +1841,7 @@ public:
             case mInspector: setInspectorOpen (! inspectorOpen); break;
             case mRoomReturnArrangement: setRoomReturnTrackVisible (! showRoomReturnTrack); break;
             case mEnvironments: environmentWelcome.open (false); break;
+            case mAuditionKeyboard: toggleAuditionKeyboard(); break;
             case mMidiMonitor: invoke (monitorButton); break;
             case mResources: if (resources.onOpen) resources.onOpen(); break;
             case mAboutStudio:
@@ -1880,6 +1953,8 @@ private:
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
+    std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    te::EditItemID keyboardTarget;
     Viewport timeline;
     std::unique_ptr<FileChooser> chooser;
     File projectFile;
@@ -1974,7 +2049,8 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
-    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" };
+    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" },
+               keyboardButton { "Keyboard" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" },
@@ -2409,6 +2485,56 @@ private:
         prefs.saveIfNeeded();
     }
 
+    void closeAuditionKeyboard()
+    {
+        if (midiKeyboardWindow == nullptr) return;
+        midiKeyboardWindow->panel.releaseNotes();
+        midiKeyboardWindow->panel.send = {};
+        midiKeyboardWindow->onClose = {};
+        midiKeyboardWindow->setLookAndFeel (nullptr);
+        midiKeyboardWindow.reset();
+        keyboardTarget = {};
+    }
+
+    void toggleAuditionKeyboard()
+    {
+        if (midiKeyboardWindow != nullptr)
+        {
+            closeAuditionKeyboard();
+            return;
+        }
+        midiKeyboardWindow = std::make_unique<studio::AuditionKeyboardWindow>();
+        auto* active = workflowTrack();
+        keyboardTarget = active != nullptr && studio::findInstrument (*active) != nullptr
+            ? active->itemID : te::EditItemID {};
+        midiKeyboardWindow->panel.setSelectedInstrument (
+            keyboardTarget.isValid() && active != nullptr ? active->getName() : String());
+        const SafePointer<StudioView> safe (this);
+        midiKeyboardWindow->panel.send = [safe] (const MidiMessage& note)
+        {
+            if (safe == nullptr || safe->edit == nullptr || safe->busy
+                || ! safe->keyboardTarget.isValid()) return;
+            if (auto* track = te::findAudioTrackForID (*safe->edit, safe->keyboardTarget))
+                if (studio::findInstrument (*track) != nullptr
+                    && safe->edit->getTransport().getCurrentPlaybackContext() != nullptr)
+                    track->injectLiveMidiMessage (note, {});
+        };
+        midiKeyboardWindow->onClose = [safe]
+        {
+            if (safe == nullptr || safe->midiKeyboardWindow == nullptr) return;
+            safe->midiKeyboardWindow->panel.releaseNotes();
+            safe->midiKeyboardWindow->setVisible (false);
+            // Do not delete a DocumentWindow in its own close handler.
+            MessageManager::callAsync ([safe]
+            {
+                if (safe != nullptr) safe->closeAuditionKeyboard();
+            });
+        };
+        midiKeyboardWindow->setLookAndFeel (&style);
+        midiKeyboardWindow->setVisible (true);
+        midiKeyboardWindow->toFront (true);
+    }
+
     void toggleArticulationDock()
     {
         if (articulationWindow != nullptr)
@@ -2448,13 +2574,18 @@ private:
         return dynamic_cast<te::AudioTrack*> (selection.getSelectedObject (0));
     }
 
+    te::FolderTrack* selectedFolder()
+    {
+        return dynamic_cast<te::FolderTrack*> (selection.getSelectedObject (0));
+    }
+
     void sizeEditor()
     {
         if (editor != nullptr)
         {
             const int width = jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness());
             const int height = jmax (timeline.getMaximumVisibleHeight(),
-                                     (studio::appearance.trackHeight() + studio::appearance.trackGap()) * editor->getVisibleTrackCount());
+                                     editor->getStudioContentHeight());
             if (editor->getWidth() != width || editor->getHeight() != height)
                 editor->setSize (width, height);
         }
@@ -2645,6 +2776,200 @@ private:
         message.setText (result.wasOk() ? "Joined MIDI regions." : result.getErrorMessage(), dontSendNotification);
     }
 
+    void createGroupDialog (bool groupSelected)
+    {
+        if (edit == nullptr || ! canEditRegions() || edit->getTransport().isPlaying())
+            return;
+        Array<te::EditItemID> chosen;
+        if (groupSelected)
+        {
+            for (auto* t : selection.getItemsOfType<te::AudioTrack>())
+                chosen.add (t->itemID);
+            if (chosen.isEmpty() && workflowTrack() != nullptr)
+                chosen.add (workflowTrack()->itemID);
+        }
+        const auto generation = projectGeneration;
+        auto* window = new AlertWindow (groupSelected ? "Group Selected Tracks" : "New Submix Folder",
+            "Folders are real audio groups with a summed mixer bus and insert effects.",
+            MessageBoxIconType::NoIcon, this);
+        window->addTextEditor ("name", "Strings", "Group name");
+        window->addButton ("Create Group", 1, KeyPress (KeyPress::returnKey));
+        window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+        const SafePointer<StudioView> safe (this);
+        window->enterModalState (true, ModalCallbackFunction::create (
+            [safe, generation, window, chosen] (int result)
+            {
+                if (result != 1 || safe == nullptr || safe->projectGeneration != generation
+                    || ! safe->canEditRegions() || safe->edit->getTransport().isPlaying())
+                    return;
+                Array<te::AudioTrack*> members;
+                for (const auto& id : chosen)
+                {
+                    auto* t = safe->trackById (id);
+                    if (t == nullptr)
+                    {
+                        safe->message.setText ("A selected track was removed; folder not created.",
+                                               dontSendNotification);
+                        return;
+                    }
+                    members.add (t);
+                }
+                auto group = studio::tracks::createSubmix (*safe->edit, members,
+                    window->getTextEditorContents ("name"));
+                if (group == nullptr)
+                {
+                    safe->message.setText (
+                        "Couldn't create group. Use unfrozen top-level tracks and stop playback.",
+                        dontSendNotification);
+                    return;
+                }
+                safe->selection.selectOnly (group.get());
+                safe->sizeEditor();
+                safe->message.setText ("Submix folder created. Move tracks into it using their Track menu; "
+                                       "its group fader and effects are in Mixer.", dontSendNotification);
+            }), true);
+    }
+
+    void showGroupEffects (te::EditItemID id, Component& anchor)
+    {
+        if (edit == nullptr || busy) return;
+        auto* group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id));
+        if (group == nullptr) return;
+        PopupMenu menu;
+        menu.addSectionHeader (group->getName() + " · Submix Effects");
+        for (auto* p : group->pluginList.getPlugins())
+        {
+            if (dynamic_cast<te::VolumeAndPanPlugin*> (p) != nullptr
+                || dynamic_cast<te::LevelMeterPlugin*> (p) != nullptr
+                || dynamic_cast<te::VCAPlugin*> (p) != nullptr)
+                continue;
+            const auto pluginId = p->itemID;
+            PopupMenu actions;
+            actions.addItem ("Open", [safe = SafePointer<StudioView> (this), id, pluginId]
+            {
+                if (safe == nullptr || safe->edit == nullptr) return;
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                    te::findTrackForID (*safe->edit, id)))
+                    for (auto* current : folder->pluginList.getPlugins())
+                        if (current->itemID == pluginId) { current->showWindowExplicitly(); break; }
+            });
+            actions.addItem ("Remove Effect", canInsertPlugin() && ! edit->getTransport().isPlaying(),
+                false, [safe = SafePointer<StudioView> (this), id, pluginId]
+                {
+                    if (safe == nullptr || safe->edit == nullptr || ! safe->canInsertPlugin()
+                        || safe->edit->getTransport().isPlaying()) return;
+                    if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                        te::findTrackForID (*safe->edit, id)))
+                        for (auto* current : folder->pluginList.getPlugins())
+                            if (current->itemID == pluginId
+                                && dynamic_cast<te::VolumeAndPanPlugin*> (current) == nullptr
+                                && dynamic_cast<te::LevelMeterPlugin*> (current) == nullptr)
+                            {
+                                auto& undo = safe->edit->getUndoManager();
+                                undo.beginNewTransaction ("Remove submix effect");
+                                current->deleteFromParent();
+                                undo.beginNewTransaction();
+                                break;
+                            }
+                });
+            menu.addSubMenu (p->getName(), actions);
+        }
+        PopupMenu add;
+        for (const auto& effect : { std::pair { "EQ", te::EqualiserPlugin::xmlTypeName },
+                                     { "Compressor", te::CompressorPlugin::xmlTypeName },
+                                     { "Delay", te::DelayPlugin::xmlTypeName } })
+        {
+            const String label (effect.first), kind (effect.second);
+            add.addItem (label, canInsertPlugin() && ! edit->getTransport().isPlaying(), false,
+                [safe = SafePointer<StudioView> (this), id, kind]
+                {
+                    if (safe == nullptr || ! safe->canInsertPlugin()
+                        || safe->edit->getTransport().isPlaying()) return;
+                    auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id));
+                    if (folder == nullptr) return;
+                    auto effectPlugin = safe->edit->getPluginCache().createNewPlugin (kind, {});
+                    if (effectPlugin == nullptr) return;
+                    auto& undo = safe->edit->getUndoManager();
+                    undo.beginNewTransaction ("Add group effect");
+                    auto* volume = folder->getVolumePlugin();
+                    const int index = volume != nullptr ? folder->pluginList.indexOf (volume) : -1;
+                    folder->pluginList.insertPlugin (effectPlugin, index, nullptr);
+                    undo.beginNewTransaction();
+                });
+        }
+        menu.addSubMenu ("Add Group Effect", add);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+    void populateFolderEditMenu (PopupMenu& parent, te::FolderTrack& group,
+                                 bool nested = true)
+    {
+        const auto id = group.itemID;
+        PopupMenu folderMenu;
+        auto& menu = nested ? folderMenu : parent;
+        const auto safe = SafePointer<StudioView> (this);
+        const bool collapsed = (bool) group.state.getProperty ("studioFolderCollapsed", false);
+        menu.addItem (collapsed ? "Expand Group" : "Collapse Group", [safe, id]
+        {
+            if (safe == nullptr || safe->edit == nullptr) return;
+            if (auto* target = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id)))
+            {
+                auto& undo = safe->edit->getUndoManager();
+                undo.beginNewTransaction ("Toggle group visibility");
+                target->state.setProperty ("studioFolderCollapsed",
+                    ! (bool) target->state.getProperty ("studioFolderCollapsed", false), &undo);
+                undo.beginNewTransaction();
+                safe->sizeEditor();
+            }
+        });
+        menu.addItem ("Rename Group...", [safe, id, generation = projectGeneration]
+        {
+            if (safe == nullptr || safe->edit == nullptr) return;
+            auto* target = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id));
+            if (target == nullptr) return;
+            auto* window = new AlertWindow ("Rename Submix Group", {}, MessageBoxIconType::NoIcon, safe.getComponent());
+            window->addTextEditor ("name", target->getName(), "Group name");
+            window->addButton ("Rename", 1, KeyPress (KeyPress::returnKey));
+            window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+            window->enterModalState (true, ModalCallbackFunction::create (
+                [safe, generation, id, window] (int result)
+                {
+                    if (result != 1 || safe == nullptr || safe->projectGeneration != generation
+                        || ! safe->canEditRegions()) return;
+                    if (auto* current = dynamic_cast<te::FolderTrack*> (
+                        te::findTrackForID (*safe->edit, id)))
+                    {
+                        const auto name = window->getTextEditorContents ("name").trim();
+                        if (name.isNotEmpty())
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Rename submix group");
+                            current->setName (name);
+                        }
+                    }
+                }), true);
+        });
+        menu.addItem ("Group Effects...", [safe, id]
+        {
+            if (safe != nullptr) safe->showGroupEffects (id, safe->trackOptions);
+        });
+        if (group.getAllSubTracks (false).isEmpty())
+            menu.addItem ("Delete Empty Group", canEditRegions(), false, [safe, id]
+            {
+                if (safe == nullptr || ! safe->canEditRegions()
+                    || safe->edit->getTransport().isPlaying()) return;
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                    te::findTrackForID (*safe->edit, id)))
+                    if (folder->getAllSubTracks (false).isEmpty())
+                    {
+                        auto& undo = safe->edit->getUndoManager();
+                        undo.beginNewTransaction ("Delete empty group");
+                        safe->edit->deleteTrack (folder);
+                        safe->sizeEditor();
+                    }
+            });
+        if (nested) parent.addSubMenu ("Submix Group · " + group.getName(), folderMenu);
+    }
+
     void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track, bool nested = true)
     {
         const auto id = track.itemID;
@@ -2652,6 +2977,53 @@ private:
         PopupMenu& tracks = nested ? subMenu : parent;
         const auto general = studio::tracks::restriction (track, false);
         const auto destructive = studio::tracks::restriction (track, true);
+        PopupMenu heights;
+        const int currentHeight = (int) track.state.getProperty ("studioTrackHeight", 50);
+        for (const auto& option : { std::pair { "Compact", 36 }, { "Normal", 50 },
+                                     { "Tall", 84 }, { "Extra Tall", 132 }, { "Maximum", 240 } })
+        {
+            const int points = option.second;
+            heights.addItem (String (option.first) + " · " + String (points) + " pt",
+                true, currentHeight == points,
+                trackMenuAction (id, [points] (StudioView& studio, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Set track height");
+                    target.state.setProperty ("studioTrackHeight", points, &undo);
+                    studio.sizeEditor();
+                }));
+        }
+        tracks.addSubMenu ("Track Height (or drag lower edge)", heights, general.isEmpty());
+        if (auto* currentGroup = track.getParentFolderTrack())
+            tracks.addItem ("Move Out of Group: " + currentGroup->getName(), general.isEmpty(), false,
+                trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& member)
+                {
+                    if (! studio::tracks::removeFromSubmix (member))
+                        studio.message.setText ("Couldn't move track out of group.", dontSendNotification);
+                    studio.sizeEditor();
+                }));
+        else if (! studio::spatial::isRoomReturn (track))
+        {
+            PopupMenu destinations;
+            for (auto* candidate : te::getAllTracks (*edit))
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (candidate))
+                {
+                    const auto groupId = folder->itemID;
+                    destinations.addItem (folder->getName(), general.isEmpty(), false,
+                        trackMenuAction (id, [groupId] (StudioView& studio, te::AudioTrack& member)
+                        {
+                            if (auto* dst = dynamic_cast<te::FolderTrack*> (
+                                te::findTrackForID (*studio.edit, groupId)))
+                            {
+                                if (! studio::tracks::moveIntoSubmix (member, *dst))
+                                    studio.message.setText ("Couldn't add track to group.", dontSendNotification);
+                                studio.sizeEditor();
+                            }
+                        }));
+                }
+            if (destinations.getNumItems() > 0)
+                tracks.addSubMenu ("Move Track into Group", destinations);
+        }
         tracks.addItem ("Rename...", general.isEmpty(), false, trackMenuAction (id,
             [] (StudioView& view, te::AudioTrack& target) { view.renameTrack (target); }));
         for (const auto direction : { -1, 1 })
@@ -2918,6 +3290,19 @@ private:
         else
             piano.setComparisonClips ({});
 
+        if (midiKeyboardWindow != nullptr)
+        {
+            auto* active = workflowTrack();
+            const auto nextTarget = active != nullptr && studio::findInstrument (*active) != nullptr
+                ? active->itemID : te::EditItemID {};
+            if (keyboardTarget != nextTarget)
+            {
+                midiKeyboardWindow->panel.releaseNotes();
+                keyboardTarget = nextTarget;
+            }
+            midiKeyboardWindow->panel.setSelectedInstrument (
+                nextTarget.isValid() && active != nullptr ? active->getName() : String());
+        }
         auto* track = selectedTrack();
         StringArray names;
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
@@ -3426,6 +3811,8 @@ private:
             edit->getTransport().stop (false, false);
             midiFocus.release (edit.get());
         }
+        if (midiKeyboardWindow != nullptr) midiKeyboardWindow->panel.releaseNotes();
+        keyboardTarget = {};
         piano.setClip (nullptr);
         regionClipboard.clear();
         rememberInstrumentWorkspace();
@@ -3500,7 +3887,12 @@ private:
         view.showStudioTrackFX = [this] (te::EditItemID id, Component& anchor)
         {
             if (edit == nullptr || busy) return;
-            if (auto* track = trackById (id))
+            if (auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id)))
+            {
+                selection.selectOnly (folder);
+                showGroupEffects (id, anchor);
+            }
+            else if (auto* track = trackById (id))
             {
                 selection.selectOnly (track);
                 showTrackMenu (id, studio::TrackMenu::inserts, anchor);
@@ -3509,7 +3901,14 @@ private:
         view.showStudioTrackMenu = [this] (te::EditItemID id, Component& anchor)
         {
             if (edit == nullptr || busy) return;
-            if (auto* track = trackById (id))
+            if (auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id)))
+            {
+                selection.selectOnly (folder);
+                PopupMenu menu;
+                populateFolderEditMenu (menu, *folder, false);
+                menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+            }
+            else if (auto* track = trackById (id))
             {
                 selection.selectOnly (track);
                 PopupMenu menu;
@@ -3931,8 +4330,9 @@ private:
         trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
         trackActions.selectTrack = [this] (te::EditItemID id)
         {
-            if (auto* track = trackById (id))
-                selection.selectOnly (track);
+            if (edit != nullptr)
+                if (auto* track = te::findTrackForID (*edit, id))
+                    selection.selectOnly (track);
         };
         trackActions.showMenu = [this] (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
         {
@@ -3992,6 +4392,10 @@ private:
             }
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
         };
+        trackActions.showGroupEffects = [this] (te::EditItemID id, Component& anchor)
+        {
+            showGroupEffects (id, anchor);
+        };
         trackActions.openInstrument = [this] (te::EditItemID id)
         {
             if (! busy)
@@ -3999,6 +4403,13 @@ private:
                     if (auto* instrument = studio::findInstrument (*track); instrument != nullptr
                         && ! showNativeInstrument (*instrument) && ! showAtelierInstrument (*instrument))
                         instrument->showWindowExplicitly();
+        };
+        trackActions.openOriginalInstrument = [this] (te::EditItemID id)
+        {
+            if (busy || edit == nullptr) return;
+            if (auto* chosen = trackById (id))
+                if (auto* plug = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*chosen)))
+                    plug->showWindowExplicitly(); // Reuses the existing AU; no extra instrument.
         };
         trackActions.openFullInstrument = [this] (te::EditItemID id)
         {
@@ -4019,8 +4430,8 @@ private:
         };
         trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
         {
-            if (! busy)
-                if (auto* track = trackById (id))
+            if (! busy && edit != nullptr)
+                if (auto* track = te::findTrackForID (*edit, id))
                 {
                     if (solo) track->setSolo (! track->isSolo (false));
                     else track->setMute (! track->isMuted (false));
@@ -4097,7 +4508,12 @@ private:
                 selectedClip != nullptr && selectedClip->getAudioTrack() == target ? selectedClip : nullptr);
         }
         else
-            mixer.refresh (tracks, target, edit != nullptr && ! busy, canEditRegions());
+        {
+            te::Track* selectedMixerTrack = selectedFolder() != nullptr
+                ? static_cast<te::Track*> (selectedFolder())
+                : static_cast<te::Track*> (target);
+            mixer.refresh (tracks, selectedMixerTrack, edit != nullptr && ! busy, canEditRegions());
+        }
     }
 
     bool canInsertPlugin() const
@@ -4718,7 +5134,53 @@ int StudioView::runUnifiedStageReview (const File& output)
     refresh (legacy);
     if (! spatialWorkspace.verifyDeletedTrackForInterfaceReview (unplacedID) || read (*legacy) != moved)
         return fail ("track deletion removes its marker and rejects stale drops");
-    std::puts ("Unified Stage placement, routing, Undo/Redo, deletion, and project compatibility passed.");
+
+    // Submix folders use Tracktion's real summing folder, never a fake
+    // arrangement-only group. Check fold/unfold, fader and room-send safety.
+    te::AudioTrack* sectionMate = nullptr;
+    for (auto* t : te::getAudioTracks (*edit))
+        if (t->getName() == "Violin I") { sectionMate = t; break; }
+    if (sectionMate == nullptr) return fail ("prepare submix test section");
+    const auto oldHeight = editor->getStudioContentHeight();
+    legacy->state.setProperty ("studioTrackHeight", 124, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getStudioContentHeight() < oldHeight + 70)
+        return fail ("per-track height increases arrangement content size");
+    const Array<te::AudioTrack*> members { legacy, sectionMate };
+    auto group = studio::tracks::createSubmix (*edit, members, "Test Section");
+    // Tracktion caches FolderTrack's newly inserted fader after its pending
+    // plug-in listener dispatch. Let that normal UI update finish first.
+    if (group != nullptr)
+        for (int attempt = 0; attempt < 12 && group->getVolumePlugin() == nullptr; ++attempt)
+            MessageManager::getInstance()->runDispatchLoopUntil (25);
+    if (group == nullptr || ! group->isSubmixFolder() || group->getVolumePlugin() == nullptr
+        || legacy->getParentFolderTrack() != group.get()
+        || sectionMate->getParentFolderTrack() != group.get() || ! hasRoomSend (*legacy))
+        return fail ("real native submix folder retains members, fader and Stage routing");
+    edit->dispatchPendingUpdatesSynchronously();
+    mixer.refresh (te::getAudioTracks (*edit), group.get(), true, true);
+    if (! mixer.hasChannelForTrack (group->itemID))
+        return fail ("submix group appears as a real Mixer channel");
+    const int openRows = editor->getVisibleTrackCount();
+    group->state.setProperty ("studioFolderCollapsed", true, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getVisibleTrackCount() != openRows - 2)
+        return fail ("collapsed group hides children only, without removing audio tracks");
+    group->state.setProperty ("studioFolderCollapsed", false, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getVisibleTrackCount() != openRows)
+        return fail ("expanded folder restores original arrangement tracks");
+    const auto groupId = group->itemID;
+    if (! saveToDisk()) return fail ("save native section submix");
+    loadProject (fixture, false);
+    group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, groupId));
+    legacy = trackById (legacyID);
+    if (group == nullptr || legacy == nullptr || ! group->isSubmixFolder()
+        || legacy->getParentFolderTrack() != group.get()
+        || ! hasRoomSend (*legacy)
+        || (int) legacy->state.getProperty ("studioTrackHeight") != 124)
+        return fail ("reopened project retains submix, Stage send and custom track height");
+    std::puts ("Unified Stage, real submix folder, height persistence and room-return tests passed.");
     return 0;
 }
 

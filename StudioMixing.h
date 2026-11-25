@@ -16,7 +16,8 @@ struct TrackActions
     std::function<bool()> canChangeMix;
     std::function<void(tracktion::EditItemID)> selectTrack;
     std::function<void(tracktion::EditItemID, TrackMenu, juce::Component&)> showMenu;
-    std::function<void(tracktion::EditItemID)> openInstrument;
+    std::function<void(tracktion::EditItemID, juce::Component&)> showGroupEffects;
+    std::function<void(tracktion::EditItemID)> openInstrument, openOriginalInstrument;
     std::function<void(tracktion::EditItemID)> openFullInstrument, openArticulations;
     std::function<void(tracktion::EditItemID, bool solo)> toggleTrackState;
     std::function<void(tracktion::EditItemID)> toggleArm;
@@ -133,7 +134,7 @@ public:
     int minimumContentHeight() const;
     void appearanceChanged();
     void setEdit (tracktion::Edit*);
-    void refresh (const juce::Array<tracktion::AudioTrack*>&, tracktion::AudioTrack* selected, bool ready, bool canRoute);
+    void refresh (const juce::Array<tracktion::AudioTrack*>&, tracktion::Track* selected, bool ready, bool canRoute);
    #if STUDIO_SPATIAL_TESTS
     bool hasChannelForTrack (tracktion::EditItemID) const;
    #endif

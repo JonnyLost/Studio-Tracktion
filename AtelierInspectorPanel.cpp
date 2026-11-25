@@ -91,7 +91,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (const auto& picture : pictures) artworkPicker.addItem (picture, id++);
     artworkPicker.onChange = [this] { if (! updating) changeArtwork(); };
 
-    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &stageButton })
+    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &originalInstrument, &stageButton })
         addAndMakeVisible (*button);
     mappingsButton.onClick = [this]
     {
@@ -101,6 +101,12 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     {
         if (actions.openFullInstrument && trackId.isValid()) actions.openFullInstrument (trackId);
     };
+    originalInstrument.onClick = [this]
+    {
+        if (actions.openOriginalInstrument && trackId.isValid())
+            actions.openOriginalInstrument (trackId);
+    };
+    originalInstrument.setTooltip ("Open the hosted instrument's original Audio Unit editor directly.");
     stageButton.onClick = [this]
     {
         if (actions.showStage && trackId.isValid()) actions.showStage (trackId);
@@ -477,6 +483,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     for (auto& knob : ccKnobs) knob.setEnabled (live);
     sendValues.setEnabled (live);
     mappingsButton.setEnabled (editing);
+    originalInstrument.setEnabled (ready && hosted() != nullptr);
     const String summary = live ? "Live CC · instrument response depends on patch"
         : "CC audition unavailable · active AU/playback required";
     if (midiStatus.getText() != summary)
@@ -506,6 +513,7 @@ void AtelierInspectorPanel::resized()
     area.removeFromTop (gap);
     imageBounds = area.removeFromTop (m.px (180));
     auto artworkRow = area.removeFromTop (m.control (28, 11));
+    originalInstrument.setBounds (artworkRow.removeFromRight (m.span (113)).reduced (m.px (2), 0));
     artworkPicker.setBounds (artworkRow);
     artCaption.setBounds ({}); // The selected image is named by its picker.
     area.removeFromTop (m.px (9));

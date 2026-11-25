@@ -765,7 +765,15 @@ public:
         identity.setJustificationType (Justification::centred);
         name.setButtonText (masterStrip ? "Master" : "Track");
         name.onClick = [this] { mixer.actions.selectTrack (id); };
-        inserts.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::inserts, inserts); };
+        inserts.onClick = [this]
+        {
+            if (mixer.edit != nullptr
+                && dynamic_cast<te::FolderTrack*> (te::findTrackForID (*mixer.edit, id)) != nullptr)
+            {
+                if (mixer.actions.showGroupEffects) mixer.actions.showGroupEffects (id, inserts);
+            }
+            else if (mixer.actions.showMenu) mixer.actions.showMenu (id, TrackMenu::inserts, inserts);
+        };
         out.onClick = [this] { mixer.actions.showMenu (id, TrackMenu::output, out); };
         room.onClick = [this] { mixer.actions.showStage (id); };
         arm.onClick = [this] { mixer.actions.toggleArm (id); };
@@ -785,7 +793,10 @@ public:
         {
             if (! mixer.actions.canChangeMix() || mixer.edit == nullptr) return {};
             if (masterStrip) return mixer.edit->getMasterVolumePlugin();
-            if (auto* t = trackFor (mixer.edit, id)) return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
+            if (auto* t = trackFor (mixer.edit, id))
+                return te::VolumeAndPanPlugin::Ptr (lastTrackPlugin<te::VolumeAndPanPlugin> (*t));
+            if (auto* group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*mixer.edit, id)))
+                return te::VolumeAndPanPlugin::Ptr (group->getVolumePlugin());
             return {};
         };
         for (auto* c : { &inserts, &room, &mute, &solo, &arm })
@@ -795,7 +806,7 @@ public:
         if (masterStrip) identity.setText ("Main output", dontSendNotification);
     }
 
-    void refresh (te::AudioTrack* track, bool isSelected, bool ready, bool canRoute,
+    void refresh (te::Track* source, bool isSelected, bool ready, bool canRoute,
                   const Array<te::InputDeviceInstance*>& inputs)
     {
         if (selected != isSelected)
@@ -804,7 +815,9 @@ public:
             name.setToggleState (selected, dontSendNotification);
             repaint();
         }
-        const auto editable = canRoute && track != nullptr && ! track->isFrozen (te::Track::anyFreeze);
+        auto* track = dynamic_cast<te::AudioTrack*> (source);
+        auto* group = dynamic_cast<te::FolderTrack*> (source);
+        const auto editable = canRoute && source != nullptr && ! source->isFrozen (te::Track::anyFreeze);
         auto* edit = mixer.edit;
         if (masterStrip)
         {
@@ -888,6 +901,33 @@ public:
             meter.setTooltip (frozen ? "Meter unavailable on a frozen track"
                                      : levelPlugin == nullptr ? "This track has no Level Meter insert"
                                      : wetReturn ? "Wet room return after the fader" : "Track peak levels");
+        }
+        else if (group != nullptr)
+        {
+            name.setButtonText (group->getName());
+            name.setTooltip ("Submix folder: select or use the FX button to edit group inserts.");
+            if (accent != colours::action) { accent = colours::action; repaint(); }
+            const auto count = group->getInputTracks().size();
+            identity.setText ("GROUP BUS · " + String (count) + " input(s)", dontSendNotification);
+            identity.setTooltip ("Native Tracktion summing submix with independent level, pan and insert chain");
+            inserts.setButtonText ("Group FX");
+            inserts.setTooltip ("Open the group's actual plug-in chain and add EQ, compression or delay");
+            inserts.setEnabled (editable);
+            const bool relayout = room.isVisible() || arm.isVisible();
+            arm.setVisible (false);
+            room.setVisible (false);
+            if (relayout) resized();
+            out.setButtonText ("Group Sum");
+            out.setTooltip ("Native submix: nested tracks are summed through their configured output.");
+            out.setEnabled (false);
+            mute.setToggleState (group->isMuted (false), dontSendNotification);
+            solo.setToggleState (group->isSolo (false), dontSendNotification);
+            mute.setEnabled (ready);
+            solo.setEnabled (ready);
+            mix.refresh (group->getVolumePlugin(), ready);
+            auto* level = group->pluginList.findFirstPluginOfType<te::LevelMeterPlugin>();
+            meter.attach (level != nullptr ? &level->measurer : nullptr);
+            meter.setTooltip (level != nullptr ? "Group submix level" : "No group level meter available");
         }
         meter.sample();
     }
@@ -990,15 +1030,26 @@ void StudioMixer::setEdit (te::Edit* next)
     repaint();
 }
 
-void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack* selected, bool ready, bool canRoute)
+void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::Track* selected, bool ready, bool canRoute)
 {
-    bool rebuild = tracks.size() != (int) strips.size();
-    for (int i = 0; ! rebuild && i < tracks.size(); ++i)
-        rebuild = tracks[i]->itemID != strips[(size_t) i]->getId();
+    // Real native FolderTrack buses appear at their place in the session.
+    // Preserve the caller's exact AudioTrack filter for small-layout review.
+    Array<te::Track*> channels;
+    if (edit != nullptr)
+        for (auto* t : te::getAllTracks (*edit))
+        {
+            if (dynamic_cast<te::FolderTrack*> (t) != nullptr)
+                channels.add (t);
+            else if (auto* audio = dynamic_cast<te::AudioTrack*> (t))
+                if (tracks.contains (audio)) channels.add (audio);
+        }
+    bool rebuild = channels.size() != (int) strips.size();
+    for (int i = 0; ! rebuild && i < channels.size(); ++i)
+        rebuild = channels[i]->itemID != strips[(size_t) i]->getId();
     if (rebuild)
     {
         strips.clear();
-        for (auto* t : tracks)
+        for (auto* t : channels)
         {
             auto strip = std::make_unique<Strip> (*this, t->itemID, false);
             stripBank.addAndMakeVisible (*strip);
@@ -1019,11 +1070,11 @@ void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack*
     lastSelection = selectedId;
     const auto visible = viewport.getViewArea().expanded (2, 0);
     const auto inputs = edit != nullptr ? edit->getAllInputDevices() : Array<te::InputDeviceInstance*>();
-    for (int i = 0; i < tracks.size(); ++i)
+    for (int i = 0; i < channels.size(); ++i)
     {
         auto& strip = *strips[(size_t) i];
         if (visible.intersects (strip.getBounds()))
-            strip.refresh (tracks[i], tracks[i] == selected, ready, canRoute, inputs);
+            strip.refresh (channels[i], channels[i] == selected, ready, canRoute, inputs);
         else
             strip.detachMeter();
     }
