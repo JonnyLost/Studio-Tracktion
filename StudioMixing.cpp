@@ -861,13 +861,14 @@ public:
             // Input routing lives in the selected-track Inspector or the
             // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
-            arm.setVisible (! wetReturn);
-            if (returnLayoutChanged) resized();
-            arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
-            const bool returnLayoutChanged = room.isVisible() == wetReturn;
+            const bool returnLayoutChanged = (room.isVisible() == wetReturn)
+                || (arm.isVisible() == wetReturn);
+            arm.setVisible (! wetReturn);
+            arm.setToggleState (armed, dontSendNotification);
             room.setEnabled (! wetReturn && ready);
             room.setVisible (! wetReturn);
+            if (returnLayoutChanged) resized();
             room.setToggleState (sending, dontSendNotification);
             room.setTooltip (sending ? "Room send enabled. Open this seat on Stage." : "Open Stage to set the room send");
             out.setButtonText (outputLabel (*track));
