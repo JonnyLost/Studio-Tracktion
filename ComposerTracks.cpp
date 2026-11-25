@@ -95,4 +95,78 @@ void remove (te::AudioTrack& track)
     edit.deleteTrack (&track);
     edit.getUndoManager().beginNewTransaction();
 }
+
+te::FolderTrack::Ptr createSubmix (te::Edit& edit, const Array<te::AudioTrack*>& requested,
+                                   const String& title)
+{
+    if (! transportSettled (edit) || edit.getTransport().isPlaying()
+        || edit.getTransport().isRecording())
+        return {};
+    const auto name = title.trim();
+    if (name.isEmpty()) return {};
+    // The managed Stage return and nested tracks must not be moved into a
+    // new group silently: it would change room routing or break a submix.
+    Array<te::AudioTrack*> ordered;
+    for (auto* candidate : te::getAudioTracks (edit))
+        if (requested.contains (candidate))
+        {
+            if (spatial::isRoomReturn (*candidate) || candidate->getParentTrack() != nullptr
+                || candidate->isFrozen (te::Track::anyFreeze))
+                return {};
+            ordered.add (candidate);
+        }
+    if (ordered.size() != requested.size()) return {};
+    if (te::getAllTracks (edit).size() >= edit.engine.getEngineBehaviour().getEditLimits().maxNumTracks)
+        return {};
+    auto& undo = edit.getUndoManager();
+    undo.beginNewTransaction ("Create submix folder");
+    const auto point = ordered.isEmpty()
+        ? te::TrackInsertPoint::getEndOfTracks (edit)
+        : te::TrackInsertPoint (*ordered.getFirst(), true);
+    auto folder = edit.insertNewFolderTrack (point, nullptr, true);
+    if (folder == nullptr) return {};
+    folder->setName (name);
+    folder->state.setProperty ("studioFolderCollapsed", false, &undo);
+    te::Track* preceding = nullptr;
+    for (auto* track : ordered)
+    {
+        edit.moveTrack (track, te::TrackInsertPoint (folder.get(), preceding));
+        preceding = track;
+    }
+    undo.beginNewTransaction();
+    return folder;
+}
+
+bool moveIntoSubmix (te::AudioTrack& track, te::FolderTrack& folder)
+{
+    if (&track.edit != &folder.edit || track.getParentTrack() != nullptr
+        || spatial::isRoomReturn (track)
+        || restriction (track, false).isNotEmpty()
+        || track.isFrozen (te::Track::anyFreeze))
+        return false;
+    auto& undo = track.edit.getUndoManager();
+    undo.beginNewTransaction ("Move track to " + folder.getName());
+    te::Track* previous = nullptr;
+    for (auto* item : folder.getAllSubTracks (false))
+        previous = item;
+    track.edit.moveTrack (&track, te::TrackInsertPoint (&folder, previous));
+    undo.beginNewTransaction();
+    return track.getParentFolderTrack() == &folder;
+}
+
+bool removeFromSubmix (te::AudioTrack& track)
+{
+    auto* parent = track.getParentFolderTrack();
+    if (parent == nullptr || spatial::isRoomReturn (track)
+        || restriction (track, false).isNotEmpty()
+        || track.isFrozen (te::Track::anyFreeze))
+        return false;
+    auto& undo = track.edit.getUndoManager();
+    undo.beginNewTransaction ("Move track out of " + parent->getName());
+    // The first move back to the top-level is immediately after its old
+    // folder. This does not delete any group effects or change other tracks.
+    track.edit.moveTrack (&track, te::TrackInsertPoint (nullptr, parent));
+    undo.beginNewTransaction();
+    return track.getParentFolderTrack() == nullptr;
+}
 }
