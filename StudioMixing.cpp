@@ -1030,16 +1030,19 @@ void StudioMixer::setEdit (te::Edit* next)
     repaint();
 }
 
-void StudioMixer::refresh (const Array<te::AudioTrack*>&, te::Track* selected, bool ready, bool canRoute)
+void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::Track* selected, bool ready, bool canRoute)
 {
-    // Mixers show both AudioTrack channels and real native FolderTrack buses.
-    // Unlike the arrangement, the managed Stage Reverb is *always* included.
+    // Real native FolderTrack buses appear at their place in the session.
+    // Preserve the caller's exact AudioTrack filter for small-layout review.
     Array<te::Track*> channels;
     if (edit != nullptr)
         for (auto* t : te::getAllTracks (*edit))
-            if (dynamic_cast<te::AudioTrack*> (t) != nullptr
-                || dynamic_cast<te::FolderTrack*> (t) != nullptr)
+        {
+            if (dynamic_cast<te::FolderTrack*> (t) != nullptr)
                 channels.add (t);
+            else if (auto* audio = dynamic_cast<te::AudioTrack*> (t))
+                if (tracks.contains (audio)) channels.add (audio);
+        }
     bool rebuild = channels.size() != (int) strips.size();
     for (int i = 0; ! rebuild && i < channels.size(); ++i)
         rebuild = channels[i]->itemID != strips[(size_t) i]->getId();
