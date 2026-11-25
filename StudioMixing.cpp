@@ -913,9 +913,13 @@ public:
         area.removeFromTop (m.px (3));
         if (! masterStrip)
         {
-            // Stack insert and room-send controls: wider buttons, narrower strip.
-            inserts.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
-            room.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
+            // The shared Stage Reverb has no outgoing room send. Give its
+            // managed-return identifier the space of both unused buttons.
+            inserts.setBounds (area.removeFromTop (m.control (room.isVisible() ? 19 : 38, 10))
+                                   .reduced (m.px (1), 0));
+            room.setBounds (room.isVisible()
+                ? area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0)
+                : Rectangle<int>());
         }
         else
         {
@@ -926,9 +930,10 @@ public:
         if (! masterStrip)
         {
             auto toggles = area.removeFromBottom (m.control (23));
-            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3).reduced (m.px (1)));
-            solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
-            arm.setBounds (toggles.reduced (m.px (1)));
+            const bool canArm = arm.isVisible();
+            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / (canArm ? 3 : 2)).reduced (m.px (1)));
+            solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / (canArm ? 2 : 1)).reduced (m.px (1)));
+            arm.setBounds (canArm ? toggles.reduced (m.px (1)) : Rectangle<int>());
         }
         else
             for (auto* toggle : { &mute, &solo, &arm })
@@ -1021,6 +1026,15 @@ void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack*
     }
     master->refresh (nullptr, false, ready, false, inputs);
 }
+
+#if STUDIO_SPATIAL_TESTS
+bool StudioMixer::hasChannelForTrack (te::EditItemID target) const
+{
+    for (const auto& strip : strips)
+        if (strip->getId() == target) return true;
+    return false;
+}
+#endif
 
 void StudioMixer::appearanceChanged()
 {
