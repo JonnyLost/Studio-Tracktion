@@ -2,14 +2,15 @@
 #pragma once
 #include "StudioSampler.h"
 
-namespace studio::garritan
+namespace studio::instrumentimport
 {
-enum class Compatibility { supported, partial, unsupported };
+enum class Compatibility { supported, partial, originalPlayer, unsupported };
 const char* statusName (Compatibility);
 
 struct Definition
 {
     juce::File source;
+    juce::String variant;
     sampler::Instrument instrument;
     std::size_t decodedBytes = 0;
     Compatibility compatibility = Compatibility::unsupported;
@@ -20,6 +21,10 @@ struct Definition
 struct Inventory
 {
     juce::File root;
+    juce::File selection;
+    bool complete = false;
+    int reused = 0;
+    juce::String listingFingerprint;
     std::vector<Definition> definitions;
     juce::Array<juce::var> samples;
     juce::StringArray issues;
@@ -32,7 +37,14 @@ struct Progress
     std::atomic<int> completed { 0 };
 };
 
-Inventory scan (const juce::File& root, Progress&);
+bool canConvert (Compatibility, bool allowPartial);
+Inventory scan (const juce::File& selection, Progress&, const juce::File& indexDirectory = {},
+                const juce::File& sampleRoot = {});
+Inventory proposeSampleFolder (const juce::File&, Progress&);
+juce::Result relinkPreset (const juce::File& preset, const juce::File& originalRoot,
+                         const juce::File& newRoot, const juce::File& catalog,
+                         Progress&, juce::File& output);
+void writeIndex (const Inventory&, const juce::File& directory);
 juce::Result saveInventory (const Inventory&, const juce::File& directory, juce::File& output);
 juce::Result convert (const Inventory&, const Definition&, const juce::File& directory,
                       bool allowPartial, Progress&, juce::File& output);

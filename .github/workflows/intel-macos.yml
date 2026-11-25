@@ -6,6 +6,7 @@ on:
     branches:
       - integration/studio-0.2-integrated-alpha
       - feature/studio-garritan-library-import
+      - feature/studio-universal-instrument-import
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
@@ -136,12 +137,14 @@ jobs:
           path: ${{ runner.temp }}/studio-unified-stage/
           if-no-files-found: error
       - name: Package integrated Intel Studio application
-        if: github.ref == 'refs/heads/integration/studio-0.2-integrated-alpha' || github.ref == 'refs/heads/feature/studio-garritan-library-import'
+        if: github.ref == 'refs/heads/integration/studio-0.2-integrated-alpha' || github.ref == 'refs/heads/feature/studio-garritan-library-import' || github.ref == 'refs/heads/feature/studio-universal-instrument-import'
         id: integrated-app
         shell: bash
         run: |
           archive=Studio-0.2-Integrated-Alpha-Intel
-          if [[ "$GITHUB_REF_NAME" == feature/studio-garritan-library-import ]]; then
+          if [[ "$GITHUB_REF_NAME" == feature/studio-universal-instrument-import ]]; then
+            archive=Studio-0.2-Universal-Importer-Intel-preview
+          elif [[ "$GITHUB_REF_NAME" == feature/studio-garritan-library-import ]]; then
             archive=Studio-0.2-Garritan-Importer-Intel-preview
           elif [[ ! -f assets/Studio.png ]]; then
             archive=Studio-0.2-Integrated-Alpha-Intel-preview
@@ -163,10 +166,10 @@ jobs:
           path: ${{ runner.temp }}/${{ steps.integrated-app.outputs.archive }}.zip
           if-no-files-found: error
       - name: Package Intel Studio application
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import' && github.ref != 'refs/heads/feature/studio-universal-instrument-import'
         run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
       - uses: actions/upload-artifact@v4
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/feature/studio-garritan-library-import' && github.ref != 'refs/heads/feature/studio-universal-instrument-import'
         with:
           name: Studio-M13-Intel-app
           path: ${{ runner.temp }}/Studio-M13-Intel.zip
@@ -189,3 +192,35 @@ jobs:
         with:
           name: Studio-M4R-acoustic-comparison
           path: ${{ runner.temp }}/studio-acoustic-comparison/
+
+  apple-silicon-importer:
+    if: github.ref == 'refs/heads/feature/studio-universal-instrument-import'
+    name: Apple Silicon importer
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned Tracktion Engine and JUCE
+        run: |
+          test "$(uname -m)" = arm64
+          git init "$RUNNER_TEMP/tracktion-engine"
+          git -C "$RUNNER_TEMP/tracktion-engine" fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228
+          git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
+      - name: Build native Studio on arm64
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+          cmake --build build --config Debug --target Studio --parallel 4
+          test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = arm64
+      - name: Exercise import and sampler playback
+        run: |
+          ctest --test-dir build -C Debug --output-on-failure \
+            -R '^Studio(GarritanLibrary|UniversalImport|SamplerIntegration)$' \
+            --output-junit "$RUNNER_TEMP/ctest-apple-silicon-import.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Studio-apple-silicon-import-tests
+          path: ${{ runner.temp }}/ctest-apple-silicon-import.xml

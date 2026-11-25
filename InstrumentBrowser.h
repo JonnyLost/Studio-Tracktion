@@ -7,7 +7,7 @@
 
 namespace studio
 {
-namespace garritan { class ImportWindow; }
+namespace instrumentimport { class ImportWindow; }
 
 class InstrumentBrowser final : public juce::Component, private juce::ChangeListener
 {
@@ -73,9 +73,9 @@ private:
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
     juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
-    juce::TextButton importLibrary { "Import Garritan Library..." };
+    juce::TextButton importLibrary { "Import Instruments..." };
     juce::File importedDirectory;
-    std::unique_ptr<garritan::ImportWindow> importer;
+    std::unique_ptr<instrumentimport::ImportWindow> importer;
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
     void rebuildCatalog();
