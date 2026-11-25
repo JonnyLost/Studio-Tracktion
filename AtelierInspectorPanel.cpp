@@ -91,7 +91,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (const auto& picture : pictures) artworkPicker.addItem (picture, id++);
     artworkPicker.onChange = [this] { if (! updating) changeArtwork(); };
 
-    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &stageButton })
+    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &originalInstrument, &stageButton })
         addAndMakeVisible (*button);
     mappingsButton.onClick = [this]
     {
@@ -101,6 +101,12 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     {
         if (actions.openFullInstrument && trackId.isValid()) actions.openFullInstrument (trackId);
     };
+    originalInstrument.onClick = [this]
+    {
+        if (actions.openOriginalInstrument && trackId.isValid())
+            actions.openOriginalInstrument (trackId);
+    };
+    originalInstrument.setTooltip ("Open the hosted instrument's original Audio Unit editor directly.");
     stageButton.onClick = [this]
     {
         if (actions.showStage && trackId.isValid()) actions.showStage (trackId);
@@ -493,7 +499,7 @@ int AtelierInspectorPanel::desiredHeight (int width) const
         + m.px (20) + m.control (20) + m.control (37) * 2 + m.control (29)
         + m.px (19) + m.control (20) + m.control (28) + ccRows * m.px (93)
         + m.control (26) + m.px (17) + m.control (22) + m.px (204)
-        + m.control (40) + m.control (34) + m.px (20);
+        + m.control (40) + m.control (34) * 2 + m.px (20);
 }
 
 void AtelierInspectorPanel::resized()
@@ -567,7 +573,9 @@ void AtelierInspectorPanel::resized()
     micStatus.setBounds (area.removeFromTop (m.control (30, 10)));
     auto actionsRow = area.removeFromTop (m.control (34));
     fullInstrument.setBounds (actionsRow.removeFromLeft (actionsRow.getWidth() / 2).reduced (m.px (2), 0));
-    stageButton.setBounds (actionsRow.reduced (m.px (2), 0));
+    originalInstrument.setBounds (actionsRow.reduced (m.px (2), 0));
+    area.removeFromTop (m.px (3));
+    stageButton.setBounds (area.removeFromTop (m.control (34)).reduced (m.px (2), 0));
 }
 
 void AtelierInspectorPanel::paint (Graphics& g)
