@@ -51,7 +51,8 @@ private:
     std::vector<ArticulationMapping> mappings;
     juce::String activeMapping;
     juce::TextButton mappingsButton { "Edit Articulations" }, sendValues { "Send CC" },
-                     fullInstrument { "Full Instrument" }, stageButton { "Stage & Mics" };
+                     fullInstrument { "Full Instrument" }, originalInstrument { "Open Plug-in" },
+                     stageButton { "Stage & Mics" };
     juce::Slider volume, pan, roomSend;
     juce::Label volumeLabel, panLabel, roomLabel;
     juce::Rectangle<int> imageBounds, articulationBounds, ccBounds, mixerBounds;
