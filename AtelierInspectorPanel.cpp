@@ -500,7 +500,7 @@ int AtelierInspectorPanel::desiredHeight (int width) const
         + m.px (20) + m.control (20) + m.control (37) * 2 + m.control (29)
         + m.px (19) + m.control (20) + m.control (28) + ccRows * m.px (93)
         + m.control (26) + m.px (17) + m.control (22) + m.px (204)
-        + m.control (40) + m.control (34) * 2 + m.px (20);
+        + m.control (40) + m.control (34) + m.px (20);
 }
 
 void AtelierInspectorPanel::resized()
@@ -513,6 +513,7 @@ void AtelierInspectorPanel::resized()
     area.removeFromTop (gap);
     imageBounds = area.removeFromTop (m.px (180));
     auto artworkRow = area.removeFromTop (m.control (28, 11));
+    originalInstrument.setBounds (artworkRow.removeFromRight (m.span (113)).reduced (m.px (2), 0));
     artworkPicker.setBounds (artworkRow);
     artCaption.setBounds ({}); // The selected image is named by its picker.
     area.removeFromTop (m.px (9));
@@ -574,9 +575,7 @@ void AtelierInspectorPanel::resized()
     micStatus.setBounds (area.removeFromTop (m.control (30, 10)));
     auto actionsRow = area.removeFromTop (m.control (34));
     fullInstrument.setBounds (actionsRow.removeFromLeft (actionsRow.getWidth() / 2).reduced (m.px (2), 0));
-    originalInstrument.setBounds (actionsRow.reduced (m.px (2), 0));
-    area.removeFromTop (m.px (3));
-    stageButton.setBounds (area.removeFromTop (m.control (34)).reduced (m.px (2), 0));
+    stageButton.setBounds (actionsRow.reduced (m.px (2), 0));
 }
 
 void AtelierInspectorPanel::paint (Graphics& g)
