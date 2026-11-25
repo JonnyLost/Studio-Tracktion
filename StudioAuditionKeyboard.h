@@ -36,7 +36,6 @@ public:
         keys.setAvailableRange (21, 108);
         keys.setLowestVisibleKey (48);
         keys.setKeyWidth (22.0f);
-        keys.setTooltip ("Click and hold notes to audition the selected Studio instrument");
     }
 
     ~AuditionKeyboardPanel() override
