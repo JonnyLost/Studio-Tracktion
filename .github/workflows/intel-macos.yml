@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - integration/studio-0.2-integrated-alpha
+      - feature/studio-postintegration-composer-workflow-m6
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
