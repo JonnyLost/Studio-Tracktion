@@ -2454,7 +2454,7 @@ private:
         {
             const int width = jmax (1, timeline.getMaximumVisibleWidth() - timeline.getScrollBarThickness());
             const int height = jmax (timeline.getMaximumVisibleHeight(),
-                                     (studio::appearance.trackHeight() + studio::appearance.trackGap()) * editor->getVisibleTrackCount());
+                                     editor->getStudioContentHeight());
             if (editor->getWidth() != width || editor->getHeight() != height)
                 editor->setSize (width, height);
         }
@@ -2652,6 +2652,23 @@ private:
         PopupMenu& tracks = nested ? subMenu : parent;
         const auto general = studio::tracks::restriction (track, false);
         const auto destructive = studio::tracks::restriction (track, true);
+        PopupMenu heights;
+        const int currentHeight = (int) track.state.getProperty ("studioTrackHeight", 50);
+        for (const auto& option : { std::pair { "Compact", 36 }, { "Normal", 50 },
+                                     { "Tall", 84 }, { "Extra Tall", 132 }, { "Maximum", 240 } })
+        {
+            const int points = option.second;
+            heights.addItem (String (option.first) + " · " + String (points) + " pt",
+                true, currentHeight == points,
+                trackMenuAction (id, [points] (StudioView& studio, te::AudioTrack& target)
+                {
+                    auto& undo = target.edit.getUndoManager();
+                    undo.beginNewTransaction ("Set track height");
+                    target.state.setProperty ("studioTrackHeight", points, &undo);
+                    studio.sizeEditor();
+                }));
+        }
+        tracks.addSubMenu ("Track Height (or drag lower edge)", heights, general.isEmpty());
         tracks.addItem ("Rename...", general.isEmpty(), false, trackMenuAction (id,
             [] (StudioView& view, te::AudioTrack& target) { view.renameTrack (target); }));
         for (const auto direction : { -1, 1 })
