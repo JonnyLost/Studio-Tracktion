@@ -2652,6 +2652,200 @@ private:
         message.setText (result.wasOk() ? "Joined MIDI regions." : result.getErrorMessage(), dontSendNotification);
     }
 
+    void createGroupDialog (bool groupSelected)
+    {
+        if (edit == nullptr || ! canEditRegions() || edit->getTransport().isPlaying())
+            return;
+        Array<te::EditItemID> chosen;
+        if (groupSelected)
+        {
+            for (auto* t : selection.getItemsOfType<te::AudioTrack>())
+                chosen.add (t->itemID);
+            if (chosen.isEmpty() && workflowTrack() != nullptr)
+                chosen.add (workflowTrack()->itemID);
+        }
+        const auto generation = projectGeneration;
+        auto* window = new AlertWindow (groupSelected ? "Group Selected Tracks" : "New Submix Folder",
+            "Folders are real audio groups with a summed mixer bus and insert effects.",
+            MessageBoxIconType::NoIcon, this);
+        window->addTextEditor ("name", "Strings", "Group name");
+        window->addButton ("Create Group", 1, KeyPress (KeyPress::returnKey));
+        window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+        const SafePointer<StudioView> safe (this);
+        window->enterModalState (true, ModalCallbackFunction::create (
+            [safe, generation, window, chosen] (int result)
+            {
+                if (result != 1 || safe == nullptr || safe->projectGeneration != generation
+                    || ! safe->canEditRegions() || safe->edit->getTransport().isPlaying())
+                    return;
+                Array<te::AudioTrack*> members;
+                for (const auto& id : chosen)
+                {
+                    auto* t = safe->trackById (id);
+                    if (t == nullptr)
+                    {
+                        safe->message.setText ("A selected track was removed; folder not created.",
+                                               dontSendNotification);
+                        return;
+                    }
+                    members.add (t);
+                }
+                auto group = studio::tracks::createSubmix (*safe->edit, members,
+                    window->getTextEditorContents ("name"));
+                if (group == nullptr)
+                {
+                    safe->message.setText (
+                        "Couldn't create group. Use unfrozen top-level tracks and stop playback.",
+                        dontSendNotification);
+                    return;
+                }
+                safe->selection.selectOnly (group.get());
+                safe->sizeEditor();
+                safe->message.setText ("Submix folder created. Move tracks into it using their Track menu; "
+                                       "its group fader and effects are in Mixer.", dontSendNotification);
+            }), true);
+    }
+
+    void showGroupEffects (te::EditItemID id, Component& anchor)
+    {
+        if (edit == nullptr || busy) return;
+        auto* group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id));
+        if (group == nullptr) return;
+        PopupMenu menu;
+        menu.addSectionHeader (group->getName() + " · Submix Effects");
+        for (auto* p : group->pluginList.getPlugins())
+        {
+            if (dynamic_cast<te::VolumeAndPanPlugin*> (p) != nullptr
+                || dynamic_cast<te::LevelMeterPlugin*> (p) != nullptr
+                || dynamic_cast<te::VCAPlugin*> (p) != nullptr)
+                continue;
+            const auto pluginId = p->itemID;
+            PopupMenu actions;
+            actions.addItem ("Open", [safe = SafePointer<StudioView> (this), id, pluginId]
+            {
+                if (safe == nullptr || safe->edit == nullptr) return;
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                    te::findTrackForID (*safe->edit, id)))
+                    for (auto* current : folder->pluginList.getPlugins())
+                        if (current->itemID == pluginId) { current->showWindowExplicitly(); break; }
+            });
+            actions.addItem ("Remove Effect", canInsertPlugin() && ! edit->getTransport().isPlaying(),
+                false, [safe = SafePointer<StudioView> (this), id, pluginId]
+                {
+                    if (safe == nullptr || safe->edit == nullptr || ! safe->canInsertPlugin()
+                        || safe->edit->getTransport().isPlaying()) return;
+                    if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                        te::findTrackForID (*safe->edit, id)))
+                        for (auto* current : folder->pluginList.getPlugins())
+                            if (current->itemID == pluginId
+                                && dynamic_cast<te::VolumeAndPanPlugin*> (current) == nullptr
+                                && dynamic_cast<te::LevelMeterPlugin*> (current) == nullptr)
+                            {
+                                auto& undo = safe->edit->getUndoManager();
+                                undo.beginNewTransaction ("Remove submix effect");
+                                current->deleteFromParent();
+                                undo.beginNewTransaction();
+                                break;
+                            }
+                });
+            menu.addSubMenu (p->getName(), actions);
+        }
+        PopupMenu add;
+        for (const auto& effect : { std::pair { "EQ", te::EqualiserPlugin::xmlTypeName },
+                                     { "Compressor", te::CompressorPlugin::xmlTypeName },
+                                     { "Delay", te::DelayPlugin::xmlTypeName } })
+        {
+            const String label (effect.first), kind (effect.second);
+            add.addItem (label, canInsertPlugin() && ! edit->getTransport().isPlaying(), false,
+                [safe = SafePointer<StudioView> (this), id, kind]
+                {
+                    if (safe == nullptr || ! safe->canInsertPlugin()
+                        || safe->edit->getTransport().isPlaying()) return;
+                    auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id));
+                    if (folder == nullptr) return;
+                    auto effectPlugin = safe->edit->getPluginCache().createNewPlugin (kind, {});
+                    if (effectPlugin == nullptr) return;
+                    auto& undo = safe->edit->getUndoManager();
+                    undo.beginNewTransaction ("Add group effect");
+                    auto* volume = folder->getVolumePlugin();
+                    const int index = volume != nullptr ? folder->pluginList.indexOf (volume) : -1;
+                    folder->pluginList.insertPlugin (effectPlugin, index, nullptr);
+                    undo.beginNewTransaction();
+                });
+        }
+        menu.addSubMenu ("Add Group Effect", add);
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+    void populateFolderEditMenu (PopupMenu& parent, te::FolderTrack& group,
+                                 bool nested = true)
+    {
+        const auto id = group.itemID;
+        PopupMenu folderMenu;
+        auto& menu = nested ? folderMenu : parent;
+        const auto safe = SafePointer<StudioView> (this);
+        const bool collapsed = (bool) group.state.getProperty ("studioFolderCollapsed", false);
+        menu.addItem (collapsed ? "Expand Group" : "Collapse Group", [safe, id]
+        {
+            if (safe == nullptr || safe->edit == nullptr) return;
+            if (auto* target = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id)))
+            {
+                auto& undo = safe->edit->getUndoManager();
+                undo.beginNewTransaction ("Toggle group visibility");
+                target->state.setProperty ("studioFolderCollapsed",
+                    ! (bool) target->state.getProperty ("studioFolderCollapsed", false), &undo);
+                undo.beginNewTransaction();
+                safe->sizeEditor();
+            }
+        });
+        menu.addItem ("Rename Group...", [safe, id, generation = projectGeneration]
+        {
+            if (safe == nullptr || safe->edit == nullptr) return;
+            auto* target = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*safe->edit, id));
+            if (target == nullptr) return;
+            auto* window = new AlertWindow ("Rename Submix Group", {}, MessageBoxIconType::NoIcon, safe.getComponent());
+            window->addTextEditor ("name", target->getName(), "Group name");
+            window->addButton ("Rename", 1, KeyPress (KeyPress::returnKey));
+            window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+            window->enterModalState (true, ModalCallbackFunction::create (
+                [safe, generation, id, window] (int result)
+                {
+                    if (result != 1 || safe == nullptr || safe->projectGeneration != generation
+                        || ! safe->canEditRegions()) return;
+                    if (auto* current = dynamic_cast<te::FolderTrack*> (
+                        te::findTrackForID (*safe->edit, id)))
+                    {
+                        const auto name = window->getTextEditorContents ("name").trim();
+                        if (name.isNotEmpty())
+                        {
+                            safe->edit->getUndoManager().beginNewTransaction ("Rename submix group");
+                            current->setName (name);
+                        }
+                    }
+                }), true);
+        });
+        menu.addItem ("Group Effects...", [safe, id]
+        {
+            if (safe != nullptr) safe->showGroupEffects (id, safe->trackOptions);
+        });
+        if (group.getAllSubTracks (false).isEmpty())
+            menu.addItem ("Delete Empty Group", canEditRegions(), false, [safe, id]
+            {
+                if (safe == nullptr || ! safe->canEditRegions()
+                    || safe->edit->getTransport().isPlaying()) return;
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (
+                    te::findTrackForID (*safe->edit, id)))
+                    if (folder->getAllSubTracks (false).isEmpty())
+                    {
+                        auto& undo = safe->edit->getUndoManager();
+                        undo.beginNewTransaction ("Delete empty group");
+                        safe->edit->deleteTrack (folder);
+                        safe->sizeEditor();
+                    }
+            });
+        if (nested) parent.addSubMenu ("Submix Group · " + group.getName(), folderMenu);
+    }
+
     void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track, bool nested = true)
     {
         const auto id = track.itemID;
