@@ -917,8 +917,8 @@ public:
             arm.setVisible (false);
             room.setVisible (false);
             if (relayout) resized();
-            out.setButtonText ("Submix → Master");
-            out.setTooltip ("The folder sums nested tracks before the main mix");
+            out.setButtonText ("Group Sum");
+            out.setTooltip ("Native submix: nested tracks are summed through their configured output.");
             out.setEnabled (false);
             mute.setToggleState (group->isMuted (false), dontSendNotification);
             solo.setToggleState (group->isSolo (false), dontSendNotification);
