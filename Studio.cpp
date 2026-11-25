@@ -4605,6 +4605,35 @@ int StudioView::runUnifiedStageReview (const File& output)
     loadProject (fixture, false);
     legacy = trackById (legacyID);
     unplaced = trackById (unplacedID);
+    // Regression: the shared return remains a real Tracktion audio/aux
+    // track and a dedicated Mixer strip, but is absent from the arrangement.
+    auto* wetReturn = roomReturnTrack (*edit);
+    if (wetReturn == nullptr || ! isRoomReturn (*wetReturn))
+        return fail ("load the existing managed room return");
+    const auto returnID = wetReturn->itemID;
+    const auto pluginCount = wetReturn->pluginList.size();
+    const int fullTrackCount = te::getAudioTracks (*edit).size();
+    const auto waitForArrangementRows = [this] (int target)
+    {
+        for (int attempt = 0; attempt < 24 && editor->getVisibleTrackCount() != target; ++attempt)
+            MessageManager::getInstance()->runDispatchLoopUntil (35);
+        return editor->getVisibleTrackCount() == target;
+    };
+    setRoomReturnTrackVisible (false, false);
+    if (! waitForArrangementRows (fullTrackCount - 1))
+        return fail ("managed return is hidden from arrangement by default");
+    mixer.refresh (te::getAudioTracks (*edit), legacy, true, true);
+    if (! mixer.hasChannelForTrack (returnID))
+        return fail ("hidden arrangement return still has a dedicated Mixer channel");
+    setRoomReturnTrackVisible (true, false);
+    if (! waitForArrangementRows (fullTrackCount))
+        return fail ("View menu can reveal the managed return for inspection");
+    setRoomReturnTrackVisible (false, false);
+    if (! waitForArrangementRows (fullTrackCount - 1)
+        || roomReturnTrack (*edit) != wetReturn
+        || wetReturn->pluginList.size() != pluginCount
+        || ! hasRoomSend (*legacy))
+        return fail ("hiding and revealing return cannot change the aux track or sends");
     const auto read = [] (te::AudioTrack& track) { return readSeat (track.state.getChildWithName (seatType)); };
     if (! legacy || ! unplaced || read (*legacy) != savedSeat || ! hasRoomSend (*legacy)
         || unplaced->state.getChildWithName (seatType).isValid() || studio::seating::read (edit->state) != archived)
@@ -4676,8 +4705,12 @@ int StudioView::runUnifiedStageReview (const File& output)
     legacy = trackById (legacyID);
     unplaced = trackById (unplacedID);
     if (! legacy || ! unplaced || read (*legacy) != moved || read (*unplaced) != placed || ! hasRoomSend (*legacy)
-        || hasRoomSend (*unplaced) || studio::seating::read (edit->state) != archived || roomReturnTrack (*edit) == nullptr)
-        return fail ("restore positions, acoustic send and the unmodified reference");
+        || hasRoomSend (*unplaced) || studio::seating::read (edit->state) != archived || roomReturnTrack (*edit) == nullptr
+        || ! waitForArrangementRows (te::getAudioTracks (*edit).size() - 1))
+        return fail ("restore positions, acoustic send, hidden room return and unmodified reference");
+    mixer.refresh (te::getAudioTracks (*edit), legacy, true, true);
+    if (! mixer.hasChannelForTrack (roomReturnTrack (*edit)->itemID))
+        return fail ("reopened project keeps its Stage Reverb Mixer return");
     showWorkspace (Workspace::stage);
     refresh (unplaced);
     selection.deselectAll();
