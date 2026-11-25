@@ -785,6 +785,15 @@ public:
             {
                 if (safe != nullptr && safe->browser.loadSampler) safe->browser.loadSampler (true);
             });
+            menu.addSeparator();
+            menu.addItem ("New Submix Group...", [safe]
+            {
+                if (safe != nullptr) safe->createGroupDialog (false);
+            });
+            menu.addItem ("Group Selected Tracks...", [safe]
+            {
+                if (safe != nullptr) safe->createGroupDialog (true);
+            });
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (addMidi.isVisible() ? &addMidi : &trackMenu));
         };
         addSynthTrack.onClick = [this] { if (browser.loadSynth) browser.loadSynth ("analog", true); };
@@ -1615,7 +1624,7 @@ public:
     {
         mPicture = 2000, mNew = 2001, mOpen, mSave, mSaveAs, mMidiImport, mAudioImport,
         mMidiExport, mAudioExport, mAudioSettings, mPluginManager, mUndo, mRedo,
-        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
+        mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip, mNewGroup, mGroupSelected,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
         mMidiMonitor, mResources, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
@@ -1660,6 +1669,9 @@ public:
                 add (mAddSynth, "New Studio Synth Track", canInsertPlugin());
                 add (mAddSampler, "New Studio Sampler Track", canInsertPlugin());
                 add (mAddAudio, "New Audio Track", editable);
+                menu.addSeparator();
+                add (mNewGroup, "New Submix Folder...", editable);
+                add (mGroupSelected, "Group Selected Tracks...", editable);
                 add (mAddMidiClip, "New MIDI Clip", addMidiClip.isEnabled());
                 break;
             case 3: // Navigate
@@ -1756,6 +1768,8 @@ public:
             case mAddSynth: invoke (addSynthTrack); break;
             case mAddSampler: invoke (addSamplerTrack); break;
             case mAddAudio: invoke (addAudio); break;
+            case mNewGroup: createGroupDialog (false); break;
+            case mGroupSelected: createGroupDialog (true); break;
             case mAddMidiClip: invoke (addMidiClip); break;
             case mRegionActions: invoke (regionActions); break;
             case mRewind: invoke (rewind); break;
@@ -2870,6 +2884,36 @@ private:
                 }));
         }
         tracks.addSubMenu ("Track Height (or drag lower edge)", heights, general.isEmpty());
+        if (auto* currentGroup = track.getParentFolderTrack())
+            tracks.addItem ("Move Out of Group: " + currentGroup->getName(), general.isEmpty(), false,
+                trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& member)
+                {
+                    if (! studio::tracks::removeFromSubmix (member))
+                        studio.message.setText ("Couldn't move track out of group.", dontSendNotification);
+                    studio.sizeEditor();
+                }));
+        else if (! studio::spatial::isRoomReturn (track))
+        {
+            PopupMenu destinations;
+            for (auto* candidate : te::getAllTracks (*edit))
+                if (auto* folder = dynamic_cast<te::FolderTrack*> (candidate))
+                {
+                    const auto groupId = folder->itemID;
+                    destinations.addItem (folder->getName(), general.isEmpty(), false,
+                        trackMenuAction (id, [groupId] (StudioView& studio, te::AudioTrack& member)
+                        {
+                            if (auto* dst = dynamic_cast<te::FolderTrack*> (
+                                te::findTrackForID (*studio.edit, groupId)))
+                            {
+                                if (! studio::tracks::moveIntoSubmix (member, *dst))
+                                    studio.message.setText ("Couldn't add track to group.", dontSendNotification);
+                                studio.sizeEditor();
+                            }
+                        }));
+                }
+            if (destinations.getNumItems() > 0)
+                tracks.addSubMenu ("Move Track into Group", destinations);
+        }
         tracks.addItem ("Rename...", general.isEmpty(), false, trackMenuAction (id,
             [] (StudioView& view, te::AudioTrack& target) { view.renameTrack (target); }));
         for (const auto direction : { -1, 1 })
