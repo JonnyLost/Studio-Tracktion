@@ -281,13 +281,26 @@ public:
         setTooltip (label);
     }
 
+    std::function<void()> onContextMenu;
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+        {
+            if (onContextMenu) onContextMenu();
+            return;
+        }
+        juce::TextButton::mouseDown (e);
+    }
+
     void paintButton (juce::Graphics& g, bool hovered, bool down) override
     {
         const bool recording = icon == TransportIcon::record;
         const auto tint = recording ? colours::record : getToggleState() ? colours::signal : colours::action;
         const auto colour = getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
         getLookAndFeel().drawButtonBackground (g, *this, colour, hovered, down);
-        const auto side = (float) appearance.px (17);
+        const auto side = juce::jlimit ((float) appearance.px (17), (float) appearance.px (29),
+                                        (float) getHeight() * 0.57f);
         const auto area = getLocalBounds().toFloat().withSizeKeepingCentre (side, side);
         g.setColour (tint.withAlpha (isEnabled() ? 1.0f : 0.38f));
         juce::Graphics::ScopedSaveState state (g);
@@ -346,6 +359,18 @@ public:
         setMouseCursor (adjustable ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
 
+    std::function<void()> onContextMenu;
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+        {
+            if (onContextMenu) onContextMenu();
+            return;
+        }
+        juce::TextButton::mouseDown (e);
+    }
+
     void setValue (const juce::String& content)
     {
         if (value == content) return;
@@ -367,11 +392,13 @@ public:
             g.setColour (colours::focus);
             g.drawRoundedRectangle (bounds.toFloat().reduced (.5f), (float) appearance.px (4), 1);
         }
+        const bool large = getHeight() >= appearance.px (48);
         g.setColour (colours::secondary);
-        g.setFont (uiFont (9.5f, juce::Font::bold));
-        const auto caption = bounds.removeFromTop (appearance.line (10, 1));
+        g.setFont (uiFont (large ? 11.0f : 9.5f, juce::Font::bold));
+        const auto caption = bounds.removeFromTop (appearance.line (large ? 12 : 10, 1));
         g.drawFittedText (label.toUpperCase() + (canEdit ? "  ›" : ""), caption, juce::Justification::centred, 1, .88f);
-        const float size = label == "Bars / Beats" ? 20.0f : 15.5f;
+        const float size = label == "Bars / Beats" ? (large ? 25.0f : 20.0f)
+                                                    : (large ? 19.0f : 15.5f);
         g.setColour (label == "Bars / Beats" ? colours::signal : colours::text);
         g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), appearance.fontSize (size), juce::Font::bold));
         g.drawFittedText (value, bounds, juce::Justification::centred, 1, .9f);
