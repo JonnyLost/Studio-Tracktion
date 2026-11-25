@@ -4508,7 +4508,12 @@ private:
                 selectedClip != nullptr && selectedClip->getAudioTrack() == target ? selectedClip : nullptr);
         }
         else
-            mixer.refresh (tracks, target, edit != nullptr && ! busy, canEditRegions());
+        {
+            te::Track* selectedMixerTrack = selectedFolder() != nullptr
+                ? static_cast<te::Track*> (selectedFolder())
+                : static_cast<te::Track*> (target);
+            mixer.refresh (tracks, selectedMixerTrack, edit != nullptr && ! busy, canEditRegions());
+        }
     }
 
     bool canInsertPlugin() const
