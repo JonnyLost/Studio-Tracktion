@@ -200,7 +200,11 @@ string(REPLACE "${header_fill}" [=[    auto area = getLocalBounds().withTrimmedR
     {
         g.setColour (studio::colours::focus.withAlpha (0.38f));
         g.drawRect (area, 1);
-    }]=] editor "${editor}")
+    }
+    // A visible subtle grip indicates the track header can be resized.
+    g.setColour (studio::colours::divider.brighter (0.25f));
+    g.fillRoundedRectangle (getLocalBounds().removeFromBottom (studio::appearance.px (3))
+        .removeFromRight (studio::appearance.px (32)).toFloat(), 1.0f);]=] editor "${editor}")
 string(REPLACE "g.setColour (Colours::grey);" "g.setColour (studio::colours::panel);" editor "${editor}")
 string(REPLACE "g.fillAll (Colours::grey);" "g.fillAll (studio::colours::timeline);" editor "${editor}")
 string(REPLACE "g.setColour (Colours::yellow);" "g.setColour (studio::colours::playhead);" editor "${editor}")
