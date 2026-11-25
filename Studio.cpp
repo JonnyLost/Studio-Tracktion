@@ -5553,7 +5553,7 @@ int StudioView::runInterfaceReview (const File& output)
     return 0;
 }
 
-namespace studio::garritan { int runLibraryTest(); }
+namespace studio::instrumentimport { int runLibraryTest(); int runUniversalImportTest(); }
 namespace studio::spatial { int runSpatialRoutingTest(); }
 namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
@@ -5606,9 +5606,15 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-universal-import")
+        {
+            setApplicationReturnValue (studio::instrumentimport::runUniversalImportTest());
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-garritan-library")
         {
-            setApplicationReturnValue (studio::garritan::runLibraryTest());
+            setApplicationReturnValue (studio::instrumentimport::runLibraryTest());
             quit();
             return;
         }

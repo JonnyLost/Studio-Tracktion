@@ -13,7 +13,7 @@ namespace
 {
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
-constexpr int version = 3;
+constexpr int version = 4;
 constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
@@ -25,10 +25,13 @@ float bounded (const XmlElement& xml, const char* key, float fallback, float min
 XmlElement encode (const Instrument& model, const File& base, bool project)
 {
     XmlElement xml (documentTag);
-    xml.setAttribute ("version", version);
+    const bool hasEmbedded = std::any_of (model.zones.begin(), model.zones.end(), [] (const auto& z) { return z.soundFont.has_value(); });
+    xml.setAttribute ("version", hasEmbedded ? version : 3);
     xml.setAttribute ("name", model.name);
     xml.setAttribute ("preset", model.preset);
     xml.setAttribute ("dirty", model.dirty);
+    if (model.sourceLibrary.isNotEmpty()) xml.setAttribute ("sourceLibrary", model.sourceLibrary);
+    if (model.sourceInstrument.isNotEmpty()) xml.setAttribute ("sourceInstrument", model.sourceInstrument);
     const auto& s = model.settings;
     xml.setAttribute ("attack", s.attack);
     xml.setAttribute ("decay", s.decay);
@@ -60,6 +63,12 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         else
             node.setAttribute ("file", entry.file.getFullPathName());
 
+        if (entry.soundFont)
+        {
+            node.setAttribute ("sfOffset", String (entry.soundFont->offset));
+            node.setAttribute ("sfFrames", entry.soundFont->frames);
+            node.setAttribute ("sfRate", entry.soundFont->rate);
+        }
         const auto& z = entry.mapping;
         node.setAttribute ("folder", entry.folder);
         node.setAttribute ("start", z.start);
@@ -92,6 +101,8 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
     if (model.name.trim().isEmpty()) model.name = "Studio Sampler";
     model.preset = xml->getStringAttribute ("preset").substring (0, 120);
     model.dirty = xml->getBoolAttribute ("dirty");
+    model.sourceLibrary = xml->getStringAttribute ("sourceLibrary");
+    model.sourceInstrument = xml->getStringAttribute ("sourceInstrument");
     auto& s = model.settings;
     s.attack = bounded (*xml, "attack", s.attack, 0, 10);
     s.decay = bounded (*xml, "decay", s.decay, 0, 10);
@@ -137,6 +148,18 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
                 entry.file = candidate;
         }
         if (entry.file == File()) return Result::fail ("Invalid sample reference.");
+        if (child->hasAttribute ("sfOffset"))
+        {
+            const auto offset = child->getStringAttribute ("sfOffset");
+            SoundFontSample source { offset.getLargeIntValue(), child->getIntAttribute ("sfFrames"),
+                                     child->getIntAttribute ("sfRate") };
+            if (xml->getIntAttribute ("version") < 4 || ! entry.file.hasFileExtension ("sf2")
+                || ! offset.containsOnly ("0123456789") || source.offset < 12
+                || source.frames < 2 || source.frames > static_cast<int> (maxSampleBytes / sizeof (float))
+                || source.rate < 1000 || source.rate > 768000)
+                return Result::fail ("Invalid embedded SoundFont sample reference.");
+            entry.soundFont = source;
+        }
         entry.folder = child->getIntAttribute ("folder");
         auto& z = entry.mapping;
         z.start = child->getIntAttribute ("start");
@@ -186,13 +209,10 @@ std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullpt
 Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
 {
     if (! file.existsAsFile()) return Result::fail ("Missing sample");
-    AudioFormatManager formats;
-    formats.registerFormat (new WavAudioFormat(), true);
-    formats.registerFormat (new AiffAudioFormat(), false);
-    std::unique_ptr<AudioFormatReader> reader (formats.createReaderFor (file));
+    auto reader = openSampleReader (file);
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
-        return Result::fail ("Choose a readable mono or stereo WAV or AIFF sample.");
+        return Result::fail ("Choose readable mono or stereo WAV, AIFF, FLAC or macOS CAF audio.");
 
     const auto floatFrameBytes = reader->numChannels * sizeof (float);
     if (reader->lengthInSamples > static_cast<int64> (std::min (budget, maxSampleBytes) / floatFrameBytes))
@@ -226,9 +246,41 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     return Result::ok();
 }
 
-bool currentSample (const SampleZone& z, const File& file)
+Result readEmbeddedSample (const SampleZone& entry, std::size_t budget, std::shared_ptr<const Sample>& output,
+                           std::atomic<bool>* cancelled)
 {
-    return z.file == file && z.mapping.sample && file.existsAsFile()
+    const auto& source = *entry.soundFont;
+    if (static_cast<std::size_t> (source.frames) > budget / sizeof (float))
+        return Result::fail ("Embedded sample exceeds Studio's memory limit.");
+    auto stream = entry.file.createInputStream();
+    if (! stream) return Result::fail ("Missing SoundFont bank.");
+    const auto chunk = soundFontPCM (*stream, soundFontEnd (*stream));
+    if (! chunk || source.offset < chunk.offset || source.offset > chunk.offset + chunk.size
+        || (source.offset - chunk.offset) % 2 != 0
+        || source.frames * juce::int64 (2) > chunk.offset + chunk.size - source.offset
+        || ! stream->setPosition (source.offset))
+        return Result::fail ("Embedded sample exceeds the bank's PCM data. Rescan the SoundFont.");
+    auto sample = std::make_shared<Sample>();
+    sample->sourceBytes = entry.file.getSize(); sample->sourceTime = entry.file.getLastModificationTime().toMilliseconds();
+    sample->rate = source.rate;
+    sample->left.resize (static_cast<std::size_t> (source.frames));
+    std::array<unsigned char, 8192> bytes {};
+    for (int offset = 0; offset < source.frames; offset += static_cast<int> (bytes.size() / 2))
+    {
+        if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+        const auto count = jmin (source.frames - offset, static_cast<int> (bytes.size() / 2));
+        if (stream->read (bytes.data(), count * 2) != count * 2) return Result::fail ("Truncated SoundFont PCM.");
+        for (int frame = 0; frame < count; ++frame)
+            sample->left[static_cast<size_t> (offset + frame)] =
+                static_cast<int16_t> (ByteOrder::littleEndianShort (bytes.data() + frame * 2)) / 32768.0f;
+    }
+    output = std::move (sample);
+    return Result::ok();
+}
+
+bool currentSample (const SampleZone& z, const File& file, std::optional<SoundFontSample> source = {})
+{
+    return z.file == file && z.soundFont == source && z.mapping.sample && file.existsAsFile()
         && z.mapping.sample->sourceBytes == file.getSize()
         && z.mapping.sample->sourceTime == file.getLastModificationTime().toMilliseconds();
 }
@@ -239,7 +291,7 @@ void prepareSamples (Instrument& next, const Instrument& current, std::atomic<bo
     {
         if (cancelled && cancelled->load()) return;
         auto& sample = entry.mapping.sample;
-        const auto reuse = [&] (const auto& zone) { return currentSample (zone, entry.file); };
+        const auto reuse = [&] (const auto& zone) { return currentSample (zone, entry.file, entry.soundFont); };
         if (auto loaded = std::find_if (next.zones.begin(), next.zones.end(), reuse); loaded != next.zones.end())
             sample = loaded->mapping.sample;
         else if (auto previous = std::find_if (current.zones.begin(), current.zones.end(), reuse);
@@ -247,7 +299,11 @@ void prepareSamples (Instrument& next, const Instrument& current, std::atomic<bo
                     && previous->mapping.sample->bytes() <= maxBankBytes - sampleBytes (next))
             sample = previous->mapping.sample;
         else
-            entry.problem = readSample (entry.file, maxBankBytes - sampleBytes (next), sample, cancelled).getErrorMessage();
+        {
+            const auto budget = maxBankBytes - sampleBytes (next);
+            entry.problem = (entry.soundFont ? readEmbeddedSample (entry, budget, sample, cancelled)
+                                            : readSample (entry.file, budget, sample, cancelled)).getErrorMessage();
+        }
 
         if (! sample) continue;
         if (entry.mapping.start >= static_cast<int> (sample->left.size()) || entry.mapping.end > static_cast<int> (sample->left.size()))
@@ -382,6 +438,7 @@ Result Plugin::prepareSample (Instrument initial, const File& file, int replace,
     SampleZone entry;
     entry.folder = model.groups.front().id;
     entry.file = file;
+    entry.soundFont.reset();
     if (replace >= 0)
     {
         entry.folder = next.zones[static_cast<std::size_t> (replace)].folder;
@@ -487,7 +544,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
     {
         if (aborted()) return Result::fail ("Import cancelled.");
         if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
-        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc")) { ++unsupported; continue; }
+        if (! file.hasFileExtension (audioExtensions)) { ++unsupported; continue; }
         if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
         SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
         auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
@@ -578,11 +635,23 @@ void Plugin::rename (String name)
     change (std::move (next), true);
 }
 
+String instrumentDocument (const Instrument& model, const File& base)
+{
+    return encode (model, base, false).toString (XmlElement::TextFormat().singleLine());
+}
+
+Result readInstrumentDocument (const String& text, const File& base, Instrument& model)
+{
+    auto xml = text.getNumBytesAsUTF8() <= maxPresetBytes && ! text.containsIgnoreCase ("<!DOCTYPE") ? XmlDocument::parse (text) : nullptr;
+    return decode (xml.get(), base, model);
+}
+
 Result writeImportedPreset (Instrument model, const File& file, std::atomic<bool>& cancelled)
 {
-    prepareSamples (model, {}, &cancelled);
+    auto validation = model;
+    prepareSamples (validation, {}, &cancelled);
     if (cancelled.load()) return Result::fail ("Import cancelled.");
-    for (const auto& zone : model.zones)
+    for (const auto& zone : validation.zones)
         if (zone.problem.isNotEmpty() || ! zone.mapping.sample)
             return Result::fail (zone.file.getFileName() + ": " + zone.problem);
     if (model.zones.empty()) return Result::fail ("No playable sample zones.");
@@ -618,8 +687,8 @@ Result Plugin::loadPreset (const File& file)
 }
 Result Plugin::preparePreset (const File& file, const Instrument& cache, Instrument& next, std::atomic<bool>* cancelled)
 {
-    const auto xml = file.getSize() <= maxPresetBytes ? XmlDocument::parse (file) : nullptr;
-    if (auto result = decode (xml.get(), file.getParentDirectory(), next); result.failed()) return result;
+    if (file.getSize() > maxPresetBytes) return Result::fail ("Studio Sampler preset exceeds the size limit.");
+    if (auto result = readInstrumentDocument (file.loadFileAsString(), file.getParentDirectory(), next); result.failed()) return result;
     prepareSamples (next, cache, cancelled);
     if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
     if (next.preset.isEmpty()) next.preset = file.getFileNameWithoutExtension().substring (0, 120);

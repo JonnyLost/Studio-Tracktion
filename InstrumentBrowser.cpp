@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentBrowser.h"
-#include "GarritanImportWindow.h"
+#include "InstrumentImportWindow.h"
 #include "StudioSynth.h"
 #include "StudioUI.h"
 #include <algorithm>
@@ -116,7 +116,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     {
         if (! importer)
         {
-            importer = std::make_unique<garritan::ImportWindow> (importedDirectory);
+            importer = std::make_unique<instrumentimport::ImportWindow> (importedDirectory);
             importer->onCatalogChanged = [this] { rebuildCatalog(); };
         }
         importer->setVisible (true);
@@ -202,7 +202,11 @@ void InstrumentBrowser::rebuildCatalog()
                  File::findFiles, File::FollowSymlinks::no))
         {
             const auto file = item.getFile();
-            entries.push_back ({ "imported:" + file.getFileName(), file.getFileNameWithoutExtension(),
+            const auto stem = file.getFileNameWithoutExtension();
+            const auto suffix = stem.fromLastOccurrenceOf ("-", false, false);
+            const auto display = suffix.length() == 16 && suffix.containsOnly ("0123456789abcdef")
+                ? stem.upToLastOccurrenceOf ("-", false, false) : stem;
+            entries.push_back ({ "imported:" + file.getFileName(), display,
                 "Imported Libraries", "Studio Sampler", "Studio | Imported instrument",
                 "Native preset using samples in the original library folder.", {}, true, file });
         }

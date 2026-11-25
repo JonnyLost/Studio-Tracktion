@@ -873,7 +873,7 @@ void Editor::choose (bool presetFile, bool save, bool replace)
     chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio Sampler preset")
                                                        : (replace ? "Locate sample" : "Load sample"),
         save ? File::getSpecialLocation (File::userDocumentsDirectory).getChildFile (File::createLegalFileName (plugin.instrument().name) + ".studiosampler") : File(),
-        presetFile ? "*.studiosampler" : "*.wav;*.wave;*.aif;*.aiff;*.aifc", true, false, this);
+        presetFile ? "*.studiosampler" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.flac;*.caf", true, false, this);
     const auto modeFlags = save ? FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting
                                 : FileBrowserComponent::openMode;
     chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles | (! presetFile && ! replace ? FileBrowserComponent::canSelectMultipleItems | FileBrowserComponent::canSelectDirectories : 0),

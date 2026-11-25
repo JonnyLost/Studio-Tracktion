@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "../GarritanLibrary.h"
+#include "../InstrumentLibrary.h"
 #include "../InstrumentBrowser.h"
 #include <cstdio>
 #include <filesystem>
 
-namespace studio::garritan
+namespace studio::instrumentimport
 {
 using namespace juce;
 
@@ -90,7 +90,9 @@ int runLibraryTest()
     const auto& partial = find ("Partial");
     for (const auto& item : inventory.definitions)
         if (&item != &playable && &item != &partial
-            && (item.compatibility != Compatibility::unsupported || item.issues.isEmpty()))
+            && (item.compatibility != (item.source.hasFileExtension ("aria") ? Compatibility::originalPlayer
+                                                                              : Compatibility::unsupported)
+                || item.issues.isEmpty()))
             return fail ("missing, protected, out-of-root and malformed inputs were not rejected");
     if (playable.compatibility != Compatibility::supported || partial.compatibility != Compatibility::partial
         || playable.regions.size() != 5 || playable.decodedBytes != 4800 * sizeof (float))
@@ -99,7 +101,7 @@ int runLibraryTest()
     File report, preset, unused;
     if (saveInventory (inventory, library.getChildFile ("disallowed"), unused).wasOk()
         || saveInventory (inventory, sandbox.getChildFile ("Reports"), report).failed()
-        || JSON::parse (report.loadFileAsString()).getProperty ("schemaVersion", 0) != var (1))
+        || JSON::parse (report.loadFileAsString()).getProperty ("schemaVersion", 0) != var (2))
         return fail ("JSON manifest and source protection");
     if (convert (inventory, partial, catalog, false, discovery, unused).wasOk()
         || convert (inventory, playable, library.getChildFile ("disallowed"), false, discovery, unused).wasOk()
