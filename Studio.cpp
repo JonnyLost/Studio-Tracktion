@@ -33,6 +33,7 @@ using namespace tracktion::literals;
 #include "InstrumentWorkspace.h"
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
+#include "StudioAuditionKeyboard.h"
 #include "Seating/SeatingWorkspace.h"
 #include "FilmScoringWorkspace.h"
 
@@ -459,6 +460,9 @@ public:
         addAndMakeVisible (music);
         addAndMakeVisible (transportOptions);
         addAndMakeVisible (flashbackButton);
+        addAndMakeVisible (keyboardButton);
+        keyboardButton.setTooltip ("Open the on-screen audition keyboard for the selected instrument (Shift-Command-K)");
+        keyboardButton.onClick = [this] { toggleAuditionKeyboard(); };
         flashbackButton.setTooltip ("Capture recently played MIDI from the selected track's assigned input, even if Record wasn't pressed");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
@@ -836,6 +840,13 @@ public:
             bounceWindow.deleteAndZero();
         bounce.reset();
         pendingPlugin.reset();
+        if (midiKeyboardWindow != nullptr)
+        {
+            midiKeyboardWindow->panel.releaseNotes();
+            midiKeyboardWindow->panel.send = {};
+            midiKeyboardWindow->setLookAndFeel (nullptr);
+            midiKeyboardWindow.reset();
+        }
         if (edit != nullptr) midiFocus.release (edit.get());
         rememberInstrumentWorkspace();
         performance.clear();
@@ -1184,7 +1195,8 @@ public:
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
         const int gap = m.px (6);
         const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
-        const int menuW = m.span (76), flashbackW = m.span (98), elapsedW = m.span (97);
+        const int menuW = m.span (76), flashbackW = m.span (98),
+                  keyboardW = m.span (86), elapsedW = m.span (97);
        #if JUCE_MAC
         const int customizeW = 0; // View menu owns transport customization.
        #else
@@ -1200,11 +1212,13 @@ public:
         const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
         const bool showMusicMenu = availableWidth >= m.span (610);
         const bool showFlashback = availableWidth >= m.span (830);
+        const bool showKeyboard = availableWidth >= m.span (1100);
         const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
         const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
         const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
         const int secondaryWidth = (showMusicMenu ? menuW + gap : 0)
                                  + (showFlashback ? flashbackW + gap : 0)
+                                 + (showKeyboard ? keyboardW + gap : 0)
                                  + (showCustomize ? customizeW : 0);
         const int fixed = readoutBase + secondaryWidth + 2 * gap;
         const int buttonCount = 4 + optionalButtons;
@@ -1219,6 +1233,7 @@ public:
         clickButton.setVisible (showClick);
         music.setVisible (showMusicMenu);
         flashbackButton.setVisible (showFlashback);
+        keyboardButton.setVisible (showKeyboard);
         const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
         const int totalWidth = fixed + buttonCount * key + (showElapsed ? elapsedW : 0);
         auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
@@ -1248,6 +1263,12 @@ public:
             flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
         }
         else flashbackButton.setBounds ({});
+        if (showKeyboard)
+        {
+            row.removeFromLeft (gap);
+            keyboardButton.setBounds (row.removeFromLeft (keyboardW).reduced (m.px (1), m.px (5)));
+        }
+        else keyboardButton.setBounds ({});
        #if JUCE_MAC
         transportOptions.setVisible (false);
        #else
@@ -1627,7 +1648,7 @@ public:
         mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip, mNewGroup, mGroupSelected,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
-        mMidiMonitor, mResources, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
+        mMidiMonitor, mResources, mAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
@@ -1725,6 +1746,7 @@ public:
                 add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
                 add (mPerformanceNone, "Hide Performance Panel", true, performanceMode.getSelectedId() == 3);
                 menu.addSeparator();
+                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
@@ -1785,6 +1807,7 @@ public:
             case mInspector: setInspectorOpen (! inspectorOpen); break;
             case mRoomReturnArrangement: setRoomReturnTrackVisible (! showRoomReturnTrack); break;
             case mEnvironments: environmentWelcome.open (false); break;
+            case mAuditionKeyboard: toggleAuditionKeyboard(); break;
             case mMidiMonitor: invoke (monitorButton); break;
             case mResources: if (resources.onOpen) resources.onOpen(); break;
             case mAboutStudio:
@@ -1896,6 +1919,8 @@ private:
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
+    std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    te::EditItemID keyboardTarget;
     Viewport timeline;
     std::unique_ptr<FileChooser> chooser;
     File projectFile;
@@ -1990,7 +2015,8 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
-    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" };
+    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" },
+               keyboardButton { "Keyboard" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
     TextButton newProject { "New Project" }, openProject { "Open Project" },
@@ -3180,6 +3206,19 @@ private:
         else
             piano.setComparisonClips ({});
 
+        if (midiKeyboardWindow != nullptr)
+        {
+            auto* active = workflowTrack();
+            const auto nextTarget = active != nullptr && studio::findInstrument (*active) != nullptr
+                ? active->itemID : te::EditItemID {};
+            if (keyboardTarget != nextTarget)
+            {
+                midiKeyboardWindow->panel.releaseNotes();
+                keyboardTarget = nextTarget;
+            }
+            midiKeyboardWindow->panel.setSelectedInstrument (
+                nextTarget.isValid() && active != nullptr ? active->getName() : String());
+        }
         auto* track = selectedTrack();
         StringArray names;
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
@@ -3688,6 +3727,8 @@ private:
             edit->getTransport().stop (false, false);
             midiFocus.release (edit.get());
         }
+        if (midiKeyboardWindow != nullptr) midiKeyboardWindow->panel.releaseNotes();
+        keyboardTarget = {};
         piano.setClip (nullptr);
         regionClipboard.clear();
         rememberInstrumentWorkspace();
