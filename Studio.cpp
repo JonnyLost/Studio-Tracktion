@@ -5129,7 +5129,48 @@ int StudioView::runUnifiedStageReview (const File& output)
     refresh (legacy);
     if (! spatialWorkspace.verifyDeletedTrackForInterfaceReview (unplacedID) || read (*legacy) != moved)
         return fail ("track deletion removes its marker and rejects stale drops");
-    std::puts ("Unified Stage placement, routing, Undo/Redo, deletion, and project compatibility passed.");
+
+    // Submix folders use Tracktion's real summing folder, never a fake
+    // arrangement-only group. Check fold/unfold, fader and room-send safety.
+    te::AudioTrack* sectionMate = nullptr;
+    for (auto* t : te::getAudioTracks (*edit))
+        if (t->getName() == "Violin I") { sectionMate = t; break; }
+    if (sectionMate == nullptr) return fail ("prepare submix test section");
+    const auto oldHeight = editor->getStudioContentHeight();
+    legacy->state.setProperty ("studioTrackHeight", 124, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getStudioContentHeight() < oldHeight + 70)
+        return fail ("per-track height increases arrangement content size");
+    const Array<te::AudioTrack*> members { legacy, sectionMate };
+    auto group = studio::tracks::createSubmix (*edit, members, "Test Section");
+    if (group == nullptr || ! group->isSubmixFolder() || group->getVolumePlugin() == nullptr
+        || legacy->getParentFolderTrack() != group.get()
+        || sectionMate->getParentFolderTrack() != group.get() || ! hasRoomSend (*legacy))
+        return fail ("real native submix folder retains members, fader and Stage routing");
+    edit->dispatchPendingUpdatesSynchronously();
+    mixer.refresh (te::getAudioTracks (*edit), group.get(), true, true);
+    if (! mixer.hasChannelForTrack (group->itemID))
+        return fail ("submix group appears as a real Mixer channel");
+    const int openRows = editor->getVisibleTrackCount();
+    group->state.setProperty ("studioFolderCollapsed", true, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getVisibleTrackCount() != openRows - 2)
+        return fail ("collapsed group hides children only, without removing audio tracks");
+    group->state.setProperty ("studioFolderCollapsed", false, &edit->getUndoManager());
+    edit->dispatchPendingUpdatesSynchronously();
+    if (editor->getVisibleTrackCount() != openRows)
+        return fail ("expanded folder restores original arrangement tracks");
+    const auto groupId = group->itemID;
+    if (! saveToDisk()) return fail ("save native section submix");
+    loadProject (fixture, false);
+    group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, groupId));
+    legacy = trackById (legacyID);
+    if (group == nullptr || legacy == nullptr || ! group->isSubmixFolder()
+        || legacy->getParentFolderTrack() != group.get()
+        || ! hasRoomSend (*legacy)
+        || (int) legacy->state.getProperty ("studioTrackHeight") != 124)
+        return fail ("reopened project retains submix, Stage send and custom track height");
+    std::puts ("Unified Stage, real submix folder, height persistence and room-return tests passed.");
     return 0;
 }
 
