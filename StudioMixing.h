@@ -16,7 +16,7 @@ struct TrackActions
     std::function<bool()> canChangeMix;
     std::function<void(tracktion::EditItemID)> selectTrack;
     std::function<void(tracktion::EditItemID, TrackMenu, juce::Component&)> showMenu;
-    std::function<void(tracktion::EditItemID)> openInstrument;
+    std::function<void(tracktion::EditItemID)> openInstrument, openOriginalInstrument;
     std::function<void(tracktion::EditItemID)> openFullInstrument, openArticulations;
     std::function<void(tracktion::EditItemID, bool solo)> toggleTrackState;
     std::function<void(tracktion::EditItemID)> toggleArm;
