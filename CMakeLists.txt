@@ -407,8 +407,11 @@ if(studio_track_mouse_match EQUAL -1)
 endif()
 string(REPLACE "${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mouseDown (const MouseEvent& event)
 {
-    editViewState.selectionManager.selectOnly (track.get());
-    if (track->isFolderTrack() && event.mods.isLeftButtonDown()
+    if (event.mods.isShiftDown())
+        editViewState.selectionManager.select (track.get(), true);
+    else
+        editViewState.selectionManager.selectOnly (track.get());
+    if (track->isFolderTrack() && ! event.mods.isShiftDown() && event.mods.isLeftButtonDown()
         && event.x < studio::appearance.px (25) && event.y < studio::appearance.px (27))
     {
         const bool wasCollapsed = (bool) track->state.getProperty ("studioFolderCollapsed", false);
