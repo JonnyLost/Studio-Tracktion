@@ -73,7 +73,7 @@ if(edit_view_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example EditComponent accessor has changed.")
 endif()
 string(REPLACE "${edit_view_accessor}"
-    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }\n    void setStudioRoomReturnVisible (bool shouldShow)\n    {\n        if (editViewState.showStudioRoomReturn == shouldShow) return;\n        editViewState.showStudioRoomReturn = shouldShow;\n        buildTracks();\n    }"
+    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }\n    int getStudioContentHeight() const;\n    void setStudioRoomReturnVisible (bool shouldShow)\n    {\n        if (editViewState.showStudioRoomReturn == shouldShow) return;\n        editViewState.showStudioRoomReturn = shouldShow;\n        buildTracks();\n    }"
     editor_header "${editor_header}")
 
 # The track header is Studio's only per-track control area. The pinned
@@ -101,6 +101,11 @@ string(REPLACE "${studio_track_header_controls_anchor}"
     [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"}, fxButton {"FX"};
     Slider miniVolume, miniPan;
     Label miniLevel;
+    bool resizingTrack = false;
+    int dragStartHeight = 50;
+    void mouseDrag (const MouseEvent&) override;
+    void mouseUp (const MouseEvent&) override;
+    void mouseMove (const MouseEvent&) override;
     void updateMiniControls();
     void timerCallback() override;
     te::LevelMeasurer::Client miniMeterClient;
@@ -383,6 +388,34 @@ string(REPLACE "${studio_track_mouse_anchor}" [=[void TrackHeaderComponent::mous
     editViewState.selectionManager.selectOnly (track.get());
     if (event.mods.isPopupMenu() && editViewState.showStudioTrackMenu)
         editViewState.showStudioTrackMenu (track->itemID, *this);
+    else if (event.mods.isLeftButtonDown() && event.y >= getHeight() - studio::appearance.px (7))
+    {
+        resizingTrack = true;
+        dragStartHeight = (int) track->state.getProperty (Identifier ("studioTrackHeight"), 50);
+        track->edit.getUndoManager().beginNewTransaction ("Resize track");
+    }
+}
+
+void TrackHeaderComponent::mouseMove (const MouseEvent& event)
+{
+    setMouseCursor (event.y >= getHeight() - studio::appearance.px (7)
+        ? MouseCursor::UpDownResizeCursor : MouseCursor::NormalCursor);
+}
+
+void TrackHeaderComponent::mouseDrag (const MouseEvent& event)
+{
+    if (! resizingTrack) return;
+    const int scale = studio::appearance.interfacePercent();
+    const int dragPoints = event.getDistanceFromDragStartY() * 100 / jmax (1, scale);
+    const int height = jlimit (36, 300, dragStartHeight + dragPoints);
+    track->state.setProperty (Identifier ("studioTrackHeight"), height, &track->edit.getUndoManager());
+}
+
+void TrackHeaderComponent::mouseUp (const MouseEvent&)
+{
+    if (! resizingTrack) return;
+    resizingTrack = false;
+    track->edit.getUndoManager().beginNewTransaction();
 }
 
 void TrackHeaderComponent::updateMiniControls()
@@ -499,6 +532,50 @@ if(track_mouse_down_match EQUAL -1)
 endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/ArrangementLasso.inc" arrangement_lasso)
 string(REPLACE "${track_mouse_down}" "${arrangement_lasso}" editor "${editor}")
+# A track stores its own height as a project value, not an audio parameter.
+# Preserve Tracktion's clip/track geometry and update only row boundaries.
+set(studio_height_bounds_anchor [=[        h->setBounds (0, y, headerWidth, trackHeight);
+        t->setBounds (headerWidth, y, getWidth() - headerWidth - footerWidth, trackHeight);
+        f->setBounds (getWidth() - footerWidth, y, footerWidth, trackHeight);
+
+        y += trackHeight + trackGap;]=])
+string(FIND "${editor}" "${studio_height_bounds_anchor}" studio_height_bounds_match)
+if(studio_height_bounds_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example per-track row geometry has changed.")
+endif()
+string(REPLACE "${studio_height_bounds_anchor}" [=[        const int rowHeight = t->getTrack() != nullptr && t->getTrack()->state.hasProperty ("studioTrackHeight")
+            ? metrics.px (juce::jlimit (36, 300, (int) t->getTrack()->state.getProperty ("studioTrackHeight")))
+            : trackHeight;
+        h->setBounds (0, y, headerWidth, rowHeight);
+        t->setBounds (headerWidth, y, getWidth() - headerWidth - footerWidth, rowHeight);
+        f->setBounds (getWidth() - footerWidth, y, footerWidth, rowHeight);
+
+        y += rowHeight + trackGap;]=] editor "${editor}")
+
+set(studio_height_method_anchor [=[void EditComponent::resized()
+{]=])
+string(FIND "${editor}" "${studio_height_method_anchor}" studio_height_method_match)
+if(studio_height_method_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example arrangement layout method has changed.")
+endif()
+string(REPLACE "${studio_height_method_anchor}" [=[int EditComponent::getStudioContentHeight() const
+{
+    const auto& metrics = studio::appearance;
+    int total = 0;
+    for (auto* row : tracks)
+    {
+        const auto* t = row->getTrack();
+        total += t != nullptr && t->state.hasProperty ("studioTrackHeight")
+            ? metrics.px (juce::jlimit (36, 300, (int) t->state.getProperty ("studioTrackHeight")))
+            : metrics.trackHeight();
+        total += metrics.trackGap();
+    }
+    return total;
+}
+
+void EditComponent::resized()
+{]=] editor "${editor}")
+
 # Hide only the managed shared reverb return's *arrangement widgets*.
 # Never call Tracktion's audio-track hide/disable, mute or delete APIs:
 # the actual aux return remains in the Edit, playback graph and Mixer.
@@ -529,8 +606,13 @@ if(studio_room_role_match EQUAL -1)
 endif()
 string(REPLACE "${studio_room_role_anchor}" [=[void EditComponent::valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i)
 {
-    if (i == juce::Identifier ("studioSpatialRole") && te::TrackList::isTrack (v))
-        markAndUpdate (updateTracks);
+    if (te::TrackList::isTrack (v))
+    {
+        if (i == juce::Identifier ("studioSpatialRole"))
+            markAndUpdate (updateTracks);
+        if (i == juce::Identifier ("studioTrackHeight") || i == juce::Identifier ("studioFolderCollapsed"))
+            markAndUpdate (updateTracks);
+    }
     if (v.hasType (IDs::EDITVIEWSTATE))]=] editor "${editor}")
 
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
