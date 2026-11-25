@@ -252,6 +252,27 @@ int runUniversalImportTest()
         || ! proposed.definitions.front().issues.joinIntoString (" ").contains ("Provisional root"))
         return fail ("deterministic sample-folder proposal");
 
+    const auto tagged = home.getChildFile ("Tagged");
+    if (tagged.getChildFile ("Staccato").createDirectory().failed()
+        || ! writeAudio<WavAudioFormat> (tagged.getChildFile ("Staccato/Horn_F4_close.wav")))
+        return fail ("create tagged sample folder");
+    const auto tags = proposeSampleFolder (tagged, progress);
+    if (tags.definitions.size() != 1 || tags.definitions[0].instrument.groups.size() != 2
+        || tags.definitions[0].instrument.groups[1].name != "staccato / close"
+        || tags.definitions[0].instrument.zones.front().folder != 1)
+        return fail ("articulation and microphone tags organize an editable proposal");
+
+    const auto wide = home.getChildFile ("Wide");
+    if (wide.createDirectory().failed()) return fail ("create wide fixture folder");
+    for (int i = 0; i < 1200; ++i)
+        if (! wide.getChildFile (String (i) + ".wav").replaceWithText ("unreadable sample candidate"))
+            return fail ("populate wide fixture");
+    Progress wideProgress;
+    const auto discovered = scan (wide, wideProgress);
+    if (! discovered.complete || wideProgress.completed.load() != 1200 || discovered.samples.size() != 1200
+        || ! discovered.definitions.empty())
+        return fail ("wide discovery inventories metadata without decoding sample candidates");
+
     const auto relocated = home.getChildFile ("Relocated");
     if (! library.moveFileTo (relocated)) return fail ("move test library");
     Progress stopped;

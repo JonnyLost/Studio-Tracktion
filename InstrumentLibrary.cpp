@@ -242,7 +242,8 @@ struct SampleInfo
     int frames = 0;
     std::size_t bytes = 0;
     bool hasEmbeddedLoop = false;
-    int loopStart = -1, loopEnd = -1, root = -1;
+    int loopStart = -1, loopEnd = -1, root = -1, channels = 0;
+    double rate = 0;
 };
 
 SampleInfo probe (const File& file)
@@ -255,6 +256,8 @@ SampleInfo probe (const File& file)
         return {};
     const auto frames = static_cast<int> (reader->lengthInSamples);
     SampleInfo info { frames, static_cast<std::size_t> (frames) * sizeof (float) * reader->numChannels };
+    info.channels = static_cast<int> (reader->numChannels);
+    info.rate = reader->sampleRate;
     const auto& metadata = reader->metadataValues;
     const auto field = [&] (const char* name, const char* fallback = "0") { return metadata.getValue (name, fallback).getIntValue(); };
     for (const auto& key : { String ("MidiUnityNote"), String (AiffAudioFormat::appleRootNote) })
@@ -542,7 +545,8 @@ Discovered discover (Inventory& inventory, Progress& progress)
     std::sort (result.audio.begin(), result.audio.end());
     StringArray listing;
     for (const auto& file : result.audio) listing.add (file.getRelativePathFrom (inventory.root));
-    inventory.listingFingerprint = String::toHexString (listing.joinIntoString ("\n").hashCode64());
+    if (! progress.cancelled.load())
+        inventory.listingFingerprint = String::toHexString (listing.joinIntoString ("\n").hashCode64());
     return result;
 }
 
@@ -846,6 +850,12 @@ Inventory proposeSampleFolder (const File& selected, Progress& progress)
     item.issues.add ("Review this inferred keyboard map. Uncertain pitches, overlapping takes, or ambiguous variants require manual editing.");
     int fallback = 48;
     std::vector<sampler::Zone> zones;
+    const auto tag = [] (const StringArray& tokens, std::initializer_list<const char*> candidates)
+    {
+        for (auto* candidate : candidates)
+            if (tokens.contains (candidate)) return String (candidate);
+        return String();
+    };
     for (const auto& file : files.audio)
     {
         if (progress.cancelled.load()) return inventory;
@@ -870,10 +880,35 @@ Inventory proposeSampleFolder (const File& selected, Progress& progress)
             item.issues.addIfNotAlreadyThere ("Review unsupported embedded loop: " + file.getFileName());
         z.end = info.frames;
         const auto label = file.getRelativePathFrom (inventory.root);
+        const auto tokens = StringArray::fromTokens (label.toLowerCase(), " /_.-", "");
+        const auto articulation = tag (tokens, { "sustain", "legato", "staccato", "spiccato", "pizzicato",
+                                                "tremolo", "trill", "marcato", "release" });
+        const auto microphone = tag (tokens, { "close", "room", "decca", "ambient", "overhead", "spot" });
+        auto groupName = articulation;
+        if (microphone.isNotEmpty()) groupName += (groupName.isEmpty() ? String() : " / ") + microphone;
+        int folder = 0;
+        if (groupName.isNotEmpty())
+        {
+            auto& groups = item.instrument.groups;
+            auto group = std::find_if (groups.begin(), groups.end(), [&] (const auto& candidate) { return candidate.name == groupName; });
+            if (group != groups.end()) folder = group->id;
+            else if (groups.size() < sampler::maxGroups)
+            {
+                folder = static_cast<int> (groups.size());
+                sampler::Group playback;
+                playback.id = folder;
+                groups.push_back ({ folder, groupName, playback });
+            }
+            else item.issues.addIfNotAlreadyThere ("Additional labels share the Main group because the native group limit was reached.");
+            item.issues.addIfNotAlreadyThere ("Filename and folder tags organize groups. Switches, mic routing and release triggers need review.");
+        }
         item.regions.add (object ({ { "sample", label }, { "root", z.root }, { "velocityLow", z.soft },
-            { "velocityHigh", z.hard }, { "frames", info.frames }, { "loopStart", z.loopStart }, { "loopEnd", z.loopEnd } }));
+            { "velocityHigh", z.hard }, { "frames", info.frames }, { "durationSeconds", info.frames / info.rate },
+            { "channels", info.channels }, { "articulationTag", articulation }, { "microphoneTag", microphone },
+            { "group", folder }, { "loopStart", z.loopStart }, { "loopEnd", z.loopEnd } }));
+        z.folder = folder;
         zones.push_back (z);
-        item.instrument.zones.push_back ({ file, z, {}, 0, {} });
+        item.instrument.zones.push_back ({ file, z, {}, folder, {} });
     }
     sampler::spreadMapping (zones);
     for (std::size_t i = 0; i < zones.size(); ++i)
@@ -894,7 +929,8 @@ Inventory proposeSampleFolder (const File& selected, Progress& progress)
 
 void writeIndex (const Inventory& inventory, const File& directory)
 {
-    if (! safeDestination (inventory, directory) || directory.createDirectory().failed()) return;
+    if (inventory.listingFingerprint.isEmpty() || ! safeDestination (inventory, directory)
+        || directory.createDirectory().failed()) return;
     Array<var> rows;
     for (const auto& item : inventory.definitions)
     {

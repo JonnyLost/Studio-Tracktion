@@ -17,7 +17,9 @@ types, with no separate reader implementation to retain or replace.
   tokens such as `Violin_C4_v1-63.wav`, embedded root-note and forward-loop
   metadata, relative folder paths and sample lengths. It uses C4 for MIDI 60.
   Unknown pitches receive provisional roots, and overlapping layers are
-  called out. Approve the proposal explicitly before converting. Adjust roots,
+  called out. Recognized articulation and microphone labels create editable
+  organizational groups, with no inferred trigger or routing rules. Approve
+  the proposal explicitly before converting. Adjust roots,
   velocity ranges, layer organization and playback in the Sampler editor.
 - **Locate Missing Samples** rescans a selected definition with the folder you
   choose as its sample root. EXS can also locate a unique filename anywhere in

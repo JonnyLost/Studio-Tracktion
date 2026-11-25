@@ -155,6 +155,7 @@ bool addSoundFontZone (Definition& result, const File& file, sampler::SoundFontC
     const auto mode = generator (source, 54);
     zone.loop = mode == 1 || mode == 3;
     if (mode == 3) result.issues.addIfNotAlreadyThere ("Sustain loops continue through the native release envelope.");
+    else if (mode != 0 && mode != 1) result.issues.addIfNotAlreadyThere ("Unsupported SoundFont loop mode.");
     if (zone.loop)
     {
         const int64 loopStart = int64 (u32 (28)) + add (2) + int64 (add (45)) * 32768 - start;
@@ -174,8 +175,8 @@ bool addSoundFontZone (Definition& result, const File& file, sampler::SoundFontC
     else if (*envelope != adsr) result.issues.addIfNotAlreadyThere ("Multiple SoundFont envelopes use the first supported zone's ADSR.");
     constexpr int handled[] { 0,1,2,3,4,12,34,36,37,38,41,43,44,45,48,50,51,52,53,54,58 };
     for (const auto* values : { &source, &preset })
-        for (const auto& [op, amount] : *values)
-            if (amount != 0 && std::find (std::begin (handled), std::end (handled), op) == std::end (handled))
+        for (const auto& entry : *values)
+            if (const auto op = entry.first; std::find (std::begin (handled), std::end (handled), op) == std::end (handled))
                 result.issues.addIfNotAlreadyThere ("SoundFont generator " + String (op) + " requires the original player for exact playback.");
     if (! sampler::validMapping (zone) || result.instrument.zones.size() >= sampler::maxZones) return false;
     result.instrument.zones.push_back (std::move (item));
