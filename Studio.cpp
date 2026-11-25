@@ -672,10 +672,12 @@ public:
         trackOptions.onClick = [this]
         {
             PopupMenu menu;
-            if (auto* track = workflowTrack())
+            if (auto* folder = selectedFolder())
+                populateFolderEditMenu (menu, *folder);
+            else if (auto* track = workflowTrack())
                 populateTrackEditMenu (menu, *track);
             else
-                menu.addSectionHeader ("Select a track in the arrangement first");
+                menu.addSectionHeader ("Select a track or folder in the arrangement first");
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&trackOptions));
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
@@ -2448,6 +2450,11 @@ private:
         return dynamic_cast<te::AudioTrack*> (selection.getSelectedObject (0));
     }
 
+    te::FolderTrack* selectedFolder()
+    {
+        return dynamic_cast<te::FolderTrack*> (selection.getSelectedObject (0));
+    }
+
     void sizeEditor()
     {
         if (editor != nullptr)
@@ -3517,7 +3524,12 @@ private:
         view.showStudioTrackFX = [this] (te::EditItemID id, Component& anchor)
         {
             if (edit == nullptr || busy) return;
-            if (auto* track = trackById (id))
+            if (auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id)))
+            {
+                selection.selectOnly (folder);
+                showGroupEffects (id, anchor);
+            }
+            else if (auto* track = trackById (id))
             {
                 selection.selectOnly (track);
                 showTrackMenu (id, studio::TrackMenu::inserts, anchor);
@@ -3526,7 +3538,14 @@ private:
         view.showStudioTrackMenu = [this] (te::EditItemID id, Component& anchor)
         {
             if (edit == nullptr || busy) return;
-            if (auto* track = trackById (id))
+            if (auto* folder = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id)))
+            {
+                selection.selectOnly (folder);
+                PopupMenu menu;
+                populateFolderEditMenu (menu, *folder, false);
+                menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+            }
+            else if (auto* track = trackById (id))
             {
                 selection.selectOnly (track);
                 PopupMenu menu;
@@ -3948,8 +3967,9 @@ private:
         trackActions.canChangeMix = [this] { return edit != nullptr && ! busy; };
         trackActions.selectTrack = [this] (te::EditItemID id)
         {
-            if (auto* track = trackById (id))
-                selection.selectOnly (track);
+            if (edit != nullptr)
+                if (auto* track = te::findTrackForID (*edit, id))
+                    selection.selectOnly (track);
         };
         trackActions.showMenu = [this] (te::EditItemID id, studio::TrackMenu kind, Component& anchor)
         {
@@ -4009,6 +4029,10 @@ private:
             }
             menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
         };
+        trackActions.showGroupEffects = [this] (te::EditItemID id, Component& anchor)
+        {
+            showGroupEffects (id, anchor);
+        };
         trackActions.openInstrument = [this] (te::EditItemID id)
         {
             if (! busy)
@@ -4043,8 +4067,8 @@ private:
         };
         trackActions.toggleTrackState = [this] (te::EditItemID id, bool solo)
         {
-            if (! busy)
-                if (auto* track = trackById (id))
+            if (! busy && edit != nullptr)
+                if (auto* track = te::findTrackForID (*edit, id))
                 {
                     if (solo) track->setSolo (! track->isSolo (false));
                     else track->setMute (! track->isMuted (false));
