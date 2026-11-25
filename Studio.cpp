@@ -267,6 +267,13 @@ private:
             "Edit  |  Command-Z  |  Undo",
             "Edit  |  Shift-Command-Z  |  Redo",
             "MIDI  |  Command-J  |  Join Selected MIDI Regions",
+            "Keyboard  |  Shift-Command-K  |  On-Screen MIDI Keyboard",
+            "Track  |  Shift-Command-G  |  Group Selected Tracks",
+            "Workspace  |  Command-1  |  Piano Roll",
+            "Workspace  |  Command-2  |  Full Mixer",
+            "Workspace  |  Command-3  |  Orchestral Stage",
+            "Workspace  |  Command-4  |  Film Scoring",
+            "Inspector  |  Command-I  |  Show / Hide Selected Track Inspector",
             "Piano Roll  |  Delete  |  Delete Selected Notes",
             "Piano Roll  |  Escape  |  Clear Note Selection",
             "Transport  |  Return to Start",
@@ -1120,6 +1127,32 @@ public:
             else play.onClick();
             return true;
         }
+        // Dedicated composition shortcuts, independent of fragile button order.
+        const auto mods = key.getModifiers();
+        if (mods.isCommandDown() && mods.isShiftDown()
+            && (key.getKeyCode() == 'K' || key.getKeyCode() == 'k'))
+        {
+            toggleAuditionKeyboard();
+            return true;
+        }
+        if (mods.isCommandDown() && mods.isShiftDown()
+            && (key.getKeyCode() == 'G' || key.getKeyCode() == 'g'))
+        {
+            createGroupDialog (true);
+            return true;
+        }
+        if (mods.isCommandDown() && ! mods.isShiftDown() && ! mods.isAltDown())
+        {
+            switch (key.getKeyCode())
+            {
+                case '1': showWorkspace (Workspace::piano); return true;
+                case '2': showWorkspace (Workspace::mix); return true;
+                case '3': showWorkspace (Workspace::stage); return true;
+                case '4': showWorkspace (Workspace::filmScoring); return true;
+                case 'i': case 'I': setInspectorOpen (! inspectorOpen); return true;
+                default: break;
+            }
+        }
         if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'J' || key.getKeyCode() == 'j')
             && canEditRegions())
         {
@@ -1725,6 +1758,7 @@ public:
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
                 add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
+                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
                 menu.addSeparator();
                 add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
                 add (mTransportClick, "Transport: Metronome", true, showTransportClick);
@@ -2449,6 +2483,56 @@ private:
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         prefs.setValue ("studio.articulationWindow", articulationWindow->getWindowStateAsString());
         prefs.saveIfNeeded();
+    }
+
+    void closeAuditionKeyboard()
+    {
+        if (midiKeyboardWindow == nullptr) return;
+        midiKeyboardWindow->panel.releaseNotes();
+        midiKeyboardWindow->panel.send = {};
+        midiKeyboardWindow->onClose = {};
+        midiKeyboardWindow->setLookAndFeel (nullptr);
+        midiKeyboardWindow.reset();
+        keyboardTarget = {};
+    }
+
+    void toggleAuditionKeyboard()
+    {
+        if (midiKeyboardWindow != nullptr)
+        {
+            closeAuditionKeyboard();
+            return;
+        }
+        midiKeyboardWindow = std::make_unique<studio::AuditionKeyboardWindow>();
+        auto* active = workflowTrack();
+        keyboardTarget = active != nullptr && studio::findInstrument (*active) != nullptr
+            ? active->itemID : te::EditItemID {};
+        midiKeyboardWindow->panel.setSelectedInstrument (
+            keyboardTarget.isValid() && active != nullptr ? active->getName() : String());
+        const SafePointer<StudioView> safe (this);
+        midiKeyboardWindow->panel.send = [safe] (const MidiMessage& note)
+        {
+            if (safe == nullptr || safe->edit == nullptr || safe->busy
+                || ! safe->keyboardTarget.isValid()) return;
+            if (auto* track = te::findAudioTrackForID (*safe->edit, safe->keyboardTarget))
+                if (studio::findInstrument (*track) != nullptr
+                    && safe->edit->getTransport().getCurrentPlaybackContext() != nullptr)
+                    track->injectLiveMidiMessage (note, {});
+        };
+        midiKeyboardWindow->onClose = [safe]
+        {
+            if (safe == nullptr || safe->midiKeyboardWindow == nullptr) return;
+            safe->midiKeyboardWindow->panel.releaseNotes();
+            safe->midiKeyboardWindow->setVisible (false);
+            // Do not delete a DocumentWindow in its own close handler.
+            MessageManager::callAsync ([safe]
+            {
+                if (safe != nullptr) safe->closeAuditionKeyboard();
+            });
+        };
+        midiKeyboardWindow->setLookAndFeel (&style);
+        midiKeyboardWindow->setVisible (true);
+        midiKeyboardWindow->toFront (true);
     }
 
     void toggleArticulationDock()
