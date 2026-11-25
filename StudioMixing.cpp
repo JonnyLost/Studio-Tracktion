@@ -862,8 +862,10 @@ public:
             // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
             arm.setVisible (! wetReturn);
+            if (returnLayoutChanged) resized();
             arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
+            const bool returnLayoutChanged = room.isVisible() == wetReturn;
             room.setEnabled (! wetReturn && ready);
             room.setVisible (! wetReturn);
             room.setToggleState (sending, dontSendNotification);
