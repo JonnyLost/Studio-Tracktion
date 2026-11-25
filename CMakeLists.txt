@@ -267,7 +267,8 @@ string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appeara
     if (track->getParentFolderTrack() != nullptr) nameRow.removeFromLeft (m.px (9));
     trackName.setBounds (nameRow);
 
-    const bool showMini = (bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false)
+    const bool showMini = track->isFolderTrack()
+                       || (bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false)
                        || (bool) track->state.getProperty (Identifier ("studioHeaderPan"), false)
                        || (bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false);
     if (showMini) r.removeFromBottom (m.px (14));
@@ -344,7 +345,8 @@ endif()
 string(REPLACE "${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisible (*this, { &trackName, &armButton, &muteButton, &soloButton, &inputButton, &fxButton });
     fxButton.setTooltip ("Instrument and insert effects");
     fxButton.setTitle ("Track instrument and insert effects");
-    fxButton.setVisible (dynamic_cast<te::AudioTrack*> (track.get()) != nullptr);
+    fxButton.setVisible (dynamic_cast<te::AudioTrack*> (track.get()) != nullptr
+        || track->isFolderTrack());
     fxButton.onClick = [this]
     {
         if (editViewState.showStudioTrackFX)
@@ -365,18 +367,35 @@ string(REPLACE "${studio_track_buttons_anchor}" [=[    Helpers::addAndMakeVisibl
     miniPan.setTooltip ("Track pan. Double-click to centre.");
     miniVolume.onValueChange = [this]
     {
-        if (auto* at = dynamic_cast<te::AudioTrack*> (track.get()))
-            if (auto p = at->getVolumePlugin()) p->setVolumeDb ((float) miniVolume.getValue());
+        if (auto* audio = dynamic_cast<te::AudioTrack*> (track.get()))
+        {
+            if (auto* p = studioHeaderMixPlugin (*audio)) p->setVolumeDb ((float) miniVolume.getValue());
+        }
+        else if (auto* folder = dynamic_cast<te::FolderTrack*> (track.get()))
+            if (auto* p = folder->getVolumePlugin()) p->setVolumeDb ((float) miniVolume.getValue());
     };
     miniPan.onValueChange = [this]
     {
-        if (auto* at = dynamic_cast<te::AudioTrack*> (track.get()))
-            if (auto p = at->getVolumePlugin()) p->setPan ((float) miniPan.getValue());
+        if (auto* audio = dynamic_cast<te::AudioTrack*> (track.get()))
+        {
+            if (auto* p = studioHeaderMixPlugin (*audio)) p->setPan ((float) miniPan.getValue());
+        }
+        else if (auto* folder = dynamic_cast<te::FolderTrack*> (track.get()))
+            if (auto* p = folder->getVolumePlugin()) p->setPan ((float) miniPan.getValue());
     };
     addAndMakeVisible (miniLevel);
     miniLevel.setJustificationType (Justification::centred);
     miniLevel.setTooltip ("Track audio level activity");
-    updateMiniControls();]=] editor "${editor}")
+    updateMiniControls();
+    if (auto* folder = dynamic_cast<te::FolderTrack*> (track.get()))
+    {
+        muteButton.setVisible (true);
+        soloButton.setVisible (true);
+        inputButton.setVisible (false);
+        armButton.setVisible (false);
+        muteButton.onClick = [folder] { folder->setMute (! folder->isMuted (false)); };
+        soloButton.onClick = [folder] { folder->setSolo (! folder->isSolo (false)); };
+    }]=] editor "${editor}")
 
 set(studio_track_mouse_anchor [=[void TrackHeaderComponent::mouseDown (const MouseEvent&)
 {
@@ -433,9 +452,12 @@ void TrackHeaderComponent::mouseUp (const MouseEvent&)
 
 void TrackHeaderComponent::updateMiniControls()
 {
-    miniVolume.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false));
-    miniPan.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderPan"), false));
-    miniLevel.setVisible ((bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false));
+    miniVolume.setVisible (track->isFolderTrack()
+        || (bool) track->state.getProperty (Identifier ("studioHeaderVolume"), false));
+    miniPan.setVisible (track->isFolderTrack()
+        || (bool) track->state.getProperty (Identifier ("studioHeaderPan"), false));
+    miniLevel.setVisible (track->isFolderTrack()
+        || (bool) track->state.getProperty (Identifier ("studioHeaderMeter"), false));
     if (miniVolume.isVisible() || miniPan.isVisible() || miniLevel.isVisible()) startTimerHz (10);
     else stopTimer();
     resized();
@@ -443,18 +465,21 @@ void TrackHeaderComponent::updateMiniControls()
 
 void TrackHeaderComponent::timerCallback()
 {
-    auto* at = dynamic_cast<te::AudioTrack*> (track.get());
-    if (at == nullptr) return;
-    if (auto p = at->getVolumePlugin())
+    te::VolumeAndPanPlugin* gain = nullptr;
+    if (auto* at = dynamic_cast<te::AudioTrack*> (track.get()))
+        gain = studioHeaderMixPlugin (*at);
+    else if (auto* folder = dynamic_cast<te::FolderTrack*> (track.get()))
+        gain = folder->getVolumePlugin();
+    if (gain != nullptr)
     {
         if (miniVolume.isVisible() && ! miniVolume.isMouseButtonDown())
-            miniVolume.setValue (p->getVolumeDb(), dontSendNotification);
+            miniVolume.setValue (gain->getVolumeDb(), dontSendNotification);
         if (miniPan.isVisible() && ! miniPan.isMouseButtonDown())
-            miniPan.setValue (p->getPan(), dontSendNotification);
+            miniPan.setValue (gain->getPan(), dontSendNotification);
     }
     te::LevelMeasurer* next = nullptr;
     if (miniLevel.isVisible())
-        for (auto* plugin : at->pluginList)
+        for (auto* plugin : track->pluginList)
             if (auto* level = dynamic_cast<te::LevelMeterPlugin*> (plugin))
                 next = &level->measurer;
     if (next != miniMeter.get())
