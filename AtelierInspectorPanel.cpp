@@ -483,6 +483,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     for (auto& knob : ccKnobs) knob.setEnabled (live);
     sendValues.setEnabled (live);
     mappingsButton.setEnabled (editing);
+    originalInstrument.setEnabled (ready && hosted() != nullptr);
     const String summary = live ? "Live CC · instrument response depends on patch"
         : "CC audition unavailable · active AU/playback required";
     if (midiStatus.getText() != summary)
