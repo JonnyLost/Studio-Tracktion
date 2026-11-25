@@ -73,7 +73,7 @@ if(edit_view_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example EditComponent accessor has changed.")
 endif()
 string(REPLACE "${edit_view_accessor}"
-    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }"
+    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }\n    void setStudioRoomReturnVisible (bool shouldShow)\n    {\n        if (editViewState.showStudioRoomReturn == shouldShow) return;\n        editViewState.showStudioRoomReturn = shouldShow;\n        buildTracks();\n    }"
     editor_header "${editor_header}")
 
 # The track header is Studio's only per-track control area. The pinned
@@ -89,6 +89,8 @@ string(REPLACE "${studio_view_callbacks_anchor}" [=[    ValueTree state;
 
     std::function<void (te::EditItemID, Component&)> showStudioTrackFX;
     std::function<void (te::EditItemID, Component&)> showStudioTrackMenu;
+    // Studio-only UI choice; the Tracktion Edit and audio graph are unchanged.
+    bool showStudioRoomReturn = false;
 };]=] editor_header "${editor_header}")
 set(studio_track_header_controls_anchor [=[    TextButton armButton {"A"}, muteButton {"M"}, soloButton {"S"}, inputButton {"I"};]=])
 string(FIND "${editor_header}" "${studio_track_header_controls_anchor}" studio_track_header_controls_match)
@@ -474,7 +476,7 @@ string(REPLACE "${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (
             updateMiniControls();
         else if (i == te::IDs::mute)]=] editor "${editor}")
 
-string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n")
+string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n#include \"SpatialRouting.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
 # additive/toggle selection without modifying the Tracktion checkout itself.
 set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)
@@ -497,6 +499,40 @@ if(track_mouse_down_match EQUAL -1)
 endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/ArrangementLasso.inc" arrangement_lasso)
 string(REPLACE "${track_mouse_down}" "${arrangement_lasso}" editor "${editor}")
+# Hide only the managed shared reverb return's *arrangement widgets*.
+# Never call Tracktion's audio-track hide/disable, mute or delete APIs:
+# the actual aux return remains in the Edit, playback graph and Mixer.
+set(studio_room_track_build_anchor [=[    for (auto t : getAllTracks (edit))
+    {
+        TrackComponent* c = nullptr;]=])
+string(FIND "${editor}" "${studio_room_track_build_anchor}" studio_room_track_build_match)
+if(studio_room_track_build_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example arrangement track-build loop has changed.")
+endif()
+string(REPLACE "${studio_room_track_build_anchor}" [=[    for (auto t : getAllTracks (edit))
+    {
+        if (! editViewState.showStudioRoomReturn)
+            if (auto* audio = dynamic_cast<te::AudioTrack*> (t))
+                if (studio::spatial::isRoomReturn (*audio))
+                    continue; // Mixer still sees this actual audio return track.
+        TrackComponent* c = nullptr;]=] editor "${editor}")
+
+# Newly created Stage returns are inserted before Studio stamps their role.
+# Rebuild arrangement rows when the role is assigned or restored by Undo,
+# without ever changing the underlying Tracktion session or routing.
+set(studio_room_role_anchor [=[void EditComponent::valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i)
+{
+    if (v.hasType (IDs::EDITVIEWSTATE))]=])
+string(FIND "${editor}" "${studio_room_role_anchor}" studio_room_role_match)
+if(studio_room_role_match EQUAL -1)
+    message(FATAL_ERROR "Tracktion example EditComponent property-listener anchor has changed.")
+endif()
+string(REPLACE "${studio_room_role_anchor}" [=[void EditComponent::valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i)
+{
+    if (i == juce::Identifier ("studioSpatialRole") && te::TrackList::isTrack (v))
+        markAndUpdate (updateTracks);
+    if (v.hasType (IDs::EDITVIEWSTATE))]=] editor "${editor}")
+
 file(CONFIGURE OUTPUT generated/Components.cpp CONTENT "${editor}" @ONLY)
 
 set(studio_synth_families Analog FM Wavetable Additive Granular Physical)

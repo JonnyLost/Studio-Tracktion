@@ -355,6 +355,7 @@ public:
                                 prefs.getIntValue ("studio.textScale", 100));
         followSelectedMidi = prefs.getBoolValue ("studio.midiFollowSelection", true);
         inspectorOpen = prefs.getBoolValue ("studio.inspectorOpen", false);
+        showRoomReturnTrack = prefs.getBoolValue ("studio.showRoomReturnTrack", false);
         inspectorWidth = prefs.getIntValue ("studio.inspectorWidth", 375);
         showTransportCycle = prefs.getBoolValue ("studio.transportCycle", true);
         showTransportClick = prefs.getBoolValue ("studio.transportClick", true);
@@ -1393,6 +1394,27 @@ public:
         return true;
     }
 
+    void setRoomReturnTrackVisible (bool show, bool persist = true)
+    {
+        showRoomReturnTrack = show;
+        if (editor != nullptr)
+        {
+            // Only rebuild Tracktion's arrangement widgets. This never hides
+            // the actual aux return, changes the Edit, or affects playback.
+            editor->setStudioRoomReturnVisible (show);
+            sizeEditor();
+        }
+        if (! show && edit != nullptr && selectedTrack() != nullptr
+            && studio::spatial::isRoomReturn (*selectedTrack()))
+            selection.deselectAll(); // Don't leave an invisible selected row.
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.showRoomReturnTrack", show);
+            prefs.saveIfNeeded();
+        }
+    }
+
     void setInspectorOpen (bool value, bool persist = true)
     {
         if (! value) inspectorDrawer.suspendAtelier();
@@ -1541,6 +1563,10 @@ public:
         {
             if (safe != nullptr) safe->setInspectorOpen (! safe->inspectorOpen);
         });
+        menu.addItem ("Show Stage Reverb Return in Arrangement", true, showRoomReturnTrack, [safe]
+        {
+            if (safe != nullptr) safe->setRoomReturnTrackVisible (! safe->showRoomReturnTrack);
+        });
         menu.addItem ("Classic Channel Workspace (temporary)", [safe]
         {
             if (safe == nullptr) return;
@@ -1590,7 +1616,7 @@ public:
         mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
-        mMidiMonitor, mResources, mScaleUp, mScaleDown, mScaleReset,
+        mMidiMonitor, mResources, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
@@ -1653,12 +1679,14 @@ public:
             case 5: // Mix
                 add (mMixer, "Show Mixer");
                 add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                add (mRoomReturnArrangement, "Show Stage Reverb Return in Arrangement", project, showRoomReturnTrack);
                 menu.addSeparator();
                 add (mPluginManager, "Plug-in Manager...");
                 add (mAudioSettings, "Audio Settings...");
                 break;
             case 6: // View
                 add (mInspector, "Selected Track Inspector", project, inspectorOpen);
+                add (mRoomReturnArrangement, "Show Stage Reverb Return in Arrangement", project, showRoomReturnTrack);
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
                 add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
@@ -1739,6 +1767,7 @@ public:
             case mPicture: showWorkspace (Workspace::filmScoring); break;
             case mMixer: showWorkspace (Workspace::mix); break;
             case mInspector: setInspectorOpen (! inspectorOpen); break;
+            case mRoomReturnArrangement: setRoomReturnTrackVisible (! showRoomReturnTrack); break;
             case mEnvironments: environmentWelcome.open (false); break;
             case mMidiMonitor: invoke (monitorButton); break;
             case mResources: if (resources.onOpen) resources.onOpen(); break;
@@ -1820,6 +1849,7 @@ private:
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
     bool inspectorOpen = false;
+    bool showRoomReturnTrack = false; // Visual-only arrangement preference.
     int inspectorWidth = 270;
     int stereoScanTicks = 0;
     bool showTransportCycle = true, showTransportClick = true, showTransportElapsed = true;
@@ -3488,6 +3518,9 @@ private:
             }
         };
         view.showWaveDevices = true;
+        // New and existing sessions keep their managed aux return in the
+        // actual Edit and Mixer; only the arrangement defaults to hiding it.
+        editor->setStudioRoomReturnVisible (showRoomReturnTrack);
         timeline.setViewedComponent (editor.get(), false);
         zoom.onChange();
         sizeEditor();
@@ -4572,6 +4605,35 @@ int StudioView::runUnifiedStageReview (const File& output)
     loadProject (fixture, false);
     legacy = trackById (legacyID);
     unplaced = trackById (unplacedID);
+    // Regression: the shared return remains a real Tracktion audio/aux
+    // track and a dedicated Mixer strip, but is absent from the arrangement.
+    auto* wetReturn = roomReturnTrack (*edit);
+    if (wetReturn == nullptr || ! isRoomReturn (*wetReturn))
+        return fail ("load the existing managed room return");
+    const auto returnID = wetReturn->itemID;
+    const auto pluginCount = wetReturn->pluginList.size();
+    const int fullTrackCount = te::getAudioTracks (*edit).size();
+    const auto waitForArrangementRows = [this] (int target)
+    {
+        for (int attempt = 0; attempt < 24 && editor->getVisibleTrackCount() != target; ++attempt)
+            MessageManager::getInstance()->runDispatchLoopUntil (35);
+        return editor->getVisibleTrackCount() == target;
+    };
+    setRoomReturnTrackVisible (false, false);
+    if (! waitForArrangementRows (fullTrackCount - 1))
+        return fail ("managed return is hidden from arrangement by default");
+    mixer.refresh (te::getAudioTracks (*edit), legacy, true, true);
+    if (! mixer.hasChannelForTrack (returnID))
+        return fail ("hidden arrangement return still has a dedicated Mixer channel");
+    setRoomReturnTrackVisible (true, false);
+    if (! waitForArrangementRows (fullTrackCount))
+        return fail ("View menu can reveal the managed return for inspection");
+    setRoomReturnTrackVisible (false, false);
+    if (! waitForArrangementRows (fullTrackCount - 1)
+        || roomReturnTrack (*edit) != wetReturn
+        || wetReturn->pluginList.size() != pluginCount
+        || ! hasRoomSend (*legacy))
+        return fail ("hiding and revealing return cannot change the aux track or sends");
     const auto read = [] (te::AudioTrack& track) { return readSeat (track.state.getChildWithName (seatType)); };
     if (! legacy || ! unplaced || read (*legacy) != savedSeat || ! hasRoomSend (*legacy)
         || unplaced->state.getChildWithName (seatType).isValid() || studio::seating::read (edit->state) != archived)
@@ -4643,8 +4705,12 @@ int StudioView::runUnifiedStageReview (const File& output)
     legacy = trackById (legacyID);
     unplaced = trackById (unplacedID);
     if (! legacy || ! unplaced || read (*legacy) != moved || read (*unplaced) != placed || ! hasRoomSend (*legacy)
-        || hasRoomSend (*unplaced) || studio::seating::read (edit->state) != archived || roomReturnTrack (*edit) == nullptr)
-        return fail ("restore positions, acoustic send and the unmodified reference");
+        || hasRoomSend (*unplaced) || studio::seating::read (edit->state) != archived || roomReturnTrack (*edit) == nullptr
+        || ! waitForArrangementRows (te::getAudioTracks (*edit).size() - 1))
+        return fail ("restore positions, acoustic send, hidden room return and unmodified reference");
+    mixer.refresh (te::getAudioTracks (*edit), legacy, true, true);
+    if (! mixer.hasChannelForTrack (roomReturnTrack (*edit)->itemID))
+        return fail ("reopened project keeps its Stage Reverb Mixer return");
     showWorkspace (Workspace::stage);
     refresh (unplaced);
     selection.deselectAll();

@@ -817,15 +817,16 @@ public:
         }
         else if (track != nullptr)
         {
-            name.setButtonText (track->getName());
-            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
-            name.setTooltip ((icon.isNotEmpty() ? icon + " · " : String()) + track->getName()
-                             + " (select track)");
-            auto* instrument = findInstrument (*track);
             const bool wetReturn = spatial::isRoomReturn (*track);
+            name.setButtonText (wetReturn ? "Stage Reverb" : track->getName());
+            const auto icon = track->state.getProperty (Identifier ("studioTrackIcon")).toString();
+            name.setTooltip (wetReturn
+                ? "Studio Room Return · managed effects return. Select to control its wet volume, pan and output."
+                : (icon.isNotEmpty() ? icon + " · " : String()) + track->getName() + " (select track)");
+            auto* instrument = findInstrument (*track);
             const auto nextAccent = wetReturn ? colours::roomReturn : track->getColour().interpolatedWith (colours::action, 0.38f);
             if (accent != nextAccent) { accent = nextAccent; repaint(); }
-            identity.setText (wetReturn ? "Auxiliary wet return" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
+            identity.setText (wetReturn ? "WET FX RETURN" : instrument != nullptr ? instrument->getName() : "Audio / MIDI",
                               dontSendNotification);
             identity.setTooltip (identity.getText());
             // Count only user-facing instruments/effects; do not count Studio's
@@ -842,8 +843,11 @@ public:
                     continue;
                 ++insertsCount;
             }
-            inserts.setButtonText (insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
-            inserts.setTooltip (insertsCount > 0
+            inserts.setButtonText (wetReturn ? "Managed Room FX"
+                : insertsCount > 0 ? "FX " + String (insertsCount) : "FX");
+            inserts.setTooltip (wetReturn
+                ? "Studio owns the native room return. Adjust its wet level here and room sends on Stage."
+                : insertsCount > 0
                 ? String (insertsCount) + " instrument/effect insert(s). Open to edit or remove."
                 : "No instrument/effect inserts. Open to add an effect.");
             int inputCount = 0;
@@ -857,15 +861,22 @@ public:
             // Input routing lives in the selected-track Inspector or the
             // arrangement's I button, not in the compact mixer channel.
             arm.setEnabled (editable && inputCount > 0 && ! wetReturn);
-            arm.setToggleState (armed, dontSendNotification);
             const bool sending = ! wetReturn && spatial::hasRoomSend (*track);
+            const bool returnLayoutChanged = (room.isVisible() == wetReturn)
+                || (arm.isVisible() == wetReturn);
+            arm.setVisible (! wetReturn);
+            arm.setToggleState (armed, dontSendNotification);
             room.setEnabled (! wetReturn && ready);
+            room.setVisible (! wetReturn);
+            if (returnLayoutChanged) resized();
             room.setToggleState (sending, dontSendNotification);
             room.setTooltip (sending ? "Room send enabled. Open this seat on Stage." : "Open Stage to set the room send");
             out.setButtonText (outputLabel (*track));
             out.setTooltip (out.getButtonText());
             out.setEnabled (editable);
-            inserts.setEnabled (editable);
+            // The shared room chain must remain managed by Studio: do not
+            // offer destructive insert editing on this special return strip.
+            inserts.setEnabled (editable && ! wetReturn);
             mute.setToggleState (track->isMuted (false), dontSendNotification);
             solo.setToggleState (track->isSolo (false), dontSendNotification);
             mute.setEnabled (ready);
@@ -905,9 +916,13 @@ public:
         area.removeFromTop (m.px (3));
         if (! masterStrip)
         {
-            // Stack insert and room-send controls: wider buttons, narrower strip.
-            inserts.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
-            room.setBounds (area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0));
+            // The shared Stage Reverb has no outgoing room send. Give its
+            // managed-return identifier the space of both unused buttons.
+            inserts.setBounds (area.removeFromTop (m.control (room.isVisible() ? 19 : 38, 10))
+                                   .reduced (m.px (1), 0));
+            room.setBounds (room.isVisible()
+                ? area.removeFromTop (m.control (19, 10)).reduced (m.px (1), 0)
+                : Rectangle<int>());
         }
         else
         {
@@ -918,9 +933,10 @@ public:
         if (! masterStrip)
         {
             auto toggles = area.removeFromBottom (m.control (23));
-            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / 3).reduced (m.px (1)));
-            solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (m.px (1)));
-            arm.setBounds (toggles.reduced (m.px (1)));
+            const bool canArm = arm.isVisible();
+            mute.setBounds (toggles.removeFromLeft (toggles.getWidth() / (canArm ? 3 : 2)).reduced (m.px (1)));
+            solo.setBounds (toggles.removeFromLeft (toggles.getWidth() / (canArm ? 2 : 1)).reduced (m.px (1)));
+            arm.setBounds (canArm ? toggles.reduced (m.px (1)) : Rectangle<int>());
         }
         else
             for (auto* toggle : { &mute, &solo, &arm })
@@ -1013,6 +1029,15 @@ void StudioMixer::refresh (const Array<te::AudioTrack*>& tracks, te::AudioTrack*
     }
     master->refresh (nullptr, false, ready, false, inputs);
 }
+
+#if STUDIO_SPATIAL_TESTS
+bool StudioMixer::hasChannelForTrack (te::EditItemID target) const
+{
+    for (const auto& strip : strips)
+        if (strip->getId() == target) return true;
+    return false;
+}
+#endif
 
 void StudioMixer::appearanceChanged()
 {
