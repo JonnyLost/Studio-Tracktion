@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <thread>
 using namespace juce;
 using namespace tracktion::literals;
 
@@ -1875,6 +1876,24 @@ private:
     };
     std::vector<OriginalAriaState> originalAriaStates;
 
+    struct ImportedPresetLoad
+    {
+        std::thread worker;
+        std::atomic<bool> cancelled { false }, done { false };
+        studio::sampler::Instrument instrument;
+        String error;
+        te::EditItemID target;
+        uint64_t generation = 0;
+        bool newTrack = false;
+
+        ~ImportedPresetLoad()
+        {
+            cancelled.store (true);
+            if (worker.joinable()) worker.join();
+        }
+    };
+    std::unique_ptr<ImportedPresetLoad> importedPresetLoad;
+
     struct RegionClipboardItem
     {
         te::ClipCopy copy;
@@ -2792,6 +2811,7 @@ private:
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
         completePendingPlugin();
+        completeImportedPreset();
         updateWavExport();
         filmWorkspace.tick();
         // AVKit is embedded as a native view. Track its screen bounds for tooltips.
@@ -3383,6 +3403,7 @@ private:
         }
 
         pendingPlugin.reset();
+        if (importedPresetLoad) importedPresetLoad->cancelled.store (true);
         auto next = [&]
         {
             const ScopedValueSetter<bool> loading (busy, true);
@@ -3828,6 +3849,62 @@ private:
         return true;
     }
 
+    void startImportedPreset (const File& file, bool newTrack)
+    {
+        if (! canInsertPlugin() || importedPresetLoad) return;
+        auto* track = workflowTrack();
+        if (! newTrack)
+            if (const auto reason = instrumentTrackRestriction (track); reason.isNotEmpty())
+            {
+                pluginStatus (reason);
+                return;
+            }
+        importedPresetLoad = std::make_unique<ImportedPresetLoad>();
+        auto* load = importedPresetLoad.get();
+        load->target = track != nullptr ? track->itemID : te::EditItemID {};
+        load->generation = projectGeneration;
+        load->newTrack = newTrack;
+        load->worker = std::thread ([load, file]
+        {
+            try
+            {
+                load->error = studio::sampler::Plugin::preparePreset (file, {}, load->instrument, &load->cancelled).getErrorMessage();
+                for (const auto& zone : load->instrument.zones)
+                    if (load->error.isEmpty() && (! zone.mapping.sample || zone.problem.isNotEmpty()))
+                        load->error = "Sample unavailable: " + zone.file.getFileName() + ". " + zone.problem;
+            }
+            catch (const std::exception& e) { load->error = String::fromUTF8 (e.what()); }
+            load->done.store (true, std::memory_order_release);
+        });
+        pluginStatus ("Loading " + file.getFileNameWithoutExtension() + "...");
+    }
+
+    void completeImportedPreset()
+    {
+        if (! importedPresetLoad || ! importedPresetLoad->done.load (std::memory_order_acquire)) return;
+        auto load = std::move (importedPresetLoad);
+        if (load->cancelled.load() || load->generation != projectGeneration) return;
+        if (! canInsertPlugin())
+        {
+            pluginStatus ("Studio is busy. Load the instrument again when ready.");
+            return;
+        }
+        if (load->error.isNotEmpty())
+        {
+            pluginStatus (load->error);
+            return;
+        }
+        auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
+        auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin.get());
+        if (sampler == nullptr)
+        {
+            pluginStatus ("Could not create Studio Sampler.");
+            return;
+        }
+        sampler->commitImport (std::move (load->instrument), false);
+        commitPlugin (plugin, load->target, load->newTrack, true);
+    }
+
     void configureInstrumentWorkflow()
     {
         browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
@@ -3849,6 +3926,10 @@ private:
                 if (auto* track = workflowTrack())
                     if (auto* synth = dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*track)))
                         showNativeInstrument (*synth);
+        };
+        browser.loadImportedSampler = [this] (const File& file, bool newTrack)
+        {
+            startImportedPreset (file, newTrack);
         };
         browser.loadSampler = [this] (bool addNew)
         {
@@ -4184,7 +4265,9 @@ private:
                 return;
             }
             track = newTrack.get();
-            track->setName (plugin->getName());
+            const auto* sampler = dynamic_cast<const studio::sampler::Plugin*> (plugin.get());
+            track->setName (sampler != nullptr && sampler->instrument().preset.isNotEmpty()
+                ? sampler->instrument().name : plugin->getName());
         }
 
         const auto* volume = track->getVolumePlugin();
@@ -5470,6 +5553,7 @@ int StudioView::runInterfaceReview (const File& output)
     return 0;
 }
 
+namespace studio::garritan { int runLibraryTest(); }
 namespace studio::spatial { int runSpatialRoutingTest(); }
 namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
@@ -5522,6 +5606,12 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        if (commandLine == "--studio-test-garritan-library")
+        {
+            setApplicationReturnValue (studio::garritan::runLibraryTest());
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-film-scoring-workspace")
         {
             StudioView view;

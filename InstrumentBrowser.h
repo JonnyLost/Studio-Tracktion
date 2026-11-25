@@ -7,6 +7,8 @@
 
 namespace studio
 {
+namespace garritan { class ImportWindow; }
+
 class InstrumentBrowser final : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -16,6 +18,7 @@ public:
     std::function<void()> openPluginManager;
     std::function<void(bool newTrack)> loadSampler;
     std::function<void(juce::String family, bool newTrack)> loadSynth;
+    std::function<void(const juce::File&, bool newTrack)> loadImportedSampler;
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction, bool samplerOnTrack = false, bool synthOnTrack = false);
@@ -35,6 +38,7 @@ private:
         juce::String key, name, family, type, vendor, description;
         juce::PluginDescription plugin;
         bool available = false;
+        juce::File preset;
     };
 
     struct Rows final : juce::ListBoxModel
@@ -69,6 +73,9 @@ private:
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
     juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
+    juce::TextButton importLibrary { "Import Garritan Library..." };
+    juce::File importedDirectory;
+    std::unique_ptr<garritan::ImportWindow> importer;
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
     void rebuildCatalog();

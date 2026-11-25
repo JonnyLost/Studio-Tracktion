@@ -118,5 +118,6 @@ private:
     std::atomic<bool> previewOverflow { false };
 };
 
+juce::Result writeImportedPreset (Instrument, const juce::File&, std::atomic<bool>& cancelled);
 void registerPlugin (tracktion::Engine&);
 }

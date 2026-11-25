@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentBrowser.h"
+#include "GarritanImportWindow.h"
 #include "StudioSynth.h"
 #include "StudioUI.h"
 #include <algorithm>
@@ -52,6 +53,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
 {
     if (preferences != nullptr)
     {
+        importedDirectory = preferences->getFile().getSiblingFile ("Imported Instruments");
         preferredDetailsWidth = jlimit (180, 420, preferences->getIntValue ("studio.browserDetailsWidth", 258));
         const auto parsed = JSON::parse (preferences->getValue ("studio.browserFavourites", "[]"));
         if (auto* array = parsed.getArray())
@@ -72,7 +74,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
              &search, &compactFamily, &compactType, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add, &favourite, &favouritesFilter })
+             &explanation, &status, &count, &load, &add, &favourite, &favouritesFilter, &importLibrary })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
@@ -109,6 +111,17 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     add.setTooltip ("Create a track with the selected instrument");
     load.onClick = [this] { loadSelected (false); };
     add.onClick = [this] { loadSelected (true); };
+    importLibrary.setEnabled (importedDirectory != File());
+    importLibrary.onClick = [this]
+    {
+        if (! importer)
+        {
+            importer = std::make_unique<garritan::ImportWindow> (importedDirectory);
+            importer->onCatalogChanged = [this] { rebuildCatalog(); };
+        }
+        importer->setVisible (true);
+        importer->toFront (true);
+    };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
     favourite.setTooltip ("Mark this instrument as a favorite or remove its favorite");
     favourite.onClick = [this]
@@ -184,6 +197,15 @@ void InstrumentBrowser::rebuildCatalog()
     }
     entries.push_back ({ "studio-sampler", "Studio Sampler", "Studio", "Sampler", "Studio | Native instrument",
                          "Play WAV and AIFF samples, edit the sound, and build multisample instruments.", {}, true });
+    if (importedDirectory.isDirectory())
+        for (const auto& item : RangedDirectoryIterator (importedDirectory, false, "*.studiosampler",
+                 File::findFiles, File::FollowSymlinks::no))
+        {
+            const auto file = item.getFile();
+            entries.push_back ({ "imported:" + file.getFileName(), file.getFileNameWithoutExtension(),
+                "Imported Libraries", "Studio Sampler", "Studio | Imported instrument",
+                "Native preset using samples in the original library folder.", {}, true, file });
+        }
     std::stable_sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
     {
         if (a.available != b.available) return a.available;
@@ -282,7 +304,11 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
-    if (entry->key == "studio-sampler")
+    if (entry->preset != File())
+    {
+        if (loadImportedSampler) loadImportedSampler (entry->preset, newTrack);
+    }
+    else if (entry->key == "studio-sampler")
     {
         if (! newTrack && samplerOnTarget && openSampler) openSampler();
         else if (loadSampler) loadSampler (newTrack);
@@ -415,7 +441,7 @@ int InstrumentBrowser::minimumContentHeight (int width) const
     const int list = 3 * (m.line (12, 2) + m.line (11, 2));
     const bool stacked = m.stackedBrowserDetails (width);
     const bool stackedFilters = m.browserFilterRow (width);
-    return m.control (30) * (stackedFilters ? 2 : 1) + 2 * m.line (13, 2) + m.px (6)
+    return m.control (30) * (stackedFilters ? 3 : 2) + 2 * m.line (13, 2) + m.px (6)
         + (stacked ? details + list + m.px (5) : jmax (details, list));
 }
 
@@ -423,6 +449,8 @@ void InstrumentBrowser::resized()
 {
     const auto& m = appearance;
     auto area = getLocalBounds().reduced (m.px (8), m.px (2));
+    auto libraryActions = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
+    importLibrary.setBounds (libraryActions.removeFromLeft (m.span (205)));
     auto toolbar = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
     manage.setBounds (toolbar.removeFromRight (m.span (95)));
     favouritesFilter.setBounds (toolbar.removeFromRight (m.span (88)).reduced (m.px (2), 0));
