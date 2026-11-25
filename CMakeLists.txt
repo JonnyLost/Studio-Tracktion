@@ -89,6 +89,7 @@ string(REPLACE "${studio_view_callbacks_anchor}" [=[    ValueTree state;
 
     std::function<void (te::EditItemID, Component&)> showStudioTrackFX;
     std::function<void (te::EditItemID, Component&)> showStudioTrackMenu;
+    std::function<void (te::EditItemID, Component&)> showStudioRegionMenu;
     // Studio-only UI choice; the Tracktion Edit and audio graph are unchanged.
     bool showStudioRoomReturn = false;
 };]=] editor_header "${editor_header}")
