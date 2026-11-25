@@ -47,8 +47,10 @@ public:
     std::function<void (const juce::MidiMessage&)> send;
     void setSelectedInstrument (const juce::String& name)
     {
-        status.setText (name.isNotEmpty() ? "Audition · " + name
-            : "Select an instrument track to audition.", juce::dontSendNotification);
+        const auto label = name.isNotEmpty() ? "Audition · " + name
+            : juce::String ("Select an instrument track to audition.");
+        if (status.getText() != label)
+            status.setText (label, juce::dontSendNotification);
     }
     void releaseNotes() { state.allNotesOff (activeChannel); }
 
