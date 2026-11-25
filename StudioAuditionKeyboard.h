@@ -28,8 +28,9 @@ public:
         channel.setTooltip ("Audition channel (does not change track or clip MIDI channels)");
         channel.onChange = [this]
         {
-            releaseNotes(); // Send note-offs on the old channel before switching.
-            keys.setMidiChannel (channel.getSelectedId());
+            releaseNotes(); // Note-offs must use the previous MIDI channel.
+            activeChannel = channel.getSelectedId();
+            keys.setMidiChannel (activeChannel);
         };
         keys.setMidiChannel (1);
         keys.setAvailableRange (21, 108);
@@ -50,7 +51,7 @@ public:
         status.setText (name.isNotEmpty() ? "Audition · " + name
             : "Select an instrument track to audition.", juce::dontSendNotification);
     }
-    void releaseNotes() { state.allNotesOff (channel.getSelectedId()); }
+    void releaseNotes() { state.allNotesOff (activeChannel); }
 
     void resized() override
     {
@@ -67,6 +68,7 @@ private:
     juce::MidiKeyboardComponent keys;
     juce::ComboBox channel;
     juce::Label status;
+    int activeChannel = 1;
 
     void handleNoteOn (juce::MidiKeyboardState*, int channelNumber,
                        int midiNote, float velocity) override
