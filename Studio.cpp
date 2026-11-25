@@ -280,7 +280,10 @@ private:
             "Record  |  Capture Recent MIDI",
             "Track  |  Add Instrument / Synth / Sampler / Audio",
             "Mix  |  Selected Track Inspector",
-            "View  |  Transport Layout and Interface Scale",
+            "View  |  Transport Layout, Size, and Interface Scale",
+            "Transport  |  Right-click button or readout  |  Customize Transport",
+            "Arrangement  |  Right-click track header  |  Track / Group Actions",
+            "Arrangement  |  Right-click MIDI or audio region  |  Region Actions",
             "Window  |  Mixer / Stage / Piano Roll"
         })
             if (query.isEmpty() || String (item).containsIgnoreCase (query))
@@ -370,6 +373,7 @@ public:
         showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
         showTransportTempo = prefs.getBoolValue ("studio.transportTempo", true);
         showTransportMeter = prefs.getBoolValue ("studio.transportMeter", true);
+        transportSize = jlimit (0, 2, prefs.getIntValue ("studio.transportSize", 1));
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
         railViewport.setScrollBarsShown (true, false);
@@ -423,7 +427,12 @@ public:
                                &audioSettings, &plugins, &addMidi, &addAudio, &importAudio })
             addAndMakeVisible (*control);
         for (auto* button : { &rewind, &play, &stop, &record, &cycleButton, &clickButton })
+        {
             addAndMakeVisible (*button);
+            button->onContextMenu = [this] { showTransportOptions(); };
+        }
+        for (auto* readout : { &bars, &position, &tempo, &meter })
+            readout->onContextMenu = [this] { showTransportOptions(); };
         addChildComponent (performance);
         addChildComponent (articulationStrip);
         performance.onOpenEditor = [this] (te::Plugin& plugin)
@@ -1186,8 +1195,9 @@ public:
         const auto& m = studio::appearance;
         auto area = getLocalBounds();
         const int projectHeight = m.control (31, 12);
-        const int transportHeight = jmax (m.control (44, 12), m.transportRowHeight() + m.px (7));
-        topBar = area.removeFromTop (projectHeight + transportHeight + m.px (8));
+        const int transportHeight = jmax (m.control (44, 12),
+            m.px (transportSize == 0 ? 47 : (transportSize == 2 ? 78 : 64)));
+        topBar = area.removeFromTop (projectHeight + transportHeight + m.px (6));
         auto commands = topBar.withHeight (projectHeight).reduced (m.px (10), m.px (2));
        #if JUCE_MAC
         performanceMode.setVisible (false);
@@ -1227,9 +1237,13 @@ public:
 
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
         const int gap = m.px (6);
-        const int barW = m.span (91), bpmW = m.span (58), meterW = m.span (53);
+        const bool roomyTransport = transportSize != 0;
+        const int barW = m.span (transportSize == 2 ? 126 : (roomyTransport ? 112 : 91));
+        const int bpmW = m.span (transportSize == 2 ? 80 : (roomyTransport ? 69 : 58));
+        const int meterW = m.span (transportSize == 2 ? 72 : (roomyTransport ? 62 : 53));
         const int menuW = m.span (76), flashbackW = m.span (98),
-                  keyboardW = m.span (86), elapsedW = m.span (97);
+                  keyboardW = m.span (86);
+        const int elapsedW = m.span (transportSize == 2 ? 132 : (roomyTransport ? 112 : 97));
        #if JUCE_MAC
         const int customizeW = 0; // View menu owns transport customization.
        #else
@@ -1244,8 +1258,8 @@ public:
         const bool showTempo = showTransportTempo && availableWidth >= m.span (580);
         const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
         const bool showMusicMenu = availableWidth >= m.span (610);
-        const bool showFlashback = availableWidth >= m.span (830);
-        const bool showKeyboard = availableWidth >= m.span (1100);
+        const bool showFlashback = availableWidth >= m.span (transportSize == 2 ? 1120 : 830);
+        const bool showKeyboard = availableWidth >= m.span (transportSize == 2 ? 1330 : 1100);
         const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
         const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
         const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
@@ -1255,7 +1269,8 @@ public:
                                  + (showCustomize ? customizeW : 0);
         const int fixed = readoutBase + secondaryWidth + 2 * gap;
         const int buttonCount = 4 + optionalButtons;
-        const int key = jlimit (m.px (20), m.px (38),
+        const int preferredKey = m.px (transportSize == 0 ? 38 : (transportSize == 2 ? 58 : 48));
+        const int key = jlimit (m.px (30), preferredKey,
             (availableWidth - fixed - (showTransportElapsed ? elapsedW : 0)) / buttonCount);
         const bool showElapsed = showTransportElapsed
             && fixed + buttonCount * key + elapsedW <= availableWidth;
@@ -1355,12 +1370,19 @@ public:
        #else
         const bool showAllTrackTools = tools.getWidth() >= m.span (828);
        #endif
-        trackOptions.setBounds (tools.removeFromLeft (m.span (90)).reduced (m.px (2), 0));
+        // Per-track editing belongs to the header's existing right-click menu.
+        trackOptions.setVisible (false);
+        trackOptions.setBounds ({});
         zoom.setBounds (tools.removeFromRight (m.span (107)).reduced (m.px (2), 0));
         const int zoomButtonWidth = m.span (32);
         arrangementZoomIn.setBounds (tools.removeFromRight (zoomButtonWidth).reduced (m.px (1), 0));
         arrangementZoomOut.setBounds (tools.removeFromRight (zoomButtonWidth).reduced (m.px (1), 0));
+       #if JUCE_MAC
+        // Native Track menu contains creation commands; right-click edits a track.
+        trackMenu.setVisible (false);
+       #else
         trackMenu.setVisible (! showAllTrackTools);
+       #endif
         if (trackMenu.isVisible())
             trackMenu.setBounds (tools.removeFromLeft (m.span (92)).reduced (m.px (2), 0));
         for (auto* button : { &addMidi, &addAudio, &addMidiClip, &importAudio })
@@ -1369,10 +1391,9 @@ public:
             if (showAllTrackTools)
                 button->setBounds (tools.removeFromLeft (m.span (button == &addAudio ? 69 : 94)).reduced (m.px (2), 0));
         }
-        // Region editing is used frequently, so retain one discoverable
-        // entry point at narrow as well as full MacBook widths.
-        regionActions.setVisible (true);
-        regionActions.setBounds (tools.removeFromLeft (m.span (100)).reduced (m.px (2), 0));
+        // Region edits now live on the clicked MIDI/audio clip and in Edit menu.
+        regionActions.setVisible (false);
+        regionActions.setBounds ({});
         trackDetails.setBounds (tools);
 
         rulerRow = area.removeFromTop (m.control (26) + m.control (18));
@@ -1588,19 +1609,39 @@ public:
         addToggle ("Time signature", showTransportMeter, &StudioView::showTransportMeter, "studio.transportMeter");
         const auto safe = Component::SafePointer<StudioView> (this);
         menu.addSeparator();
+        menu.addSectionHeader ("Transport size");
+        for (const auto& option : { std::pair { "Compact", 0 },
+                                    { "Comfortable", 1 }, { "Large", 2 } })
+        {
+            const int size = option.second;
+            menu.addItem (option.first, true, transportSize == size, [safe, size]
+            {
+                if (safe == nullptr) return;
+                safe->transportSize = size;
+                auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+                prefs.setValue ("studio.transportSize", size);
+                prefs.saveIfNeeded();
+                safe->resized();
+            });
+        }
+        menu.addSeparator();
         menu.addItem ("Restore default layout", [safe]
         {
             if (safe == nullptr) return;
             safe->showTransportCycle = safe->showTransportClick = true;
             safe->showTransportElapsed = safe->showTransportTempo = safe->showTransportMeter = true;
+            safe->transportSize = 1;
             auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.transportSize", 1);
             for (const auto* key : { "studio.transportCycle", "studio.transportClick",
                                      "studio.transportElapsed", "studio.transportTempo", "studio.transportMeter" })
                 prefs.setValue (key, true);
             prefs.saveIfNeeded();
             safe->resized();
         });
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&transportOptions));
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (
+            transportOptions.isShowing() ? static_cast<Component*> (&transportOptions)
+                                         : static_cast<Component*> (&bars)));
     }
 
     void showViewOptions()
@@ -1683,7 +1724,8 @@ public:
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
         mMidiMonitor, mResources, mAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
-        mTransportMeter, mTransportReset, mCompact, mSplit, mExpanded,
+        mTransportMeter, mTransportReset, mTransportCompact, mTransportComfortable,
+        mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
         mAboutStudio, mKeyboardHelp, mSettings, mAtelier
     };
@@ -1767,6 +1809,10 @@ public:
                 add (mTransportMeter, "Transport: Time Signature", true, showTransportMeter);
                 add (mTransportReset, "Reset Transport Layout");
                 menu.addSeparator();
+                add (mTransportCompact, "Transport Size: Compact", true, transportSize == 0);
+                add (mTransportComfortable, "Transport Size: Comfortable", true, transportSize == 1);
+                add (mTransportLarge, "Transport Size: Large", true, transportSize == 2);
+                menu.addSeparator();
                 add (mScaleDown, "Decrease Interface Scale", studio::appearance.interfacePercent() > 100);
                 add (mScaleUp, "Increase Interface Scale", studio::appearance.interfacePercent() < 175);
                 add (mScaleReset, "Reset Appearance");
@@ -1827,7 +1873,7 @@ public:
             case mNewGroup: createGroupDialog (false); break;
             case mGroupSelected: createGroupDialog (true); break;
             case mAddMidiClip: invoke (addMidiClip); break;
-            case mRegionActions: invoke (regionActions); break;
+            case mRegionActions: showRegionActions(); break;
             case mRewind: invoke (rewind); break;
             case mRecord: invoke (record); break;
             case mFlashback: invoke (flashbackButton); break;
@@ -1879,7 +1925,11 @@ public:
             case mTransportReset:
                 showTransportCycle = showTransportClick = showTransportElapsed = true;
                 showTransportTempo = showTransportMeter = true;
+                transportSize = 1;
                 break;
+            case mTransportCompact: transportSize = 0; break;
+            case mTransportComfortable: transportSize = 1; break;
+            case mTransportLarge: transportSize = 2; break;
             default: break;
         }
         if (action >= mTransportCycle && action <= mTransportReset)
@@ -1890,6 +1940,14 @@ public:
             prefs.setValue ("studio.transportElapsed", showTransportElapsed);
             prefs.setValue ("studio.transportTempo", showTransportTempo);
             prefs.setValue ("studio.transportMeter", showTransportMeter);
+            prefs.setValue ("studio.transportSize", transportSize);
+            prefs.saveIfNeeded();
+            resized();
+        }
+        if (action >= mTransportCompact && action <= mTransportLarge)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.transportSize", transportSize);
             prefs.saveIfNeeded();
             resized();
         }
@@ -1927,6 +1985,7 @@ private:
     int stereoScanTicks = 0;
     bool showTransportCycle = true, showTransportClick = true, showTransportElapsed = true;
     bool showTransportTempo = true, showTransportMeter = true;
+    int transportSize = 1; // 0 compact, 1 comfortable, 2 large.
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
     TooltipWindow tooltips { this, 650 };
@@ -3112,12 +3171,11 @@ private:
         }), true);
     }
 
-    void showRegionActions()
+    void showRegionActions (Component* anchor = nullptr)
     {
         PopupMenu menu;
-        const bool selected = selection.getItemsOfType<te::Clip>().size() > 0;
-        if (auto* track = workflowTrack())
-            populateTrackEditMenu (menu, *track);
+        const bool editable = canEditRegions();
+        const bool selected = editable && selection.getItemsOfType<te::Clip>().size() > 0;
         if (edit != nullptr)
         {
             PopupMenu snap;
@@ -3140,7 +3198,7 @@ private:
         menu.addItem (2, "Duplicate selected", selected);
         menu.addSeparator();
         menu.addItem (3, "Copy selected regions", selected);
-        menu.addItem (4, "Paste at playhead", ! regionClipboard.empty());
+        menu.addItem (4, "Paste at playhead", editable && ! regionClipboard.empty());
         menu.addItem (5, "Cut selected regions", selected);
         menu.addItem (6, "Delete selected regions", selected);
         menu.addItem (9, "Join selected MIDI regions", selection.getItemsOfType<te::MidiClip>().size() >= 2
@@ -3150,7 +3208,7 @@ private:
         menu.addItem (7, "Undo", edit != nullptr && edit->getUndoManager().canUndo());
         menu.addItem (8, "Redo", edit != nullptr && edit->getUndoManager().canRedo());
         Component::SafePointer<StudioView> safe (this);
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (regionActions.isVisible() ? &regionActions : &trackMenu),
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (anchor != nullptr ? anchor : &bars),
                             [safe] (int choice)
                             {
                                 if (safe == nullptr || choice == 0 || ! safe->canEditRegions())
@@ -3915,6 +3973,12 @@ private:
                 populateTrackEditMenu (menu, *track, false);
                 menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
             }
+        };
+        view.showStudioRegionMenu = [this] (te::EditItemID id, Component& anchor)
+        {
+            if (edit == nullptr || busy || te::findClipForID (*edit, id) == nullptr) return;
+            // The clip gesture has already applied the correct selection rules.
+            showRegionActions (&anchor);
         };
         view.showWaveDevices = true;
         // New and existing sessions keep their managed aux return in the
