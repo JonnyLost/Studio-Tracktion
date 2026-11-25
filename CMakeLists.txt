@@ -512,7 +512,7 @@ endif()
 string(REPLACE "${studio_room_track_build_anchor}" [=[    for (auto t : getAllTracks (edit))
     {
         if (! editViewState.showStudioRoomReturn)
-            if (auto* audio = dynamic_cast<te::AudioTrack*> (t.get()))
+            if (auto* audio = dynamic_cast<te::AudioTrack*> (t))
                 if (studio::spatial::isRoomReturn (*audio))
                     continue; // Mixer still sees this actual audio return track.
         TrackComponent* c = nullptr;]=] editor "${editor}")
