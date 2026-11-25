@@ -668,7 +668,9 @@ string(REPLACE "${studio_room_role_anchor}" [=[void EditComponent::valueTreeProp
     {
         if (i == juce::Identifier ("studioSpatialRole"))
             markAndUpdate (updateTracks);
-        if (i == juce::Identifier ("studioTrackHeight") || i == juce::Identifier ("studioFolderCollapsed"))
+        if (i == juce::Identifier ("studioTrackHeight"))
+            markAndUpdate (updateZoom); // Preserve the header while dragging its edge.
+        if (i == juce::Identifier ("studioFolderCollapsed"))
             markAndUpdate (updateTracks);
     }
     if (v.hasType (IDs::EDITVIEWSTATE))]=] editor "${editor}")
