@@ -134,6 +134,9 @@ public:
     void appearanceChanged();
     void setEdit (tracktion::Edit*);
     void refresh (const juce::Array<tracktion::AudioTrack*>&, tracktion::AudioTrack* selected, bool ready, bool canRoute);
+   #if STUDIO_SPATIAL_TESTS
+    bool hasChannelForTrack (tracktion::EditItemID) const;
+   #endif
     void resized() override;
     void paint (juce::Graphics&) override;
 
