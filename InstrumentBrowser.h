@@ -19,6 +19,7 @@ public:
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     std::function<void(const juce::PluginDescription&)> insertAppleEffect;
+    std::function<void(const juce::PluginDescription&, int gmProgram, bool newTrack)> loadGeneralMidi;
     // Browse only the actual programs exposed by the *loaded* Audio Unit.
     // Never substitute a fictitious GM list for a bank the AU cannot open.
     std::function<void(const juce::PluginDescription&, juce::Component&)> browseApplePrograms;
@@ -43,6 +44,7 @@ private:
         juce::String key, name, family, type, vendor, description;
         juce::PluginDescription plugin;
         bool available = false, effect = false, apple = false;
+        int gmProgram = -1; // MIDI 0-127, -1 means native AU entry rather than a GM sound
     };
 
     struct Rows final : juce::ListBoxModel
