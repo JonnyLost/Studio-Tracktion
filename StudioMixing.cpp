@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioMixing.h"
+#include "StudioSampler.h"
 #include "AtelierInspectorPanel.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
@@ -602,8 +603,9 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
     selectedTrackId = track != nullptr ? track->itemID : te::EditItemID {};
-    const bool needsAtelier = track != nullptr
-        && dynamic_cast<te::ExternalPlugin*> (findInstrument (*track)) != nullptr;
+    auto* instrument = track != nullptr ? findInstrument (*track) : nullptr;
+    const bool needsAtelier = dynamic_cast<te::ExternalPlugin*> (instrument) != nullptr
+        || dynamic_cast<sampler::Plugin*> (instrument) != nullptr;
     if (needsAtelier)
     {
         // Avoid an unused meter client and non-visible channel Inspector
@@ -621,7 +623,14 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
         atelierScroll.setViewPosition (0, 0);
         resized();
     }
-    if (atelierMode) atelier->refresh (track, ready);
+    if (atelierMode)
+    {
+        atelier->refresh (track, ready);
+        const auto width=atelier->getWidth();
+        const auto height=jmax(atelierScroll.getHeight(),atelier->desiredHeight(width));
+        if(atelier->getHeight()!=height)atelier->setSize(width,height);
+    }
+    else atelier->setEdit(track != nullptr ? &track->edit : nullptr);
     quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
