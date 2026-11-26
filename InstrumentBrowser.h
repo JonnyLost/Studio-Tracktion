@@ -27,6 +27,7 @@ public:
                          bool samplerOnTrack = false, bool synthOnTrack = false,
                          bool canInsertEffect = false, juce::String hostedAppleIdentifier = {});
     void setStatus (const juce::String&);
+    void browseAppleEffects();
     void appearanceChanged();
     int minimumContentHeight (int width) const;
     void resized() override;
