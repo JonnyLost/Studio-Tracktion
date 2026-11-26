@@ -102,7 +102,9 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         addAndMakeVisible (*button);
     mappingsButton.onClick = [this]
     {
-        if (actions.openArticulations && trackId.isValid()) actions.openArticulations (trackId);
+        if(dynamic_cast<sampler::Plugin*>(hosted()))
+        {if(actions.openFullInstrument&&trackId.isValid())actions.openFullInstrument(trackId);}
+        else if (actions.openArticulations && trackId.isValid()) actions.openArticulations (trackId);
     };
     fullInstrument.onClick = [this]
     {
@@ -508,6 +510,8 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     artCaption.setVisible(nativeMode);
     artCaption.setText(nativeMode?(presentation.family.isNotEmpty()?presentation.family:String("Native instrument")):portraitName,dontSendNotification);
     originalInstrument.setButtonText(nativeMode?"Open Sampler":"Open Plug-in");
+    mappingsButton.setButtonText(nativeMode?"Sampler articulations":"Edit articulations");
+    mappingsButton.setTooltip(nativeMode?"Open the sampler to see its mapped playing techniques and edit them under Build > Groups.":"Edit the verified MIDI articulation mappings for this hosted instrument.");
     originalInstrument.setTooltip(nativeMode?"Open the native sampler editor.":"Open the hosted instrument's original Audio Unit editor directly.");
     String displayedInstrument = chosen->getName() + " | "
         + (hosted() != nullptr ? hosted()->getName() : String ("Instrument"));
@@ -568,6 +572,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
         const bool supported=!nativeMode||i==0||i==2||i==3||i==4;
         ccKnobs[i].setVisible(supported);ccLabels[i].setVisible(supported);ccKnobs[i].setEnabled(live&&supported);
         ccLabels[i].setText(nativeMode?(i==0?"Vibrato":i==2?"MIDI Vol":i==3?"Expression":"Sustain"):String(controllers[i].name)+" · CC"+String(controllers[i].cc),dontSendNotification);
+        ccKnobs[i].setTooltip(nativeMode?(i==0?"Vibrato depth (CC1).":i==2?"MIDI note volume (CC7), separate from the track mixer.":i==3?"Musical expression level (CC11).":"Sustain pedal (CC64)."):("Live MIDI CC"+String(controllers[i].cc)+" on the selected channel; patch support varies."));
     }
     ccHeading.setText(nativeMode?"EXPRESSION":"MIDI CONTROLLERS",dontSendNotification);
     sendValues.setEnabled (live);
