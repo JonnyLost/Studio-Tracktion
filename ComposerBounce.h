@@ -6,6 +6,7 @@
 namespace studio::bounce
 {
 std::unique_ptr<tracktion::Edit> createRenderSnapshot (tracktion::Edit&);
+juce::Result verifySamplerSources (tracktion::Edit&, bool checkOfflineErrors);
 
 struct Options
 {
