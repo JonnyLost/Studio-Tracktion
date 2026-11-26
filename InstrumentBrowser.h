@@ -64,6 +64,7 @@ private:
         Kind kind;
     };
 
+    juce::Component::SafePointer<juce::DialogWindow> libraryWindow;
     juce::KnownPluginList& known;
     juce::PropertiesFile* preferences = nullptr;
     juce::StringArray favouriteKeys;
