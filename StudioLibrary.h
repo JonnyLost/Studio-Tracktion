@@ -171,4 +171,47 @@ inline Result convert(Entry& e,const File& root,std::atomic<bool>& cancel)
     media.keep=true;e.converted=target;e.report=report.isEmpty()?"Converted to native preset.":report;
     return Result::ok();
 }
+inline Result repair(Entry& e,const File& root,const File& sampleRoot,std::atomic<bool>& cancel)
+{
+    if(!e.converted.existsAsFile()||!sampleRoot.isDirectory()||
+       sampleRoot==File::getSpecialLocation(File::userHomeDirectory)||sampleRoot.getParentDirectory()==sampleRoot)
+        return Result::fail("Choose an existing native preset and a specific recording folder.");
+    sampler::Instrument model;
+    if(auto r=sampler::Plugin::preparePreset(e.converted,{},model,&cancel);r.failed())return r;
+    std::set<String> wanted;
+    for(const auto& z:model.zones)if(!z.mapping.sample||z.problem.isNotEmpty())wanted.insert(z.file.getFileName().toLowerCase());
+    if(wanted.empty())return Result::fail("No unavailable samples in this native preset.");
+    std::map<String,std::vector<File>> matches;
+    int visited=0;
+    for(const auto& item:RangedDirectoryIterator(sampleRoot,true,"*",File::findFiles,File::FollowSymlinks::no))
+    {
+        if(cancel.load())return Result::fail("Repair cancelled.");
+        if(++visited>20000)return Result::fail("Repair search exceeds 20,000 files. Choose a narrower folder.");
+        const auto f=item.getFile();const auto name=f.getFileName().toLowerCase();
+        if(wanted.count(name))matches[name].push_back(f);
+    }
+    String report="Relocated sample candidates, matched by unique filename and native boundary checks. Compare with original before using.\n";
+    for(int i=0;i<static_cast<int>(model.zones.size());++i)
+    {
+        if(cancel.load())return Result::fail("Repair cancelled.");
+        const auto& z=model.zones[static_cast<std::size_t>(i)];
+        if(z.mapping.sample&&z.problem.isEmpty())continue;
+        const auto old=z.file;const auto name=old.getFileName().toLowerCase();
+        const auto it=matches.find(name);
+        if(it==matches.end()||it->second.size()!=1)
+            return Result::fail("Missing or ambiguous replacement: "+old.getFileName()+". Use Locate Sample manually.");
+        sampler::Instrument proposal;
+        if(auto r=sampler::Plugin::prepareSample(model,it->second.front(),i,proposal,&cancel);r.failed())return r;
+        report+=old.getFullPathName()+" -> "+it->second.front().getFullPathName()+"\n";
+        model=std::move(proposal);
+    }
+    if(cancel.load())return Result::fail("Repair cancelled.");
+    const auto folder=root.getChildFile("Presets").getChildFile(Uuid().toString());
+    if(auto r=folder.createDirectory();r.failed())return r;
+    const auto target=folder.getChildFile(File::createLegalFileName(e.name).substring(0,100)+" - repaired.studiosampler");
+    if(auto r=sampler::Plugin::writeConvertedPreset(model,target);r.failed()){folder.deleteRecursively();return r;}
+    e.converted=target;e.report=report+"Original preset retained. Review the replacement paths before loading.";
+    return Result::ok();
+}
+
 }
