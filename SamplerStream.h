@@ -70,6 +70,7 @@ public:
         bool read (StreamCache& cache, int frame, float& l, float& r, bool offline) noexcept
         {
             const int page = frame / streamPageFrames;
+            if (failedPage == page) return false;
             if (slot == nullptr || owner != &cache || currentPage != page)
             {
                 release();
@@ -85,7 +86,7 @@ public:
                         slot = cache.pin (page);
                     }
                     else cache.requestPage (page);
-                    if (slot == nullptr) return false;
+                    if (slot == nullptr) { failedPage = page; return false; }
                 }
                 owner = &cache;
                 currentPage = page;
@@ -104,7 +105,7 @@ public:
         }
         Slot* slot = nullptr;
         StreamCache* owner = nullptr;
-        int currentPage = -1;
+        int currentPage = -1, failedPage = -1;
     };
 
     void requestFrame (int frame) noexcept
