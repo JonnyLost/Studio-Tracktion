@@ -22,6 +22,22 @@ struct InstrumentGroup
     Group playback;
 };
 
+// Extracted WAV files are staged in a unique directory. The import review
+// owns this object; cancellation removes only its own uncommitted files.
+// Accepted media stays on disk for undo, presets and project reopen.
+struct BankImportMedia
+{
+    juce::File directory;
+    bool keep = false;
+    ~BankImportMedia() { if (! keep && directory.isDirectory()) directory.deleteRecursively(); }
+};
+struct BankProgram
+{
+    juce::String name;
+    int bank = 0, number = 0;
+    bool drums = false;
+};
+
 struct Instrument
 {
     juce::String name { "Studio Sampler" }, preset;
@@ -72,6 +88,11 @@ public:
     static juce::Result prepareImport (Instrument initial, const juce::Array<juce::File>& paths, bool automatic, Instrument&, juce::String& summary, std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     static juce::Result prepareSfz (const juce::File&, const Instrument& cache, Instrument&, juce::String& report,
                                    std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
+    static juce::Result catalogSoundBank (const juce::File&, std::vector<BankProgram>&,
+                                          std::atomic<bool>* cancelled = nullptr);
+    static juce::Result prepareSoundBank (const juce::File&, int programIndex, Instrument&, juce::String& report,
+                                          BankImportMedia&, std::atomic<bool>* cancelled = nullptr,
+                                          std::atomic<int>* progress = nullptr);
     void moveZone (int, int folder);
     juce::Result proposeImport (const juce::Array<juce::File>&, bool automatic, Instrument&, juce::String& summary);
     void commitImport (Instrument next, bool dirty = true) { change (std::move (next), dirty); }
