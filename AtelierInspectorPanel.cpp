@@ -180,6 +180,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         knob.setColour (Slider::textBoxBackgroundColourId, background);
         knob.setColour (Slider::textBoxOutlineColourId, accent.withAlpha (.25f));
         knob.setRange (0, 127, i == 4 ? 127 : 1);
+        knob.setDoubleClickReturnValue (true, controllers[i].value);
         knob.setValue (controllers[i].value, dontSendNotification);
         knob.setTooltip ("Live MIDI CC" + String (controllers[i].cc) + " on the selected channel; patch support varies.");
         knob.onValueChange = [this, i]

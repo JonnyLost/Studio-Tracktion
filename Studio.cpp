@@ -20,6 +20,7 @@ using namespace tracktion::literals;
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
 #include "StudioActivities.h"
+#include "WorkflowCommands.h"
 #include "MidiPerformanceFocus.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
@@ -234,10 +235,19 @@ private:
 class StudioCommandReference final : public Component
 {
 public:
+    std::function<void(studio::WorkflowCommand)> onRun;
+    std::function<bool(studio::WorkflowCommand)> canRun;
     StudioCommandReference()
     {
         addAndMakeVisible (search);
         addAndMakeVisible (results);
+        addAndMakeVisible (commands);
+        addAndMakeVisible (run);
+        commands.setTitle ("Matching Studio commands");
+        run.setTooltip ("Run the selected command and close this window.");
+        commands.onChange = [this] { updateRun(); };
+        run.onClick = [this] { runSelected(); };
+        search.onReturnKey = [this] { runSelected(); };
         search.setTextToShowWhenEmpty ("Search commands and shortcuts", studio::colours::secondary);
         search.setColour (TextEditor::backgroundColourId, studio::colours::panel);
         search.onTextChange = [this] { refreshList(); };
@@ -250,17 +260,63 @@ public:
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (12);
-        search.setBounds (area.removeFromTop (34));
-        area.removeFromTop (10);
+        const auto& m = studio::appearance;
+        auto area = getLocalBounds().reduced (m.px (8));
+        search.setBounds (area.removeFromTop (m.control (32)));
+        area.removeFromTop (m.px (4));
+        auto row = area.removeFromTop (m.control (32));
+        run.setBounds (row.removeFromRight (jmin (m.span (75), row.getWidth() / 3)).reduced (m.px (2), 0));
+        commands.setBounds (row);
+        area.removeFromTop (m.px (4));
         results.setBounds (area);
     }
 
 private:
     TextEditor search, results;
+    ComboBox commands;
+    TextButton run { "Run" };
+    void updateRun()
+    {
+        const int index = commands.getSelectedId() - 1;
+        run.setEnabled (onRun != nullptr && isPositiveAndBelow (index, (int) studio::workflowCommands.size())
+            && (! canRun || canRun (studio::workflowCommands[(size_t) index].command)));
+    }
+    void runSelected()
+    {
+        updateRun();
+        if (! run.isEnabled()) return;
+        const auto command = studio::workflowCommands[(size_t) (commands.getSelectedId() - 1)].command;
+        auto callback = onRun;
+        if (auto* dialog = findParentComponentOfClass<DialogWindow>())
+            dialog->exitModalState (0);
+        // Dispatch after the modal is dismissed, never while it owns focus.
+        MessageManager::callAsync ([callback = std::move (callback), command]
+        {
+            if (callback) callback (command);
+        });
+    }
+public:
     void refreshList()
     {
         const auto query = search.getText().trim();
+        const int previous = commands.getSelectedId();
+        commands.clear (dontSendNotification);
+        int first = 0;
+        bool retained = false;
+        for (size_t i = 0; i < studio::workflowCommands.size(); ++i)
+        {
+            const auto& entry = studio::workflowCommands[i];
+            if (query.isNotEmpty() && ! (String (entry.label) + " " + entry.keywords).containsIgnoreCase (query))
+                continue;
+            const int id = (int) i + 1;
+            commands.addItem (entry.label, id);
+            if (first == 0) first = id;
+            retained = retained || previous == id;
+            if (canRun) commands.setItemEnabled (id, canRun (entry.command));
+        }
+        commands.setSelectedId (retained ? previous : first, dontSendNotification);
+        commands.setTextWhenNothingSelected ("No matching commands");
+        updateRun();
         StringArray lines;
         // Only claim shortcuts implemented in StudioView::keyPressed or
         // enabled by the Piano Roll. Other commands are listed without keys.
@@ -277,6 +333,9 @@ private:
             "Workspace  |  Command-2  |  Full Mixer",
             "Workspace  |  Command-3  |  Orchestral Stage",
             "Workspace  |  Command-4  |  Film Scoring",
+            "Workspace  |  Command-5  |  Instrument Browser",
+            "Instrument  |  Command-6  |  Open Selected Instrument",
+            "Help  |  Shift-Command-P  |  Find and Run Commands",
             "Inspector  |  Command-I  |  Show / Hide Selected Track Inspector",
             "Piano Roll  |  Delete  |  Delete Selected Notes",
             "Piano Roll  |  Escape  |  Clear Note Selection",
@@ -1216,6 +1275,12 @@ public:
         }
         // Dedicated composition shortcuts, independent of fragile button order.
         const auto mods = key.getModifiers();
+        if (mods.isCommandDown() && mods.isShiftDown() && ! mods.isAltDown()
+            && (key.getKeyCode() == 'P' || key.getKeyCode() == 'p'))
+        {
+            applicationMenuSelected (mKeyboardHelp);
+            return true;
+        }
         if (mods.isCommandDown() && mods.isShiftDown()
             && (key.getKeyCode() == 'K' || key.getKeyCode() == 'k'))
         {
@@ -1244,6 +1309,8 @@ public:
                 case '2': showWorkspace (Workspace::mix); return true;
                 case '3': showWorkspace (Workspace::stage); return true;
                 case '4': showWorkspace (Workspace::filmScoring); return true;
+                case '5': runWorkflowCommand (studio::WorkflowCommand::browser); return true;
+                case '6': runWorkflowCommand (studio::WorkflowCommand::instrument); return true;
                 case 'i': case 'I': setInspectorOpen (! inspectorOpen); return true;
                 default: break;
             }
@@ -1854,7 +1921,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics
     };
 
     PopupMenu applicationMenu (int index)
@@ -1900,11 +1967,14 @@ public:
             case 3: // Navigate
                 add (mRewind, "Return to Start", project);
                 menu.addSeparator();
-                add (mBrowser, "Instrument Browser");
-                add (mPiano, "Piano Roll");
-                add (mStage, "Stage");
-                add (mPicture, "Picture");
-                add (mMixer, "Mixer");
+                add (mBrowser, "Instrument Browser  (Command-5)");
+                add (mOpenSelectedInstrument, "Open Selected Instrument  (Command-6)", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
+                add (mPiano, "Piano Roll  (Command-1)");
+                add (mStage, "Stage  (Command-3)");
+                add (mRooms, "Rooms");
+                add (mVirtualMics, "Virtual Microphones");
+                add (mPicture, "Picture  (Command-4)");
+                add (mMixer, "Mixer  (Command-2)");
                 {
                     PopupMenu activities;
                     populateActivityMenu (activities);
@@ -1970,10 +2040,55 @@ public:
                 break;
             case 8: // Help
                 add (mAboutStudio, "About Studio...");
-                add (mKeyboardHelp, "Keyboard Shortcuts...");
+                add (mKeyboardHelp, "Find and Run Commands...  (Shift-Command-P)");
                 break;
         }
         return menu;
+    }
+
+    bool canRunWorkflowCommand (studio::WorkflowCommand command)
+    {
+        if (busy || environmentWelcome.isVisible()) return false;
+        using C = studio::WorkflowCommand;
+        if (command == C::settings || command == C::environments) return true;
+        if (edit == nullptr) return false;
+        if (command == C::instrument)
+        {
+            auto* track = workflowTrack();
+            return track != nullptr && studio::findInstrument (*track) != nullptr;
+        }
+        return true;
+    }
+
+    void runWorkflowCommand (studio::WorkflowCommand command)
+    {
+        if (! canRunWorkflowCommand (command))
+        {
+            if (command == studio::WorkflowCommand::instrument)
+                message.setText ("Select a track with a loaded instrument first.", dontSendNotification);
+            return;
+        }
+        using C = studio::WorkflowCommand;
+        switch (command)
+        {
+            case C::browser: if (dockMode == DockMode::compact) setDockMode (DockMode::split); showWorkspace (Workspace::instruments); break;
+            case C::piano: showWorkspace (Workspace::piano); break;
+            case C::mixer: showWorkspace (Workspace::mix); break;
+            case C::stage: showWorkspace (Workspace::stage); break;
+            case C::rooms: if (dockMode == DockMode::compact) setDockMode (DockMode::split); showWorkspace (Workspace::rooms); break;
+            case C::microphones: if (dockMode == DockMode::compact) setDockMode (DockMode::split); showWorkspace (Workspace::microphones); break;
+            case C::picture: showWorkspace (Workspace::filmScoring); break;
+            case C::inspector: setInspectorOpen (! inspectorOpen); break;
+            case C::instrument:
+                if (auto* track = workflowTrack())
+                    if (auto* plugin = studio::findInstrument (*track))
+                        if (! showNativeInstrument (*plugin)) plugin->showWindowExplicitly();
+                break;
+            case C::keyboard: toggleAuditionKeyboard(); break;
+            case C::resources: if (resources.onOpen) resources.onOpen(); break;
+            case C::settings: showStudioSettings(); break;
+            case C::environments: environmentWelcome.open (false); break;
+        }
     }
 
     void applicationMenuSelected (int action)
@@ -2017,7 +2132,10 @@ public:
             case mFlashback: invoke (flashbackButton); break;
             case mCycle: invoke (cycleButton); break;
             case mClick: invoke (clickButton); break;
-            case mBrowser: showWorkspace (Workspace::instruments); break;
+            case mBrowser: runWorkflowCommand (studio::WorkflowCommand::browser); break;
+            case mOpenSelectedInstrument: runWorkflowCommand (studio::WorkflowCommand::instrument); break;
+            case mRooms: runWorkflowCommand (studio::WorkflowCommand::rooms); break;
+            case mVirtualMics: runWorkflowCommand (studio::WorkflowCommand::microphones); break;
             case mPiano: showWorkspace (Workspace::piano); break;
             case mStage: showWorkspace (Workspace::stage); break;
             case mPicture: showWorkspace (Workspace::filmScoring); break;
@@ -2044,7 +2162,15 @@ public:
                 options.escapeKeyTriggersCloseButton = true;
                 options.useNativeTitleBar = true;
                 options.resizable = true;
-                options.content.setOwned (new StudioCommandReference());
+                auto* reference = new StudioCommandReference();
+                const SafePointer<StudioView> safe (this);
+                const auto generation = projectGeneration;
+                reference->canRun = [safe, generation] (studio::WorkflowCommand command)
+                { return safe != nullptr && safe->projectGeneration == generation && safe->canRunWorkflowCommand (command); };
+                reference->onRun = [safe, generation] (studio::WorkflowCommand command)
+                { if (safe != nullptr && safe->projectGeneration == generation) safe->runWorkflowCommand (command); };
+                reference->refreshList();
+                options.content.setOwned (reference);
                 options.content->setSize (jmin (getWidth() - 30, 600), jmin (getHeight() - 60, 460));
                 options.launchAsync();
                 break;
@@ -3455,6 +3581,22 @@ private:
         const auto id = track.itemID;
         PopupMenu subMenu;
         PopupMenu& tracks = nested ? subMenu : parent;
+        if (studio::findInstrument (track) != nullptr)
+        {
+            tracks.addItem ("Open Instrument Editor", trackMenuAction (id,
+                [] (StudioView& view, te::AudioTrack& target)
+                {
+                    if (auto* plugin = studio::findInstrument (target))
+                        if (! view.showNativeInstrument (*plugin)) plugin->showWindowExplicitly();
+                }));
+            tracks.addItem ("Show Instrument Inspector", trackMenuAction (id,
+                [] (StudioView& view, te::AudioTrack& target)
+                {
+                    view.selection.selectOnly (&target);
+                    view.setInspectorOpen (true);
+                }));
+            tracks.addSeparator();
+        }
         const auto general = studio::tracks::restriction (track, false);
         const auto destructive = studio::tracks::restriction (track, true);
         PopupMenu heights;
@@ -3629,10 +3771,11 @@ private:
         menu.addItem (7, "Undo", edit != nullptr && edit->getUndoManager().canUndo());
         menu.addItem (8, "Redo", edit != nullptr && edit->getUndoManager().canRedo());
         Component::SafePointer<StudioView> safe (this);
+        const auto generation = projectGeneration;
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (anchor != nullptr ? anchor : &bars),
-                            [safe] (int choice)
+                            [safe, generation] (int choice)
                             {
-                                if (safe == nullptr || choice == 0 || ! safe->canEditRegions())
+                                if (safe == nullptr || choice == 0 || safe->projectGeneration != generation || ! safe->canEditRegions())
                                     return;
                                 if (choice == 7)
                                     safe->edit->undo();
@@ -6672,6 +6815,14 @@ int StudioView::runInterfaceReview (const File& output)
     monitorButton.onClick();
     if (! monitor.isVisible() || workspaceTitle.getText() != "MIDI Monitor")
         return fail ("MIDI Monitor remains available from View");
+    showWorkspace (Workspace::closed);
+    // Command launcher routes to actual existing tools, with no project edits.
+    runWorkflowCommand (studio::WorkflowCommand::rooms);
+    if (workspace != Workspace::rooms || ! spatialWorkspace.isVisible()) return fail ("command launcher Rooms");
+    runWorkflowCommand (studio::WorkflowCommand::microphones);
+    if (workspace != Workspace::microphones || ! spatialWorkspace.isVisible()) return fail ("command launcher Microphones");
+    runWorkflowCommand (studio::WorkflowCommand::browser);
+    if (workspace != Workspace::instruments || ! browser.isVisible()) return fail ("command launcher Browser");
     showWorkspace (Workspace::closed);
     // Exercise the real activity buttons; none may start recording or add tracks.
     const auto originalTracks = te::getAudioTracks (*edit).size();
