@@ -705,13 +705,18 @@ Result Plugin::preparePreset (const File& file, const Instrument& cache, Instrum
 Result Plugin::verifyStreamSources (bool checkOfflineErrors) const
 {
     for (const auto& zone : model.zones)
-        if (const auto& sample = zone.mapping.sample; sample && sample->stream)
+    {
+        const auto& sample = zone.mapping.sample;
+        if (! sample || zone.problem.isNotEmpty() || ! zone.file.existsAsFile())
+            return Result::fail ("Sampler source unavailable: " + zone.file.getFileName());
+        if (sample->stream)
         {
             if (! currentSample (zone, zone.file))
                 return Result::fail ("Streamed sample changed or disappeared: " + zone.file.getFileName());
             if (checkOfflineErrors && sample->stream->offlineErrors() != 0)
                 return Result::fail ("Offline sample read failed: " + zone.file.getFileName());
         }
+    }
     return Result::ok();
 }
 
@@ -741,7 +746,7 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
     stats.sampleBytes = resident;
     stats.cacheBytes = cache;
     stats.streamingBytes = streamed;
-    stats.memoryBytes = resident + cache;
+    stats.memoryBytes = loadedBytes;
     stats.activeVoices = renderer.activeVoices();
     stats.detail = String (loadedSamples) + " sample(s) | " + String (streams) + " streamed | "
         + String (model.settings.polyphony) + " max voices | "
