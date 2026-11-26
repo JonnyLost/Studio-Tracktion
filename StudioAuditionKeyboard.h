@@ -2,18 +2,53 @@
 #pragma once
 #include <JuceHeader.h>
 #include <functional>
+#include <bitset>
 
 namespace studio
 {
 // A lightweight performance surface. Uses the already-loaded Tracktion
 // instrument's live MIDI path; it never records clips, instantiates an AU or
 // creates a new CoreMIDI device.
+// Visual overlays never modify the MIDI state that sends audition notes.
+class ActivityMidiKeyboard final : public juce::MidiKeyboardComponent
+{
+public:
+    explicit ActivityMidiKeyboard (juce::MidiKeyboardState& state)
+        : juce::MidiKeyboardComponent (state, juce::MidiKeyboardComponent::horizontalKeyboard) {}
+
+    void showActivity (const std::bitset<128>& notes)
+    {
+        if (activity == notes) return;
+        activity = notes;
+        repaint();
+    }
+
+    void drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area,
+                        bool down, bool over, juce::Colour line, juce::Colour text) override
+    {
+        juce::MidiKeyboardComponent::drawWhiteNote (note, g, area,
+            down || (note >= 0 && note < 128 && activity.test (static_cast<size_t> (note))),
+            over, line, text);
+    }
+
+    void drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area,
+                        bool down, bool over, juce::Colour fill) override
+    {
+        juce::MidiKeyboardComponent::drawBlackNote (note, g, area,
+            down || (note >= 0 && note < 128 && activity.test (static_cast<size_t> (note))),
+            over, fill);
+    }
+
+private:
+    std::bitset<128> activity;
+};
+
 class AuditionKeyboardPanel final : public juce::Component,
                                     private juce::MidiKeyboardStateListener
 {
 public:
     AuditionKeyboardPanel()
-        : keys (state, juce::MidiKeyboardComponent::horizontalKeyboard)
+        : keys (state)
     {
         state.addListener (this);
         addAndMakeVisible (keys);
@@ -53,6 +88,8 @@ public:
             status.setText (label, juce::dontSendNotification);
     }
     void releaseNotes() { state.allNotesOff (activeChannel); }
+    void displayActivity (const std::bitset<128>& notes) { keys.showActivity (notes); }
+    void clearActivity() { keys.showActivity ({}); }
 
     void resized() override
     {
@@ -66,7 +103,7 @@ public:
 
 private:
     juce::MidiKeyboardState state;
-    juce::MidiKeyboardComponent keys;
+    ActivityMidiKeyboard keys;
     juce::ComboBox channel;
     juce::Label status;
     int activeChannel = 1;
