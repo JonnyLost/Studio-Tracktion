@@ -19,8 +19,8 @@ bool sampleFile (const String& path)
 class ImportProposal final : public Component
 {
 public:
-    ImportProposal (std::shared_ptr<Instrument> model, String summary, int firstZone, std::function<void()> commit)
-        : proposal (std::move (model))
+    ImportProposal (std::shared_ptr<Instrument> model, String summary, int firstZone, std::function<void()> commit, bool sfzImport = false)
+        : proposal (std::move (model)), readOnlyMapping (sfzImport)
     {
         setLookAndFeel (&look);
         addAndMakeVisible (report); report.setMultiLine (true); report.setReadOnly (true); report.setText (summary);
@@ -46,6 +46,12 @@ public:
             };
         }
         zones.onChange = [this] { update(); }; zones.setSelectedItemIndex (0, sendNotificationSync);
+        if (readOnlyMapping)
+        {
+            zones.setVisible (false);
+            for (int i = 0; i < 5; ++i) { labels[i].setVisible (false); values[i].setVisible (false); }
+            accept.setButtonText ("Replace instrument");
+        }
         addAndMakeVisible (accept); addAndMakeVisible (cancel);
         accept.onClick = [this, commit] { commit(); close(); };
         cancel.onClick = [this] { close(); };
@@ -55,6 +61,11 @@ public:
     void resized() override
     {
         auto area = getLocalBounds().reduced (16);
+        if (readOnlyMapping)
+        {
+            auto row = area.removeFromBottom (32); accept.setBounds (row.removeFromRight (180)); row.removeFromRight (8); cancel.setBounds (row.removeFromRight (120));
+            report.setBounds (area.withTrimmedBottom (8)); return;
+        }
         report.setBounds (area.removeFromTop (150)); area.removeFromTop (8);
         zones.setBounds (area.removeFromTop (30)); area.removeFromTop (8);
         for (int i = 0; i < 5; ++i)
@@ -65,7 +76,7 @@ private:
     StudioLookAndFeel look;
     std::shared_ptr<Instrument> proposal;
     TextEditor report; ComboBox zones; Label labels[5]; Slider values[5];
-    TextButton accept { "Import" }, cancel { "Cancel" }; bool updating = false;
+    TextButton accept { "Import" }, cancel { "Cancel" }; bool updating = false, readOnlyMapping = false;
     void close() { if (auto* dialog = findParentComponentOfClass<DialogWindow>()) dialog->exitModalState (0); }
     void update()
     {
@@ -80,17 +91,19 @@ private:
 class EnvelopePlot final : public Component
 {
 public:
-    explicit EnvelopePlot (Plugin& p) : plugin (p) { setTitle ("Amplitude envelope"); }
+    explicit EnvelopePlot (Plugin& p, std::function<const SampleZone*()> selected) : plugin (p), selection (std::move (selected)) { setTitle ("Amplitude envelope"); }
     void paint (Graphics& g) override
     {
         auto area = getLocalBounds().toFloat();
         g.setColour (colours::canvas);
         g.fillRoundedRectangle (area, 6);
         area = area.reduced (12, 9);
-        const auto& s = plugin.instrument().settings;
-        const auto attack = 0.12f + 0.15f * std::sqrt (s.attack / 10);
-        const auto decay = 0.11f + 0.14f * std::sqrt (s.decay / 10);
-        const auto release = 0.12f + 0.15f * std::sqrt (s.release / 15);
+        auto s = plugin.instrument().settings;
+        if (const auto* entry = selection(); entry && entry->mapping.sfz.enabled)
+        { const auto& f = entry->mapping.sfz; s.attack = f.attack; s.decay = f.decay; s.sustain = f.sustain; s.release = f.release; }
+        const auto attack = 0.12f + 0.15f * std::sqrt (std::min (s.attack / 10, 1.0f));
+        const auto decay = 0.11f + 0.14f * std::sqrt (std::min (s.decay / 10, 1.0f));
+        const auto release = 0.12f + 0.15f * std::sqrt (std::min (s.release / 15, 1.0f));
         const auto x = [area] (float v) { return area.getX() + v * area.getWidth(); };
         const auto y = area.getBottom() - 0.87f * s.sustain * area.getHeight();
         Path path;
@@ -108,6 +121,7 @@ public:
     }
 private:
     Plugin& plugin;
+    std::function<const SampleZone*()> selection;
 };
 }
 
@@ -129,7 +143,7 @@ Editor::Editor (Plugin& p) : plugin (p)
              &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView })
         body.addAndMakeVisible (*c);
 
-    auto* plot = owned.add (new EnvelopePlot (p));
+    auto* plot = owned.add (new EnvelopePlot (p, [this] { return zone(); }));
     envelope.addAndMakeVisible (*plot);
     envelope.setInterceptsMouseClicks (false, false);
     for (auto* label : { &name, &preset, &filename, &status, &meter })
@@ -191,6 +205,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     load.setColour (TextButton::buttonColourId, colours::action);
     load.setColour (TextButton::textColourOffId, colours::rail);
     loadPreset.onClick = [this] { choose (true, false, false); };
+    loadPreset.setTooltip ("Load a Studio preset or import an SFZ instrument for review.");
     savePreset.onClick = [this] { choose (true, true, false); };
     basic.onClick = [this] { setPage (Page::basic); };
     groups.onClick = [this] { setPage (Page::groups); };
@@ -288,10 +303,24 @@ Editor::Editor (Plugin& p) : plugin (p)
             envelope.repaint();
         };
     };
-    setup (attack, "Attack", 0, 10000, 1, " ms", setSetting (&Settings::attack, .001), true);
-    setup (decay, "Decay", 0, 10000, 1, " ms", setSetting (&Settings::decay, .001), true);
-    setup (sustain, "Sustain", 0, 100, 1, " %", setSetting (&Settings::sustain, .01), true);
-    setup (release, "Release", 0, 15000, 1, " ms", setSetting (&Settings::release, .001), true);
+    const auto setEnvelope = [this, setSetting] (float Settings::* native, float SfzRegion::* imported, double factor)
+    {
+        return [this, setSetting, native, imported, factor] (double value)
+        {
+            if (const auto* entry = zone(); entry && entry->mapping.sfz.enabled)
+            {
+                auto z = entry->mapping;
+                z.sfz.*imported = static_cast<float> (value * factor);
+                plugin.editZone (selection, z);
+                envelope.repaint();
+            }
+            else setSetting (native, factor) (value);
+        };
+    };
+    setup (attack, "Attack", 0, 10000, 1, " ms", setEnvelope (&Settings::attack, &SfzRegion::attack, .001), true);
+    setup (decay, "Decay", 0, 10000, 1, " ms", setEnvelope (&Settings::decay, &SfzRegion::decay, .001), true);
+    setup (sustain, "Sustain", 0, 100, 1, " %", setEnvelope (&Settings::sustain, &SfzRegion::sustain, .01), true);
+    setup (release, "Release", 0, 15000, 1, " ms", setEnvelope (&Settings::release, &SfzRegion::release, .001), true);
     attack.slider.setSkewFactorFromMidPoint (80);
     decay.slider.setSkewFactorFromMidPoint (200);
     release.slider.setSkewFactorFromMidPoint (250);
@@ -482,7 +511,7 @@ void Editor::refresh()
     const auto& s = model.settings;
     const bool playable = entry && z.sample;
     filename.setText (entry ? entry->file.getFileName() + "  |  " + noteName (z.low) + " to " + noteName (z.high)
-                            + (z.sample && z.sample->stream ? "  |  Disk streaming" : "")
+                            + (z.sfz.enabled ? "  |  SFZ region" : "") + (z.sample && z.sample->stream ? "  |  Disk streaming" : "")
                             : String(), dontSendNotification);
     filename.setTooltip (entry ? entry->file.getFullPathName() : String());
     if (plugin.stateError().isNotEmpty()) setStatus (plugin.stateError());
@@ -515,10 +544,16 @@ void Editor::refresh()
         if (! c.slider.isMouseButtonDown() && ! c.slider.hasKeyboardFocus (true))
             c.slider.setValue (v, dontSendNotification);
     };
-    value (attack, s.attack * 1000);
-    value (decay, s.decay * 1000);
-    value (sustain, s.sustain * 100);
-    value (release, s.release * 1000);
+    const bool sfzEnvelope = z.sfz.enabled;
+    attack.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
+    decay.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
+    release.slider.setRange (0, sfzEnvelope ? 100000 : 15000, 1);
+    for (auto* c : { &attack, &decay, &sustain, &release })
+        c->slider.setTooltip (sfzEnvelope ? "Imported envelope for the selected SFZ region." : "Instrument amplitude envelope.");
+    value (attack, (sfzEnvelope ? z.sfz.attack : s.attack) * 1000);
+    value (decay, (sfzEnvelope ? z.sfz.decay : s.decay) * 1000);
+    value (sustain, (sfzEnvelope ? z.sfz.sustain : s.sustain) * 100);
+    value (release, (sfzEnvelope ? z.sfz.release : s.release) * 100);
     value (gain, s.gainDb);
     value (tune, s.semitones);
     value (voices, s.polyphony);
@@ -610,7 +645,12 @@ void Editor::refresh()
     }
     for (auto* c : { &root, &low, &high, &soft, &hard, &zoneGain, &cents, &group })
         c->slider.setEnabled (entry != nullptr);
-    for (auto* c : { &fadeIn, &fadeOut, &loopFade }) c->slider.setEnabled (entry != nullptr);
+    for (auto* c : { &fadeIn, &fadeOut })
+    {
+        c->slider.setEnabled (entry != nullptr && ! z.sfz.enabled);
+        c->slider.setTooltip (z.sfz.enabled ? "SFZ crossfade endpoints preserved from the source definition." : "Native velocity crossfade steps.");
+    }
+    loopFade.slider.setEnabled (entry != nullptr);
     resized();
     display.repaint();
     keyboard.repaint();
@@ -871,10 +911,10 @@ void Editor::paint (Graphics& g)
 void Editor::choose (bool presetFile, bool save, bool replace)
 {
     if (chooser) return;
-    chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio Sampler preset")
+    chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio preset or import SFZ")
                                                        : (replace ? "Locate sample" : "Load sample"),
         save ? File::getSpecialLocation (File::userDocumentsDirectory).getChildFile (File::createLegalFileName (plugin.instrument().name) + ".studiosampler") : File(),
-        presetFile ? "*.studiosampler" : "*.wav;*.wave;*.aif;*.aiff;*.aifc", true, false, this);
+        presetFile ? (save ? "*.studiosampler" : "*.studiosampler;*.sfz") : (replace ? "*.wav;*.wave;*.aif;*.aiff;*.aifc" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.sfz"), true, false, this);
     const auto modeFlags = save ? FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting
                                 : FileBrowserComponent::openMode;
     chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles | (! presetFile && ! replace ? FileBrowserComponent::canSelectMultipleItems | FileBrowserComponent::canSelectDirectories : 0),
@@ -918,6 +958,13 @@ void Editor::choose (bool presetFile, bool save, bool replace)
 void Editor::importFiles (const StringArray& paths)
 {
     if (importTask) { setStatus ("An import is already running. Cancel it before starting another."); return; }
+    for (const auto& path : paths)
+        if (File (path).hasFileExtension ("sfz"))
+        {
+            if (paths.size() != 1) { setStatus ("Import one SFZ instrument at a time, separately from recordings."); return; }
+            startImport ({ File (path) }, false);
+            return;
+        }
     const auto safe = Component::SafePointer<Editor> (this);
     AlertWindow::showAsync (MessageBoxOptions().withTitle ("Import recordings").withMessage ("Choose a starting map. Review and edit the proposal before committing. Filename notes take priority over file root-note metadata. C4 = MIDI 60; unknown roots are provisional.")
         .withButton ("Map Automatically", 1).withButton ("Map Manually", 2).withButton ("Cancel", 0), [safe, paths] (int choice)
@@ -932,10 +979,13 @@ void Editor::startImport (Array<File> files, bool automatic, int replace, bool p
     if (importTask || importReview) { setStatus ("Finish or cancel the current import first."); return; }
     auto initial = plugin.instrument();
     importTask = std::make_unique<ImportTask>();
-    auto* task = importTask.get(); task->replace = replace; task->preset = presetFile; task->revision = plugin.changeCount(); task->first = static_cast<int> (initial.zones.size());
+    auto* task = importTask.get(); task->replace = replace; task->preset = presetFile; task->revision = plugin.changeCount();
+    task->sfz = replace < 0 && files.size() == 1 && files.getFirst().hasFileExtension ("sfz");
+    task->first = task->sfz ? 0 : static_cast<int> (initial.zones.size());
     task->worker = std::thread ([task, initial = std::move (initial), files = std::move (files), automatic] () mutable
     {
-        const auto result = task->preset ? Plugin::preparePreset (files.getFirst(), initial, task->proposal, &task->cancelled)
+        const auto result = task->sfz ? Plugin::prepareSfz (files.getFirst(), initial, task->proposal, task->summary, &task->cancelled, &task->progress)
+            : task->preset ? Plugin::preparePreset (files.getFirst(), initial, task->proposal, &task->cancelled)
             : task->replace >= 0 ? Plugin::prepareSample (std::move (initial), files.getFirst(), task->replace, task->proposal, &task->cancelled)
             : Plugin::prepareImport (std::move (initial), files, automatic, task->proposal, task->summary, &task->cancelled, &task->progress);
         task->error = result.getErrorMessage(); task->done.store (true, std::memory_order_release);
@@ -949,9 +999,16 @@ void Editor::finishImport()
     if (! importTask->done.load (std::memory_order_acquire)) return;
     auto task = std::move (importTask);
     cancelImport.setVisible (false);
-    if (task->cancelled.load() || task->error.isNotEmpty()) { refresh(); setStatus (task->cancelled.load() ? "Import cancelled; instrument unchanged." : task->error); return; }
+    if (task->cancelled.load() || task->error.isNotEmpty())
+    {
+        refresh(); setStatus (task->cancelled.load() ? "Import cancelled; instrument unchanged." : task->error);
+        if (task->sfz && ! task->cancelled.load() && task->error.isNotEmpty())
+            AlertWindow::showAsync (MessageBoxOptions().withTitle ("SFZ import could not complete")
+                .withMessage (task->error.substring (0, 5000)).withButton ("OK"), nullptr);
+        return;
+    }
     if (task->revision != plugin.changeCount()) { refresh(); setStatus ("Instrument changed during import. Import again to make a fresh proposal."); return; }
-    if (task->preset || task->replace >= 0)
+    if (! task->sfz && (task->preset || task->replace >= 0))
     {
         const int replaced = task->replace;
         plugin.commitImport (std::move (task->proposal), ! task->preset);
@@ -961,15 +1018,15 @@ void Editor::finishImport()
     const auto summary = task->summary; const auto revision = task->revision;
     const auto safe = Component::SafePointer<Editor> (this);
     DialogWindow::LaunchOptions dialog;
-    dialog.dialogTitle = "Review and revise mapping - C4 = MIDI 60";
+    dialog.dialogTitle = task->sfz ? "Review SFZ conversion - confirm replacement" : "Review and revise mapping - C4 = MIDI 60";
     dialog.dialogBackgroundColour = colours::panel;
     dialog.useNativeTitleBar = true; dialog.resizable = true; dialog.componentToCentreAround = this;
     dialog.content.setOwned (new ImportProposal (proposal, summary, task->first, [safe, proposal, revision, summary]
     {
         if (! safe) return;
         if (safe->plugin.changeCount() != revision) { safe->setStatus ("Instrument changed. Import again to make a fresh proposal."); return; }
-        safe->plugin.commitImport (std::move (*proposal)); safe->setPage (Page::mapping); safe->setStatus (summary);
-    }));
+        safe->plugin.commitImport (std::move (*proposal)); safe->selection = safe->initialZone(); safe->setPage (Page::mapping); safe->setStatus (summary);
+    }, task->sfz));
     refresh(); importReview = dialog.launchAsync();
 }
 void Editor::editGroup (const std::function<void(Group&)>& apply)
@@ -1371,7 +1428,7 @@ void Editor::Display::mouseUp (const MouseEvent& event)
 bool Editor::Display::isInterestedInFileDrag (const StringArray& files)
 {
     for (const auto& file : files)
-        if (sampleFile (file) || File (file).isDirectory()) return true;
+        if (sampleFile (file) || File (file).hasFileExtension ("sfz") || File (file).isDirectory()) return true;
     return false;
 }
 void Editor::Display::fileDragEnter (const StringArray&, int, int) { draggingFiles = true; repaint(); }
