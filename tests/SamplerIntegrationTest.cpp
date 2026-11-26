@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
-#include "SoundBankFixtures.h"
+#include "LegacyBankFixtures.h"
 #include "ExsFixtures.h"
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
@@ -362,6 +362,47 @@ Result verifyExsImport (const File& directory, Plugin& sampler, WavAudioFormat& 
     return Result::ok();
 }
 
+Result verifyLegacyBankImport (const File& directory, Plugin& sampler)
+{
+    namespace sb=studio::soundbank;
+    const auto root=directory.getChildFile("Legacy bank fixtures");
+    if(root.createDirectory().failed())return Result::fail("create legacy bank fixture folder");
+    const auto gig=root.getChildFile("Strings.gig"),program=root.getChildFile("Orchestra.P3"),sample=root.getChildFile("Strings.S3");
+    try
+    {
+        sb::fixtures::write(std::filesystem::u8path(gig.getFullPathName().toStdString()),sb::legacyfixtures::gig());
+        sb::fixtures::write(std::filesystem::u8path(program.getFullPathName().toStdString()),sb::legacyfixtures::program(true));
+        sb::fixtures::write(std::filesystem::u8path(sample.getFullPathName().toStdString()),sb::legacyfixtures::sample(true));
+    }
+    catch(...) {return Result::fail("write legacy bank fixtures");}
+    for(const auto& file:{gig,program})
+    {
+        const bool isGig=file==gig;
+        const auto revision=sampler.changeCount();
+        BankImportMedia media;media.parent=root;
+        Instrument proposal;String report;
+        std::vector<BankProgram> catalog;
+        if(Plugin::catalogSoundBank(file,catalog).failed()||catalog.size()!=1)
+            return Result::fail("catalog legacy bank");
+        if(auto r=Plugin::prepareSoundBank(file,0,proposal,report,media);r.failed())return r;
+        if(sampler.changeCount()!=revision||proposal.zones.size()!=1)return Result::fail("legacy bank proposal must be transactional");
+        const auto& z=proposal.zones[0].mapping;
+        if(!z.sample||!z.sample->stream||z.sample->frameCount()!=196608||z.low!=48||z.high!=72||
+           z.root!=(isGig?62:60)||z.loopEnd!=(isGig?9216:100001)||!z.loop)
+            return Result::fail("legacy mapping and streamed WAV conversion");
+        StreamCache::Cursor cursor;float l=0,r=0;
+        if(!z.sample->readFrame(131072,cursor,l,r,true)||std::abs(l+0.5f)>2e-5f)
+            return Result::fail("legacy PCM extraction");
+        sampler.commitImport(proposal);media.keep=true;
+        const auto preset=root.getChildFile(isGig?"GIG.studiosampler":"Akai.studiosampler");
+        if(sampler.savePreset(preset).failed()||sampler.loadPreset(preset).failed()||
+           !sampler.instrument().zones[0].mapping.sample||!sampler.instrument().zones[0].mapping.sample->stream)
+            return Result::fail("legacy native preset restore");
+        sampler.commitImport({},false);
+    }
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -513,6 +554,7 @@ Result run (const File& screenshots)
     if (auto imported = verifySfzImport (directory, *other, wav); imported.failed()) return imported;
     if (auto bank = verifySoundBankImport (directory, *other); bank.failed()) return bank;
     if (auto exs = verifyExsImport (directory, *other, wav); exs.failed()) return exs;
+    if (auto legacy = verifyLegacyBankImport (directory, *other); legacy.failed()) return legacy;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;

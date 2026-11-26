@@ -16,7 +16,7 @@ bool sampleFile (const String& path)
     return File (path).hasFileExtension ("wav;wave;aif;aiff;aifc;caf");
 }
 
-bool soundBankFile (const File& file) { return file.hasFileExtension ("sf2;sf3;dls"); }
+bool soundBankFile (const File& file) { return file.hasFileExtension ("sf2;sf3;dls;gig;p1;p3;s1;s3"); }
 
 class BankChooser final : public Component
 {
@@ -271,7 +271,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     load.setColour (TextButton::buttonColourId, colours::action);
     load.setColour (TextButton::textColourOffId, colours::rail);
     loadPreset.onClick = [this] { choose (true, false, false); };
-    loadPreset.setTooltip ("Load a Studio preset, SFZ/EXS instrument, or SF2/SF3/DLS bank for review.");
+    loadPreset.setTooltip ("Load a Studio preset, SFZ/EXS instrument, SF2/SF3/DLS/GIG bank or extracted Akai P1/P3/S1/S3 file for review.");
     savePreset.onClick = [this] { choose (true, true, false); };
     basic.onClick = [this] { setPage (Page::basic); };
     groups.onClick = [this] { setPage (Page::groups); };
@@ -986,7 +986,7 @@ void Editor::choose (bool presetFile, bool save, bool replace)
     chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio preset, SFZ, EXS or sound bank")
                                                        : (replace ? "Locate sample" : "Load sample"),
         save ? File::getSpecialLocation (File::userDocumentsDirectory).getChildFile (File::createLegalFileName (plugin.instrument().name) + ".studiosampler") : File(),
-        presetFile ? (save ? "*.studiosampler" : "*.studiosampler;*.sfz;*.sf2;*.sf3;*.dls;*.exs") : (replace ? "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf;*.sfz;*.sf2;*.sf3;*.dls;*.exs"), true, false, this);
+        presetFile ? (save ? "*.studiosampler" : "*.studiosampler;*.sfz;*.sf2;*.sf3;*.dls;*.exs;*.gig;*.p1;*.p3;*.s1;*.s3") : (replace ? "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf;*.sfz;*.sf2;*.sf3;*.dls;*.exs;*.gig;*.p1;*.p3;*.s1;*.s3"), true, false, this);
     const auto modeFlags = save ? FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting
                                 : FileBrowserComponent::openMode;
     chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles | (! presetFile && ! replace ? FileBrowserComponent::canSelectMultipleItems | FileBrowserComponent::canSelectDirectories : 0),

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
@@ -47,6 +48,9 @@ struct Audio
     Encoding encoding=Encoding::pcm16;
     U64 offset=0, bytes=0, lowBytes=0;
     int channels=1, rate=44100, frames=0;
+    std::filesystem::path external;
+    U64 externalSize=0;
+    std::filesystem::file_time_type externalTime {};
 };
 struct Region
 {
@@ -54,7 +58,7 @@ struct Region
     int root=60, low=0, high=127, soft=1, hard=127;
     int start=0, end=0, loopStart=0, loopEnd=0, transpose=0, keyTrack=100;
     float cents=0, gainDb=0, pan=0, attack=.001f, decay=.001f, sustain=1, release=.001f;
-    bool loop=false, sustainLoop=false;
+    bool loop=false, sustainLoop=false, oneShot=false;
 };
 struct Program { std::string name; U32 bank=0, number=0; bool drums=false; };
 struct Mapping { std::vector<Region> regions; std::set<std::string> warnings; };
@@ -64,26 +68,33 @@ struct Mapping { std::vector<Region> regions; std::set<std::string> warnings; };
 class Bank
 {
 public:
-    explicit Bank (const std::filesystem::path& path) : input(path,std::ios::binary)
+    explicit Bank (const std::filesystem::path& path) : input(path,std::ios::binary), sourcePath(path)
     {
         if (!input) fail("Cannot open sound bank");
         input.seekg(0,std::ios::end);
         const auto end=input.tellg();
         if(end<12) fail("Invalid RIFF bank");
         length=static_cast<U64>(end);
+        const auto ext=lower(path.extension().string());
+        isGig=ext==".gig";
+        if(ext==".p1"||ext==".p3"||ext==".s1"||ext==".s3")
+        {
+            isAkai=true; loadAkai(ext); return;
+        }
         const auto h=read(0,12);
         if(fourcc(h,0)!="RIFF") fail("Not a little-endian RIFF sound bank");
         const U64 declared=U64(u32(h,4))+8;
         if(declared>length || declared<12) fail("Truncated RIFF bank");
         const auto type=fourcc(h,8);
         const auto chunks=children(12,declared);
+        if(isGig&&type!="DLS ")fail("GIG requires a DLS-derived RIFF container");
         if(type=="sfbk") loadSf(chunks);
         else if(type=="DLS ") loadDls(chunks);
         else fail("Unsupported RIFF bank type");
         if(programs.empty()) fail("No instruments in bank");
     }
     std::vector<Program> programs;
-    bool isDls=false;
+    bool isDls=false, isGig=false, isAkai=false;
     Bytes read(U64 offset,U64 count)
     {
         if(offset>length || count>length-offset || count>32u*1024u*1024u) fail("Invalid or oversized bank metadata read");
@@ -95,17 +106,36 @@ public:
         }
         return b;
     }
+    Bytes readAudio(const Audio& audio,U64 offset,U64 count)
+    {
+        if(audio.external.empty())return read(offset,count);
+        if(count>32u*1024u*1024u||offset>audio.externalSize||count>audio.externalSize-offset||
+           std::filesystem::file_size(audio.external)!=audio.externalSize||
+           std::filesystem::last_write_time(audio.external)!=audio.externalTime)
+            fail("Akai source sample changed or read exceeds its bounds");
+        std::ifstream file(audio.external,std::ios::binary);
+        Bytes bytes(static_cast<std::size_t>(count));
+        file.seekg(static_cast<std::streamoff>(offset));
+        if(!file.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(count)))
+            fail("Cannot read external Akai sample");
+        return bytes;
+    }
     Mapping resolve(std::size_t index,int maxRegions=128)
     {
         if(index>=programs.size() || maxRegions<1) fail("Invalid bank instrument selection");
         Mapping result;
-        if(isDls) resolveDls(index,result,maxRegions);
+        if(isAkai) resolveAkai(result,maxRegions);
+        else if(isDls) resolveDls(index,result,maxRegions);
         else resolveSf(index,result,maxRegions);
         if(result.regions.empty()) fail("No convertible regions in this bank instrument");
         return result;
     }
 private:
     std::ifstream input;
+    std::filesystem::path sourcePath;
+    Bytes akaiHeader;
+    int akaiStride=0;
+    bool akaiSingle=false;
     U64 length=0;
     Chunk smpl,sm24;
     Bytes phdr,pbag,pgen,pmod,inst,ibag,igen,imod,shdr;
@@ -149,6 +179,151 @@ private:
     {
         if(static_cast<int>(m.regions.size())>=limit) fail("Instrument exceeds Studio region limit; no partial conversion");
         m.regions.push_back(std::move(r));
+    }
+    static std::string lower(std::string s)
+    {
+        for(auto& c:s)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    }
+    static std::string akaiName(const Bytes& b,std::size_t p)
+    {
+        constexpr char alphabet[]="0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ#+-.";
+        if(p>b.size()||b.size()-p<12)fail("Truncated Akai name");
+        std::string s;
+        for(std::size_t i=0;i<12;++i)
+        {
+            const auto c=b[p+i];if(c>=sizeof(alphabet)-1)fail("Invalid Akai name encoding");
+            s+=alphabet[c];
+        }
+        while(!s.empty()&&s.back()==' ')s.pop_back();
+        return s;
+    }
+    static int signedByte(unsigned char b){return b<128?int(b):int(b)-256;}
+    void loadAkai(const std::string& ext)
+    {
+        akaiStride=(ext==".p1"||ext==".s1")?150:192;
+        akaiSingle=ext==".s1"||ext==".s3";
+        akaiHeader=read(0,akaiStride);
+        if(akaiHeader[0]!=(akaiSingle?3:1))fail("Invalid Akai block ID");
+        const auto name=akaiName(akaiHeader,3);
+        if(name.empty())fail("Empty Akai instrument name");
+        if(!akaiSingle)
+        {
+            const auto groups=akaiHeader[42];
+            if(groups==0||groups>99||length!=U64(groups+1)*akaiStride||akaiHeader[15]>127)
+                fail("Invalid Akai program size or keygroup count");
+        }
+        else if(length!=U64(akaiStride)+U64(u32(akaiHeader,26))*2)
+            fail("Akai sample size does not match extension and frame count");
+        programs.push_back({name,0,akaiSingle?0u:U32(akaiHeader[15]),false});
+    }
+    static Bytes externalHeader(const std::filesystem::path& p,int stride)
+    {
+        Bytes h(static_cast<std::size_t>(stride));
+        std::ifstream f(p,std::ios::binary);
+        if(!f.read(reinterpret_cast<char*>(h.data()),stride))fail("Truncated Akai sample header");
+        return h;
+    }
+    static void applyTune(Region& r,double cents)
+    {
+        r.transpose=static_cast<int>(cents/100.0);r.cents=float(cents-r.transpose*100);
+        if(r.transpose < -48||r.transpose > 48)fail("Akai tuning exceeds native range");
+    }
+    Region akaiSample(const std::filesystem::path& p,Mapping& m)
+    {
+        const auto ext=lower(p.extension().string());
+        const int stride=ext==".s1"?150:ext==".s3"?192:0;
+        if(!stride)fail("Akai sample requires .s1 or .s3 extension");
+        const auto size=std::filesystem::file_size(p);
+        const auto time=std::filesystem::last_write_time(p);
+        const auto h=externalHeader(p,stride);
+        if(h[0]!=3||h[2]>127)fail("Invalid Akai sample header");
+        Region r;
+        const auto frames=boundedInt(u32(h,26)),rate=int(u16(h,138));
+        if(frames<2||rate<1000||size!=U64(stride)+U64(frames)*2)
+            fail("Invalid Akai sample length, rate or generation");
+        r.audio={Encoding::pcm16,U64(stride),U64(frames)*2,0,1,rate,frames};
+        r.audio.external=p;r.audio.externalSize=size;r.audio.externalTime=time;
+        r.root=h[2];r.start=boundedInt(u32(h,30));r.end=boundedInt(u32(h,34));
+        if(r.end==0)r.end=frames;
+        if(r.start>=r.end||r.end>frames)fail("Invalid Akai sample playback bounds");
+        applyTune(r,s16(h,20)*100.0/256.0);
+        const int mode=h[19];
+        if(mode>3)fail("Unsupported Akai sample playback mode");
+        r.oneShot=mode==3;
+        if(mode<2)
+        {
+            int active=0;
+            for(int i=0;i<8;++i)
+            {
+                const auto pos=std::size_t(38+i*12);
+                const auto times=u16(h,pos+10);
+                if(!times)continue;
+                ++active;
+                if(times!=9999||u16(h,pos+4)!=0)fail("Timed or fractional Akai loop not supported");
+                const auto at=u32(h,pos),len=u32(h,pos+6);
+                if(len<2||at<len||at>=U32(r.end)||at-len<U32(r.start))
+                    fail("Invalid Akai hold-loop bounds");
+                r.loopStart=boundedInt(at-len);r.loopEnd=boundedInt(U64(at)+1);
+            }
+            if(active!=1)fail("Akai loop playback requires exactly one integer hold loop");
+            r.loop=true;r.sustainLoop=mode==1;
+        }
+        if(h[140]!=0)m.warnings.insert("Akai loop-specific tuning not converted");
+        return r;
+    }
+    void resolveAkai(Mapping& m,int limit)
+    {
+        m.warnings.insert("Akai synthesis, envelopes, filter, modulation, output routing, velocity crossfade and level curves are not emulated");
+        if(akaiSingle)
+        {
+            append(m,akaiSample(sourcePath,m),limit);return;
+        }
+        const auto directory=sourcePath.parent_path().empty()?std::filesystem::path("."):sourcePath.parent_path();
+        std::map<std::string,std::vector<std::filesystem::path>> samples;
+        int entries=0;
+        for(const auto& item:std::filesystem::directory_iterator(directory))
+        {
+            if(++entries>20000)fail("Akai sample directory entry limit exceeded");
+            if(item.is_symlink()||!item.is_regular_file())continue;
+            const auto p=item.path();const auto ext=lower(p.extension().string());
+            if(ext!=".s1"&&ext!=".s3")continue;
+            const auto h=externalHeader(p,ext==".s1"?150:192);
+            if(h[0]!=3)continue;
+            samples[lower(akaiName(h,3))].push_back(p);
+        }
+        std::map<std::string,Region> loaded;
+        const int progLo=akaiHeader[19],progHi=akaiHeader[20];
+        bounds(progLo,progHi,0,127);
+        const int octave=signedByte(akaiHeader[21]);
+        if(octave < -2||octave > 2)fail("Invalid Akai octave shift");
+        for(int g=0;g<akaiHeader[42];++g)
+        {
+            const auto kg=read(U64(g+1)*akaiStride,akaiStride);
+            if(kg[0]!=2)fail("Invalid Akai keygroup block");
+            bounds(kg[3],kg[4],0,127);
+            const int lo=std::max(progLo,int(kg[3])),hi=std::min(progHi,int(kg[4]));
+            if(lo>hi)continue;
+            for(int z=0;z<4;++z)
+            {
+                const auto pos=std::size_t(34+24*z);
+                const int soft=std::max(1,int(kg[pos+12])),hard=kg[pos+13];
+                if(soft>hard)continue;
+                bounds(soft,hard,1,127);
+                const auto name=lower(akaiName(kg,pos));
+                if(name.empty()||!samples.count(name))throw std::runtime_error("Missing Akai sample in program folder: "+name);
+                if(samples.at(name).size()!=1)throw std::runtime_error("Ambiguous Akai sample name in program folder: "+name);
+                if(!loaded.count(name))loaded.emplace(name,akaiSample(samples.at(name).front(),m));
+                auto r=loaded.at(name);
+                r.low=lo;r.high=hi;r.soft=soft;r.hard=hard;
+                applyTune(r,r.transpose*100.0+r.cents+octave*1200.0+
+                            (s16(akaiHeader,65)+s16(kg,5)+s16(kg,pos+14))*100.0/256.0);
+                r.pan=float(std::clamp((signedByte(akaiHeader[24])+signedByte(kg[pos+18]))*2,-100,100));
+                if(kg[pos+19]!=0)m.warnings.insert("Akai zone-specific loop override not converted");
+                append(m,r,limit);
+            }
+        }
+        m.warnings.insert("Akai -L/-R samples remain separate mono regions; no automatic stereo pairing");
     }
     void loadSf(const std::vector<Chunk>& chunks)
     {
@@ -351,8 +526,28 @@ private:
         {
             ++count;
             const auto rs=children(rc);const auto rh=get(rs,"rgnh"),wl=get(rs,"wlnk");
-            if(rh.size<12||wl.size<12)fail("Truncated DLS region");
-            const auto h=read(rh.data,12),l=read(wl.data,12);
+            const auto dimensions=get(rs,"3lnk");
+            const bool gig=isGig||!dimensions.id.empty();
+            if(rh.size<12||(!gig&&wl.size<12))fail("Truncated DLS region");
+            const auto h=read(rh.data,12),l=wl.size>=12?read(wl.data,12):Bytes(12);
+            U32 cue=u32(l,8);
+            Chunk gigWs;
+            if(gig)
+            {
+                if(dimensions.size!=172&&dimensions.size!=1092)fail("Unsupported GIG dimension-table layout");
+                const auto d=read(dimensions.data,dimensions.size);
+                if(u32(d,0)!=1)fail("Multi-dimension GIG instrument requires future dimension conversion");
+                const std::size_t cueOffset=dimensions.size==172?44:68;
+                cue=u32(d,cueOffset);
+                const auto subregions=get(rs,"LIST","3prg");
+                if(subregions.id.empty())fail("Missing GIG dimension-region list");
+                int subCount=0;
+                for(const auto& sub:children(subregions))
+                    if(sub.id=="LIST"&&sub.type=="3ewl")
+                    {++subCount;gigWs=get(children(sub),"wsmp");}
+                if(subCount!=1||gigWs.id.empty())fail("Unsupported GIG dimension sample metadata");
+                m.warnings.insert("GIG single-dimension PCM conversion only; GigaStudio envelope, filter, LFO and articulation effects not converted");
+            }
             Region r;
             r.low=int(u16(h,0));r.high=int(u16(h,2));r.soft=std::max(1,int(u16(h,4)));r.hard=int(u16(h,6));
             bounds(r.low,r.high,0,127);bounds(r.soft,r.hard,1,127);
@@ -360,9 +555,9 @@ private:
             if(u16(l,0)&1) m.warnings.insert("DLS multichannel phase groups not emulated");
             if(!get(rs,"LIST","lart").id.empty()||!get(rs,"LIST","lar2").id.empty()) m.warnings.insert("DLS region articulation connections not converted");
             if(!get(rs,"cdl ").id.empty())fail("Conditional DLS region not supported");
-            const auto cue=u32(l,8);
             if(cue>=cues.size()||!dlsWaves.count(cues[cue]))fail("Invalid DLS wave pool reference");
             const auto wave=children(dlsWaves.at(cues[cue]));const auto fmt=get(wave,"fmt "),data=get(wave,"data");
+            if(gig&&!get(wave,"ewav").id.empty())fail("Compressed GIG audio not supported");
             if(fmt.size<16||data.id.empty())fail("Missing DLS wave format/data");
             const auto f=read(fmt.data,16);
             const auto ch=u16(f,2),rate=u32(f,4),bits=u16(f,14),align=u16(f,12);
@@ -370,7 +565,7 @@ private:
                 fail("Unsupported DLS wave encoding (PCM 8/16/24-bit mono/stereo required)");
             r.audio={bits==8?Encoding::pcm8:bits==16?Encoding::pcm16:Encoding::pcm24,data.data,data.size,0,int(ch),int(rate),boundedInt(data.size/align)};
             if(r.audio.frames<2)fail("Empty DLS wave");
-            auto ws=get(rs,"wsmp");if(ws.id.empty())ws=get(wave,"wsmp");
+            auto ws=gig?gigWs:get(rs,"wsmp");if(ws.id.empty())ws=get(wave,"wsmp");
             if(!ws.id.empty())
             {
                 if(ws.size<20)fail("Truncated DLS wsmp");

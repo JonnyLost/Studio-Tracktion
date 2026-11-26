@@ -19,8 +19,10 @@ on:
       - feature/studio-sfz-importer-m20
       - feature/studio-sound-bank-importer-m21
       - feature/studio-exs24-importer-m22
+      - feature/studio-legacy-sampler-importer-m23
   pull_request:
     branches:
+      - feature/studio-exs24-importer-m22
       - feature/studio-sound-bank-importer-m21
       - feature/studio-sfz-importer-m20
       - feature/studio-sampler-disk-streaming-m19

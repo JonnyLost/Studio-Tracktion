@@ -1229,8 +1229,8 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
 
 Result Plugin::catalogSoundBank (const File& file, std::vector<BankProgram>& output, std::atomic<bool>* cancelled)
 {
-    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls"))
-        return Result::fail ("Select an existing SF2, SF3 or DLS bank.");
+    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls;gig;p1;p3;s1;s3"))
+        return Result::fail ("Select an existing SF2, SF3, DLS, GIG or extracted Akai P1/P3/S1/S3 file.");
     try
     {
         soundbank::Bank bank (sfz::path (file.getFullPathName().toStdString()));
@@ -1254,7 +1254,7 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
     using namespace soundbank;
     const auto aborted = [&] { return cancelled && cancelled->load(); };
     if (aborted()) return Result::fail ("Import cancelled.");
-    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls") || media.directory != File())
+    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls;gig;p1;p3;s1;s3") || media.directory != File())
         return Result::fail ("Select an existing bank and a fresh conversion.");
     const auto originalSize = file.getSize();
     const auto originalTime = file.getLastModificationTime();
@@ -1286,7 +1286,8 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
         const auto same = [] (const Audio& a,const Audio& b)
         {
             return a.encoding==b.encoding && a.offset==b.offset && a.bytes==b.bytes
-                && a.lowBytes==b.lowBytes && a.channels==b.channels && a.rate==b.rate && a.frames==b.frames;
+                && a.lowBytes==b.lowBytes && a.channels==b.channels && a.rate==b.rate && a.frames==b.frames
+                && a.external==b.external && a.externalSize==b.externalSize && a.externalTime==b.externalTime;
         };
         constexpr U64 maximumOutput = 2ull * 1024 * 1024 * 1024;
         U64 outputBytes = 0;
@@ -1352,7 +1353,7 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
                         else
                         {
                             const int width = src.encoding==Encoding::pcm8 ? 1 : src.encoding==Encoding::pcm24 ? 3 : 2;
-                            const auto raw = bank.read (src.offset+U64(first)*channels*width,U64(count)*channels*width);
+                            const auto raw = bank.readAudio (src,src.offset+U64(first)*channels*width,U64(count)*channels*width);
                             const auto low = src.encoding==Encoding::sf24 ? bank.read (src.lowBytes+U64(first),U64(count)) : Bytes{};
                             for (int n=0;n<count;++n)
                                 for(int ch=0;ch<channels;++ch)
@@ -1387,7 +1388,7 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
             }
             z.root=region.root;z.low=region.low;z.high=region.high;z.soft=region.soft;z.hard=region.hard;
             z.gainDb=region.gainDb;z.cents=region.cents;
-            z.start=region.start;z.end=region.end;z.loop=region.loop;
+            z.start=region.start;z.end=region.end;z.loop=region.loop;z.oneShot=region.oneShot;
             z.loopStart=region.loopStart;z.loopEnd=region.loop ? region.loopEnd : z.sample->frameCount();
             z.loopCrossfade=0;
             z.sfz.enabled=true;z.sfz.sustainLoop=region.sustainLoop;
