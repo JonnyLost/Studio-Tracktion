@@ -381,6 +381,8 @@ void InstrumentBrowser::updateDetails()
     load.setTitle (load.getTooltip());
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
+                   : effect ? (canInsertEffect ? "Apple effect target | " + targetName
+                          : "Select an unfrozen track and stop recording to insert an effect")
                    : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track | " + targetName,
                    dontSendNotification);
     status.setTooltip (status.getText());
@@ -525,7 +527,6 @@ void InstrumentBrowser::resized()
         if (! compact) typeList.setBounds (area.removeFromLeft (m.span (120)));
         resultList.setBounds (area);
     }
-    const auto shortActions = detailPanel.getWidth() < m.span (222);
     // The selected entry owns the action label (instrument, AU editor or effect).
     auto detail = detailPanel.reduced (m.px (8), m.px (2));
     if (add.isVisible()) add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
