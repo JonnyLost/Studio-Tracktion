@@ -270,7 +270,7 @@ private:
     }
 };
 
-enum class TransportIcon { start, play, stop, record, cycle, click };
+enum class TransportIcon { start, play, stop, record, captureMidi, cycle, click };
 
 class TransportButton final : public juce::TextButton
 {
@@ -295,7 +295,7 @@ public:
 
     void paintButton (juce::Graphics& g, bool hovered, bool down) override
     {
-        const bool recording = icon == TransportIcon::record;
+        const bool recording = icon == TransportIcon::record || icon == TransportIcon::captureMidi;
         const auto tint = recording ? colours::record : getToggleState() ? colours::signal : colours::action;
         const auto colour = getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
         getLookAndFeel().drawButtonBackground (g, *this, colour, hovered, down);
@@ -323,6 +323,17 @@ public:
             case TransportIcon::record:
                 g.drawEllipse (1.8f, 1.8f, 12.4f, 12.4f, 1.25f);
                 g.fillEllipse (4.5f, 4.5f, 7.0f, 7.0f);
+                break;
+            case TransportIcon::captureMidi:
+                // Render with JUCE primitives, never font glyphs that may mojibake.
+                g.drawEllipse (5.0f, 5.0f, 9.0f, 9.0f, 1.3f);
+                g.fillEllipse (7.3f, 7.3f, 4.4f, 4.4f);
+                path.startNewSubPath (8.0f, 3.5f);
+                path.cubicTo (4.8f, 1.0f, 1.3f, 3.8f, 2.0f, 7.0f);
+                g.strokePath (path, juce::PathStrokeType (1.3f));
+                path.clear();
+                path.addTriangle (0.2f, 6.0f, 4.2f, 6.0f, 1.8f, 9.3f);
+                g.fillPath (path);
                 break;
             case TransportIcon::cycle:
                 g.drawLine (2.0f, 5.2f, 13.4f, 5.2f, 1.35f);
