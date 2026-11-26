@@ -24,8 +24,10 @@ on:
       - feature/studio-universal-library-m25
       - feature/studio-sampler-performance-m26
       - feature/studio-sampler-stabilization-m27
+      - feature/studio-sampler-interface-m28
   pull_request:
     branches:
+      - feature/studio-sampler-stabilization-m27
       - feature/studio-sampler-performance-m26
       - feature/studio-universal-library-m25
       - feature/studio-decent-kontakt-importer-m24

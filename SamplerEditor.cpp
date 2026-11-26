@@ -199,14 +199,14 @@ Editor::Editor (Plugin& p) : plugin (p)
     limits.setSizeLimits (460, 320, 1600, 1000);
     limits.setMinimumOnscreenAmounts (0x10000, 30, 28, 30);
     for (Component* c : std::initializer_list<Component*> { &name, &preset, &loadPreset, &savePreset, &audition,
-             &basic, &mapping, &groups, &loops, &advanced, &keyboard, &viewport, &cancelImport })
+             &play, &basic, &build, &mapping, &groups, &loops, &advanced, &keyboard, &viewport, &cancelImport })
         addAndMakeVisible (*c);
 
     viewport.setViewedComponent (&body, false);
     viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
-             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView })
+             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView, &playSummary, &playHelp, &articulationLabel, &soundScope, &articulationChoice, &applyArticulation })
         body.addAndMakeVisible (*c);
 
     auto* plot = owned.add (new EnvelopePlot (p, [this] { return zone(); }));
@@ -223,7 +223,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     name.setTitle ("Instrument name");
     name.onTextChange = [this] { plugin.rename (name.getText()); };
 
-    for (auto* button : { &loadPreset, &savePreset, &basic, &mapping, &groups, &loops, &advanced,
+    for (auto* button : { &loadPreset, &savePreset, &play, &basic, &build, &mapping, &groups, &loops, &advanced,
                           &load, &locate, &remove, &audition })
     {
         button->setTitle (button->getButtonText());
@@ -273,7 +273,35 @@ Editor::Editor (Plugin& p) : plugin (p)
     loadPreset.onClick = [this] { choose (true, false, false); };
     loadPreset.setTooltip ("Load a Studio preset or import SFZ, EXS, Decent Sampler, legacy Kontakt, SoundFont, DLS, GIG or extracted Akai.");
     savePreset.onClick = [this] { choose (true, true, false); };
+    play.onClick = [this] { setPage (Page::perform); };
     basic.onClick = [this] { setPage (Page::basic); };
+    build.onClick = [this] { setPage (lastBuildPage); };
+    play.setTooltip ("Play the complete instrument with its configured articulations.");
+    basic.setTooltip ("Adjust instrument volume, tuning and amplitude envelope.");
+    build.setTooltip ("Edit individual recordings, keyboard mapping, groups and loops.");
+    loadPreset.setButtonText ("Open");
+    loadPreset.setTitle ("Open instrument");
+    savePreset.setButtonText ("Save");
+    savePreset.setTitle ("Save instrument");
+    articulationLabel.setText ("Articulation", dontSendNotification);
+    articulationChoice.setTextWhenNothingSelected ("No articulation selected");
+    articulationChoice.setTitle ("Available instrument articulations");
+    articulationChoice.onChange = [this] { applyArticulation.setEnabled (articulationChoice.getSelectedId() > 0); };
+    applyArticulation.setTooltip ("Send the selected instrument's actual keyswitch or MIDI controller message.");
+    applyArticulation.onClick = [this]
+    {
+        const int i = articulationChoice.getSelectedId() - 1;
+        if (! isPositiveAndBelow (i, static_cast<int> (playableArticulations.size()))) return;
+        if (plugin.sendArticulation (playableArticulations[static_cast<std::size_t> (i)]))
+            setStatus ("Sent: " + playableArticulations[static_cast<std::size_t> (i)].name);
+        else setStatus ("Articulation unavailable. Check the instrument mapping.");
+    };
+    for (auto* l : { &playSummary, &playHelp, &soundScope, &articulationLabel })
+    {
+        l->setColour (Label::textColourId, colours::secondary);
+        l->setMinimumHorizontalScale (1.0f);
+        l->setBorderSize (BorderSize<int>());
+    }
     groups.onClick = [this] { setPage (Page::groups); };
     undo.onClick = [this] { plugin.undoMapping (false); refresh(); };
     redo.onClick = [this] { plugin.undoMapping (true); refresh(); };
@@ -538,6 +566,7 @@ void Editor::selectZone (int index)
 void Editor::setPage (Page value)
 {
     page = value;
+    if (page != Page::perform && page != Page::basic) lastBuildPage = page;
     viewport.setViewPosition (0, 0);
     refresh();
 }
@@ -723,15 +752,76 @@ void Editor::refresh()
         c->slider.setTooltip (z.sfz.enabled ? "SFZ crossfade endpoints preserved from the source definition." : "Native velocity crossfade steps.");
     }
     loopFade.slider.setEnabled (entry != nullptr);
+    refreshPerformance();
     resized();
     display.repaint();
     keyboard.repaint();
 }
 
+void Editor::refreshPerformance()
+{
+    const bool performing = page == Page::perform;
+    const bool sound = page == Page::basic;
+    const bool building = ! performing && ! sound;
+    play.setToggleState (performing, dontSendNotification);
+    build.setToggleState (building, dontSendNotification);
+    for (auto* tab : { &mapping, &groups, &loops, &advanced }) tab->setVisible (building);
+    for (auto* c : std::initializer_list<Component*> { &playSummary, &playHelp, &articulationLabel, &articulationChoice, &applyArticulation })
+        c->setVisible (performing);
+    soundScope.setVisible (sound);
+    if (sound)
+    {
+        // Imported envelopes belong to the selected region, not the whole patch.
+        const auto* entry = zone();
+        soundScope.setText (entry && entry->mapping.sfz.enabled ? "Envelope edits the selected recording; volume and tuning affect the whole instrument."
+                                                              : "Envelope, volume and tuning affect the whole instrument.", dontSendNotification);
+        samples.setVisible (entry && entry->mapping.sfz.enabled);
+        root.label.setVisible (false); root.slider.setVisible (false);
+        tune.label.setVisible (true); tune.slider.setVisible (true);
+    }
+    if (! performing) return;
+    const auto& model = plugin.instrument();
+    int available = 0, missing = 0;
+    for (const auto& z : model.zones)
+        if (z.mapping.sample && z.problem.isEmpty()) ++available; else ++missing;
+    playSummary.setText (model.zones.empty() ? "No instrument loaded" : String (available) + " playable recordings" +
+        (missing ? " | " + String (missing) + " unavailable" : " | Ready to play"), dontSendNotification);
+    playHelp.setText (model.zones.empty() ? "Open an instrument or choose Build." :
+        "Play your keyboard. Shape the sound in Sound.", dontSendNotification);
+    const auto previous = articulationChoice.getSelectedId();
+    auto next = plugin.articulations();
+    std::erase_if (next, [&model] (const auto& a)
+    {
+        for (const auto& g : model.groups)
+            if (a.id == "sampler-group-" + String (g.id))
+                return g.playback.mute || std::none_of (model.zones.begin(), model.zones.end(), [&g](const auto& z)
+                    { return z.folder == g.id && z.mapping.sample && z.problem.isEmpty(); });
+        return true;
+    });
+    if (next != playableArticulations)
+    {
+        playableArticulations = std::move (next);
+        articulationChoice.clear (dontSendNotification);
+        for (std::size_t i=0; i<playableArticulations.size(); ++i)
+            articulationChoice.addItem (playableArticulations[i].name, static_cast<int>(i)+1);
+        // Do not claim an articulation is active just because it appears first.
+        articulationChoice.setSelectedId (0, dontSendNotification);
+    }
+    else articulationChoice.setSelectedId (previous, dontSendNotification);
+    articulationChoice.setEnabled (! playableArticulations.empty());
+    articulationChoice.setTextWhenNothingSelected (playableArticulations.empty() ? "No mapped articulations" : "Choose an articulation");
+    applyArticulation.setEnabled (articulationChoice.getSelectedId() > 0);
+    for (auto* c : std::initializer_list<Component*> { &display, &samples, &filename, &mode, &loopEnabled, &envelope, &load, &locate, &remove, &editMapping, &meter, &audition })
+        c->setVisible (false);
+    for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
+                     &zoneGain, &cents, &mapZoom, &mapPosition, &keySwitch, &ccNumber, &ccLow, &ccHigh, &fadeIn, &fadeOut, &loopFade, &zoom, &position, &sampleStart, &sampleEnd, &loopStart, &loopEnd, &voices, &bend, &group })
+    { c->label.setVisible (c == &gain); c->slider.setVisible (c == &gain); }
+}
+
 void Editor::appearanceChanged()
 {
     name.setFont (FontOptions (20, Font::bold));
-    for (auto* label : { &preset, &filename, &status, &meter })
+    for (auto* label : { &preset, &filename, &status, &meter, &playSummary, &playHelp, &articulationLabel, &soundScope })
         label->setFont (FontOptions (12));
     for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
                      &zoneGain, &cents, &mapZoom, &mapPosition, &keySwitch, &ccNumber, &ccLow, &ccHigh, &fadeIn, &fadeOut, &loopFade, &zoom, &position, &sampleStart, &sampleEnd, &loopStart, &loopEnd, &voices, &bend, &group })
@@ -753,7 +843,7 @@ String Editor::viewState() const { return String (static_cast<int> (page)); }
 
 void Editor::restoreView (const String& stored)
 {
-    setPage (static_cast<Page> (jlimit (0, 4, stored.getIntValue())));
+    setPage (stored.isEmpty() ? Page::perform : static_cast<Page> (jlimit (0, 5, stored.getIntValue())));
 }
 
 void Editor::resized()
@@ -771,10 +861,11 @@ void Editor::resized()
     };
     auto buttons = header.removeFromRight (jmin (header.getWidth() * 3 / 5, m.span (300)));
     auto buttonRow = buttons.withSizeKeepingCentre (buttons.getWidth(), button);
-    const auto half = (buttonRow.getWidth() - 2 * gap) / 3;
+    const int headerButtons = page == Page::perform ? 2 : 3;
+    const auto half = (buttonRow.getWidth() - (headerButtons - 1) * gap) / headerButtons;
     put (buttonRow, loadPreset, half);
     put (buttonRow, savePreset, half);
-    put (buttonRow, audition, half);
+    if (page != Page::perform) put (buttonRow, audition, half);
     name.setBounds (header.removeFromTop (m.line (20, 1)));
     auto subtitle = header.removeFromTop (line);
     if (importTask) cancelImport.setBounds (subtitle.removeFromRight (jmin (subtitle.getWidth(), m.span (110))));
@@ -782,14 +873,42 @@ void Editor::resized()
 
     area.removeFromTop (gap);
     auto tabs = area.removeFromTop (button);
-    const int tabWidth = jmax (0, jmin (m.span (107), (tabs.getWidth() - 4 * gap) / 5));
-    for (auto* tab : { &basic, &mapping, &groups, &loops, &advanced }) put (tabs, *tab, tabWidth);
+    const int tabWidth = jmax (0, jmin (m.span (130), (tabs.getWidth() - 2 * gap) / 3));
+    for (auto* tab : { &play, &basic, &build }) put (tabs, *tab, tabWidth);
+    if (page != Page::perform && page != Page::basic)
+    {
+        area.removeFromTop (gap);
+        auto tools = area.removeFromTop (button);
+        const int w = jmax (0, jmin (m.span (130), (tools.getWidth() - 3 * gap) / 4));
+        for (auto* tab : { &mapping, &groups, &loops, &advanced }) put (tools, *tab, w);
+    }
     area.removeFromTop (gap);
     keyboard.setBounds (area.removeFromBottom (m.px (61)));
     area.removeFromBottom (gap);
     viewport.setBounds (area);
 
     const int width = jmax (1, viewport.getMaximumVisibleWidth() - viewport.getScrollBarThickness());
+    if (page == Page::perform)
+    {
+        const int height = line * 3 + button * 2 + gap * 4;
+        body.setSize (width, jmax (viewport.getHeight(), height));
+        auto content = body.getLocalBounds();
+        playSummary.setBounds (content.removeFromTop (line));
+        playHelp.setBounds (content.removeFromTop (line));
+        content.removeFromTop (gap);
+        auto row = content.removeFromTop (button);
+        put (row, articulationLabel, m.span (85));
+        put (row, applyArticulation, jmin (m.span (145), row.getWidth()/2));
+        articulationChoice.setBounds (row);
+        content.removeFromTop (gap);
+        row = content.removeFromTop (button);
+        put (row, gain.label, m.span (85));
+        gain.slider.setBounds (row.removeFromLeft (jmin (row.getWidth(), m.span (280))));
+        content.removeFromTop (gap);
+        status.setVisible (status.getText().isNotEmpty());
+        status.setBounds (content.removeFromTop (line));
+        return;
+    }
     if (page == Page::mapping || page == Page::groups)
     {
         const bool wide = width >= m.span (720);
@@ -866,14 +985,14 @@ void Editor::resized()
     for (auto* action : { &load, &locate, &remove, &editMapping })
         if (action->isVisible()) actions[static_cast<std::size_t> (actionCount++)] = action;
     const int actionRows = (actionCount + actionColumns - 1) / actionColumns;
-    const bool sampleList = page != Page::basic;
+    const bool sampleList = page != Page::basic || samples.isVisible();
     const bool hasWaveform = page != Page::advanced;
     const bool sampleName = page == Page::basic || page == Page::loops;
     const bool hasStatus = status.getText().isNotEmpty();
     const int builderRows = (page == Page::mapping ? 1 : page == Page::groups ? 3 : 0);
     const int height = builderRows * (button + gap) + (actionRows + (sampleList ? 1 : 0)) * (button + gap)
         + (sampleName ? line : 0) + (hasWaveform ? waveform + gap : 0) + (hasStatus ? line + gap : 0)
-        + (page == Page::basic ? dialHeight + gap : 0)
+        + (page == Page::basic ? dialHeight + gap + line * 2 : 0)
         + (page == Page::loops ? button + gap : 0)
         + rows * (line + button + gap) + (page == Page::advanced ? line * 3 : 0);
     body.setSize (width, jmax (viewport.getHeight(), height));
@@ -906,6 +1025,7 @@ void Editor::resized()
             put (row, *actions[static_cast<std::size_t> (i)], w);
         content.removeFromTop (gap);
     }
+    if (page == Page::basic) soundScope.setBounds (content.removeFromTop (line * 2));
     if (page == Page::basic || page == Page::loops)
         filename.setBounds (content.removeFromTop (line));
     if (page != Page::advanced)
@@ -955,7 +1075,7 @@ void Editor::resized()
         envelope.setBounds (shape.reduced (gap));
         owned[0]->setBounds (envelope.getLocalBounds());
         content.removeFromTop (gap);
-        placeGrid ({ &root, &gain }, 2);
+        placeGrid ({ &tune, &gain }, 2);
     }
     else if (page == Page::mapping || page == Page::groups)
         placeGrid ({ &root, &low, &high, &soft, &hard, &zoneGain, &cents, &group }, gridColumns);
@@ -1114,7 +1234,9 @@ void Editor::finishImport()
     {
         const int replaced = task->replace;
         plugin.commitImport (std::move (task->proposal), ! task->preset);
-        selection = replaced >= 0 ? replaced : initialZone(); refresh(); return;
+        selection = replaced >= 0 ? replaced : initialZone();
+        if (task->preset) setPage (Page::perform); else refresh();
+        return;
     }
     auto proposal = std::make_shared<Instrument> (std::move (task->proposal));
     const auto summary = task->summary; const auto revision = task->revision;
@@ -1124,12 +1246,13 @@ void Editor::finishImport()
     dialog.dialogBackgroundColour = colours::panel;
     dialog.useNativeTitleBar = true; dialog.resizable = true; dialog.componentToCentreAround = this;
     const auto media = task->bankMedia;
-    dialog.content.setOwned (new ImportProposal (proposal, summary, task->first, [safe, proposal, revision, summary, media]
+    const bool convertedInstrument = task->sfz || task->soundBank || task->exs || task->xmlInstrument;
+    dialog.content.setOwned (new ImportProposal (proposal, summary, task->first, [safe, proposal, revision, summary, media, convertedInstrument]
     {
         if (! safe) return;
         if (safe->plugin.changeCount() != revision) { safe->setStatus ("Instrument changed. Import again to make a fresh proposal."); return; }
         if (media) media->keep = true;
-        safe->plugin.commitImport (std::move (*proposal)); safe->selection = safe->initialZone(); safe->setPage (Page::mapping); safe->setStatus (summary);
+        safe->plugin.commitImport (std::move (*proposal)); safe->selection = safe->initialZone(); safe->setPage (convertedInstrument ? Page::perform : Page::mapping); safe->setStatus (convertedInstrument ? "Instrument loaded. Compatibility report reviewed." : summary);
     }, task->sfz || task->soundBank || task->exs || task->xmlInstrument));
     refresh(); importReview = dialog.launchAsync();
 }
@@ -1277,7 +1400,7 @@ Editor::Keyboard::Keyboard (Editor& editor, MidiKeyboardState& state)
 void Editor::Keyboard::drawRange (int note, Graphics& g, Rectangle<float> area)
 {
     const auto* selected = owner.zone();
-    if (selected && note >= selected->mapping.low && note <= selected->mapping.high)
+    if (owner.page != Page::perform && selected && note >= selected->mapping.low && note <= selected->mapping.high)
     {
         g.setColour (colours::action);
         g.fillRect (area.removeFromTop (3));
@@ -1611,7 +1734,7 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
-    if (page != Page::basic || zone() || audition.isEnabled() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
+    if (page != Page::perform || zone() || audition.isVisible() || mapping.isVisible() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
     startImport ({ first, second }, true);
     cancelImport.onClick();
     const auto importDeadline = Time::getMillisecondCounter() + 5000;
@@ -1631,6 +1754,20 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         if (auto* button = dynamic_cast<TextButton*> (child); button && button->getButtonText() == "Import") { button->onClick(); accepted = true; break; }
     MessageManager::getInstance()->runDispatchLoopUntil (20);
     if (! accepted) return reviewFailure (__LINE__);
+    play.onClick();
+    if (page != Page::perform || display.isVisible() || root.slider.isVisible() || !gain.slider.isVisible() || !capture ("sampler-play.png")) return reviewFailure (__LINE__);
+    const auto savedPlay = viewState();
+    const auto beforeViewChange = plugin.changeCount();
+    setSize (460, 320);
+    if (! getLocalBounds().contains (keyboard.getBounds()) || gain.slider.getBounds().isEmpty()
+        || ! capture ("sampler-play-compact.png")) return reviewFailure (__LINE__);
+    build.onClick();
+    if (! mapping.isVisible() || ! groups.isVisible() || ! loops.isVisible() || ! advanced.isVisible()
+        || page != Page::mapping) return reviewFailure (__LINE__);
+    restoreView (savedPlay);
+    if (page != Page::perform || mapping.isVisible() || plugin.changeCount() != beforeViewChange)
+        return reviewFailure (__LINE__);
+    setSize (800, 564);
     basic.onClick();
     if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return reviewFailure (__LINE__);
     attack.slider.setValue (23, sendNotificationSync);

@@ -93,7 +93,7 @@ Result verifyStreamedBounce (te::Engine& engine, const File& folder)
     constexpr int chunk = 8192;
     {
         WavAudioFormat format;
-        auto stream = media.createOutputStream();
+        std::unique_ptr<OutputStream> stream = media.createOutputStream();
         auto writer = format.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000)
             .withNumChannels (2).withBitsPerSample (24));
         AudioBuffer<float> signal (2, chunk);
