@@ -330,16 +330,18 @@ const InstrumentBrowser::Entry* InstrumentBrowser::selected() const
 
 void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction,
                                          bool samplerOnTrack, bool synthOnTrack,
-                                         bool effectReady, String loadedAppleId)
+                                         bool effectReady, String loadedAppleId, int selectedGmProgram)
 {
     if (canCreate == ready && targetName == name && targetRestriction == restriction
         && samplerOnTarget == samplerOnTrack && synthOnTarget == synthOnTrack
-        && canInsertEffect == effectReady && hostedAppleIdentifier == loadedAppleId) return;
+        && canInsertEffect == effectReady && hostedAppleIdentifier == loadedAppleId
+        && currentGmProgram == selectedGmProgram) return;
     canCreate = ready;
     samplerOnTarget = samplerOnTrack;
     synthOnTarget = synthOnTrack;
     canInsertEffect = effectReady;
     hostedAppleIdentifier = std::move (loadedAppleId);
+    currentGmProgram = selectedGmProgram;
     targetName = std::move (name);
     targetRestriction = std::move (restriction);
     updateDetails();
@@ -417,10 +419,12 @@ void InstrumentBrowser::updateDetails()
         && e->plugin.createIdentifierString() == hostedAppleIdentifier;
     const bool gmEntry = available && e->gmProgram >= 0;
     const bool gmOnTrack = gmEntry && appleHosted;
+    const bool gmSelected = gmOnTrack && currentGmProgram == e->gmProgram;
     const bool openNative = available && ((e->key == "studio-sampler" && samplerOnTarget)
         || (e->key.startsWith ("studio-synth-") && synthOnTarget));
     const bool effect = available && e->effect;
     load.setButtonText (effect ? "Insert Apple Effect"
+                               : gmSelected ? "Reselect GM Sound"
                                : gmOnTrack ? "Select GM Sound"
                                : gmEntry ? "Load GM Sound" : appleHosted ? "Open Apple AU"
                                : openNative ? "Open Instrument" : "Load on Selected Track");
@@ -443,6 +447,8 @@ void InstrumentBrowser::updateDetails()
     load.setTitle (load.getTooltip());
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
+                   : gmSelected ? "GM " + String (gm::displayNumber (e->gmProgram)) 
+                                    + " selected | " + targetName
                    : gmOnTrack ? "DLSMusicDevice ready | " + targetName
                    : effect ? (canInsertEffect ? "Apple effect target | " + targetName
                           : "Select an unfrozen track and stop recording to insert an effect")
@@ -492,8 +498,14 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
-    g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
-    g.drawFittedText (entry.type + " | " + (entry.effect ? "Insert Effect" : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
+    const bool activeGm = entry.gmProgram >= 0
+        && entry.plugin.createIdentifierString() == browser.hostedAppleIdentifier
+        && entry.gmProgram == browser.currentGmProgram;
+    g.setColour (activeGm ? colours::focus : entry.available ? colours::signal
+                           : entry.family == "Studio" ? colours::secondary : colours::warning);
+    g.drawFittedText (entry.type + " | " + (activeGm ? "Selected on track"
+                    : entry.effect ? "Insert Effect"
+                    : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
