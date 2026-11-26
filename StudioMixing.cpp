@@ -630,7 +630,7 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
         const auto height=jmax(atelierScroll.getHeight(),atelier->desiredHeight(width));
         if(atelier->getHeight()!=height)atelier->setSize(width,height);
     }
-    else atelier->setEdit(track != nullptr ? &track->edit : nullptr);
+    else atelier->suspend();
     quickFx.setEnabled (track != nullptr && canRoute);
     // Avoid encoded separators that can render as stray characters with
     // some Intel macOS font/fallback combinations.
