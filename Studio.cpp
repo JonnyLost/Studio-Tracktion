@@ -480,7 +480,7 @@ public:
         addAndMakeVisible (transportOptions);
         addAndMakeVisible (flashbackButton);
         addAndMakeVisible (keyboardButton);
-        keyboardButton.setTooltip ("Open the on-screen audition keyboard for the selected instrument (Shift-Command-K)");
+        keyboardButton.setTooltip ("Dock, float or hide the Cinematic Atelier MIDI keyboard (Shift-Command-K)");
         keyboardButton.onClick = [this] { showKeyboardChoices(); };
         flashbackButton.setTooltip ("Capture MIDI — recover recent unrecorded MIDI on the selected track");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
@@ -721,6 +721,23 @@ public:
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
         addChildComponent (dockedKeyboard);
+        dockedKeyboard.setDocked (true);
+        const SafePointer<StudioView> keyboardHost (this);
+        dockedKeyboard.onToggleDock = [keyboardHost]
+        {
+            // Defer changing the component hierarchy until after the click.
+            MessageManager::callAsync ([keyboardHost]
+            {
+                if (keyboardHost != nullptr) keyboardHost->setKeyboardDocked (false);
+            });
+        };
+        dockedKeyboard.onHide = [keyboardHost]
+        {
+            MessageManager::callAsync ([keyboardHost]
+            {
+                if (keyboardHost != nullptr) keyboardHost->hideAuditionKeyboard();
+            });
+        };
         if (keyboardDocked)
         {
             // Restore the persisted dock with the same live-MIDI routing as a manual dock.
@@ -2714,16 +2731,26 @@ private:
         });
         menu.addItem ("Hide keyboard", keyboardDocked || midiKeyboardWindow != nullptr, false, [safe]
         {
-            if (safe == nullptr) return;
-            safe->keyboardDocked = false;
-            safe->dockedKeyboard.releaseNotes();
-            safe->closeAuditionKeyboard();
-            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
-            prefs.setValue ("studio.keyboardDocked", false);
-            prefs.saveIfNeeded();
-            safe->resized();
+            if (safe != nullptr) safe->hideAuditionKeyboard();
         });
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardButton));
+    }
+
+    void hideAuditionKeyboard()
+    {
+        dockedKeyboard.releaseNotes();
+        dockedKeyboard.clearActivity();
+        dockedKeyboard.send = {};
+        keyboardDocked = false;
+        closeAuditionKeyboard();
+        keyboardInputActivity.detach();
+        displayedKeyboardTrack = {};
+        dockedKeyboardTarget = {};
+        lastKeyboardPlaybackPosition.reset();
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        prefs.setValue ("studio.keyboardDocked", false);
+        prefs.saveIfNeeded();
+        resized();
     }
 
     void setKeyboardDocked (bool dock)
@@ -2732,6 +2759,7 @@ private:
         {
             closeAuditionKeyboard();
             keyboardDocked = true;
+            dockedKeyboard.setDocked (true);
             if (auto* track = workflowTrack())
             {
                 dockedKeyboardTarget = track->itemID;
@@ -2766,6 +2794,8 @@ private:
         if (midiKeyboardWindow == nullptr) return;
         midiKeyboardWindow->panel.releaseNotes();
         midiKeyboardWindow->panel.send = {};
+        midiKeyboardWindow->panel.onToggleDock = {};
+        midiKeyboardWindow->panel.onHide = {};
         midiKeyboardWindow->onClose = {};
         midiKeyboardWindow->setLookAndFeel (nullptr);
         midiKeyboardWindow.reset();
@@ -2791,6 +2821,17 @@ private:
             return;
         }
         midiKeyboardWindow = std::make_unique<studio::AuditionKeyboardWindow>();
+        midiKeyboardWindow->panel.setDocked (false);
+        const SafePointer<StudioView> dockHost (this);
+        midiKeyboardWindow->panel.onToggleDock = [dockHost]
+        {
+            // Never destroy the floating window while its Dock button is
+            // still executing an onClick handler.
+            MessageManager::callAsync ([dockHost]
+            {
+                if (dockHost != nullptr) dockHost->setKeyboardDocked (true);
+            });
+        };
         auto* active = workflowTrack();
         keyboardTarget = active != nullptr && studio::findInstrument (*active) != nullptr
             ? active->itemID : te::EditItemID {};
