@@ -4713,6 +4713,16 @@ private:
             pluginStatus ("Load this Apple instrument on the selected track to browse its programs.");
             return;
         }
+        if (isAppleDls (*au))
+        {
+            // The Apple DLS synth exposes General MIDI using MIDI program
+            // change, not necessarily the AU's getNumPrograms() interface.
+            showWorkspace (Workspace::instruments);
+            browser.browseGeneralMidi();
+            pluginStatus ("Choose any General MIDI instrument in Apple Sounds. "
+                         "Double-click or use Select GM Sound to hear it.");
+            return;
+        }
 
         PopupMenu menu;
         menu.addSectionHeader (au->getName() + " | Installed Apple AU");
@@ -5240,8 +5250,21 @@ private:
                              + " on " + track->getName() + ".");
                 return;
             }
-            pluginStatus ("DLSMusicDevice loaded, but its GM sound could not be selected. "
-                         "Open the original Apple instrument and try again.");
+            // An AU can finish asynchronous initialization after Tracktion
+            // has inserted it. Persist the requested program as a retryable
+            // intent; restoreDlsPrograms applies it when the AU is ready.
+            if (auto* dls = dynamic_cast<te::ExternalPlugin*> (plugin.get());
+                dls != nullptr && isAppleDls (*dls))
+            {
+                dls->state.setProperty (Identifier ("studioDlsGmProgram"), gmProgram,
+                                        &edit->getUndoManager());
+                pluginStatus ("Loaded DLSMusicDevice. Applying GM "
+                             + String (studio::gm::displayNumber (gmProgram))
+                             + ": " + studio::gm::name (gmProgram)
+                             + " when the Audio Unit is ready.");
+            }
+            else
+                pluginStatus ("Could not initialize the requested GM instrument.");
             return;
         }
         auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
