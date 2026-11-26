@@ -1756,6 +1756,18 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if (! accepted) return reviewFailure (__LINE__);
     play.onClick();
     if (page != Page::perform || display.isVisible() || root.slider.isVisible() || !gain.slider.isVisible() || !capture ("sampler-play.png")) return reviewFailure (__LINE__);
+    const auto savedPlay = viewState();
+    const auto beforeViewChange = plugin.changeCount();
+    setSize (460, 320);
+    if (! getLocalBounds().contains (keyboard.getBounds()) || gain.slider.getBounds().isEmpty()
+        || ! capture ("sampler-play-compact.png")) return reviewFailure (__LINE__);
+    build.onClick();
+    if (! mapping.isVisible() || ! groups.isVisible() || ! loops.isVisible() || ! advanced.isVisible()
+        || page != Page::mapping) return reviewFailure (__LINE__);
+    restoreView (savedPlay);
+    if (page != Page::perform || mapping.isVisible() || plugin.changeCount() != beforeViewChange)
+        return reviewFailure (__LINE__);
+    setSize (800, 564);
     basic.onClick();
     if (! zone() || ! zone()->mapping.sample || ! audition.isEnabled() || ! capture ("sampler-basic.png")) return reviewFailure (__LINE__);
     attack.slider.setValue (23, sendNotificationSync);
