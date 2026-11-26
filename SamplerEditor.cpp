@@ -2058,10 +2058,10 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         return reviewFailure(__LINE__);
     // The review catalog is isolated from the user's real catalog.
     TemporaryFile libraryFixture(".xml");
-    library::Catalog catalog;library::Entry violin,cello;
-    violin.name="Review Violin";violin.family="Strings";violin.source=first;violin.format="sfz";
-    cello.name="Review Cello";cello.family="Strings";cello.source=second;cello.format="sfz";
-    catalog.entries={violin,cello};
+    library::Catalog catalog;library::Entry catalogViolin,catalogCello;
+    catalogViolin.name="Review Violin";catalogViolin.family="Strings";catalogViolin.source=first;catalogViolin.format="sfz";
+    catalogCello.name="Review Cello";catalogCello.family="Strings";catalogCello.source=second;catalogCello.format="sfz";
+    catalog.entries={catalogViolin,catalogCello};
     if(library::save(catalog,libraryFixture.getFile()).failed())return reviewFailure(__LINE__);
     library::Manager manager([](Instrument,library::Presentation){},libraryFixture.getFile());
     if(!manager.review(output))return reviewFailure(__LINE__);
