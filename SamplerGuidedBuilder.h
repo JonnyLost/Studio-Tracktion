@@ -17,7 +17,7 @@ public:
         for(Component* c:std::initializer_list<Component*>{&title,&intro,&nameLabel,&name,&layoutLabel,&layout,&rootLabel,&root,&playbackLabel,&playback,&spread,&alternates,&files,&folder,&selection,&report,&status,&prepare,&accept,&cancel})addAndMakeVisible(*c);
         title.setText("Create an instrument",dontSendNotification);title.setFont(uiFont(20));
         intro.setText("Choose recordings, preview their mapping, then create your instrument.",dontSendNotification);
-        nameLabel.setText("Instrument name",dontSendNotification);name.setText("New instrument",false);
+        nameLabel.setText("Instrument name",dontSendNotification);name.setText("New instrument",false);name.setInputRestrictions(120);
         layoutLabel.setText("Instrument type",dontSendNotification);
         layout.addItem("Pitched instrument",1);layout.addItem("Drum / percussion kit",2);layout.setSelectedId(1,dontSendNotification);
         rootLabel.setText("Single sample root",dontSendNotification);
@@ -105,7 +105,8 @@ private:
     void invalidate()
     {
         if(task)return;
-        ready=false;proposal={};status.setText("Preview the mapping before creating the instrument.",juce::dontSendNotification);updateControls();
+        ready=false;proposal={};report.setText("Settings changed. Choose Preview mapping to generate an updated proposal.",false);
+        status.setText("Preview the mapping before creating the instrument.",juce::dontSendNotification);updateControls();
     }
     void updateControls()
     {
