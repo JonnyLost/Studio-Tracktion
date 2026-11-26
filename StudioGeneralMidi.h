@@ -171,6 +171,30 @@ constexpr const char* name (int zeroBasedProgram) noexcept
     return valid (zeroBasedProgram) ? names[static_cast<unsigned> (zeroBasedProgram)] : "";
 }
 
+// Ordered MIDI selection messages for a single-patch GM track. Keep the
+// mapping independent of the host so it can be exercised on Linux as well.
+struct SelectionMessage
+{
+    int status, data1, data2, size;
+};
+
+template <typename Emit>
+constexpr bool emitSelection (int program, Emit&& emit)
+{
+    if (! valid (program)) return false;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        if (channel == 9) continue; // GM drum channel, not a melodic patch
+        emit (SelectionMessage { 0xb0 | channel, 64, 0, 3 }); // sustain off
+        emit (SelectionMessage { 0xb0 | channel, 123, 0, 3 }); // all notes off
+        emit (SelectionMessage { 0xe0 | channel, 0, 64, 3 }); // pitch 8192
+        emit (SelectionMessage { 0xb0 | channel, 0, 0, 3 }); // bank MSB
+        emit (SelectionMessage { 0xb0 | channel, 32, 0, 3 }); // bank LSB
+        emit (SelectionMessage { 0xc0 | channel, program, 0, 2 });
+    }
+    return true;
+}
+
 // Keep the visible GM numbering 1-128 separate from MIDI's 0-127.
 constexpr int displayNumber (int zeroBasedProgram) noexcept
 {
