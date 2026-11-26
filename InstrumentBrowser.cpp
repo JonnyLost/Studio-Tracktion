@@ -4,6 +4,7 @@
 #include "StudioGeneralMidi.h"
 #include "StudioUI.h"
 #include <algorithm>
+#include <optional>
 
 using namespace juce;
 
