@@ -353,27 +353,31 @@ void AtelierInspectorPanel::refreshMappings()
     if (t == nullptr || p == nullptr) return;
     if (auto* native = dynamic_cast<sampler::Plugin*> (p))
     {
-        auto next = native->articulations();
-        const auto& model = native->instrument();
-        std::erase_if (next, [&model](const auto& a)
+        const auto instance=native->itemID.toString();
+        const auto revision=native->changeCount();
+        const bool changed=cachedMappingXml!="native"||nativeMappingInstance!=instance||nativeMappingRevision!=revision;
+        if(changed)
         {
-            for (const auto& g : model.groups)
-                if (a.id == "sampler-group-" + String (g.id))
-                    return g.playback.mute || std::none_of (model.zones.begin(),model.zones.end(),[&g](const auto& z)
-                        {return z.folder == g.id && z.mapping.sample && z.problem.isEmpty();});
-            return true;
-        });
-        const bool changed = next != mappings || cachedMappingXml != "native";
-        cachedMappingXml = "native"; mappings = std::move(next);
+            auto next=native->articulations();
+            const auto& model=native->instrument();
+            std::erase_if(next,[&model](const auto& a)
+            {
+                for(const auto& g:model.groups)
+                    if(a.id=="sampler-group-"+String(g.id))
+                        return g.playback.mute||std::none_of(model.zones.begin(),model.zones.end(),[&g](const auto& z)
+                            {return z.folder==g.id&&z.mapping.sample&&z.problem.isEmpty();});
+                return true;
+            });
+            cachedMappingXml="native";nativeMappingInstance=instance;nativeMappingRevision=revision;mappings=std::move(next);
+        }
         for (size_t i=0;i<articulationPads.size();++i)
         {
             auto& b=articulationPads[i];
-            b.setVisible(i<mappings.size());
+            if(changed)b.setVisible(i<mappings.size());
             if(i>=mappings.size())continue;
-            b.setButtonText(mappings[i].name);
-            b.setTooltip("Send this native articulation. All mapped articulations are available in the sampler Play view.");
+            if(changed){b.setButtonText(mappings[i].name);b.setTooltip("Send this native articulation. All mapped articulations are available in the sampler Play view.");}
             const auto& a=mappings[i];
-            b.setToggleState(a.message==ArticulationMessage::keyswitch && native->activeKeyswitch(a.channel-1)==a.number,dontSendNotification);
+            b.setToggleState(a.message==ArticulationMessage::keyswitch && native->activeKeyswitch(a.channel)==a.number,dontSendNotification);
             b.setEnabled(canSendMidi());
         }
         if(changed)resized();
@@ -579,7 +583,7 @@ void AtelierInspectorPanel::appearanceChanged() { resized(); repaint(); }
 int AtelierInspectorPanel::desiredHeight (int width) const
 {
     const auto& m = appearance;
-    const bool four = width >= m.span (316);
+    const bool four = width - 2 * m.px(9) >= m.span (316);
     const bool native=dynamic_cast<sampler::Plugin*>(hosted())!=nullptr;
     const int ccRows = (native?4:8)/(four?4:2);
     return m.px (20) + m.control (52) + m.px (180) + m.control (27)
@@ -706,7 +710,7 @@ void AtelierInspectorPanel::paint (Graphics& g)
                                        .withTrimmedBottom (appearance.control (30));
         g.setColour (secondary);
         g.setFont (FontOptions (11.0f));
-        g.drawFittedText ("No verified articulation mappings. Assign keyswitches or CCs using Edit Articulations.",
+        g.drawFittedText (dynamic_cast<sampler::Plugin*>(hosted())?"No mapped articulations. Use the sampler Build view to define them.":"No verified articulation mappings. Assign keyswitches or CCs using Edit Articulations.",
                           text, Justification::centred, 3);
     }
 }
