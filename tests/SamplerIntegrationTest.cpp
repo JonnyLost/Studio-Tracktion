@@ -165,6 +165,74 @@ Result verifyStreamingImport (const File& directory, Plugin& sampler, WavAudioFo
     return Result::ok();
 }
 
+Result verifySfzImport (const File& directory, Plugin& sampler, WavAudioFormat& wav)
+{
+    const auto source = directory.getChildFile ("SFZ test samples");
+    if (source.createDirectory().failed()) return Result::fail ("create SFZ fixture directory");
+    const auto sample = source.getChildFile ("Long note C4.wav");
+    if (! longSample (sample, wav, 16 * streamPageFrames + 77, 2))
+        return Result::fail ("write SFZ stream fixture");
+    const auto definition = directory.getChildFile ("Test instrument.sfz");
+    const auto include = directory.getChildFile ("Regions.inc");
+    if (! include.replaceWithText (R"sfz(
+<region> sample=Long note C4.wav seq_position=2 volume=-6
+<region> sample="Long note C4.wav" seq_position=1 volume=-3
+<group> key=D4 trigger=release
+<region> sample=Long note C4.wav loop_mode=one_shot
+<group> key=E4 locc1=64 hicc1=127
+<region> sample=Missing.wav
+<group> key=F4 lorand=0 hirand=0.5
+<region> sample=Long note C4.wav
+)sfz") || ! definition.replaceWithText (R"sfz(
+#define $samples SFZ test samples
+<control> default_path=$samples
+<global> ampeg_attack=0.02 ampeg_release=0.5 amp_veltrack=0
+<group> key=C4 sw_last=C1 sw_default=C1 sw_label=Sustain seq_length=2
+loop_mode=loop_sustain offset=65536 loop_start=70000 loop_end=100000 pan=-25
+xfin_lovel=20 xfin_hivel=80 xf_velcurve=gain
+#include "Regions.inc"
+)sfz")) return Result::fail ("write SFZ and included definitions");
+
+    const auto revision = sampler.changeCount();
+    Instrument imported; String report;
+    if (auto result = Plugin::prepareSfz (definition, sampler.instrument(), imported, report); result.failed()) return result;
+    if (sampler.changeCount() != revision || imported.zones.size() != 4
+        || ! report.contains ("3 playable regions") || ! report.contains ("1 unavailable")
+        || ! report.contains ("1 omitted") || ! report.contains ("lorand"))
+        return Result::fail ("transactional SFZ compatibility proposal");
+    const auto& z = imported.zones[0].mapping;
+    if (! z.sample || ! z.sample->stream || z.sample != imported.zones[1].mapping.sample
+        || z.root != 60 || z.low != 60 || z.high != 60 || z.gainDb != -3
+        || z.group == 0 || z.group != imported.zones[1].mapping.group
+        || z.start != 65536 || z.loopEnd != 100001 || ! z.sfz.sustainLoop
+        || z.sfz.velocityTrack != 0 || z.sfz.pan != -25 || z.sfz.powerFade
+        || std::abs (z.sfz.attack - 0.02f) > 0.00001f || z.sfz.release != 0.5f)
+        return Result::fail ("preserve SFZ sequence order, loop endpoints, envelope, pan and streaming");
+    if (imported.groups[0].playback.switchDefault != 24 || ! imported.groups[1].playback.releaseTrigger
+        || imported.groups[2].playback.controller != 1 || imported.groups[2].playback.ccLow != 64
+        || imported.zones[3].mapping.sample || imported.zones[3].problem.isEmpty())
+        return Result::fail ("keyswitch, release, controller and unavailable sample mapping");
+
+    sampler.commitImport (imported);
+    const auto preset = directory.getChildFile ("SFZ converted.studiosampler");
+    if (sampler.savePreset (preset).failed() || sampler.loadPreset (preset).failed()
+        || sampler.instrument().zones.size() != 4
+        || sampler.instrument().zones[0].mapping.sfz.release != 0.5f
+        || sampler.instrument().groups[0].playback.switchDefault != 24
+        || ! sampler.instrument().zones[0].mapping.sample->stream)
+        return Result::fail ("persist native SFZ region parameters and streaming");
+    std::atomic<bool> cancel { true };
+    Instrument cancelled; String cancelledReport;
+    if (Plugin::prepareSfz (definition, sampler.instrument(), cancelled, cancelledReport, &cancel).wasOk())
+        return Result::fail ("cancel SFZ proposal");
+    const auto bad = directory.getChildFile ("Bad SFZ.sfz");
+    if (! bad.replaceWithText ("<region> sample=bad.wav lokey=invalid")
+        || Plugin::prepareSfz (bad, sampler.instrument(), cancelled, cancelledReport).wasOk())
+        return Result::fail ("reject invalid SFZ mapping");
+    sampler.commitImport ({}, false);
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -313,6 +381,7 @@ Result run (const File& screenshots)
         return Result::fail ("deterministic bulk import preview and cancellation");
     if (auto streamed = verifyStreamingImport (directory, *other, wav, aiff); streamed.failed())
         return streamed;
+    if (auto imported = verifySfzImport (directory, *other, wav); imported.failed()) return imported;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;
