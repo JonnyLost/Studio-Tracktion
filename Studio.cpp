@@ -1021,6 +1021,11 @@ public:
             articulationWindow->setLookAndFeel (nullptr);
         }
         articulationWindow.reset();
+        // Release selection and row-held EditItem references while the Edit
+        // is still alive, rather than relying on reverse member destruction.
+        selection.deselectAll();
+        editor.reset();
+        music.setEdit (nullptr);
         workspaceViewport.onScroll = {};
         workspaceViewport.setViewedComponent (nullptr);
         railViewport.setViewedComponent (nullptr);
@@ -6154,6 +6159,7 @@ int StudioView::runUnifiedStageReview (const File& output)
     for (auto* t : te::getAudioTracks (*edit))
         if (t->getName() == "Violin I") { sectionMate = t; break; }
     if (sectionMate == nullptr) return fail ("prepare submix test section");
+    std::fputs ("Unified Stage: checking submix and track height\n", stderr);
     const auto oldHeight = editor->getStudioContentHeight();
     legacy->state.setProperty ("studioTrackHeight", 124, &edit->getUndoManager());
     edit->dispatchPendingUpdatesSynchronously();
@@ -6198,6 +6204,7 @@ int StudioView::runUnifiedStageReview (const File& output)
         return false;
     };
     if(!waitForFolder(false))return fail("wait for open submix arrangement rows");
+    std::fputs ("Unified Stage: open submix verified\n", stderr);
     const auto routingIntact=[&]
     {
         return te::getAudioTracks(*edit).size()==audioCount&&trackById(memberA)==legacy&&trackById(memberB)==sectionMate
@@ -6219,8 +6226,12 @@ int StudioView::runUnifiedStageReview (const File& output)
     folderUndo.beginNewTransaction();
     if(!waitForFolder(false)||!routingIntact()||!capture("stage-folder-expanded.png"))
         return fail("expanded folder restores original arrangement tracks");
+    std::fputs ("Unified Stage: collapse, undo, redo and expansion verified\n", stderr);
     const auto groupId = group->itemID;
     if (! saveToDisk()) return fail ("save native section submix");
+    // FolderTrack::Ptr owns an EditItem. Release before destroying the Edit;
+    // its destructor accesses the owning edit. Keep only the stable ID.
+    group = nullptr;
     loadProject (fixture, false);
     group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, groupId));
     legacy = trackById (legacyID);

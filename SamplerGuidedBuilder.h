@@ -5,6 +5,7 @@
 #include "StudioInstrumentHelp.h"
 #include "SamplerNoteText.h"
 #include <thread>
+#include <cstdio>
 
 namespace studio::sampler
 {
@@ -55,13 +56,19 @@ public:
             else{root.setValue(60,dontSendNotification);playback.setSelectedId(1,dontSendNotification);}
             invalidate();updateControls();
         };
-        name.onTextChange=[this]{invalidate();};
+        name.onTextChange=[this]
+        {
+            if (!ready || reviewedForm != formSignature()) invalidate();
+        };
         root.onValueChange=[this]{invalidate();};playback.onChange=[this]{invalidate();};
         spread.onClick=[this]{invalidate();};alternates.onClick=[this]{invalidate();};
         prepare.onClick=[this]{start();};
         accept.onClick=[this]
         {
             if(!ready||task||!apply)return;
+            // TextEditor change notifications can be queued. Validate the live
+            // form synchronously before committing a reviewed mapping.
+            if (reviewedForm != formSignature()) { invalidate(); return; }
             auto result=apply(proposal);
             if(result.failed()){status.setText(result.getErrorMessage(),dontSendNotification);return;}
             if(auto* d=findParentComponentOfClass<DialogWindow>())d->exitModalState(1);
@@ -77,6 +84,11 @@ public:
     bool review(const juce::File& recording,const juce::File& output)
     {
         using namespace juce;
+        const auto reviewFailure=[](const char* detail)
+        {
+            std::fprintf(stderr,"Guided builder review failed: %s\n",detail);
+            return false;
+        };
         const ScopedValueSetter<AppearanceMetrics> restore(appearance,appearance);
         for(int text:{100,130})
         {
@@ -85,7 +97,7 @@ public:
                !getLocalBounds().contains(accept.getBounds())||!getLocalBounds().contains(cancel.getBounds())||
                prepare.getBounds().intersects(accept.getBounds())||accept.getBounds().intersects(cancel.getBounds())||
                !form.getLocalBounds().contains(report.getBounds())||report.getHeight()<=0)
-                return false;
+                return reviewFailure("form or footer bounds");
             if(output!=File())
             {
                 FileOutputStream stream(output.getChildFile("m32-builder-text"+String(text)+".png"));
@@ -98,14 +110,20 @@ public:
         const auto deadline=Time::getMillisecondCounter()+10000;
         while(task&&Time::getMillisecondCounter()<deadline)
         {timerCallback();MessageManager::getInstance()->runDispatchLoopUntil(10);}
-        if(task||!ready||!accept.isEnabled()||proposal.zones.size()!=1)return false;
+        if(task||!ready||!accept.isEnabled()||proposal.zones.size()!=1)
+            return reviewFailure("initial mapping did not produce one zone");
         name.setText("M32 revised review",true);
-        if(ready||accept.isEnabled())return false;
+        // Exercise the real Create callback before the queued edit notification.
+        // It must reject the obsolete proposal even in that short window.
+        accept.onClick();
+        MessageManager::getInstance()->runDispatchLoopUntil(20);
+        if(ready||accept.isEnabled())return reviewFailure("changed form did not invalidate proposal");
         prepare.onClick();
         const auto nextDeadline=Time::getMillisecondCounter()+10000;
         while(task&&Time::getMillisecondCounter()<nextDeadline)
         {timerCallback();MessageManager::getInstance()->runDispatchLoopUntil(10);}
-        if(task||!ready||proposal.name!="M32 revised review")return false;
+        if(task||!ready||proposal.name!="M32 revised review")
+            return reviewFailure("revised mapping did not become ready");
         accept.onClick();return true;
     }
 #endif
@@ -167,10 +185,24 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<Task> task;
     Instrument proposal;bool ready=false;
+    juce::String reviewedForm;
+    juce::String formSignature() const
+    {
+        // The fields are fixed while the worker runs. The signature also
+        // covers queued/programmatic changes not yet delivered to listeners.
+        juce::String signature;
+        signature << name.getText().length() << ":" << name.getText()
+                  << "|" << layout.getSelectedId() << "|" << juce::roundToInt(root.getValue())
+                  << "|" << playback.getSelectedId() << "|" << int(spread.getToggleState())
+                  << "|" << int(alternates.getToggleState());
+        for (const auto& path : paths)
+            signature << "|" << path.getFullPathName().length() << ":" << path.getFullPathName();
+        return signature;
+    }
     void invalidate()
     {
         if(task)return;
-        ready=false;proposal={};report.setText("Settings changed. Choose Preview mapping to generate an updated proposal.",false);
+        ready=false;proposal={};reviewedForm.clear();report.setText("Settings changed. Choose Preview mapping to generate an updated proposal.",false);
         status.setText("Preview the mapping before creating the instrument.",juce::dontSendNotification);updateControls();
     }
     void updateControls()
@@ -214,7 +246,7 @@ private:
         options.playback=static_cast<GuidedBuild::Playback>(jlimit(0,2,playback.getSelectedId()-1));
         options.firstNote=roundToInt(root.getValue());options.spread=spread.getToggleState();
         options.roundRobin=options.layout==GuidedBuild::Layout::pitched&&alternates.getToggleState();
-        ready=false;proposal={};task=std::make_unique<Task>();auto* t=task.get();
+        ready=false;proposal={};reviewedForm=formSignature();task=std::make_unique<Task>();auto* t=task.get();
         t->worker=std::thread([t,options,chosen=paths]
         {
             try{auto r=Plugin::prepareGuided(options,chosen,t->proposal,t->report,&t->cancel,&t->progress);t->error=r.getErrorMessage();}
@@ -232,6 +264,7 @@ private:
         auto t=std::move(task);
         if(t->cancel.load()){status.setText("Cancelled. Existing instrument unchanged.",dontSendNotification);}
         else if(t->error.isNotEmpty()){report.setText(t->error,false);status.setText("Review the issue, change settings and preview again.",dontSendNotification);}
+        else if(reviewedForm!=formSignature()){invalidate();return;}
         else{proposal=std::move(t->proposal);ready=true;report.setText(t->report,false);status.setText("Review the mapping. Create replaces only the current sampler instrument.",dontSendNotification);}
         updateControls();
     }
