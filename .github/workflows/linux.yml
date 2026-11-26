@@ -22,8 +22,10 @@ on:
       - feature/studio-legacy-sampler-importer-m23
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-universal-library-m25
+      - feature/studio-sampler-performance-m26
   pull_request:
     branches:
+      - feature/studio-universal-library-m25
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-legacy-sampler-importer-m23
       - feature/studio-exs24-importer-m22
@@ -82,6 +84,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra tests/ExsParserTests.cpp -o "$RUNNER_TEMP/studio-exs-tests"
           "$RUNNER_TEMP/studio-exs-tests"
+      - name: Check sampler performance, shared allocations and indexed playback
+        run: |
+          clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread tests/SamplerPerformanceTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-performance-tests"
+          "$RUNNER_TEMP/studio-performance-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"

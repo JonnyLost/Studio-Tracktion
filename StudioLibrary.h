@@ -38,7 +38,7 @@ inline Result save(const Catalog& catalog,const File& target)
         auto* x=xml.createNewChildElement("ENTRY");
         x->setAttribute("source",e.source.getFullPathName());x->setAttribute("name",e.name);
         x->setAttribute("format",e.format);x->setAttribute("program",e.program);
-        x->setAttribute("size",e.size);x->setAttribute("time",e.time);x->setAttribute("available",e.available);
+        x->setAttribute("size",String(e.size));x->setAttribute("time",String(e.time));x->setAttribute("available",e.available);
         x->setAttribute("converted",e.converted==File()?String():e.converted.getFullPathName());
         x->setAttribute("artwork",e.artwork==File()?String():e.artwork.getFullPathName());
         x->setAttribute("report",e.report.substring(0,4000));

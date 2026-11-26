@@ -11,7 +11,7 @@
 
 namespace studio::sampler
 {
-constexpr int maxVoices = 64, maxZones = 128, maxGroups = 16;
+constexpr int maxVoices = 128, maxZones = 1024, maxGroups = 16;
 constexpr std::size_t maxSampleBytes = 64 * 1024 * 1024;
 constexpr std::size_t maxBankBytes = 256 * 1024 * 1024;
 
@@ -95,6 +95,9 @@ struct Bank
     std::vector<Zone> zones;
     std::vector<Group> groups;
     std::uint64_t sampleRevision = 0, switchRevision = 0;
+    std::array<std::vector<std::uint16_t>,128> noteZones;
+    bool indexed = false;
+    void buildIndex(); // Writer thread only; immutable after publication.
 };
 
 bool validMapping (const Zone&) noexcept;
@@ -150,6 +153,8 @@ private:
     double outputRate = 44100, vibratoPhase = 0;
     float instrumentGain = 0;
     Settings settings;
+    std::array<const Group*,maxGroups> groupLookup {};
+    bool anySolo = false;
 
     const Group* groupFor (int id) const noexcept;
     bool audible (int id) const noexcept;

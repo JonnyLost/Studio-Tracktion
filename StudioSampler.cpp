@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
+#include "SamplerSharedPool.h"
 #include "StudioSfz.h"
 #include "StudioSoundBank.h"
 #include "StudioExs.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace studio::sampler
 {
@@ -16,7 +18,7 @@ namespace
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
 constexpr int version = 4;
-constexpr auto maxPresetBytes = 2 * 1024 * 1024;
+constexpr auto maxPresetBytes = 8 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
 {
@@ -204,16 +206,15 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
 std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullptr)
 {
     std::size_t bytes = 0;
-    std::array<const Sample*, maxZones> counted {};
-    std::size_t count = 0;
+    std::unordered_set<const Sample*> counted;
+    counted.reserve(model.zones.size());
     for (const auto& zone : model.zones)
         if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
-            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+            && counted.insert(sample).second)
         {
-            counted[count++] = sample;
             bytes += sample->bytes();
         }
-    if (sampleCount) *sampleCount = static_cast<unsigned> (count);
+    if (sampleCount) *sampleCount = static_cast<unsigned> (counted.size());
     return bytes;
 }
 
@@ -283,6 +284,7 @@ private:
 Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
 {
     if (! file.existsAsFile()) return Result::fail ("Missing sample");
+    const auto sizeBefore=file.getSize(), timeBefore=file.getLastModificationTime().toMilliseconds();
     auto reader = openSampleReader (file);
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || reader->lengthInSamples >= std::numeric_limits<int>::max()
@@ -296,14 +298,20 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     const bool streamed = frames > residentSampleFrames || fullBytes > std::min (budget, maxSampleBytes);
     const auto preload = streamed ? std::min (frames, streamPreloadFrames) : frames;
     const auto memory = static_cast<std::size_t> (preload) * floatFrameBytes
-        + (streamed ? StreamCache::capacityBytes (stereo) : 0);
-    if (memory > budget || (streamed && frames <= streamPreloadFrames))
-        return Result::fail ("Sample exceeds Studio's resident/preload and stream-cache memory budget.");
+        + (streamed ? StreamCache::capacityBytes (stereo, frames) : 0);
+    if (streamed && frames <= streamPreloadFrames)
+        return Result::fail ("Sample exceeds Studio's resident/preload memory budget.");
 
+    const SharedSamplePool::Key key{file.getFullPathName().toStdString(),sizeBefore,timeBefore};
+    String failure;
+    const auto outcome=sharedSamples().acquire(key,budget,memory,output,[&]() -> std::shared_ptr<const Sample>
+    {
+    const auto reject=[&](String message)->std::shared_ptr<const Sample>{failure=std::move(message);return {};};
+    if(cancelled&&cancelled->load())return reject("Import cancelled.");
     auto sample = std::make_shared<Sample>();
     sample->rate = reader->sampleRate;
     sample->totalFrames = frames;
-    sample->sourceBytes = file.getSize(); sample->sourceTime = file.getLastModificationTime().toMilliseconds();
+    sample->sourceBytes = sizeBefore; sample->sourceTime = timeBefore;
     for (const auto& key : { String ("MidiUnityNote"), String (AiffAudioFormat::appleRootNote) })
         if (reader->metadataValues.containsKey (key))
         {
@@ -322,11 +330,11 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if (stereo) sample->right.resize (static_cast<std::size_t> (preload));
     for (int offset = 0; offset < preload; offset += 4096)
     {
-        if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+        if (cancelled && cancelled->load()) return reject ("Import cancelled.");
         const int count = jmin (4096, preload - offset);
         if (! decodeFrames (*reader, offset, count, sample->left.data() + offset,
                            stereo ? sample->right.data() + offset : nullptr))
-            return Result::fail ("Could not decode the sample attack.");
+            return reject ("Could not decode the sample attack.");
     }
     if (streamed)
     {
@@ -337,12 +345,21 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
             [sharedPool, file, size, modified] (int first, int count, float* left, float* right)
             { return sharedPool->read (file, size, modified, first, count, left, right); });
         if (! sample->stream->prime (preload))
-            return Result::fail ("Could not read the first streaming page.");
+            return reject ("Could not read the first streaming page.");
         if (preload + streamPageFrames < frames && ! sample->stream->prime (preload + streamPageFrames))
-            return Result::fail ("Could not read the second streaming page.");
+            return reject ("Could not read the second streaming page.");
         StreamWorker::instance().add (sample->stream);
     }
-    output = std::move (sample);
+    if(file.getSize()!=sizeBefore||file.getLastModificationTime().toMilliseconds()!=timeBefore)
+        return reject("Sample changed during loading.");
+    return sample;
+    });
+    if(cancelled&&cancelled->load()){output.reset();return Result::fail("Import cancelled.");}
+    if(outcome==SharedSamplePool::Outcome::budgetExceeded)
+        return Result::fail("Sampler memory budget reached (256 MiB per instrument, 768 MiB shared PCM/cache pool). Unload instruments or use smaller mappings.");
+    if(outcome!=SharedSamplePool::Outcome::ready)return Result::fail(failure.isEmpty()?"Cannot load sample.":failure);
+    if(file.getSize()!=sizeBefore||file.getLastModificationTime().toMilliseconds()!=timeBefore)
+    {output.reset();return Result::fail("Sample changed during loading.");}
     return Result::ok();
 }
 
@@ -487,6 +504,7 @@ void Plugin::publish (Instrument next)
     for (const auto& group : next.groups) { auto g = group.playback; g.id = group.id; bank->groups.push_back (g); }
     for (const auto& entry : next.zones) { auto z = entry.mapping; z.folder = entry.folder; bank->zones.push_back (std::move (z)); }
 
+    bank->buildIndex();
     published.store (bank.get());
     auto previous = std::move (current);
     current = std::move (bank);
@@ -624,7 +642,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
         if (aborted()) return Result::fail ("Import cancelled.");
         if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
         if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf;flac")) { ++unsupported; continue; }
-        if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
+        if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (" + String(maxZones) + ")"); continue; }
         SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
         auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
         if (cached != next.zones.end()) entry.mapping.sample = cached->mapping.sample;
@@ -1474,7 +1492,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 if(aborted())fail("Import cancelled.");
                 if(!node->hasTagName(kontakt?"Zone":"sample"))
                 {if(node->hasTagName("oscillator")){++omitted;warnings.insert("Generated oscillator omitted.");}continue;}
-                if(++seen>maxZones)fail("Instrument exceeds Studio's 128-region limit; no partial conversion.");
+                if(++seen>maxZones)fail("Instrument exceeds Studio's region limit; no partial conversion.");
                 const auto za=kontakt?values(*node):attrs(*node);
                 Attr a=top;overlay(a,ga);overlay(a,za);
                 SampleZone e;auto& z=e.mapping;auto& x=z.sfz;x.enabled=true;
@@ -1997,15 +2015,14 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
 {
     InstrumentDiagnosticSnapshot stats;
     stats.attribution = ResourceAttribution::measured;
-    std::array<const Sample*, maxZones> counted {};
-    std::size_t count = 0;
+    std::unordered_set<const Sample*> counted;
+    counted.reserve(model.zones.size());
     std::uint64_t resident = 0, cache = 0, streamed = 0, misses = 0, errors = 0;
     unsigned streams = 0;
     for (const auto& zone : model.zones)
         if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
-            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+            && counted.insert(sample).second)
         {
-            counted[count++] = sample;
             resident += sample->residentBytes();
             cache += sample->cacheBytes();
             if (sample->stream)
@@ -2024,7 +2041,7 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
     stats.detail = String (loadedSamples) + " sample(s) | " + String (streams) + " streamed | "
         + String (model.settings.polyphony) + " max voices | "
         + String (static_cast<juce::int64> (misses)) + " stream underruns | "
-        + String (static_cast<juce::int64> (errors)) + " read errors.";
+        + String (static_cast<juce::int64> (errors)) + " read errors. Shared recordings may appear in multiple track totals.";
     return stats;
 }
 
