@@ -6,6 +6,7 @@ on:
     branches:
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
+      - feature/studio-keyboard-live-playback-feedback-m10
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
