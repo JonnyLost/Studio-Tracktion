@@ -13,7 +13,7 @@ public:
     explicit Manager(Load callback):onLoad(std::move(callback))
     {
         setLookAndFeel(&look);
-        for(Component* c:std::initializer_list<Component*>{&roots,&addRoot,&removeRoot,&rescan,&search,&format,&rows,&details,&art,&assignArt,&convertSelected,&loadSelected,&cancel,&status})
+        for(Component* c:std::initializer_list<Component*>{&roots,&addRoot,&removeRoot,&rescan,&search,&format,&rows,&details,&art,&assignArt,&repairSelected,&convertSelected,&loadSelected,&cancel,&status})
             addAndMakeVisible(*c);
         rows.setModel(this);rows.setMultipleSelectionEnabled(true);rows.setRowHeight(28);
         search.setTextToShowWhenEmpty("Search name, format or library path",colours::secondary);
@@ -27,7 +27,11 @@ public:
             const int i=roots.getSelectedItemIndex();
             if(i<0||i>=catalog.roots.size())return;
             catalog.roots.remove(i);
-            for(auto& e:catalog.entries)e.available=false;
+            for(auto& e:catalog.entries)
+            {
+                bool within=false;for(const auto& path:catalog.roots)if(e.source.isAChildOf(File(path))){within=true;break;}
+                if(!within)e.available=false;
+            }
             persist();refreshRoots();filter();
             status.setText("Folder removed from scans; existing catalog entries and converted media retained.",dontSendNotification);
         };
@@ -36,6 +40,7 @@ public:
         loadSelected.onClick=[this]{startLoad();};
         cancel.onClick=[this]{if(task)task->cancel.store(true);};
         assignArt.onClick=[this]{chooseArt();};
+        repairSelected.onClick=[this]{chooseRepairRoot();};
         if(auto r=read(index(),catalog);r.failed())
         {
             validCatalog=false;status.setText(r.getErrorMessage()+" Move the damaged catalog aside before reopening.",dontSendNotification);
@@ -57,7 +62,7 @@ public:
         auto bottom=a.removeFromBottom(64);
         auto buttons=bottom.removeFromTop(34);
         cancel.setBounds(buttons.removeFromRight(95).reduced(2));loadSelected.setBounds(buttons.removeFromRight(160).reduced(2));convertSelected.setBounds(buttons.removeFromRight(160).reduced(2));
-        assignArt.setBounds(buttons.removeFromLeft(140).reduced(2));status.setBounds(bottom.reduced(2));
+        assignArt.setBounds(buttons.removeFromLeft(140).reduced(2));repairSelected.setBounds(buttons.removeFromLeft(155).reduced(2));status.setBounds(bottom.reduced(2));
         auto right=a.removeFromRight(jlimit(220,330,a.getWidth()/3));
         art.setBounds(right.removeFromTop(jmin(160,right.getHeight()/3)).reduced(4));details.setBounds(right.reduced(4));rows.setBounds(a.reduced(2));
     }
@@ -76,7 +81,7 @@ private:
     TextEditor search,details;
     ImageComponent art;
     ListBox rows;
-    TextButton addRoot{"Add folder"},removeRoot{"Remove folder"},rescan{"Rescan"},convertSelected{"Convert selected"},loadSelected{"Load as new track"},cancel{"Cancel"},assignArt{"Assign artwork"};
+    TextButton addRoot{"Add folder"},removeRoot{"Remove folder"},rescan{"Rescan"},convertSelected{"Convert selected"},loadSelected{"Load as new track"},cancel{"Cancel"},assignArt{"Assign artwork"},repairSelected{"Repair sample paths"};
     Label status;
     std::unique_ptr<FileChooser> chooser;
     std::unique_ptr<Task> task;
@@ -141,8 +146,9 @@ private:
         rescan.setEnabled(validCatalog&&!task&&!catalog.roots.isEmpty());cancel.setEnabled(task!=nullptr);
         convertSelected.setEnabled(validCatalog&&!task&&!selected.empty()&&selected.size()<=128);
         assignArt.setEnabled(validCatalog&&!task&&selected.size()==1);
+        repairSelected.setEnabled(validCatalog&&!task&&selected.size()==1&&catalog.entries[selected.front()].converted!=File());
         loadSelected.setEnabled(!task&&selected.size()==1&&onLoad&&catalog.entries[selected.front()].converted!=File());
-        art.setImage({});
+        art.setImage(Image());
         if(selected.size()!=1)
         {details.setText(String(static_cast<int>(selected.size()))+" selected / "+String(getNumRowsConst())+" shown. Select up to 128 for batch conversion.",false);return;}
         const auto& e=catalog.entries[selected.front()];
@@ -182,6 +188,37 @@ private:
                 if(safe->task||!image.existsAsFile()||image.getSize()>8*1024*1024)return;
                 for(auto& e:safe->catalog.entries)if(e.key()==key){e.artwork=image;break;}
                 safe->persist();safe->refreshSelection();
+            });
+        });
+    }
+    void chooseRepairRoot()
+    {
+        auto chosen=selectedIndices();if(task||chosen.size()!=1)return;
+        const auto key=catalog.entries[chosen.front()].key();
+        chooser=std::make_unique<FileChooser>("Choose relocated recordings folder (creates a new preset copy)",File::getSpecialLocation(File::userMusicDirectory),"*");
+        const auto safe=Component::SafePointer<Manager>(this);
+        chooser->launchAsync(FileBrowserComponent::openMode|FileBrowserComponent::canSelectDirectories,[safe,key](const FileChooser& c)
+        {
+            const auto folder=c.getResult();
+            MessageManager::callAsync([safe,key,folder]
+            {
+                if(!safe)return;safe->chooser.reset();
+                if(safe->task||!folder.isDirectory())return;
+                auto it=std::find_if(safe->catalog.entries.begin(),safe->catalog.entries.end(),[&](const auto& e){return e.key()==key;});
+                if(it==safe->catalog.entries.end())return;
+                const auto index=static_cast<std::size_t>(it-safe->catalog.entries.begin());
+                safe->task=std::make_unique<Task>();auto* t=safe->task.get();t->kind=Task::batchTask;t->proposal=safe->catalog;
+                t->worker=std::thread([t,index,folder]
+                {
+                    try
+                    {
+                        auto r=repair(t->proposal.entries[index],directory(),folder,t->cancel);
+                        t->error=r.getErrorMessage();t->message="Repaired preset copy created. Review the new paths before loading.";
+                    }
+                    catch(const std::exception& e){t->error=e.what();}
+                    t->done.store(true,std::memory_order_release);
+                });
+                safe->refreshSelection();
             });
         });
     }
