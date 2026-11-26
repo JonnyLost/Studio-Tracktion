@@ -1419,11 +1419,11 @@ public:
         layoutDock (area);
         if (keyboardDocked)
         {
-            // A single low-profile dock: Atelier controls fill the center, while
-            // a non-interactive engraved orchestral manuscript fills side gaps.
+            // A single low-profile dock: expand the actual keyboard for easier
+            // playing, with a continuous walnut piano casing behind it.
             const int height = jlimit (m.px (160), m.px (202), area.getHeight() / 2);
             const auto dockArea = area.removeFromBottom (height);
-            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1040));
+            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1340));
             const auto instrumentBounds = dockArea.withSizeKeepingCentre (
                 jmax (1, width), jmax (1, height - m.px (5)));
             keyboardDockSurround.setBounds (dockArea);
@@ -6235,7 +6235,7 @@ int StudioView::runInterfaceReview (const File& output)
     }
 
     // Capture the actual dock within the arrangement, including the
-    // manuscript engraving in the two side margins and no redundant header.
+    // continuous piano casing in the side margins and no redundant header.
     if (writeImages)
     {
         setSize (1536, 900);
@@ -6243,8 +6243,8 @@ int StudioView::runInterfaceReview (const File& output)
         if (! dockedKeyboard.isDocked()
             || ! keyboardDockSurround.isVisible()
             || dockedKeyboard.getWidth() >= keyboardDockSurround.getWidth())
-            return fail ("Atelier dock is centered over visible staff margins");
-        if (! capture ("atelier-keyboard-docked-staff-surround-1536x900.png"))
+            return fail ("Atelier dock is centered within the continuous piano casing");
+        if (! capture ("atelier-keyboard-docked-piano-case-1536x900.png"))
             return fail ("capture Atelier keyboard embedded in arrangement");
         hideAuditionKeyboard();
         setSize (1280, 800);
