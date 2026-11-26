@@ -7,6 +7,7 @@
 #include <bitset>
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -91,7 +92,7 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
                                                std::optional<te::TimePosition> previous)
 {
     std::bitset<128> lit;
-    if (track.isMuted (false))
+    if (track.isMuted (true))
         return lit;
 
     const auto currentSeconds = current.inSeconds();
@@ -130,6 +131,20 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
         const double loopStart = clip->getLoopStartBeats().inBeats();
         const double loopEnd = loopStart + clip->getLoopLengthBeats().inBeats();
 
+        // Chase sustain controller 64 at the visible playhead. MIDI controller
+        // values are stored at 14-bit resolution in Tracktion's sequence.
+        bool pedalDown = false;
+        double pedalDownBeat = std::numeric_limits<double>::infinity();
+        for (const auto* cc : clip->getSequence().getControllerEvents())
+        {
+            if (cc->getType() != 64 || cc->getBeatPosition().inBeats() > nowBeat)
+                continue;
+            const bool down = (cc->getControllerValue() >> 7) >= 64;
+            if (down && ! pedalDown)
+                pedalDownBeat = cc->getBeatPosition().inBeats();
+            pedalDown = down;
+        }
+
         for (const auto* note : clip->getSequence().getNotes())
         {
             const int pitch = note->getNoteNumber();
@@ -142,7 +157,9 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
                 || (clip->isLooping() && nowBeat < earlier
                     && ((start > earlier && start < loopEnd)
                         || (start >= loopStart && start <= nowBeat))));
-            if (sounding || justPlayed)
+            const bool sustainedNote = pedalDown && start <= nowBeat
+                && end >= pedalDownBeat && end <= nowBeat;
+            if (sounding || justPlayed || sustainedNote)
                 lit.set (static_cast<size_t> (pitch));
         }
     }
