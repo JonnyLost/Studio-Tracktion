@@ -5234,9 +5234,11 @@ private:
         auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
         if (ariaPatch.isNotEmpty())
         {
-            status = appliedAriaCapture ? "Recalled " + ariaPatch + ". Audition the restored patch in ARIA."
-                                        : "ARIA Player opened. Choose " + ariaPatch + " in slot 1.";
-            plugin->showWindowExplicitly();
+            // Opening the vendor Cocoa editor can crash inside ARIA. Keep
+            // track insertion and state recall independent of opening its UI.
+            status = appliedAriaCapture ? "Recalled " + ariaPatch + ". Audition the restored patch."
+                                        : "ARIA Player loaded. Use Channel > Open Instrument to choose "
+                                            + ariaPatch + " in slot 1.";
         }
         else if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";

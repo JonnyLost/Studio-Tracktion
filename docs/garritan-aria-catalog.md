@@ -9,10 +9,10 @@ Use the Studio build from `feature/studio-aria-catalog-60`. If you build locally
 
 ## Register a single playable patch
 
-1. Select the discovered patch in the Instrument Browser and click **Add as New Track**. If there is no registered capture yet, Studio opens the original ARIA editor for manual selection.
+1. Select the discovered patch in the Instrument Browser and click **Add as New Track**. If there is no registered capture yet, choose **Channel → Open Instrument** to open the original ARIA editor for manual selection.
 2. Load that exact patch into **slot 1 on MIDI channel 1**. Leave the other slots empty. Play it and check for sound and missing sample warnings. Some Garritan patches require raising CC1 before they sound.
 3. Stop the transport and leave the ARIA track and browser entry selected. Choose **ARIA… → Register auditioned patch from selected track…** and confirm. Studio saves the actual state returned by the installed Audio Unit. To replace a capture, move its manifest from `Presets` first. The manifest contains the source identity and the Audio Unit version used for capture.
-4. Select the same browser entry and click **Add as New Track** again. Studio applies the saved state to a fresh matching ARIA instance and opens its editor. Check that the intended patch appears in slot 1 and sounds on channel 1. Record a short phrase, save a test project, close and reopen it, then follow Studio's existing **Retry ARIA / Confirm ARIA** workflow. Repeat with at least one patch from each installed library.
+4. Select the same browser entry and click **Add as New Track** again. Studio applies the saved state to a fresh matching ARIA instance with its editor closed. Audition the recalled patch on channel 1. Open the editor separately if you want to inspect slot 1. Record a short phrase, save a test project, close and reopen it, then follow Studio's existing **Retry ARIA / Confirm ARIA** workflow. Repeat with at least one patch from each installed library.
 
 ## Reading the results
 
