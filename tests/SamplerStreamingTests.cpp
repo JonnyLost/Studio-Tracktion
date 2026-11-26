@@ -63,6 +63,7 @@ Bank bankFor (const std::shared_ptr<Sample>& sample, bool loop, int start)
     z.loopEnd = 8 * streamPageFrames + 311;
     z.loopCrossfade = 97;
     b.zones.push_back (z);
+    b.buildIndex();
     return b;
 }
 void compare (bool stereo, bool loop, bool offline, int start, int note)

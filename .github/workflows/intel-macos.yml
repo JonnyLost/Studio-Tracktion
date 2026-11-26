@@ -23,8 +23,10 @@ on:
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-universal-library-m25
       - feature/studio-sampler-performance-m26
+      - feature/studio-sampler-stabilization-m27
   pull_request:
     branches:
+      - feature/studio-sampler-performance-m26
       - feature/studio-universal-library-m25
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-legacy-sampler-importer-m23
@@ -54,6 +56,10 @@ on:
       - feature/studio-unified-integration-m6
       - feature/studio-unified-instruments-m65
       - feature/studio-orchestral-seating-m1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -102,6 +108,14 @@ jobs:
         run: |
           c++ -std=c++20 -O2 -pthread tests/SamplerPerformanceTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-performance-tests"
           "$RUNNER_TEMP/studio-performance-tests"
+      - name: Validate indexed sampler mapping, articulation and audio behavior
+        run: |
+          c++ -std=c++20 -O2 -pthread tests/SamplerEngineTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-engine-tests"
+          "$RUNNER_TEMP/studio-engine-tests"
+          c++ -std=c++20 -O2 -pthread tests/SamplerArticulationTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-articulation-tests"
+          "$RUNNER_TEMP/studio-articulation-tests"
+          c++ -std=c++20 -O2 -pthread tests/SamplerMappingTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-mapping-tests"
+          "$RUNNER_TEMP/studio-mapping-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"
@@ -128,7 +142,7 @@ jobs:
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
           STUDIO_M9_SCREENSHOTS: ${{ runner.temp }}/studio-m9-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
-        run: ctest --test-dir build -C Debug --verbose --output-on-failure --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
+        run: ctest --test-dir build -C Debug --verbose --output-on-failure --no-tests=error --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -23,8 +23,10 @@ on:
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-universal-library-m25
       - feature/studio-sampler-performance-m26
+      - feature/studio-sampler-stabilization-m27
   pull_request:
     branches:
+      - feature/studio-sampler-performance-m26
       - feature/studio-universal-library-m25
       - feature/studio-decent-kontakt-importer-m24
       - feature/studio-legacy-sampler-importer-m23
@@ -45,6 +47,10 @@ on:
       - feature/studio-adaptive-workspace-m9
       - feature/studio-composer-workflow-m8
       - integration/studio-0.2-m7-baseline
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -88,21 +94,31 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread tests/SamplerPerformanceTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-performance-tests"
           "$RUNNER_TEMP/studio-performance-tests"
+      - name: Validate indexed sampler mapping, articulation and audio behavior
+        run: |
+          clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread tests/SamplerEngineTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-engine-tests"
+          "$RUNNER_TEMP/studio-engine-tests"
+          c++ -std=c++20 -O2 -pthread tests/SamplerArticulationTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-articulation-tests"
+          "$RUNNER_TEMP/studio-articulation-tests"
+          c++ -std=c++20 -O2 -pthread tests/SamplerMappingTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-mapping-tests"
+          "$RUNNER_TEMP/studio-mapping-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"
           git -C "$RUNNER_TEMP/tracktion-engine" fetch --depth 1 https://github.com/Tracktion/tracktion_engine.git c6293127cdc0a8488aea2ae0907f4709ee89c228
           git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
-      - name: Build and test
+      - name: Configure and build Studio
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine"
+          cmake --build build --parallel 3
+      - name: Run complete regression suite
         env:
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-composer-images
           STUDIO_FILM_SCORING_SCREENSHOTS: ${{ runner.temp }}/studio-film-scoring
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine"
-          cmake --build build --parallel 3
-          xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure --output-junit "$RUNNER_TEMP/ctest-linux.xml"
+          xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure --no-tests=error --output-junit "$RUNNER_TEMP/ctest-linux.xml"
       - name: Measure native synth block times
         run: |
           build/StudioSamplerBench > "$RUNNER_TEMP/studio-sampler-bench.tsv"
