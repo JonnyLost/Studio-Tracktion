@@ -20,6 +20,7 @@ struct Sample
     double rate = 0;
     std::int64_t sourceBytes = -1, sourceTime = 0;
     int rootNote = -1; // Verified file metadata, not acoustic pitch analysis.
+    int embeddedLoopStart = -1, embeddedLoopEnd = -1; // exclusive end; forward WAV smpl loop
     std::vector<float> left, right;
     // For streamed recordings the vectors contain the immutable attack
     // preload, not the entire recording. Existing short/fixture samples
