@@ -3,7 +3,9 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include "AriaCatalog.h"
 #include <vector>
+#include <optional>
 
 namespace studio
 {
@@ -18,6 +20,10 @@ public:
     std::function<void(juce::String family, bool newTrack)> loadSynth;
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
+    std::function<void(juce::Component&)> openAriaCatalog;
+    std::function<void(const aria::Patch&, const juce::PluginDescription&, bool)> loadAriaPatch;
+    void setAriaCatalog (const aria::Catalog&);
+    std::optional<aria::Patch> selectedAriaPatch() const;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction, bool samplerOnTrack = false, bool synthOnTrack = false);
     void setStatus (const juce::String&);
     void appearanceChanged();
@@ -35,6 +41,8 @@ private:
         juce::String key, name, family, type, vendor, description;
         juce::PluginDescription plugin;
         bool available = false;
+        const aria::Patch* patch = nullptr;
+        juce::String patchStatus {};
     };
 
     struct Rows final : juce::ListBoxModel
@@ -57,6 +65,7 @@ private:
     int resizeStartX = 0, resizeStartWidth = 0;
     bool resizingDetails = false;
     void saveFavourites();
+    const aria::Catalog* ariaCatalog = nullptr;
     std::vector<Entry> entries;
     std::vector<size_t> filtered;
     juce::StringArray families, types;
@@ -67,7 +76,7 @@ private:
     juce::ComboBox compactFamily, compactType;
     juce::TextEditor search;
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
-    juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
+    juce::TextButton manage { "Plug-ins..." }, ariaTools { "ARIA..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
