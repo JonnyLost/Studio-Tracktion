@@ -16,7 +16,7 @@ bool isAria (const PluginDescription& plugin)
         || (plugin.manufacturerName.containsIgnoreCase ("Garritan") && plugin.name.containsIgnoreCase ("ARIA"));
 }
 
-void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, Colour colour)
+void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, bool effect, Colour colour)
 {
     const auto box = bounds.withSizeKeepingCentre (jmin (bounds.getWidth(), bounds.getHeight() * 1.6f),
                                                     bounds.getHeight());
@@ -25,7 +25,20 @@ void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, Colou
     Graphics::ScopedSaveState save (g);
     g.addTransform (transform);
     g.setColour (colour);
-    if (orchestra)
+    if (effect)
+    {
+        // Compact native equaliser/processor icon: effects should not appear
+        // as additional MIDI keyboards in the Apple collection.
+        g.drawRoundedRectangle (8.0f, 9.0f, 84.0f, 42.0f, 5.0f, 1.5f);
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const float x = 29.0f + channel * 21.0f;
+            const float handle = 24.0f + ((channel + 1) % 3) * 6.5f;
+            g.drawLine (x, 15.0f, x, 45.0f, 2.0f);
+            g.fillRoundedRectangle (x - 6.0f, handle - 2.5f, 12.0f, 5.0f, 1.5f);
+        }
+    }
+    else if (orchestra)
     {
         // Simple in-house flute silhouette identifies the orchestral player.
         g.addTransform (AffineTransform::rotation (-0.46f, 50.0f, 30.0f));
@@ -71,14 +84,28 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     typeList.setModel (&typeRows);
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
-             &search, &compactFamily, &compactType, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add, &favourite, &favouritesFilter })
+             &search, &compactFamily, &compactType, &libraryView, &manage, &detailsTitle, &instrumentName, &vendor,
+             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
     search.setColour (TextEditor::backgroundColourId, colours::control);
     search.setColour (TextEditor::outlineColourId, colours::divider);
     search.onTextChange = [this] { rebuildResults(); };
+    libraryView.setTitle ("Apple sounds and effects");
+    libraryView.addItem ("Instruments", 1);
+    libraryView.addItem ("Apple Sounds", 2);
+    libraryView.addItem ("Apple Effects", 3);
+    libraryView.setSelectedId (1, dontSendNotification);
+    libraryView.setTooltip ("Browse installed instruments, Apple's Audio Unit sound devices, or Apple Audio Unit effects");
+    libraryView.onChange = [this]
+    {
+        collection = static_cast<Collection> (jlimit (1, 3, libraryView.getSelectedId()) - 1);
+        // Preserve family/type filters inside each collection where possible.
+        family = "All Instruments";
+        type = "All Types";
+        rebuildCatalog();
+    };
     compactFamily.setTitle ("Instrument family");
     compactFamily.onChange = [this]
     {
@@ -109,6 +136,13 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     add.setTooltip ("Create a track with the selected instrument");
     load.onClick = [this] { loadSelected (false); };
     add.onClick = [this] { loadSelected (true); };
+    programs.setTooltip ("Select a sound program exposed by the Apple Audio Unit installed on this track");
+    programs.onClick = [this]
+    {
+        if (const auto* entry = selected(); entry != nullptr && entry->apple && ! entry->effect
+            && entry->plugin.createIdentifierString() == hostedAppleIdentifier && browseApplePrograms)
+            browseApplePrograms (entry->plugin, programs);
+    };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
     favourite.setTooltip ("Mark this instrument as a favorite or remove its favorite");
     favourite.onClick = [this]
@@ -160,17 +194,22 @@ void InstrumentBrowser::rebuildCatalog()
     bool hasAria = false;
     for (const auto& plugin : known.getTypes())
     {
-        if (plugin.pluginFormatName != "AudioUnit" || (! plugin.isInstrument && ! isAria (plugin)))
-            continue;
+        if (plugin.pluginFormatName != "AudioUnit") continue;
         const bool aria = isAria (plugin);
-        hasAria |= aria;
         const bool apple = ! aria && plugin.manufacturerName.containsIgnoreCase ("Apple");
+        const bool effect = apple && ! plugin.isInstrument;
+        if (! plugin.isInstrument && ! aria && ! effect) continue;
+        hasAria |= aria;
+        const String type = plugin.category.isNotEmpty()
+            ? plugin.category : effect ? "Audio Effect" : "Instrument";
         entries.push_back ({ plugin.createIdentifierString(), plugin.name,
-            aria ? "Orchestral" : apple ? "Apple Instruments" : "Audio Units",
-            aria ? "Sample Player" : (plugin.category.isNotEmpty() ? plugin.category : "Instrument"),
-            plugin.manufacturerName + " | Audio Unit",
-            aria ? "Choose library patches in the hosted ARIA editor." : "Scanned Audio Unit instrument.",
-            plugin, true });
+            effect ? "Apple Effects" : aria ? "Orchestral" : apple ? "Apple Sounds" : "Audio Units",
+            aria ? "Sample Player" : type, plugin.manufacturerName + " | Audio Unit",
+            effect ? "Apple effect. Add it to an instrument or audio track, then edit its real parameters."
+              : aria ? "Choose library patches in the hosted ARIA editor."
+              : apple ? "Apple sound device. Load it and browse the programs the AU actually exposes."
+                      : "Scanned Audio Unit instrument.",
+            plugin, true, effect, apple });
     }
     if (! hasAria)
         entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan | Audio Unit",
@@ -192,7 +231,9 @@ void InstrumentBrowser::rebuildCatalog()
     families.clear();
     families.add ("All Instruments");
     for (const auto& entry : entries)
-        families.addIfNotAlreadyThere (entry.family);
+        if ((collection == Collection::appleEffects) == entry.effect
+            && (collection != Collection::appleSounds || entry.apple))
+            families.addIfNotAlreadyThere (entry.family);
     families.sortNatural();
     if (! families.contains (family) || family.isEmpty()) family = "All Instruments";
     {
@@ -211,7 +252,9 @@ void InstrumentBrowser::rebuildTypes()
     types.clear();
     types.add ("All Types");
     for (const auto& entry : entries)
-        if (family == "All Instruments" || entry.family == family)
+        if ((collection == Collection::appleEffects) == entry.effect
+            && (collection != Collection::appleSounds || entry.apple)
+            && (family == "All Instruments" || entry.family == family))
             types.addIfNotAlreadyThere (entry.type);
     types.sortNatural();
     if (! types.contains (type) || type.isEmpty()) type = "All Types";
@@ -235,7 +278,10 @@ void InstrumentBrowser::rebuildResults()
     for (size_t i = 0; i < entries.size(); ++i)
     {
         const auto& e = entries[i];
-        if ((family != "All Instruments" && family != e.family) || (type != "All Types" && type != e.type)
+        if ((collection == Collection::appleEffects) != e.effect
+            || (collection == Collection::appleSounds && ! e.apple)
+            || (family != "All Instruments" && family != e.family)
+            || (type != "All Types" && type != e.type)
             || (favouritesOnly && ! favouriteKeys.contains (e.key)))
             continue;
         if (query.isNotEmpty() && ! (e.name + " " + e.family + " " + e.type + " " + e.vendor).containsIgnoreCase (query))
@@ -261,15 +307,30 @@ const InstrumentBrowser::Entry* InstrumentBrowser::selected() const
     return i == entries.end() ? nullptr : &*i;
 }
 
-void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction, bool samplerOnTrack, bool synthOnTrack)
+void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction,
+                                         bool samplerOnTrack, bool synthOnTrack,
+                                         bool effectReady, String loadedAppleId)
 {
-    if (canCreate == ready && targetName == name && targetRestriction == restriction) return;
+    if (canCreate == ready && targetName == name && targetRestriction == restriction
+        && samplerOnTarget == samplerOnTrack && synthOnTarget == synthOnTrack
+        && canInsertEffect == effectReady && hostedAppleIdentifier == loadedAppleId) return;
     canCreate = ready;
     samplerOnTarget = samplerOnTrack;
     synthOnTarget = synthOnTrack;
+    canInsertEffect = effectReady;
+    hostedAppleIdentifier = std::move (loadedAppleId);
     targetName = std::move (name);
     targetRestriction = std::move (restriction);
     updateDetails();
+}
+
+void InstrumentBrowser::browseAppleEffects()
+{
+    collection = Collection::appleEffects;
+    libraryView.setSelectedId (3, dontSendNotification);
+    family = "All Instruments";
+    type = "All Types";
+    rebuildCatalog();
 }
 
 void InstrumentBrowser::setStatus (const String& message)
@@ -282,7 +343,16 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
-    if (entry->key == "studio-sampler")
+    if (entry->effect)
+    {
+        if (! newTrack && canInsertEffect && insertAppleEffect)
+            insertAppleEffect (entry->plugin);
+    }
+    else if (! newTrack && entry->apple && entry->plugin.createIdentifierString() == hostedAppleIdentifier)
+    {
+        if (openLoadedAppleEditor) openLoadedAppleEditor (entry->plugin);
+    }
+    else if (entry->key == "studio-sampler")
     {
         if (! newTrack && samplerOnTarget && openSampler) openSampler();
         else if (loadSampler) loadSampler (newTrack);
@@ -309,19 +379,36 @@ void InstrumentBrowser::updateDetails()
     instrumentName.setTooltip (instrumentName.getText());
     explanation.setText (e != nullptr ? e->description : "Change the search or filters.", dontSendNotification);
     explanation.setTooltip (explanation.getText());
+    const bool appleHosted = available && e->apple && ! e->effect
+        && e->plugin.createIdentifierString() == hostedAppleIdentifier;
     const bool openNative = available && ((e->key == "studio-sampler" && samplerOnTarget)
         || (e->key.startsWith ("studio-synth-") && synthOnTarget));
-    load.setButtonText (openNative ? "Open Instrument" : "Load on Selected Track");
-    load.setEnabled (openNative || (available && canCreate && targetRestriction.isEmpty()));
-    add.setEnabled (available && canCreate);
-    load.setTooltip (openNative ? "Open the native instrument on " + targetName
-                                : targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
-    load.setTitle (openNative ? "Open Instrument" : targetRestriction.isEmpty() ? "Load on " + targetName : "Load on Selected Track. " + targetRestriction);
+    const bool effect = available && e->effect;
+    load.setButtonText (effect ? "Insert Apple Effect"
+                               : appleHosted ? "Open Apple AU" : openNative ? "Open Instrument"
+                               : "Load on Selected Track");
+    load.setEnabled (effect ? canInsertEffect : appleHosted || openNative
+                      || (available && canCreate && targetRestriction.isEmpty()));
+    add.setVisible (! effect);
+    add.setEnabled (! effect && available && canCreate);
+    programs.setVisible (e != nullptr && e->apple && ! e->effect);
+    programs.setEnabled (appleHosted);
+    programs.setTooltip (appleHosted ? "Browse programs supported by this hosted Apple Audio Unit"
+                        : "Load this Apple sound device on the selected track first");
+    load.setTooltip (effect ? (canInsertEffect ? "Add Apple AU effect after existing inserts, before the track fader"
+                                             : "Select an unfrozen track and stop recording")
+                    : appleHosted ? "Open the original Apple instrument editor" : openNative
+                    ? "Open the native instrument on " + targetName
+                    : targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
+    load.setTitle (load.getTooltip());
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
+                   : effect ? (canInsertEffect ? "Apple effect target | " + targetName
+                          : "Select an unfrozen track and stop recording to insert an effect")
                    : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track | " + targetName,
                    dontSendNotification);
     status.setTooltip (status.getText());
+    resized();
     repaint (detailPanel);
 }
 
@@ -360,12 +447,12 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
         return;
     }
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", colours::action);
+    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", entry.effect, colours::action);
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
     g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
-    g.drawFittedText (entry.type + " | " + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
+    g.drawFittedText (entry.type + " | " + (entry.effect ? "Insert Effect" : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
@@ -411,7 +498,7 @@ int InstrumentBrowser::minimumContentHeight (int width) const
 {
     const auto& m = appearance;
     const int details = m.line (11) + m.px (35) + 2 * m.line (14, 1) + 2 * m.line (13, 1)
-        + 2 * m.line (13, 1) + 2 * m.control (25) + m.px (10);
+        + 2 * m.line (13, 1) + 4 * m.control (25) + m.px (10);
     const int list = 3 * (m.line (12, 2) + m.line (11, 2));
     const bool stacked = m.stackedBrowserDetails (width);
     const bool stackedFilters = m.browserFilterRow (width);
@@ -425,7 +512,8 @@ void InstrumentBrowser::resized()
     auto area = getLocalBounds().reduced (m.px (8), m.px (2));
     auto toolbar = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
     manage.setBounds (toolbar.removeFromRight (m.span (95)));
-    favouritesFilter.setBounds (toolbar.removeFromRight (m.span (88)).reduced (m.px (2), 0));
+    favouritesFilter.setBounds (toolbar.removeFromRight (m.span (84)).reduced (m.px (2), 0));
+    libraryView.setBounds (toolbar.removeFromRight (m.span (157)).reduced (m.px (2), 0));
     const bool compactFamilyFilter = m.browserFilterRow (getWidth());
     compact = m.compactBrowser (getWidth());
     const bool stackDetails = m.stackedBrowserDetails (getWidth());
@@ -461,11 +549,13 @@ void InstrumentBrowser::resized()
         if (! compact) typeList.setBounds (area.removeFromLeft (m.span (120)));
         resultList.setBounds (area);
     }
-    const auto shortActions = detailPanel.getWidth() < m.span (222);
-    load.setButtonText (shortActions ? "Load on Track" : "Load on Selected Track");
+    // The selected entry owns the action label (instrument, AU editor or effect).
     auto detail = detailPanel.reduced (m.px (8), m.px (2));
-    add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    if (add.isVisible()) add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    else add.setBounds ({});
     favourite.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    if (programs.isVisible()) programs.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
+    else programs.setBounds ({});
     load.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     explanation.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
     vendor.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
@@ -532,7 +622,7 @@ void InstrumentBrowser::paint (Graphics& g)
     {
         g.setColour (colours::well);
         g.fillRoundedRectangle (art.toFloat(), (float) appearance.px (4));
-        drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", colours::action);
+        drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", e->effect, colours::action);
     }
 }
 }

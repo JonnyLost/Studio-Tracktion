@@ -18,8 +18,16 @@ public:
     std::function<void(juce::String family, bool newTrack)> loadSynth;
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
-    void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction, bool samplerOnTrack = false, bool synthOnTrack = false);
+    std::function<void(const juce::PluginDescription&)> insertAppleEffect;
+    // Browse only the actual programs exposed by the *loaded* Audio Unit.
+    // Never substitute a fictitious GM list for a bank the AU cannot open.
+    std::function<void(const juce::PluginDescription&, juce::Component&)> browseApplePrograms;
+    std::function<void(const juce::PluginDescription&)> openLoadedAppleEditor;
+    void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction,
+                         bool samplerOnTrack = false, bool synthOnTrack = false,
+                         bool canInsertEffect = false, juce::String hostedAppleIdentifier = {});
     void setStatus (const juce::String&);
+    void browseAppleEffects();
     void appearanceChanged();
     int minimumContentHeight (int width) const;
     void resized() override;
@@ -34,7 +42,7 @@ private:
     {
         juce::String key, name, family, type, vendor, description;
         juce::PluginDescription plugin;
-        bool available = false;
+        bool available = false, effect = false, apple = false;
     };
 
     struct Rows final : juce::ListBoxModel
@@ -60,14 +68,18 @@ private:
     std::vector<Entry> entries;
     std::vector<size_t> filtered;
     juce::StringArray families, types;
-    juce::String family, type, selectedKey, targetName, targetRestriction, statusMessage;
-    bool canCreate = false, samplerOnTarget = false, synthOnTarget = false, refreshing = false, compact = false;
+    juce::String family, type, selectedKey, targetName, targetRestriction, statusMessage, hostedAppleIdentifier;
+    enum class Collection { instruments, appleSounds, appleEffects };
+    Collection collection = Collection::instruments;
+    bool canCreate = false, samplerOnTarget = false, synthOnTarget = false;
+    bool canInsertEffect = false, refreshing = false, compact = false;
     Rows familyRows { *this, Rows::families }, typeRows { *this, Rows::types }, resultRows { *this, Rows::results };
     juce::ListBox familyList, typeList, resultList;
-    juce::ComboBox compactFamily, compactType;
+    juce::ComboBox compactFamily, compactType, libraryView;
     juce::TextEditor search;
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
     juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
+                     programs { "Apple Sound Bank..." },
                      favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
