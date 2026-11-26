@@ -13,7 +13,7 @@ namespace
 String noteName (int note) { return MidiMessage::getMidiNoteName (note, true, true, 4); }
 bool sampleFile (const String& path)
 {
-    return File (path).hasFileExtension ("wav;wave;aif;aiff;aifc");
+    return File (path).hasFileExtension ("wav;wave;aif;aiff;aifc;caf");
 }
 
 bool soundBankFile (const File& file) { return file.hasFileExtension ("sf2;sf3;dls"); }
@@ -271,7 +271,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     load.setColour (TextButton::buttonColourId, colours::action);
     load.setColour (TextButton::textColourOffId, colours::rail);
     loadPreset.onClick = [this] { choose (true, false, false); };
-    loadPreset.setTooltip ("Load a Studio preset, SFZ instrument, or SF2/SF3/DLS bank for review.");
+    loadPreset.setTooltip ("Load a Studio preset, SFZ/EXS instrument, or SF2/SF3/DLS bank for review.");
     savePreset.onClick = [this] { choose (true, true, false); };
     basic.onClick = [this] { setPage (Page::basic); };
     groups.onClick = [this] { setPage (Page::groups); };
@@ -983,10 +983,10 @@ void Editor::paint (Graphics& g)
 void Editor::choose (bool presetFile, bool save, bool replace)
 {
     if (chooser) return;
-    chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio preset, SFZ or sound bank")
+    chooser = std::make_unique<FileChooser> (presetFile ? (save ? "Save Studio Sampler preset" : "Load Studio preset, SFZ, EXS or sound bank")
                                                        : (replace ? "Locate sample" : "Load sample"),
         save ? File::getSpecialLocation (File::userDocumentsDirectory).getChildFile (File::createLegalFileName (plugin.instrument().name) + ".studiosampler") : File(),
-        presetFile ? (save ? "*.studiosampler" : "*.studiosampler;*.sfz;*.sf2;*.sf3;*.dls") : (replace ? "*.wav;*.wave;*.aif;*.aiff;*.aifc" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.sfz;*.sf2;*.sf3;*.dls"), true, false, this);
+        presetFile ? (save ? "*.studiosampler" : "*.studiosampler;*.sfz;*.sf2;*.sf3;*.dls;*.exs") : (replace ? "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf" : "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.caf;*.sfz;*.sf2;*.sf3;*.dls;*.exs"), true, false, this);
     const auto modeFlags = save ? FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting
                                 : FileBrowserComponent::openMode;
     chooser->launchAsync (modeFlags | FileBrowserComponent::canSelectFiles | (! presetFile && ! replace ? FileBrowserComponent::canSelectMultipleItems | FileBrowserComponent::canSelectDirectories : 0),
@@ -1031,7 +1031,7 @@ void Editor::importFiles (const StringArray& paths)
 {
     if (importTask) { setStatus ("An import is already running. Cancel it before starting another."); return; }
     for (const auto& path : paths)
-        if (File (path).hasFileExtension ("sfz") || soundBankFile (File (path)))
+        if (File (path).hasFileExtension ("sfz;exs") || soundBankFile (File (path)))
         {
             if (paths.size() != 1) { setStatus ("Import one instrument definition or bank at a time, separately from recordings."); return; }
             startImport ({ File (path) }, false);
@@ -1046,16 +1046,19 @@ void Editor::importFiles (const StringArray& paths)
         safe->startImport (files, choice == 1);
     });
 }
-void Editor::startImport (Array<File> files, bool automatic, int replace, bool presetFile, int bankProgram, int64 expectedSize, int64 expectedTime)
+void Editor::startImport (Array<File> files, bool automatic, int replace, bool presetFile, int bankProgram, int64 expectedSize, int64 expectedTime, File exsRoot, bool exsRootChosen)
 {
     if (importTask || importReview) { setStatus ("Finish or cancel the current import first."); return; }
+    const bool isExs = replace < 0 && files.size() == 1 && files.getFirst().hasFileExtension ("exs");
+    if (isExs && ! exsRootChosen) { chooseExsRoot (files.getFirst()); return; }
     auto initial = plugin.instrument();
     importTask = std::make_unique<ImportTask>();
     auto* task = importTask.get(); task->replace = replace; task->preset = presetFile; task->revision = plugin.changeCount();
     task->sfz = replace < 0 && files.size() == 1 && files.getFirst().hasFileExtension ("sfz");
     task->soundBank = replace < 0 && files.size() == 1 && soundBankFile (files.getFirst());
     task->bankProgram = bankProgram;
-    task->first = task->sfz || task->soundBank ? 0 : static_cast<int> (initial.zones.size());
+    task->exs = isExs;
+    task->first = task->sfz || task->soundBank || task->exs ? 0 : static_cast<int> (initial.zones.size());
     if (task->soundBank)
     {
         task->bankFile = files.getFirst();
@@ -1067,9 +1070,10 @@ void Editor::startImport (Array<File> files, bool automatic, int replace, bool p
         }
         if (bankProgram >= 0) task->bankMedia = std::make_shared<BankImportMedia>();
     }
-    task->worker = std::thread ([task, initial = std::move (initial), files = std::move (files), automatic] () mutable
+    task->worker = std::thread ([task, initial = std::move (initial), files = std::move (files), automatic, exsRoot] () mutable
     {
-        const auto result = task->soundBank
+        const auto result = task->exs ? Plugin::prepareExs (files.getFirst(), exsRoot, initial, task->proposal, task->summary, &task->cancelled, &task->progress)
+            : task->soundBank
             ? (task->bankProgram < 0
                 ? Plugin::catalogSoundBank (task->bankFile, task->catalog, &task->cancelled)
                 : Plugin::prepareSoundBank (task->bankFile, task->bankProgram, task->proposal, task->summary,
@@ -1092,7 +1096,7 @@ void Editor::finishImport()
     if (task->cancelled.load() || task->error.isNotEmpty())
     {
         refresh(); setStatus (task->cancelled.load() ? "Import cancelled; instrument unchanged." : task->error);
-        if ((task->sfz || task->soundBank) && ! task->cancelled.load() && task->error.isNotEmpty())
+        if ((task->sfz || task->soundBank || task->exs) && ! task->cancelled.load() && task->error.isNotEmpty())
             AlertWindow::showAsync (MessageBoxOptions().withTitle ("Instrument import could not complete")
                 .withMessage (task->error.substring (0, 5000)).withButton ("OK"), nullptr);
         return;
@@ -1103,7 +1107,7 @@ void Editor::finishImport()
     { refresh(); setStatus ("Bank changed during import. Reopen the catalog."); return; }
     if (task->soundBank && task->bankProgram < 0)
     { refresh(); showBankCatalog (*task); return; }
-    if (! task->soundBank && ! task->sfz && (task->preset || task->replace >= 0))
+    if (! task->soundBank && ! task->sfz && ! task->exs && (task->preset || task->replace >= 0))
     {
         const int replaced = task->replace;
         plugin.commitImport (std::move (task->proposal), ! task->preset);
@@ -1113,7 +1117,7 @@ void Editor::finishImport()
     const auto summary = task->summary; const auto revision = task->revision;
     const auto safe = Component::SafePointer<Editor> (this);
     DialogWindow::LaunchOptions dialog;
-    dialog.dialogTitle = task->soundBank ? "Review sound bank conversion - confirm replacement" : task->sfz ? "Review SFZ conversion - confirm replacement" : "Review and revise mapping - C4 = MIDI 60";
+    dialog.dialogTitle = task->exs ? "Review EXS24 conversion - confirm replacement" : task->soundBank ? "Review sound bank conversion - confirm replacement" : task->sfz ? "Review SFZ conversion - confirm replacement" : "Review and revise mapping - C4 = MIDI 60";
     dialog.dialogBackgroundColour = colours::panel;
     dialog.useNativeTitleBar = true; dialog.resizable = true; dialog.componentToCentreAround = this;
     const auto media = task->bankMedia;
@@ -1123,8 +1127,39 @@ void Editor::finishImport()
         if (safe->plugin.changeCount() != revision) { safe->setStatus ("Instrument changed. Import again to make a fresh proposal."); return; }
         if (media) media->keep = true;
         safe->plugin.commitImport (std::move (*proposal)); safe->selection = safe->initialZone(); safe->setPage (Page::mapping); safe->setStatus (summary);
-    }, task->sfz || task->soundBank));
+    }, task->sfz || task->soundBank || task->exs));
     refresh(); importReview = dialog.launchAsync();
+}
+void Editor::chooseExsRoot (const File& definition)
+{
+    const auto safe = Component::SafePointer<Editor> (this);
+    const auto revision = plugin.changeCount();
+    AlertWindow::showAsync (MessageBoxOptions().withTitle ("Locate EXS24 recordings")
+        .withMessage ("Studio can try stored paths and nearby sample folders, or you can choose a folder containing your relocated recordings. Duplicate filenames are not automatically assigned.")
+        .withButton ("Find automatically", 1).withButton ("Choose sample folder", 2).withButton ("Cancel", 0),
+        [safe, definition, revision] (int choice)
+    {
+        if (! safe || choice == 0) return;
+        if (safe->plugin.changeCount() != revision || safe->importTask || safe->importReview)
+        { safe->setStatus ("Instrument changed. Reopen the EXS file."); return; }
+        if (choice == 1)
+        { safe->startImport ({definition}, false, -1, false, -1, -1, 0, {}, true); return; }
+        safe->chooser = std::make_unique<FileChooser> ("Choose EXS sample folder", definition.getParentDirectory(), "*", true, false, safe.getComponent());
+        safe->chooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories,
+            [safe, definition, revision] (const FileChooser& dialog)
+        {
+            const auto root = dialog.getResult();
+            MessageManager::callAsync ([safe,definition,root,revision]
+            {
+                if (! safe) return;
+                safe->chooser.reset();
+                if (!root.isDirectory()) return;
+                if (safe->plugin.changeCount() != revision)
+                { safe->setStatus ("Instrument changed. Reopen the EXS file."); return; }
+                safe->startImport ({definition},false,-1,false,-1,-1,0,root,true);
+            });
+        });
+    });
 }
 void Editor::showBankCatalog (const ImportTask& task)
 {
@@ -1547,7 +1582,7 @@ void Editor::Display::mouseUp (const MouseEvent& event)
 bool Editor::Display::isInterestedInFileDrag (const StringArray& files)
 {
     for (const auto& file : files)
-        if (sampleFile (file) || File (file).hasFileExtension ("sfz") || soundBankFile (File (file)) || File (file).isDirectory()) return true;
+        if (sampleFile (file) || File (file).hasFileExtension ("sfz;exs") || soundBankFile (File (file)) || File (file).isDirectory()) return true;
     return false;
 }
 void Editor::Display::fileDragEnter (const StringArray&, int, int) { draggingFiles = true; repaint(); }

@@ -66,6 +66,9 @@ private:
             {
                 formats.registerFormat (new juce::WavAudioFormat(), true);
                 formats.registerFormat (new juce::AiffAudioFormat(), false);
+               #if JUCE_MAC
+                formats.registerFormat (new juce::CoreAudioFormat (juce::CoreAudioFormat::StreamKind::kCaf), false);
+               #endif
             }
         };
         void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
@@ -112,7 +115,7 @@ private:
         std::atomic<bool> cancelled { false }, done { false };
         std::atomic<int> progress { 0 };
         Instrument proposal; juce::String summary, error; unsigned revision = 0; int first = 0;
-        int replace = -1, bankProgram = -1; bool preset = false, sfz = false, soundBank = false;
+        int replace = -1, bankProgram = -1; bool preset = false, sfz = false, soundBank = false, exs = false;
         juce::File bankFile;
         juce::int64 bankSize = -1, bankTime = 0;
         std::vector<BankProgram> catalog;
@@ -122,7 +125,9 @@ private:
     };
     std::unique_ptr<ImportTask> importTask;
     void startImport (juce::Array<juce::File>, bool, int replace = -1, bool preset = false,
-                      int bankProgram = -1, juce::int64 expectedSize = -1, juce::int64 expectedTime = 0);
+                      int bankProgram = -1, juce::int64 expectedSize = -1, juce::int64 expectedTime = 0,
+                      juce::File exsRoot = {}, bool exsRootChosen = false);
+    void chooseExsRoot (const juce::File&);
     void showBankCatalog (const ImportTask&);
     juce::Component::SafePointer<juce::DialogWindow> importReview;
     void finishImport();

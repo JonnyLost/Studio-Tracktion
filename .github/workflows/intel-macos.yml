@@ -18,8 +18,10 @@ on:
       - feature/studio-sampler-disk-streaming-m19
       - feature/studio-sfz-importer-m20
       - feature/studio-sound-bank-importer-m21
+      - feature/studio-exs24-importer-m22
   pull_request:
     branches:
+      - feature/studio-sound-bank-importer-m21
       - feature/studio-sfz-importer-m20
       - feature/studio-sampler-disk-streaming-m19
       - feature/studio-dls-general-midi-library-m18
@@ -84,6 +86,10 @@ jobs:
         run: |
           c++ -std=c++20 -O2 -Wall -Wextra tests/SoundBankTests.cpp -o "$RUNNER_TEMP/studio-bank-tests"
           "$RUNNER_TEMP/studio-bank-tests"
+      - name: Check native EXS24 parser with endian and malformed fixtures
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra tests/ExsParserTests.cpp -o "$RUNNER_TEMP/studio-exs-tests"
+          "$RUNNER_TEMP/studio-exs-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"
@@ -97,7 +103,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
+          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:

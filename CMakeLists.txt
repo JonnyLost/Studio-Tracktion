@@ -891,6 +891,12 @@ if(BUILD_TESTING)
     add_test(NAME StudioSoundBanks COMMAND StudioSoundBankTests)
     set_tests_properties(StudioSoundBanks PROPERTIES TIMEOUT 30)
 
+    add_executable(StudioExsParserTests tests/ExsParserTests.cpp)
+    target_compile_features(StudioExsParserTests PRIVATE cxx_std_20)
+    target_compile_options(StudioExsParserTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioExsParser COMMAND StudioExsParserTests)
+    set_tests_properties(StudioExsParser PROPERTIES TIMEOUT 30)
+
 
     target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp)
     add_test(NAME StudioComposerMidi COMMAND $<TARGET_FILE:Studio> --studio-test-composer-midi)
