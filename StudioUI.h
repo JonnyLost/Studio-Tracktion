@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include <cmath>
 #include "AppearanceMetrics.h"
+#include "StudioDesignTokens.h"
 
 namespace studio
 {
@@ -52,33 +53,72 @@ inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_li
 
 namespace colours
 {
-inline const juce::Colour rail      { 0xff10141c };
-inline const juce::Colour canvas    { 0xff151a23 };
-inline const juce::Colour timeline  { 0xff19212d };
-inline const juce::Colour panel     { 0xff202834 };
-inline const juce::Colour control   { 0xff293443 };
-inline const juce::Colour raised    { 0xff353f4e };
-inline const juce::Colour divider   { 0xff414d5e };
-inline const juce::Colour selected  { 0xff394e66 };
-inline const juce::Colour well      { 0xff131923 };
-inline const juce::Colour grid      { 0xff3b4b61 };
-inline const juce::Colour text      { 0xfff3f5f7 };
-inline const juce::Colour secondary { 0xffb9c0ca };
-inline const juce::Colour action    { 0xffbbcdde };
-inline const juce::Colour focus     { 0xff91c8ff };
-inline const juce::Colour playhead  { 0xff2b91ff };
-inline const juce::Colour warning   { 0xffffcb70 };
-inline const juce::Colour record    { 0xffef6674 };
-inline const juce::Colour signal    { 0xff91d1b8 };
-inline const juce::Colour strings   { 0xff9abfe8 };
-inline const juce::Colour winds     { 0xff8ed0c3 };
-inline const juce::Colour brass     { 0xffe0bf85 };
-inline const juce::Colour percussion{ 0xffd7a4ba };
-inline const juce::Colour keys      { 0xffb9a8e0 };
-inline const juce::Colour other     { 0xffb2becb };
-inline const juce::Colour midiClip  { 0xff365a77 };
-inline const juce::Colour audioClip { 0xff305b5f };
-inline const juce::Colour roomReturn{ 0xffa992d3 };
+inline const juce::Colour rail      { design::rail };
+inline const juce::Colour canvas    { design::canvas };
+inline const juce::Colour timeline  { design::timeline };
+inline const juce::Colour panel     { design::panel };
+inline const juce::Colour control   { design::control };
+inline const juce::Colour raised    { design::raised };
+inline const juce::Colour divider   { design::divider };
+inline const juce::Colour selected  { design::selected };
+inline const juce::Colour well      { design::well };
+inline const juce::Colour grid      { design::grid };
+inline const juce::Colour text      { design::text };
+inline const juce::Colour secondary { design::secondary };
+inline const juce::Colour action    { design::action };
+inline const juce::Colour focus     { design::focus };
+inline const juce::Colour playhead  { design::playhead };
+inline const juce::Colour warning   { design::warning };
+inline const juce::Colour record    { design::record };
+inline const juce::Colour signal    { design::signal };
+inline const juce::Colour strings   { design::strings };
+inline const juce::Colour winds     { design::winds };
+inline const juce::Colour brass     { design::brass };
+inline const juce::Colour percussion{ design::percussion };
+inline const juce::Colour keys      { design::keys };
+inline const juce::Colour other     { design::other };
+inline const juce::Colour midiClip  { design::midiClip };
+inline const juce::Colour audioClip { design::audioClip };
+inline const juce::Colour roomReturn{ design::roomReturn };
+inline const juce::Colour atelierAccent{ design::atelierAccent };
+}
+
+// Shared vector knob; paint-only, with no resource loading or audio state changes.
+// Respect component-specific fill/thumb colours, and leave keyboard/mouse behaviour to JUCE.
+inline void drawStudioRotary (juce::Graphics& g, int x, int y, int width, int height,
+                              float position, float startAngle, float endAngle, juce::Slider& slider,
+                              juce::Colour accent)
+{
+    using namespace juce;
+    const float diameter = (float) jmin (width, height) * .80f;
+    if (diameter < 8.0f) return;
+    const auto centre = Rectangle<float> ((float) x, (float) y, (float) width, (float) height).getCentre();
+    const float radius = diameter * .5f;
+    const float angle = startAngle + jlimit (0.0f, 1.0f, position) * (endAngle - startAngle);
+    const float stroke = jlimit (1.0f, (float) appearance.px (3), radius * .18f);
+    const float opacity = slider.isEnabled() ? 1.0f : .45f;
+    Path track;
+    track.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, endAngle, true);
+    g.setColour (colours::divider.withMultipliedAlpha (opacity));
+    g.strokePath (track, PathStrokeType (stroke, PathStrokeType::curved, PathStrokeType::rounded));
+    if (angle > startAngle)
+    {
+        Path active;
+        active.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, angle, true);
+        g.setColour (accent.withMultipliedAlpha (opacity));
+        g.strokePath (active, PathStrokeType (stroke, PathStrokeType::curved, PathStrokeType::rounded));
+    }
+    const auto face = Rectangle<float> (diameter * .73f, diameter * .73f).withCentre (centre);
+    g.setColour (colours::control.withMultipliedAlpha (opacity));
+    g.fillEllipse (face);
+    g.setColour (slider.hasKeyboardFocus (true) ? colours::focus : colours::divider);
+    g.drawEllipse (face.reduced (.5f), slider.hasKeyboardFocus (true) ? 1.5f : 1.0f);
+    const auto inner = Point<float> (centre.x + std::sin (angle) * radius * .25f,
+                                     centre.y - std::cos (angle) * radius * .25f);
+    const auto outer = Point<float> (centre.x + std::sin (angle) * radius * .60f,
+                                     centre.y - std::cos (angle) * radius * .60f);
+    g.setColour (slider.findColour (Slider::thumbColourId).withMultipliedAlpha (opacity));
+    g.drawLine (inner.x, inner.y, outer.x, outer.y, stroke);
 }
 
 class StudioLookAndFeel final : public juce::LookAndFeel_V4
@@ -98,6 +138,10 @@ public:
         setColour (ComboBox::focusedOutlineColourId, colours::focus);
         setColour (ComboBox::textColourId, colours::text);
         setColour (Slider::trackColourId, colours::action);
+        setColour (Slider::rotarySliderFillColourId, colours::action);
+        setColour (Slider::rotarySliderOutlineColourId, colours::divider);
+        setColour (Slider::textBoxTextColourId, colours::text);
+        setColour (Slider::textBoxBackgroundColourId, colours::well);
         setColour (Slider::thumbColourId, colours::action);
         setColour (Slider::textBoxOutlineColourId, colours::divider);
         setColour (ScrollBar::thumbColourId, colours::secondary.withAlpha (0.6f));
@@ -114,7 +158,7 @@ public:
 
     juce::Font getTextButtonFont (juce::TextButton&, int height) override
     {
-        return juce::FontOptions (juce::jmin (appearance.fontSize (13.0f), (float) height * 0.8f));
+        return juce::FontOptions (juce::jmin (appearance.fontSize (design::body), (float) height * 0.8f));
     }
 
     juce::Font getLabelFont (juce::Label& label) override
@@ -132,6 +176,13 @@ public:
     int getSliderThumbRadius (juce::Slider& slider) override
     {
         return juce::jmin (appearance.px (12), (slider.isHorizontal() ? slider.getHeight() : slider.getWidth()) / 2);
+    }
+
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float position,
+                           float startAngle, float endAngle, juce::Slider& slider) override
+    {
+        drawStudioRotary (g, x, y, width, height, position, startAngle, endAngle, slider,
+                          slider.findColour (juce::Slider::rotarySliderFillColourId));
     }
 
     void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float position,
@@ -247,13 +298,15 @@ public:
         auto bounds = button.getLocalBounds().toFloat().reduced (0.75f);
         const auto fill = down ? colour.brighter (0.2f) : hover ? colour.brighter (0.1f) : colour;
         g.setColour (fill.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
-        g.fillRoundedRectangle (bounds, (float) appearance.px (4));
-        g.setColour (colours::divider.withAlpha (button.isEnabled() ? 0.48f : 0.23f));
-        g.drawRoundedRectangle (bounds, (float) appearance.px (4), 0.75f);
+        g.fillRoundedRectangle (bounds, (float) appearance.px (design::corner));
+        const bool active = button.getToggleState() && button.isEnabled();
+        const float radius = (float) appearance.px (design::corner);
+        g.setColour (active ? colours::action : colours::divider.withAlpha (button.isEnabled() ? .85f : .35f));
+        g.drawRoundedRectangle (bounds, radius, active ? 1.5f : 1.0f);
         if (button.hasKeyboardFocus (false))
         {
             g.setColour (colours::focus);
-            g.drawRoundedRectangle (bounds, (float) appearance.px (4), 1.25f);
+            g.drawRoundedRectangle (bounds.reduced (1.0f), radius, 2.0f);
         }
     }
 

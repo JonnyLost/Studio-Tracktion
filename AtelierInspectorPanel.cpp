@@ -14,10 +14,10 @@ using namespace juce;
 namespace te = tracktion;
 namespace
 {
-// Inspector and floating editor share Studio's neutral slate-blue palette.
+// Inspector uses the shared console palette with a restrained Atelier brass accent.
 const Colour background = colours::canvas;
 const Colour panel = colours::panel;
-const Colour accent = colours::focus;
+const Colour accent = colours::atelierAccent;
 const Colour primary = colours::text;
 const Colour secondary = colours::secondary;
 struct Controller { const char* name; int cc, value; };
@@ -45,7 +45,7 @@ te::VolumeAndPanPlugin* volumeFor (te::AudioTrack& source)
 void setLabel (Label& label, const String& caption, float size, Colour colour)
 {
     label.setText (caption, dontSendNotification);
-    label.setFont (FontOptions (size, Font::plain));
+    label.setFont (FontOptions (size, colour == accent ? Font::bold : Font::plain));
     label.setColour (Label::textColourId, colour);
     label.setJustificationType (Justification::centredLeft);
 }
@@ -70,8 +70,8 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (auto* label : { &heading, &instrumentName, &artCaption, &mappingsHeading, &ccHeading,
                          &mixHeading, &midiStatus, &micStatus, &volumeLabel, &panLabel, &roomLabel })
         addAndMakeVisible (*label);
-    setLabel (heading, "CINEMATIC ATELIER", 15.0f, accent);
-    setLabel (instrumentName, "Selected instrument", 13.0f, primary);
+    setLabel (heading, "CINEMATIC ATELIER", design::section, accent);
+    setLabel (instrumentName, "Selected instrument", design::body, primary);
     setLabel (artCaption, "Choose your instrument artwork", 11.0f, secondary);
     setLabel (mappingsHeading, "ARTICULATIONS", 12.0f, accent);
     setLabel (ccHeading, "MIDI CONTROLLERS", 12.0f, accent);
