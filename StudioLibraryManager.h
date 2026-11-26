@@ -2,6 +2,7 @@
 #pragma once
 #include "StudioLibrary.h"
 #include "StudioUI.h"
+#include "StudioInstrumentHelp.h"
 #include <thread>
 
 namespace studio::library
@@ -13,9 +14,23 @@ public:
     explicit Manager(Load callback):onLoad(std::move(callback))
     {
         setLookAndFeel(&look);
-        for(Component* c:std::initializer_list<Component*>{&roots,&addRoot,&removeRoot,&rescan,&search,&format,&family,&favorites,&manage,&familyEdit,&favoriteEntry,&rows,&details,&art,&assignArt,&repairSelected,&convertSelected,&loadSelected,&cancel,&status})
+        for(Component* c:std::initializer_list<Component*>{&roots,&addRoot,&removeRoot,&rescan,&search,&format,&family,&favorites,&manage,&familyEdit,&favoriteEntry,&rows,&details,&art,&assignArt,&repairSelected,&convertSelected,&loadSelected,&cancel,&status,&helpButton})
             addAndMakeVisible(*c);
-        rows.setModel(this);rows.setMultipleSelectionEnabled(true);rows.setRowHeight(40);
+        rows.setModel(this);rows.setMultipleSelectionEnabled(true);rows.setRowHeight(appearance.control(40,14));
+        rows.setTitle("Instrument results");
+        helpButton.setTooltip("How to find, prepare, load and repair instruments.");
+        helpButton.onClick=[this]{if(helpWindow)helpWindow->toFront(true);else helpWindow=studio::help::show(*this,studio::help::Topic::library);};
+        family.setTitle("Instrument family filter");familyEdit.setTitle("Change selected instrument family");
+        search.setTitle("Search instruments");format.setTitle("Source format filter");roots.setTitle("Library folders");
+        addRoot.setTooltip("Choose a folder containing instrument definitions and recordings.");
+        removeRoot.setTooltip("Stop scanning this folder. No recordings or converted presets are deleted.");
+        rescan.setTooltip("Refresh the catalog, including reconnected external drives.");
+        convertSelected.setTooltip("Prepare selected source instruments as native Studio presets. Review the compatibility reports.");
+        repairSelected.setTooltip("Locate relocated recordings and create a separate repaired preset.");
+        assignArt.setTooltip("Keep an artwork copy for the selected instrument; its audio stays unchanged.");
+        manage.setTooltip("Show technical folder, conversion, repair and artwork tools.");
+        favorites.setTooltip("Only show instruments you marked as favorites.");
+        details.setTitle("Selected instrument and compatibility report");
         search.setTextToShowWhenEmpty("Search name, format or library path",colours::secondary);
         search.onTextChange=[this]{filter();};
         format.onChange=[this]{filter();};
@@ -31,7 +46,7 @@ public:
             const auto indices=selectedIndices();
             if(indices.empty())return;
             for(auto i:indices)catalog.entries[i].family=normalizedFamily(familyEdit.getText());
-            persist();filter();
+            persist();filterSelected();
         };
         favoriteEntry.onClick=[this]
         {
@@ -39,7 +54,7 @@ public:
             const auto indices=selectedIndices();if(indices.empty())return;
             const bool value=!std::all_of(indices.begin(),indices.end(),[this](auto i){return catalog.entries[i].favorite;});
             for(auto i:indices)catalog.entries[i].favorite=value;
-            persist();filter();
+            persist();filterSelected();
         };
         details.setMultiLine(true);details.setReadOnly(true);details.setScrollbarsShown(true);
         art.setImagePlacement(RectanglePlacement::centred|RectanglePlacement::onlyReduceInSize);
@@ -75,6 +90,7 @@ public:
     ~Manager() override
     {
         stopTimer();
+        if(helpWindow)helpWindow->exitModalState(0);
         if(task)
         {
             task->cancel.store(true);
@@ -94,6 +110,7 @@ public:
         auto a=getLocalBounds().reduced(m.px(10));
         const int h=m.control(30,12), gap=m.px(4);
         auto top=a.removeFromTop(h);
+        helpButton.setBounds(top.removeFromRight(jmin(m.span(65),top.getWidth()/5)).reduced(2));
         manage.setBounds(top.removeFromRight(jmin(m.span(140),top.getWidth()/3)).reduced(2));
         favorites.setBounds(top.removeFromRight(jmin(m.span(100),top.getWidth()/3)).reduced(2));
         family.setBounds(top.reduced(2));
@@ -108,7 +125,7 @@ public:
             roots.setBounds(top.reduced(2));
         }
         a.removeFromTop(gap);
-        status.setBounds(a.removeFromBottom(h).reduced(2));
+        status.setBounds(a.removeFromBottom(h*2).reduced(2));
         auto buttons=a.removeFromBottom(h);
         cancel.setBounds(buttons.removeFromRight(jmin(m.span(88),buttons.getWidth()/4)).reduced(2));
         loadSelected.setBounds(buttons.removeFromRight(jmin(m.span(180),buttons.getWidth()/2)).reduced(2));
@@ -144,7 +161,8 @@ private:
     ListBox rows;
     TextButton addRoot{"Add folder"},removeRoot{"Remove folder"},rescan{"Rescan"},convertSelected{"Convert selected"},loadSelected{"Load as new track"},cancel{"Cancel"},assignArt{"Assign artwork"},repairSelected{"Repair sample paths"};
     ToggleButton favorites{"Favorites"},manage{"Manage library"};
-    TextButton favoriteEntry{"Favorite"};
+    TextButton favoriteEntry{"Favorite"},helpButton{"Help"};
+    Component::SafePointer<DialogWindow> helpWindow;
     Label status;
     bool updating=false;
     void updateManagement()
@@ -173,6 +191,11 @@ private:
         values.sort(true);format.clear(dontSendNotification);format.addItem("All formats",1);
         for(int i=0;i<values.size();++i)format.addItem(values[i],i+2);
         const int i=values.indexOf(previous);format.setSelectedId(i<0?1:i+2,dontSendNotification);
+    }
+    void filterSelected()
+    {
+        StringArray keep;for(auto i:selectedIndices())keep.add(catalog.entries[i].key());
+        filter(keep);
     }
     void filter(const StringArray& preserve={})
     {
@@ -203,7 +226,14 @@ private:
         g.drawFittedText(state,jmax(8,width-96),0,88,height,Justification::centredRight,1);
     }
     void selectedRowsChanged(int) override{refreshSelection();}
-    void listBoxItemDoubleClicked(int,const MouseEvent&) override{if(loadSelected.isEnabled())startLoad();}
+    void returnKeyPressed(int row) override{activateRow(row);}
+    void listBoxItemDoubleClicked(int row,const MouseEvent&) override{activateRow(row);}
+    void activateRow(int row)
+    {
+        if(task||!isPositiveAndBelow(row,getNumRowsConst()))return;
+        rows.selectRow(row,false,true);refreshSelection();
+        if(loadSelected.isEnabled())startLoad();
+    }
     std::vector<std::size_t> selectedIndices() const
     {
         std::vector<std::size_t> result;
@@ -220,19 +250,24 @@ private:
         rescan.setEnabled(validCatalog&&!task&&!catalog.roots.isEmpty());cancel.setEnabled(task!=nullptr);
         convertSelected.setEnabled(validCatalog&&!task&&!selected.empty()&&selected.size()<=128);
         assignArt.setEnabled(validCatalog&&!task&&selected.size()==1);
-        repairSelected.setEnabled(validCatalog&&!task&&selected.size()==1&&catalog.entries[selected.front()].converted!=File());
+        repairSelected.setEnabled(validCatalog&&!task&&selected.size()==1&&(catalog.entries[selected.front()].converted!=File()||catalog.entries[selected.front()].source.hasFileExtension("studiosampler")));
         const Entry* entry=selected.size()==1?&catalog.entries[selected.front()]:nullptr;
         const bool native=entry&&(entry->converted!=File()||entry->source.hasFileExtension("studiosampler"));
         const bool convertible=entry&&entry->available&&(!bank(entry->source)||entry->program>=0);
         loadSelected.setButtonText(native?"Load as new track":"Prepare instrument");
         loadSelected.setEnabled(validCatalog&&!task&&onLoad&&(native||convertible));
+        loadSelected.setTooltip(native?"Load this instrument on a new track. Existing tracks are unchanged.":"Prepare a native preset and review its compatibility report before loading.");
         familyEdit.setEnabled(validCatalog&&!task&&!selected.empty());favoriteEntry.setEnabled(validCatalog&&!task&&!selected.empty());
         const ScopedValueSetter<bool> hold(updating,true);
         familyEdit.setSelectedId(0,dontSendNotification);
         favoriteEntry.setButtonText(!selected.empty()&&std::all_of(selected.begin(),selected.end(),[this](auto i){return catalog.entries[i].favorite;})?"Unfavorite":"Favorite");
         art.setImage(Image());
         if(selected.size()!=1)
-        {details.setText(String(static_cast<int>(selected.size()))+" selected / "+String(getNumRowsConst())+" shown. Select up to 128 for batch conversion.",false);return;}
+        {
+            details.setText(catalog.entries.empty()?"No instruments in the catalog. Open Manage library and Add folder to get started.":
+                selected.empty()?(getNumRowsConst()==0?"No matching instruments. Change your search or family/favorites filters.":"Select an instrument to see its details and load it."):
+                String(static_cast<int>(selected.size()))+" selected. Open Manage library for batch conversion.",false);return;
+        }
         const auto& e=catalog.entries[selected.front()];
         familyEdit.setSelectedId(families().indexOf(e.family)+1,dontSendNotification);
         details.setText(e.name+"\n"+e.family+"\n"+(e.converted!=File()||e.source.hasFileExtension("studiosampler")?"Native instrument":"Source instrument — Prepare instrument, review notes, then load")+
@@ -350,7 +385,7 @@ private:
         const auto entry=catalog.entries[chosen.front()];
         if(entry.converted==File()&&!entry.source.hasFileExtension("studiosampler")){startBatch();return;}
         const auto file=entry.converted==File()&&entry.source.hasFileExtension("studiosampler")?entry.source:entry.converted;
-        if(!file.existsAsFile()){status.setText("Native preset missing; convert again.",dontSendNotification);return;}
+        if(!file.existsAsFile()){status.setText("Preset file unavailable. Reconnect the drive and rescan, or reconvert the source in Manage library.",dontSendNotification);return;}
         task=std::make_unique<Task>();auto* t=task.get();t->kind=Task::loadTask;
         t->presentation={entry.name,entry.family,entry.portrait};t->entryKey=entry.key();
         t->worker=std::thread([t,file,entry]
@@ -360,7 +395,7 @@ private:
                 auto r=sampler::Plugin::preparePreset(file,{},t->instrument,&t->cancel);
                 if(r.failed())t->error=r.getErrorMessage();
                 else for(const auto& z:t->instrument.zones)
-                    if(!z.mapping.sample||z.problem.isNotEmpty()){t->error="Native preset has missing recordings. Repair it in Studio Sampler.";break;}
+                    if(!z.mapping.sample||z.problem.isNotEmpty()){t->error="Some recordings are missing. Open Manage library, choose Repair sample paths, and select the recordings folder.";break;}
                 if(t->instrument.zones.empty()&&t->error.isEmpty())t->error="Native preset has no playable regions.";
                 if(t->error.isEmpty()&&!t->cancel.load()&&t->presentation.portrait.isEmpty()&&entry.artwork.existsAsFile())
                 {String retained;if(retainPortrait(entry.artwork,retained).wasOk())t->presentation.portrait=retained;}
@@ -378,7 +413,7 @@ private:
             status.setText((task->kind==Task::scanTask?"Scanning files: ":task->kind==Task::batchTask?"Converting selected: ":"Preparing native instrument: ")+String(task->progress.load()),dontSendNotification);return;
         }
         auto t=std::move(task);
-        if(t->error.isNotEmpty())status.setText(t->error,dontSendNotification);
+        if(t->error.isNotEmpty()){status.setText(t->error,dontSendNotification);status.setTooltip(t->error);}
         else if(t->kind==Task::loadTask)
         {
             if(!t->cancel.load()&&onLoad)
