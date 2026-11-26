@@ -113,9 +113,9 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
             options.dialogBackgroundColour=colours::panel;
             options.useNativeTitleBar=true;options.resizable=true;options.componentToCentreAround=this;
             const auto safe=Component::SafePointer<InstrumentBrowser>(this);
-            options.content.setOwned(new library::Manager([safe](sampler::Instrument instrument)
+            options.content.setOwned(new library::Manager([safe](sampler::Instrument instrument,library::Presentation presentation)
             {
-                if(safe&&safe->loadLibraryInstrument)safe->loadLibraryInstrument(std::move(instrument));
+                if(safe&&safe->loadLibraryInstrument)safe->loadLibraryInstrument(std::move(instrument),std::move(presentation));
             }));
             libraryWindow=options.launchAsync();return;
         }
