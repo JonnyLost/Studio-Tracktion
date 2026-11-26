@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include "StudioSampler.h"
 #include <vector>
 
 namespace studio
@@ -14,6 +15,7 @@ public:
     ~InstrumentBrowser() override;
 
     std::function<void()> openPluginManager;
+    std::function<void(sampler::Instrument)> loadLibraryInstrument;
     std::function<void(bool newTrack)> loadSampler;
     std::function<void(juce::String family, bool newTrack)> loadSynth;
     std::function<void()> openSampler, openSynth;
