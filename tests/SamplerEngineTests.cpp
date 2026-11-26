@@ -45,7 +45,7 @@ struct Harness
     void on (int note = 60, int velocity = 127, int channel = 0) { engine.midi (0x90 | channel, note, velocity); }
     void off (int note = 60, int channel = 0) { engine.midi (0x80 | channel, note, 0); }
     void cc (int control, int value, int channel = 0) { engine.midi (0xB0 | channel, control, value); }
-    void use() { engine.use (bank); }
+    void use() { bank.buildIndex(); engine.use (bank); }
     std::vector<float> render (int frames)
     {
         std::vector<float> out (static_cast<std::size_t> (frames));
