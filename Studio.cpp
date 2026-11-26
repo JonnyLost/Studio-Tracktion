@@ -34,6 +34,7 @@ using namespace tracktion::literals;
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
 #include "StudioAuditionKeyboard.h"
+#include "StudioKeyboardActivity.h"
 #include "Seating/SeatingWorkspace.h"
 #include "FilmScoringWorkspace.h"
 
@@ -880,9 +881,13 @@ public:
             bounceWindow.deleteAndZero();
         bounce.reset();
         pendingPlugin.reset();
+        keyboardInputActivity.detach();
+        dockedKeyboard.releaseNotes();
+        dockedKeyboard.clearActivity();
         if (midiKeyboardWindow != nullptr)
         {
             midiKeyboardWindow->panel.releaseNotes();
+            midiKeyboardWindow->panel.clearActivity();
             midiKeyboardWindow->panel.send = {};
             midiKeyboardWindow->setLookAndFeel (nullptr);
             midiKeyboardWindow.reset();
@@ -2070,6 +2075,9 @@ private:
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
     te::EditItemID dockedKeyboardTarget;
+    te::EditItemID displayedKeyboardTrack;
+    studio::KeyboardInputActivity keyboardInputActivity;
+    std::optional<te::TimePosition> lastKeyboardPlaybackPosition;
     te::EditItemID keyboardTarget;
     Viewport timeline;
     std::unique_ptr<FileChooser> chooser;
@@ -2600,6 +2608,73 @@ private:
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         prefs.setValue ("studio.articulationWindow", articulationWindow->getWindowStateAsString());
         prefs.saveIfNeeded();
+    }
+
+    // Called from Studio's 24 Hz GUI timer, after MIDI focus routing settles.
+    // Reading note activity never sends MIDI or modifies the audio graph.
+    void refreshKeyboardActivity()
+    {
+        if ((! keyboardDocked && midiKeyboardWindow == nullptr) || edit == nullptr || busy)
+        {
+            keyboardInputActivity.detach();
+            displayedKeyboardTrack = {};
+            lastKeyboardPlaybackPosition.reset();
+            dockedKeyboard.clearActivity();
+            if (midiKeyboardWindow != nullptr) midiKeyboardWindow->panel.clearActivity();
+            return;
+        }
+
+        auto* selected = workflowTrack();
+        if (selected != nullptr && (selected->isFrozen (te::Track::anyFreeze)
+            || studio::findInstrument (*selected) == nullptr))
+            selected = nullptr;
+        const auto nextId = selected != nullptr ? selected->itemID : te::EditItemID {};
+        if (displayedKeyboardTrack != nextId)
+        {
+            // Release only the keyboard's own audition notes when the target
+            // changes; monitored notes never pass through these callbacks.
+            dockedKeyboard.releaseNotes();
+            if (midiKeyboardWindow != nullptr)
+                midiKeyboardWindow->panel.releaseNotes();
+            keyboardInputActivity.detach();
+            displayedKeyboardTrack = nextId;
+            lastKeyboardPlaybackPosition.reset();
+        }
+
+        dockedKeyboardTarget = keyboardDocked ? nextId : te::EditItemID {};
+        keyboardTarget = midiKeyboardWindow != nullptr ? nextId : te::EditItemID {};
+        const auto name = selected != nullptr ? selected->getName() : juce::String();
+        if (keyboardDocked) dockedKeyboard.setSelectedInstrument (name);
+        if (midiKeyboardWindow != nullptr)
+            midiKeyboardWindow->panel.setSelectedInstrument (name);
+
+        std::bitset<128> activity;
+        if (selected != nullptr)
+        {
+            keyboardInputActivity.watch (*edit, nextId, engine.getDeviceManager());
+            activity = keyboardInputActivity.snapshot();
+
+            auto& transport = edit->getTransport();
+            if (transport.isPlaying() || transport.isRecording())
+            {
+                const auto position = transport.getPosition();
+                activity |= studio::keyboardPlaybackNotes (*selected, position,
+                                                            lastKeyboardPlaybackPosition);
+                lastKeyboardPlaybackPosition = position;
+            }
+            else
+                lastKeyboardPlaybackPosition.reset();
+        }
+        else
+        {
+            keyboardInputActivity.detach();
+            lastKeyboardPlaybackPosition.reset();
+        }
+
+        if (keyboardDocked) dockedKeyboard.displayActivity (activity);
+        else dockedKeyboard.clearActivity();
+        if (midiKeyboardWindow != nullptr)
+            midiKeyboardWindow->panel.displayActivity (activity);
     }
 
     void showKeyboardChoices()
@@ -3478,19 +3553,6 @@ private:
         else
             piano.setComparisonClips ({});
 
-        if (midiKeyboardWindow != nullptr)
-        {
-            auto* active = workflowTrack();
-            const auto nextTarget = active != nullptr && studio::findInstrument (*active) != nullptr
-                ? active->itemID : te::EditItemID {};
-            if (keyboardTarget != nextTarget)
-            {
-                midiKeyboardWindow->panel.releaseNotes();
-                keyboardTarget = nextTarget;
-            }
-            midiKeyboardWindow->panel.setSelectedInstrument (
-                nextTarget.isValid() && active != nullptr ? active->getName() : String());
-        }
         auto* track = selectedTrack();
         StringArray names;
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
@@ -3503,6 +3565,7 @@ private:
         }
         else
             midiFocusStatus.clear();
+        refreshKeyboardActivity();
         if (names != trackNames)
             trackNames = std::move (names);
         trackOptions.setEnabled (ready && workflowTrack() != nullptr);
@@ -4001,8 +4064,18 @@ private:
             edit->getTransport().stop (false, false);
             midiFocus.release (edit.get());
         }
-        if (midiKeyboardWindow != nullptr) midiKeyboardWindow->panel.releaseNotes();
+        keyboardInputActivity.detach();
+        displayedKeyboardTrack = {};
+        lastKeyboardPlaybackPosition.reset();
+        dockedKeyboard.releaseNotes();
+        dockedKeyboard.clearActivity();
+        if (midiKeyboardWindow != nullptr)
+        {
+            midiKeyboardWindow->panel.releaseNotes();
+            midiKeyboardWindow->panel.clearActivity();
+        }
         keyboardTarget = {};
+        dockedKeyboardTarget = {};
         piano.setClip (nullptr);
         regionClipboard.clear();
         rememberInstrumentWorkspace();
