@@ -152,7 +152,19 @@ inline Result prepare(const Entry& e,sampler::Instrument& out,sampler::BankImpor
 }
 inline Result convert(Entry& e,const File& root,std::atomic<bool>& cancel)
 {
-    if(e.converted.existsAsFile())return Result::ok();
+    if(cancel.load())return Result::fail("Cancelled.");
+    if(e.source.existsAsFile()&&(e.source.getSize()!=e.size||e.source.getLastModificationTime().toMilliseconds()!=e.time))
+        return Result::fail("Source definition changed; rescan before converting.");
+    if(e.converted.existsAsFile())
+    {
+        sampler::Instrument existing;
+        if(auto r=sampler::Plugin::preparePreset(e.converted,{},existing,&cancel);r.failed())return r;
+        if(existing.zones.empty())return Result::fail("Existing native preset is empty.");
+        for(const auto& z:existing.zones)
+            if(!z.mapping.sample||z.problem.isNotEmpty())
+                return Result::fail("Existing native preset has unavailable samples; repair sample paths.");
+        return Result::ok();
+    }
     if(e.source.hasFileExtension("studiosampler"))
     {
         sampler::Instrument out;sampler::BankImportMedia media;String report;
