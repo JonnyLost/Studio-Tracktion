@@ -1101,7 +1101,7 @@ void Editor::finishImport()
         refresh(); setStatus (task->cancelled.load() ? "Import cancelled; instrument unchanged." : task->error);
         if ((task->sfz || task->soundBank || task->exs || task->xmlInstrument) && ! task->cancelled.load() && task->error.isNotEmpty())
             AlertWindow::showAsync (MessageBoxOptions().withTitle ("Instrument import could not complete")
-                .withMessage (task->error.substring (0, 5000)).withButton ("OK"), nullptr);
+                .withMessage (task->error.substring (0, 5000)).withButton ("OK", 1), nullptr);
         return;
     }
     if (task->revision != plugin.changeCount()) { refresh(); setStatus ("Instrument changed during import. Import again to make a fresh proposal."); return; }
