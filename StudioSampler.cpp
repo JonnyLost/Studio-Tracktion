@@ -284,6 +284,7 @@ private:
 Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
 {
     if (! file.existsAsFile()) return Result::fail ("Missing sample");
+    const auto sizeBefore=file.getSize(), timeBefore=file.getLastModificationTime().toMilliseconds();
     auto reader = openSampleReader (file);
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || reader->lengthInSamples >= std::numeric_limits<int>::max()
@@ -297,11 +298,10 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     const bool streamed = frames > residentSampleFrames || fullBytes > std::min (budget, maxSampleBytes);
     const auto preload = streamed ? std::min (frames, streamPreloadFrames) : frames;
     const auto memory = static_cast<std::size_t> (preload) * floatFrameBytes
-        + (streamed ? StreamCache::capacityBytes (stereo) : 0);
+        + (streamed ? StreamCache::capacityBytes (stereo, frames) : 0);
     if (streamed && frames <= streamPreloadFrames)
         return Result::fail ("Sample exceeds Studio's resident/preload memory budget.");
 
-    const auto sizeBefore=file.getSize(), timeBefore=file.getLastModificationTime().toMilliseconds();
     const SharedSamplePool::Key key{file.getFullPathName().toStdString(),sizeBefore,timeBefore};
     String failure;
     const auto outcome=sharedSamples().acquire(key,budget,memory,output,[&]() -> std::shared_ptr<const Sample>
