@@ -2,6 +2,7 @@
 #include "SamplerEditor.h"
 #include "SamplerGuidedBuilder.h"
 #include "StudioInstrumentHelp.h"
+#include "SamplerNoteText.h"
 #include "StudioLibraryPresentation.h"
 #include "SamplerReviewCapture.h"
 #include <algorithm>
@@ -471,7 +472,8 @@ Editor::Editor (Plugin& p) : plugin (p)
     setup (cents, "Fine tune", -100, 100, 1, " ct", editZone ([] (Zone& z, double n) { z.cents = static_cast<float> (n); }));
     setup (group, "Round-robin group", 0, maxGroups, 1, {}, editZone ([] (Zone& z, double n) { z.group = roundToInt (n); }));
     group.slider.setTooltip ("Zones in a nonzero group take turns when their key and velocity ranges overlap.");
-    root.slider.setTooltip ("The key that plays this sample at its original pitch.");
+    for(auto* c:{&root,&low,&high,&keySwitch})useMusicalNotes(c->slider);
+    root.slider.setTooltip ("The key that plays this sample at its original pitch. Type a note name, such as C4, or MIDI number 60.");
     soft.slider.setTooltip ("Quietest MIDI velocity that triggers this sample zone.");
     hard.slider.setTooltip ("Loudest MIDI velocity that triggers this sample zone.");
     setup (zoom, "Waveform zoom", 1, 16, 1, " x", [this] (double n) { waveZoom = n; display.repaint(); });
@@ -895,7 +897,8 @@ void Editor::appearanceChanged()
                      &zoneGain, &cents, &mapZoom, &mapPosition, &keySwitch, &ccNumber, &ccLow, &ccHigh, &fadeIn, &fadeOut, &loopFade, &zoom, &position, &sampleStart, &sampleEnd, &loopStart, &loopEnd, &voices, &bend, &group })
     {
         c->label.setFont (FontOptions (12));
-        c->slider.setTextBoxStyle (c->slider.getTextBoxPosition(), false, appearance.span (67), appearance.control (23, 10));
+        const bool note=c==&root||c==&low||c==&high||c==&keySwitch;
+        c->slider.setTextBoxStyle (c->slider.getTextBoxPosition(), false, appearance.span (note?92:67), appearance.control (23, 10));
     }
     viewport.setScrollBarThickness (appearance.scrollbar());
     keyboard.setKeyWidth (static_cast<float> (appearance.px (16)));
