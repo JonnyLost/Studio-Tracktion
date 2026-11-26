@@ -35,7 +35,8 @@ public:
 #endif
 
 private:
-    enum class Page { basic, mapping, loops, advanced, groups };
+    // Preserve saved numeric view IDs 0–4; new instruments open in Play.
+    enum class Page { basic, mapping, loops, advanced, groups, perform };
     struct Control
     {
         juce::Label label;
@@ -104,7 +105,7 @@ private:
     Plugin& plugin;
     StudioLookAndFeel look;
     juce::ComponentBoundsConstrainer limits;
-    Page page = Page::basic;
+    Page page = Page::perform, lastBuildPage = Page::mapping;
     int selection = 0, auditionNote = -1;
     unsigned seen = 0;
     bool updating = false;
@@ -156,7 +157,12 @@ private:
     juce::TextButton groups { "Groups" }, addGroup { "New group" }, copyGroup { "Copy group" }, deleteGroup { "Delete group" }, moveGroup { "Move zone here" }, duplicate { "Duplicate zone" }, undo { "Undo" }, redo { "Redo" };
     juce::ToggleButton loopEnabled { "Enable loop" };
     juce::TextButton loadPreset { "Load" }, savePreset { "Save" };
-    juce::TextButton basic { "Basic" }, mapping { "Mapping" }, loops { "Waveform" }, advanced { "Advanced" };
+    juce::TextButton play { "Play" }, basic { "Sound" }, build { "Build" }, mapping { "Mapping" }, loops { "Waveform" }, advanced { "Advanced" };
+    juce::Label playSummary, playHelp, articulationLabel, soundScope;
+    juce::ComboBox articulationChoice;
+    juce::TextButton applyArticulation { "Select articulation" };
+    std::vector<studio::ArticulationMapping> playableArticulations;
+    void refreshPerformance();
     juce::TextButton load { "Load Sample" }, locate { "Locate Sample" }, remove { "Remove Zone" }, audition { "Audition" };
     Control attack, decay, sustain, release, gain, tune, root, low, high, soft, hard, zoneGain, cents,
             mapZoom, mapPosition, keySwitch, ccNumber, ccLow, ccHigh, fadeIn, fadeOut, loopFade, zoom, position, sampleStart, sampleEnd, loopStart, loopEnd, voices, bend, group;
