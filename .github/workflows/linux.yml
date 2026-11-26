@@ -32,8 +32,10 @@ on:
       - feature/studio-design-system-m33
       - feature/studio-musical-workspaces-m34
       - feature/studio-cinematic-atelier-m35
+      - feature/studio-environments-m36
   pull_request:
     branches:
+      - feature/studio-environments-m36
       - feature/studio-cinematic-atelier-m35
       - feature/studio-musical-workspaces-m34
       - feature/studio-design-system-m33

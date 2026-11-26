@@ -7,18 +7,20 @@
 #include <memory>
 
 #include "EnvironmentSelection.h"
+#include "EnvironmentTemplates.h"
 
 namespace studio
 {
-// A purely visual project welcome screen. It never touches the Edit, transport,
-// MIDI input, audio graph, or plug-in state.
+// Artwork rotation is independent of an explicit project-template choice.
+// The welcome screen requests creation; only the project owner changes the Edit.
 class StudioEnvironmentWelcome final : public juce::Component, private juce::Timer
 {
 public:
     explicit StudioEnvironmentWelcome (juce::PropertiesFile&);
     ~StudioEnvironmentWelcome() override;
 
-    std::function<void()> onNewProject, onOpenProject, onContinue;
+    std::function<void(environments::TemplateId)> onNewProject;
+    std::function<void()> onOpenProject, onContinue;
 
     bool showAtLaunch() const;
     void open (bool chooseNextArtwork);
@@ -58,7 +60,7 @@ private:
     int scene = 0;
     int favourites = environments::allScenesMask;
 
-    juce::TextButton newProject { "New Project" }, openProject { "Open Project" },
+    juce::TextButton newProject { "New Project..." }, openProject { "Open Project" },
                      continueButton { "Continue to Studio" }, previousButton { "Previous" },
                      nextButton { "Next" };
     juce::ToggleButton launchToggle { "Show at startup" },
