@@ -13,7 +13,7 @@ namespace
 {
 // Match the host Studio color tokens; ARIA states and original artwork remain unchanged.
 const Colour base      = colours::well;
-const Colour control   = colours::control;
+const Colour controlFill = colours::control;
 const Colour accent    = colours::focus;
 const Colour white     = colours::text;
 const Colour secondary = colours::secondary;
@@ -81,7 +81,7 @@ void initLabel (Label& label, const String& text, float size, Colour colour, boo
 
 void initButton (TextButton& button)
 {
-    button.setColour (TextButton::buttonColourId, control);
+    button.setColour (TextButton::buttonColourId, controlFill);
     button.setColour (TextButton::textColourOffId, white);
     button.setColour (TextButton::buttonOnColourId, accent.darker (0.45f));
     button.setColour (TextButton::textColourOnId, white);
@@ -290,7 +290,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle (Slider::TextBoxBelow, false, 60, 19);
         slider.setColour (Slider::rotarySliderFillColourId, accent);
-        slider.setColour (Slider::rotarySliderOutlineColourId, control);
+        slider.setColour (Slider::rotarySliderOutlineColourId, controlFill);
         slider.setColour (Slider::thumbColourId, white);
         slider.setColour (Slider::textBoxTextColourId, white);
         slider.setColour (Slider::textBoxBackgroundColourId, base);
@@ -346,7 +346,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         control.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         control.setTextBoxStyle (Slider::TextBoxBelow, false, 78, 20);
         control.setColour (Slider::rotarySliderFillColourId, accent);
-        control.setColour (Slider::rotarySliderOutlineColourId, control.brighter (0.4f));
+        control.setColour (Slider::rotarySliderOutlineColourId, controlFill.brighter (0.4f));
         control.setColour (Slider::thumbColourId, white);
         control.setColour (Slider::textBoxTextColourId, white);
         control.setColour (Slider::textBoxBackgroundColourId, base);
