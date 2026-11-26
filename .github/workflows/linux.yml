@@ -29,8 +29,11 @@ on:
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-contextual-help-m31
       - feature/studio-usability-acceptance-m32
+      - feature/studio-design-system-m33
   pull_request:
     branches:
+      - feature/studio-design-system-m33
+      - feature/studio-usability-acceptance-m32
       - feature/studio-contextual-help-m31
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-visual-library-m29
