@@ -91,6 +91,8 @@ public:
     static juce::Result prepareExs (const juce::File&, const juce::File& sampleRoot, const Instrument& cache,
                                    Instrument&, juce::String& report, std::atomic<bool>* cancelled = nullptr,
                                    std::atomic<int>* progress = nullptr);
+    static juce::Result prepareXmlInstrument (const juce::File&, const Instrument& cache, Instrument&,
+        juce::String& report, BankImportMedia&, std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     static juce::Result catalogSoundBank (const juce::File&, std::vector<BankProgram>&,
                                           std::atomic<bool>* cancelled = nullptr);
     static juce::Result prepareSoundBank (const juce::File&, int programIndex, Instrument&, juce::String& report,
