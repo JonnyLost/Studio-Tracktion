@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 #include "StudioKeyboardPerformanceState.h"
 #include <algorithm>
+#include <array>
 #include <bitset>
 #include <cmath>
 #include <cstddef>
@@ -313,23 +314,15 @@ public:
             g.drawFittedText (label, r, juce::Justification::centred, 1);
         };
         drawCaption ("PITCH", captionArea (bend));
-        drawCaption ("MOD", captionArea (mod));
-        drawCaption ("EXPRESSION", captionArea (expression));
-        drawCaption ("VOLUME", captionArea (volume));
-        drawCaption ("BRIGHTNESS", captionArea (brightness));
-        drawCaption ("ROOM", captionArea (room));
-
-        const auto drawValue = [&g] (const juce::Slider& slider, int value)
-        {
-            g.setColour (atelierKeyboard::gold);
-            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-            g.drawFittedText (juce::String (value), slider.getBounds().withHeight (16).withY (
-                slider.getBottom() - 1), juce::Justification::centred, 1);
-        };
-        // Values are placed below each rotary control, inside their caption row.
-        if (rightPlate.getWidth() >= 205)
-            for (auto* slider : { &expression, &volume, &brightness, &room })
-                drawValue (*slider, juce::roundToInt (slider->getValue()));
+        drawCaption ("MOD " + juce::String (juce::roundToInt (mod.getValue())), captionArea (mod));
+        drawCaption ("EXPR " + juce::String (juce::roundToInt (expression.getValue())),
+                     captionArea (expression));
+        drawCaption ("VOL " + juce::String (juce::roundToInt (volume.getValue())),
+                     captionArea (volume));
+        drawCaption ("TONE " + juce::String (juce::roundToInt (brightness.getValue())),
+                     captionArea (brightness));
+        drawCaption ("ROOM " + juce::String (juce::roundToInt (room.getValue())),
+                     captionArea (room));
     }
 
     void resized() override
@@ -337,7 +330,7 @@ public:
         auto content = getLocalBounds().reduced (12, 10);
         auto top = content.removeFromTop (topEdge - 12);
         channel.setBounds (top.removeFromRight (91).reduced (2, 3));
-        top.removeFromLeft (getWidth() >= 800 ? 203 : 0);
+        top.removeFromLeft (juce::jmin (203, top.getWidth() / 3));
         status.setBounds (top.reduced (5, 2));
         content.removeFromTop (6);
 
