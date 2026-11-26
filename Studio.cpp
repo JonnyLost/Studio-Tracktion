@@ -6243,8 +6243,8 @@ int StudioView::runInterfaceReview (const File& output)
         if (! dockedKeyboard.isDocked()
             || ! keyboardDockSurround.isVisible()
             || dockedKeyboard.getWidth() >= keyboardDockSurround.getWidth())
-            return fail ("Atelier dock is centered within the continuous piano casing");
-        if (! capture ("atelier-keyboard-docked-piano-case-1536x900.png"))
+            return fail ("Studio keyboard remains centered in slate dock");
+        if (! capture ("studio-keyboard-slate-1536x900.png"))
             return fail ("capture Atelier keyboard embedded in arrangement");
         hideAuditionKeyboard();
         setSize (1280, 800);
