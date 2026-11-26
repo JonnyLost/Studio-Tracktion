@@ -70,6 +70,8 @@ public:
     void editGroups (std::vector<InstrumentGroup>);
     std::vector<studio::ArticulationMapping> articulations() const;
     static juce::Result prepareImport (Instrument initial, const juce::Array<juce::File>& paths, bool automatic, Instrument&, juce::String& summary, std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
+    static juce::Result prepareSfz (const juce::File&, const Instrument& cache, Instrument&, juce::String& report,
+                                   std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     void moveZone (int, int folder);
     juce::Result proposeImport (const juce::Array<juce::File>&, bool automatic, Instrument&, juce::String& summary);
     void commitImport (Instrument next, bool dirty = true) { change (std::move (next), dirty); }
