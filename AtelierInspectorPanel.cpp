@@ -4,6 +4,8 @@
 #include "SpatialRouting.h"
 #include "StudioUI.h"
 #include "StudioGeneralMidi.h"
+#include "StudioSampler.h"
+#include "StudioLibraryPresentation.h"
 #include <cmath>
 
 namespace studio
@@ -108,7 +110,9 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     };
     originalInstrument.onClick = [this]
     {
-        if (actions.openOriginalInstrument && trackId.isValid())
+        if (dynamic_cast<sampler::Plugin*>(hosted()))
+        {if (actions.openFullInstrument && trackId.isValid())actions.openFullInstrument(trackId);}
+        else if (actions.openOriginalInstrument && trackId.isValid())
             actions.openOriginalInstrument (trackId);
     };
     originalInstrument.setTooltip ("Open the hosted instrument's original Audio Unit editor directly.");
@@ -234,7 +238,7 @@ te::Plugin* AtelierInspectorPanel::hosted() const
 {
     if (auto* t = track())
         if (auto* plugin = findInstrument (*t))
-            if (dynamic_cast<te::ExternalPlugin*> (plugin) != nullptr)
+            if (dynamic_cast<te::ExternalPlugin*> (plugin) != nullptr || dynamic_cast<sampler::Plugin*> (plugin) != nullptr)
                 return plugin;
     return nullptr;
 }
@@ -246,9 +250,11 @@ te::VolumeAndPanPlugin* AtelierInspectorPanel::fader() const
 bool AtelierInspectorPanel::canSendMidi() const
 {
     auto* t = track();
-    auto* plugin = dynamic_cast<te::ExternalPlugin*> (hosted());
+    auto* plugin = hosted();
+    const auto* external = dynamic_cast<te::ExternalPlugin*> (plugin);
+    const bool native = dynamic_cast<sampler::Plugin*> (plugin) != nullptr;
     return editing && t != nullptr && plugin != nullptr
-        && plugin->isEnabled() && plugin->getAudioPluginInstance() != nullptr
+        && plugin->isEnabled() && (native || (external != nullptr && external->getAudioPluginInstance() != nullptr))
         && t->edit.getCurrentPlaybackContext() != nullptr
         && ! t->edit.getTransport().isRecording()
         && ! t->isFrozen (te::Track::anyFreeze);
@@ -266,6 +272,7 @@ void AtelierInspectorPanel::releaseSustain()
 void AtelierInspectorPanel::sendCC (int index)
 {
     if (! isPositiveAndBelow (index, (int) controllers.size()) || ! canSendMidi()) return;
+    if (dynamic_cast<sampler::Plugin*> (hosted()) && index != 0 && index != 2 && index != 3 && index != 4) return;
     auto* t = track();
     if (t == nullptr) return;
     const int channel = jlimit (1, 16, midiChannel.getSelectedId());
@@ -302,6 +309,7 @@ void AtelierInspectorPanel::setEdit (te::Edit* next)
     cachedMappingXml.clear();
     cachedCCState.clear();
     portraitName.clear();
+    nativePortraitToken.clear();
     portraitImage = {};
     editing = false;
 }
@@ -343,6 +351,34 @@ void AtelierInspectorPanel::refreshMappings()
     auto* t = track();
     auto* p = hosted();
     if (t == nullptr || p == nullptr) return;
+    if (auto* native = dynamic_cast<sampler::Plugin*> (p))
+    {
+        auto next = native->articulations();
+        const auto& model = native->instrument();
+        std::erase_if (next, [&model](const auto& a)
+        {
+            for (const auto& g : model.groups)
+                if (a.id == "sampler-group-" + String (g.id))
+                    return g.playback.mute || std::none_of (model.zones.begin(),model.zones.end(),[&g](const auto& z)
+                        {return z.folder == g.id && z.mapping.sample && z.problem.isEmpty();});
+            return true;
+        });
+        const bool changed = next != mappings || cachedMappingXml != "native";
+        cachedMappingXml = "native"; mappings = std::move(next);
+        for (size_t i=0;i<articulationPads.size();++i)
+        {
+            auto& b=articulationPads[i];
+            b.setVisible(i<mappings.size());
+            if(i>=mappings.size())continue;
+            b.setButtonText(mappings[i].name);
+            b.setTooltip("Send this native articulation. All mapped articulations are available in the sampler Play view.");
+            const auto& a=mappings[i];
+            b.setToggleState(a.message==ArticulationMessage::keyswitch && native->activeKeyswitch(a.channel-1)==a.number,dontSendNotification);
+            b.setEnabled(canSendMidi());
+        }
+        if(changed)resized();
+        return;
+    }
     const auto xmlText = t->state.getProperty ("studioArticulationMappings").toString();
     if (xmlText == cachedMappingXml) return;
     cachedMappingXml = xmlText;
@@ -375,6 +411,11 @@ void AtelierInspectorPanel::selectMapping (int index)
     auto* p = hosted();
     if (t == nullptr || p == nullptr || ! editing || ! isPositiveAndBelow (index, (int) mappings.size())
         || t->edit.getTransport().isRecording() || t->isFrozen (te::Track::anyFreeze)) return;
+    if (auto* native=dynamic_cast<sampler::Plugin*>(p))
+    {
+        if (canSendMidi()) native->sendArticulation(mappings[(size_t)index]);
+        return;
+    }
     const auto text = t->state.getProperty ("studioArticulationMappings").toString();
     auto root = parseXML (text);
     if (root == nullptr || ! root->hasTagName ("StudioArticulations")) return;
@@ -435,6 +476,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
         cachedMappingXml.clear();
         cachedCCState.clear();
         const ScopedValueSetter<bool> hold (updating, true);
+        nativePortraitToken.clear();
         portraitName = chosen->state.getProperty (portraitProperty).toString();
         int selection = 1;
         for (int i = 0; i < artworkPicker.getNumItems(); ++i)
@@ -445,6 +487,23 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
             (int) chosen->state.getProperty (channelProperty, 1)), dontSendNotification);
         loadArtwork();
     }
+    auto* native = dynamic_cast<sampler::Plugin*> (hosted());
+    const bool nativeMode = native != nullptr;
+    const auto presentation = nativeMode ? library::readPresentation(*native) : library::Presentation{};
+    const auto token = nativeMode ? "native:"+presentation.portrait : String();
+    if (nativeMode && nativePortraitToken != token)
+    {
+        nativePortraitToken=token;
+        portraitImage=library::previewImage(library::portraitFile(presentation.portrait));
+        repaint(imageBounds);
+    }
+    else if (!nativeMode && nativePortraitToken.isNotEmpty())
+    {nativePortraitToken.clear();loadArtwork();}
+    artworkPicker.setVisible(!nativeMode);
+    artCaption.setVisible(nativeMode);
+    artCaption.setText(nativeMode?(presentation.family.isNotEmpty()?presentation.family:String("Native instrument")):portraitName,dontSendNotification);
+    originalInstrument.setButtonText(nativeMode?"Open Sampler":"Open Plug-in");
+    originalInstrument.setTooltip(nativeMode?"Open the native sampler editor.":"Open the hosted instrument's original Audio Unit editor directly.");
     String displayedInstrument = chosen->getName() + " | "
         + (hosted() != nullptr ? hosted()->getName() : String ("Instrument"));
     if (auto* au = dynamic_cast<te::ExternalPlugin*> (hosted());
@@ -457,6 +516,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
             displayedInstrument = chosen->getName() + " | GM "
                 + String (gm::displayNumber (gmProgram)) + " " + gm::name (gmProgram);
     }
+    if(nativeMode) displayedInstrument=native->instrument().name;
     if (instrumentName.getText() != displayedInstrument)
         instrumentName.setText (displayedInstrument, dontSendNotification);
 
@@ -464,7 +524,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     // audition channel. Poll only the tiny saved-state strings: images are
     // decoded only when the selected portrait actually changes.
     const auto sharedPortrait = chosen->state.getProperty (portraitProperty).toString();
-    if (sharedPortrait != portraitName)
+    if (!nativeMode && sharedPortrait != portraitName)
     {
         int selection = 1;
         for (int i = 0; i < artworkPicker.getNumItems(); ++i)
@@ -498,12 +558,18 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     refreshMix();
     bool live = canSendMidi();
     if (! live && pedalChannel > 0) releaseSustain();
-    for (auto& knob : ccKnobs) knob.setEnabled (live);
+    for(size_t i=0;i<ccKnobs.size();++i)
+    {
+        const bool supported=!nativeMode||i==0||i==2||i==3||i==4;
+        ccKnobs[i].setVisible(supported);ccLabels[i].setVisible(supported);ccKnobs[i].setEnabled(live&&supported);
+        ccLabels[i].setText(nativeMode?(i==0?"Vibrato":i==2?"MIDI Vol":i==3?"Expression":"Sustain"):String(controllers[i].name)+" · CC"+String(controllers[i].cc),dontSendNotification);
+    }
+    ccHeading.setText(nativeMode?"EXPRESSION":"MIDI CONTROLLERS",dontSendNotification);
     sendValues.setEnabled (live);
     mappingsButton.setEnabled (editing);
     originalInstrument.setEnabled (ready && hosted() != nullptr);
-    const String summary = live ? "Live CC · instrument response depends on patch"
-        : "CC audition unavailable · active AU/playback required";
+    const String summary = live ? (nativeMode?"Live native expression":"Live CC · instrument response depends on patch")
+        : "Live controls unavailable · active playback context required";
     if (midiStatus.getText() != summary)
         midiStatus.setText (summary, dontSendNotification);
 }
@@ -513,7 +579,8 @@ int AtelierInspectorPanel::desiredHeight (int width) const
 {
     const auto& m = appearance;
     const bool four = width >= m.span (316);
-    const int ccRows = four ? 2 : 4;
+    const bool native=dynamic_cast<sampler::Plugin*>(hosted())!=nullptr;
+    const int ccRows = (native?4:8)/(four?4:2);
     return m.px (20) + m.control (52) + m.px (180) + m.control (27)
         + m.px (20) + m.control (20) + m.control (37) * 2 + m.control (29)
         + m.px (19) + m.control (20) + m.control (28) + ccRows * m.px (93)
@@ -533,7 +600,7 @@ void AtelierInspectorPanel::resized()
     auto artworkRow = area.removeFromTop (m.control (28, 11));
     originalInstrument.setBounds (artworkRow.removeFromRight (m.span (113)).reduced (m.px (2), 0));
     artworkPicker.setBounds (artworkRow);
-    artCaption.setBounds ({}); // The selected image is named by its picker.
+    artCaption.setBounds (dynamic_cast<sampler::Plugin*>(hosted()) ? artworkRow : Rectangle<int>{});
     area.removeFromTop (m.px (9));
     auto artSection = area.removeFromTop (m.control (20) + m.control (37) * 2 + m.control (29) + m.px (6));
     articulationBounds = artSection;
@@ -559,19 +626,23 @@ void AtelierInspectorPanel::resized()
     mappingsButton.setBounds (artSection.removeFromBottom (m.control (28)).reduced (m.px (2), 0));
     area.removeFromTop (m.px (12));
     const int columns = area.getWidth() >= m.span (316) ? 4 : 2;
-    const int rows = 8 / columns;
+    const bool native=dynamic_cast<sampler::Plugin*>(hosted())!=nullptr;
+    const int rows = (native?4:8) / columns;
     ccBounds = area.removeFromTop (m.control (20) + m.control (28) + rows * m.px (93) + m.control (26));
     auto ccArea = ccBounds;
     ccHeading.setBounds (ccArea.removeFromTop (m.control (20)));
     auto midiRow = ccArea.removeFromTop (m.control (28));
     midiChannel.setBounds (midiRow.removeFromLeft (m.span (106)));
     sendValues.setBounds (midiRow.removeFromRight (m.span (96)));
+    int visibleIndex=0;
     for (size_t i = 0; i < ccKnobs.size(); ++i)
     {
+        if(native && i!=0&&i!=2&&i!=3&&i!=4){ccKnobs[i].setBounds({});ccLabels[i].setBounds({});continue;}
+        const int slot=visibleIndex++;
         const int w = jmax (1, ccArea.getWidth() / columns);
         const int h = m.px (93);
-        const int x = ccArea.getX() + (int) (i % (size_t) columns) * w;
-        const int y = ccArea.getY() + (int) (i / (size_t) columns) * h;
+        const int x = ccArea.getX() + (slot % columns) * w;
+        const int y = ccArea.getY() + (slot / columns) * h;
         auto cell = Rectangle<int> (x, y, w, h).reduced (m.px (2));
         ccLabels[i].setBounds (cell.removeFromTop (m.control (18, 8)));
         ccKnobs[i].setBounds (cell);
@@ -618,7 +689,7 @@ void AtelierInspectorPanel::paint (Graphics& g)
     {
         g.setColour (secondary);
         g.setFont (FontOptions (14.0f));
-        g.drawFittedText ("Select instrument artwork", imageBounds.reduced (12), Justification::centred, 2);
+        g.drawFittedText (dynamic_cast<sampler::Plugin*>(hosted())?"Assign artwork in the Instrument Library":"Select instrument artwork", imageBounds.reduced (12), Justification::centred, 2);
     }
     // Artwork stays untouched; its frame follows Studio's subdued dividers.
     g.setColour (colours::divider);
