@@ -1397,8 +1397,14 @@ public:
         layoutDock (area);
         if (keyboardDocked)
         {
+            // Center the Atelier console rather than stretching the keys
+            // across every available pixel in the arrangement.
+            const int height = jlimit (m.px (178), m.px (228), area.getHeight() / 2);
+            const auto dockArea = area.removeFromBottom (height);
+            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1180));
+            dockedKeyboard.setBounds (dockArea.withSizeKeepingCentre (
+                jmax (1, width), jmax (1, height - m.px (5))));
             dockedKeyboard.setVisible (true);
-            dockedKeyboard.setBounds (area.removeFromBottom (m.px (182)).reduced (m.px (5)));
         }
         else dockedKeyboard.setVisible (false);
         arrangementTools = area.removeFromTop (m.control (29));
@@ -2639,6 +2645,9 @@ private:
             keyboardInputActivity.detach();
             displayedKeyboardTrack = nextId;
             lastKeyboardPlaybackPosition.reset();
+            dockedKeyboard.resetPerformance();
+            if (midiKeyboardWindow != nullptr)
+                midiKeyboardWindow->panel.resetPerformance();
         }
 
         dockedKeyboardTarget = keyboardDocked ? nextId : te::EditItemID {};
@@ -2649,10 +2658,13 @@ private:
             midiKeyboardWindow->panel.setSelectedInstrument (name);
 
         std::bitset<128> activity;
+        studio::KeyboardPerformanceValues liveControls;
+        studio::KeyboardPerformanceValues playbackControls;
         if (selected != nullptr)
         {
             keyboardInputActivity.watch (*edit, nextId, engine.getDeviceManager());
             activity = keyboardInputActivity.snapshot();
+            liveControls = keyboardInputActivity.consumePerformance();
 
             auto& transport = edit->getTransport();
             if (transport.isPlaying() || transport.isRecording())
@@ -2660,6 +2672,7 @@ private:
                 const auto position = transport.getPosition();
                 activity |= studio::keyboardPlaybackNotes (*selected, position,
                                                             lastKeyboardPlaybackPosition);
+                playbackControls = studio::keyboardPlaybackPerformance (*selected, position);
                 lastKeyboardPlaybackPosition = position;
             }
             else
@@ -2671,10 +2684,20 @@ private:
             lastKeyboardPlaybackPosition.reset();
         }
 
-        if (keyboardDocked) dockedKeyboard.displayActivity (activity);
+        // Displaying input and playback controllers must never echo MIDI.
+        if (keyboardDocked)
+        {
+            dockedKeyboard.displayActivity (activity);
+            dockedKeyboard.reflectPerformance (playbackControls);
+            dockedKeyboard.reflectPerformance (liveControls);
+        }
         else dockedKeyboard.clearActivity();
         if (midiKeyboardWindow != nullptr)
+        {
             midiKeyboardWindow->panel.displayActivity (activity);
+            midiKeyboardWindow->panel.reflectPerformance (playbackControls);
+            midiKeyboardWindow->panel.reflectPerformance (liveControls);
+        }
     }
 
     void showKeyboardChoices()
