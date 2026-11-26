@@ -1307,6 +1307,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 }
                 if(stream->read(buffer.data(),1)!=0)fail("ZIP entry exceeds declared size.");
                 out->flush();
+                if(out->getStatus().failed())fail("Cannot flush extracted library entry.");
             }
             warnings.insert("Accepted archive recordings are retained in the Studio imported media folder; back them up with presets.");
         }
@@ -1384,7 +1385,11 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
             fail(kontakt?"No supported readable legacy Kontakt K2 XML mapping. Modern, protected or monolithic NKI is not supported.":"Invalid or unsupported Decent Sampler XML.");
         const auto attrs=[](const XmlElement& element)
         {
-            Attr a;for(int i=0;i<element.getNumAttributes();++i)a[element.getAttributeName(i).toStdString()]=element.getAttributeValue(i).toStdString();return a;
+            Attr a;for(int i=0;i<element.getNumAttributes();++i)a[element.getAttributeName(i).toStdString()]=element.getAttributeValue(i).toStdString();
+            for(const auto& [alias,key]:std::array<std::pair<const char*,const char*>,4>{{
+                {"ampEnvAttack","attack"},{"ampEnvDecay","decay"},{"ampEnvSustain","sustain"},{"ampEnvRelease","release"}}})
+                if(a.count(alias)){a[key]=a[alias];a.erase(alias);}
+            return a;
         };
         const auto values=[](const XmlElement& element)
         {
@@ -1480,7 +1485,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 if(kontakt)
                 {
                     // Explicit legacy XML group start rules are not evaluated.
-                    if(group->getChildByName("StartOptions")||group->getChildByName("GroupStartOptions")||
+                    if(group->getChildByName("StartOptions")||group->getChildByName("GroupStartOptions")||group->getChildByName("StartConditions")||
                        boolean(a,"reverse",false))
                     {++omitted;warnings.insert("Kontakt start-condition or reverse group omitted.");continue;}
                     path=get(za,"sampleFile");
@@ -1535,11 +1540,14 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                     if(!a.count("rootNote"))fail("Decent sample missing rootNote.");
                     z.root=integer(a,"rootNote",60,0,127);z.low=integer(a,"loNote",0,0,127);z.high=integer(a,"hiNote",127,0,127);
                     z.soft=std::max(1,integer(a,"loVel",0,0,127));z.hard=integer(a,"hiVel",127,0,127);
-                    const auto gain=db(top,"volume")+db(ga,ga.count("groupVolume")?"groupVolume":"volume")+db(za,"volume");
-                    if(gain<=-120){++omitted;continue;}
+                    const auto globalGain=db(top,top.count("globalVolume")?"globalVolume":"volume");
+                    const auto groupGain=db(ga,ga.count("groupVolume")?"groupVolume":"volume");
+                    const auto sampleGain=db(za,"volume");
+                    const auto gain=globalGain+groupGain+sampleGain;
+                    if(globalGain<=-120||groupGain<=-120||sampleGain<=-120){++omitted;continue;}
                     if(gain< -60||gain>12)warnings.insert("Combined Decent sample gain limited to native range.");
                     z.gainDb=static_cast<float>(std::clamp(gain,-60.0,12.0));
-                    x.pan=static_cast<float>(std::clamp(num(a,"pan",0,-100,100)+num(ga,"groupPan",0,-100,100),-100.0,100.0));
+                    x.pan=static_cast<float>(std::clamp(num(a,"pan",0,-100,100)+num(ga,"groupPan",0,-100,100)+num(top,"globalPan",0,-100,100),-100.0,100.0));
                     const auto track=num(a,"pitchKeyTrack",1,0,1);x.keyTrack=roundToInt(track*100);
                     const auto tune=(num(top,"globalTuning",0,-48,48)+num(ga,"groupTuning",0,-48,48)+num(a,"tuning",0,-48,48))*(boolean(a,"tuningIgnoresKeyTrack",false)?1:track);
                     x.transpose=static_cast<int>(tune);z.cents=static_cast<float>((tune-x.transpose)*100);
@@ -1597,7 +1605,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                     ++missing;warnings.insert(e.file.getFullPathName().toStdString()+": "+e.problem.toStdString());
                     if(z.loop&&z.loopEnd<=z.loopStart+1){z.loop=false;x.sustainLoop=false;warnings.insert("Unavailable sample has unresolved loop; restore after locating it.");}
                 }
-                if(!validMapping(z)||!validGroup(g))fail("Imported mapping exceeds native sampler limits.");
+                if((z.end&&z.end<=z.start)||!validMapping(z)||!validGroup(g))fail("Imported mapping exceeds native sampler limits.");
                 const String groupKey=String(groupIndex)+":"+String(static_cast<int>(g.trigger))+":"+String(g.controller)+":"+String(g.ccLow)+":"+String(g.ccHigh)+":"+String(g.channel)+":"+String(int(g.releaseTrigger))+":"+String(int(g.mute));
                 auto existing=groupIds.find(groupKey);
                 if(existing==groupIds.end())
@@ -1623,7 +1631,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
             }
         }
         if(aborted())fail("Import cancelled.");
-        if(!playable)fail("No playable accessible recordings found.");
+        if(!playable){std::string reason="No playable accessible recordings found.\n";for(const auto& w:warnings)reason+=w+"\n";fail(reason);}
         if(sequences.size()>maxGroups)fail("Too many independent round-robin sequences.");
         if(!sequences.empty())
         {
