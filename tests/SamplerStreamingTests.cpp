@@ -130,12 +130,12 @@ void workerDiskTest()
         }
         assert (out);
     }
-    std::atomic<bool> background { false };
+    auto background = std::make_shared<std::atomic<bool>> (false);
     const auto caller = std::this_thread::get_id();
     auto cache = std::make_shared<StreamCache> (length, true,
-        [file, caller, &background] (int first, int count, float* left, float* right)
+        [file, caller, background] (int first, int count, float* left, float* right)
         {
-            background.store (std::this_thread::get_id() != caller);
+            background->store (std::this_thread::get_id() != caller);
             std::ifstream in (file, std::ios::binary);
             in.seekg (static_cast<std::streamoff> (first) * 2 * sizeof (float));
             for (int n = 0; n < count; ++n)
@@ -151,7 +151,7 @@ void workerDiskTest()
         StreamCache::Cursor cursor;
         float l = 0, r = 0;
         assert (! cursor.read (*cache, frame, l, r, false));
-        assert (! background.load());
+        assert (! background->load());
     }
     StreamWorker::instance().add (cache);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (3);
@@ -168,7 +168,7 @@ void workerDiskTest()
         }
         std::this_thread::sleep_for (std::chrono::milliseconds (2));
     }
-    assert (ready && background.load());
+    assert (ready && background->load());
     // Hold a reader pin while other pages are filled/evicted. Its storage
     // must never be overwritten while the cursor is reading it.
     {
