@@ -18,7 +18,7 @@ DLSMusicDevice Audio Unit and its selected sound bank.
 6. If the selected track already has DLSMusicDevice, **Select GM Sound**
    changes that instrument directly—without inserting an additional AU.
 7. Play using your MIDI controller or the on-screen keyboard. The sound runs
-   through the existing DLSMusicDevice, on MIDI **channel 1**.
+   through the existing DLSMusicDevice. Browser-selected instruments initialize all melodic MIDI channels (1–9, 11–16); channel 10 is left alone for drums.
 8. Save, close and reopen the Studio project. Its GM program is stored as a
    separate 0-based track instrument property; Studio restores the MIDI
    program after the AU has loaded.
@@ -49,9 +49,17 @@ not claimed as part of these 128 melodic slots.
 - The browser populates 128 named entries only when a real Apple
   DLSMusicDevice AU has been scanned and found.
 - Selecting a GM entry inserts the existing Apple AU where required, then
-  sends bank-select 0 and MIDI Program Change on channel 1 to that AU.
+  queues the ordered bank-select 0 and MIDI Program Change messages through
+  that track's existing Tracktion/JUCE MIDI processing path, not through a
+  UI-thread call to the Audio Unit. Selection is deferred until the AU and
+  playback context are present and stable.
 - The selected number is persisted in that plug-in's project state and
-  re-applied when the project loads after Audio Unit instantiation.
+  re-queued when the project loads after Audio Unit instantiation, and when
+  the observed AU instance or playback context changes. The selected value
+  is an intent, not proof of audible program application.
+- On program selection, the melodic channels release sustain and old notes
+  and initialize pitch bend to the exact neutral value (8192). This is a
+  one-time initialization; it does not suppress subsequent pitch expression.
 - Native Studio track/fader automation, MIDI input, audition keyboard,
   recording and plug-in state safeguards remain in place.
 - This feature does **not** convert .exs or create a new sampler, modify
@@ -72,5 +80,12 @@ not claimed as part of these 128 melodic slots.
 - Confirm the original Apple sound bank files are untouched.
 
 Hardware selection, available sound banks and actual audio response must be
-verified on a Mac. The catalog tests check numbering, completeness, and
-family mapping; they do not certify live DLS playback.
+verified on a Mac. The catalog tests check numbering, completeness, family mapping, and the
+ordered MIDI byte sequence for all 128 programs. The macOS-only
+`StudioDlsPlayback` CTest renders actual DLS audio using Studio's hosted
+Tracktion graph, checks same-instance patch switching, distinct AU instances,
+and compares the piano's pitch before and after a second AU is loaded.
+A skipped or unrun test does not certify live DLS playback. The manual
+hardware MIDI routing and save/reopen checks remain necessary. The current
+live-dispatch implementation does not independently guarantee program
+initialization in separately created offline render snapshots.
