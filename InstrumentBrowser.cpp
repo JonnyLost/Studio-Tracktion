@@ -354,6 +354,15 @@ void InstrumentBrowser::browseAppleEffects()
     rebuildCatalog();
 }
 
+void InstrumentBrowser::browseGeneralMidi()
+{
+    collection = Collection::appleSounds;
+    libraryView.setSelectedId (2, dontSendNotification);
+    family = "Apple GM Sounds";
+    type = "All Types";
+    rebuildCatalog();
+}
+
 void InstrumentBrowser::setStatus (const String& message)
 {
     statusMessage = message;
