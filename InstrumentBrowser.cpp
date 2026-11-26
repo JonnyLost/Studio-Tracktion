@@ -3,6 +3,7 @@
 #include "StudioSynth.h"
 #include "StudioGeneralMidi.h"
 #include "StudioUI.h"
+#include "StudioLibraryManager.h"
 #include <algorithm>
 #include <optional>
 
@@ -98,10 +99,26 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     libraryView.addItem ("Instruments", 1);
     libraryView.addItem ("Apple Sounds", 2);
     libraryView.addItem ("Apple Effects", 3);
+    libraryView.addItem ("Sample Library Manager...", 4);
     libraryView.setSelectedId (1, dontSendNotification);
     libraryView.setTooltip ("Browse installed instruments, Apple's Audio Unit sound devices, or Apple Audio Unit effects");
     libraryView.onChange = [this]
     {
+        if (libraryView.getSelectedId() == 4)
+        {
+            libraryView.setSelectedId(static_cast<int>(collection)+1,dontSendNotification);
+            if(libraryWindow){libraryWindow->toFront(true);return;}
+            DialogWindow::LaunchOptions options;
+            options.dialogTitle="Studio Universal Instrument Library";
+            options.dialogBackgroundColour=colours::panel;
+            options.useNativeTitleBar=true;options.resizable=true;options.componentToCentreAround=this;
+            const auto safe=Component::SafePointer<InstrumentBrowser>(this);
+            options.content.setOwned(new library::Manager([safe](sampler::Instrument instrument)
+            {
+                if(safe&&safe->loadLibraryInstrument)safe->loadLibraryInstrument(std::move(instrument));
+            }));
+            libraryWindow=options.launchAsync();return;
+        }
         collection = static_cast<Collection> (jlimit (1, 3, libraryView.getSelectedId()) - 1);
         // Preserve family/type filters inside each collection where possible.
         family = "All Instruments";
@@ -173,6 +190,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
 
 InstrumentBrowser::~InstrumentBrowser()
 {
+    if(libraryWindow)libraryWindow->exitModalState(0);
     known.removeChangeListener (this);
     for (auto* list : { &familyList, &typeList, &resultList })
         list->setModel (nullptr);

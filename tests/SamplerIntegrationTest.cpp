@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
+#include "../StudioLibrary.h"
 #include "LegacyBankFixtures.h"
 #include "ExsFixtures.h"
 #include "../SpatialRouting.h"
@@ -498,6 +499,47 @@ Result verifyXmlInstrumentImport (const File& directory, Plugin& sampler, WavAud
     return Result::ok();
 }
 
+Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
+{
+    namespace lib=studio::library;
+    const auto source=directory.getChildFile("Library source");
+    const auto output=directory.getChildFile("Library output");
+    const auto relocated=directory.getChildFile("Relocated recordings");
+    if(source.createDirectory().failed()||output.createDirectory().failed()||relocated.createDirectory().failed())return Result::fail("create library fixture folders");
+    const auto wavFile=source.getChildFile("Long C4.wav");
+    if(!longSample(wavFile,wav,196608,2))return Result::fail("create library WAV");
+    const auto sfz=source.getChildFile("Strings.sfz");
+    if(!sfz.replaceWithText("<region> sample=Long C4.wav key=60"))return Result::fail("write SFZ");
+    lib::Catalog catalog;catalog.roots.add(source.getFullPathName());catalog.roots.add(source.getFullPathName());
+    std::atomic<bool> cancel{false};std::atomic<int> progress{0};String report;
+    if(auto r=lib::scan(catalog,cancel,progress,report);r.failed())return r;
+    if(catalog.entries.size()!=1||catalog.entries[0].source!=sfz)return Result::fail("deduplicate overlapping scan roots and ignore raw audio");
+    auto& e=catalog.entries[0];e.artwork=source.getChildFile("Art.png");
+    if(auto r=lib::convert(e,output,cancel);r.failed())return r;
+    const auto originalPreset=e.converted;
+    if(!originalPreset.existsAsFile())return Result::fail("native batch preset missing");
+    if(lib::convert(e,output,cancel).failed()||e.converted!=originalPreset)return Result::fail("repeat conversion must reuse existing output");
+    const auto index=output.getChildFile("Catalog.xml");
+    if(lib::save(catalog,index).failed())return Result::fail("persist catalog");
+    lib::Catalog reopened;if(lib::read(index,reopened).failed()||reopened.entries.size()!=1||
+        reopened.entries[0].converted!=originalPreset||reopened.entries[0].artwork!=e.artwork)
+        return Result::fail("restore catalog, converted preset and artwork");
+    if(!wavFile.moveFileTo(relocated.getChildFile(wavFile.getFileName())))return Result::fail("move source recording");
+    if(auto r=lib::repair(reopened.entries[0],output,relocated,cancel);r.failed())return r;
+    if(reopened.entries[0].converted==originalPreset||!originalPreset.existsAsFile())return Result::fail("repair creates a separate preset");
+    Instrument model;
+    if(Plugin::preparePreset(reopened.entries[0].converted,{},model).failed()||model.zones.size()!=1||
+       !model.zones[0].mapping.sample||!model.zones[0].mapping.sample->stream||model.zones[0].file.getParentDirectory()!=relocated)
+       return Result::fail("repaired preset reopens with correct streamed sample");
+    if(!source.moveFileTo(directory.getChildFile("Offline library source")))return Result::fail("simulate offline library");
+    if(lib::scan(reopened,cancel,progress,report).failed()||reopened.entries.size()!=1||reopened.entries[0].available)
+        return Result::fail("retain offline catalog metadata");
+    cancel.store(true);
+    if(lib::scan(reopened,cancel,progress,report).wasOk()||reopened.entries.size()!=1)
+        return Result::fail("cancel scan transactionally");
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -651,6 +693,7 @@ Result run (const File& screenshots)
     if (auto exs = verifyExsImport (directory, *other, wav); exs.failed()) return exs;
     if (auto legacy = verifyLegacyBankImport (directory, *other); legacy.failed()) return legacy;
     if (auto xml = verifyXmlInstrumentImport (directory, *other, wav); xml.failed()) return xml;
+    if (auto library = verifyUniversalLibrary (directory, wav); library.failed()) return library;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;

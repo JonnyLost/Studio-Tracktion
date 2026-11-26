@@ -21,8 +21,10 @@ on:
       - feature/studio-exs24-importer-m22
       - feature/studio-legacy-sampler-importer-m23
       - feature/studio-decent-kontakt-importer-m24
+      - feature/studio-universal-library-m25
   pull_request:
     branches:
+      - feature/studio-decent-kontakt-importer-m24
       - feature/studio-legacy-sampler-importer-m23
       - feature/studio-exs24-importer-m22
       - feature/studio-sound-bank-importer-m21

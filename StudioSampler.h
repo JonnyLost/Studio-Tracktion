@@ -108,6 +108,7 @@ public:
     juce::Result editZones (const std::vector<std::pair<int, Zone>>&);
     void editSettings (const Settings&);
     void rename (juce::String);
+    static juce::Result writeConvertedPreset (const Instrument&, const juce::File&);
     juce::Result savePreset (const juce::File&);
     juce::Result loadPreset (const juce::File&);
     InstrumentDiagnosticSnapshot resourceSnapshot() const override;
