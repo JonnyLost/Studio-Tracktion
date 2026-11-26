@@ -3,6 +3,7 @@
 #include "../FilmCueRender.h"
 #include "../SpatialRouting.h"
 #include "../StudioSynth.h"
+#include "../StudioSampler.h"
 
 namespace studio
 {
@@ -83,6 +84,64 @@ Result verifyFilmDelivery (te::Edit& edit, te::AudioTrack& track, const File& fo
         if (! delivery.getChildFile ("Delivery-Report.csv").loadFileAsString().contains (",completed,"))
             return Result::fail ("film delivery receipt missing completed output");
     }
+    return Result::ok();
+}
+
+Result verifyStreamedBounce (te::Engine& engine, const File& folder)
+{
+    const auto media = folder.getChildFile ("Streamed bounce source.wav");
+    constexpr int chunk = 8192;
+    {
+        WavAudioFormat format;
+        auto stream = media.createOutputStream();
+        auto writer = format.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000)
+            .withNumChannels (2).withBitsPerSample (24));
+        AudioBuffer<float> signal (2, chunk);
+        for (int i = 0; i < chunk; ++i)
+        {
+            const auto v = 0.2f * std::sin (i * (2.0f * juce::MathConstants<float>::pi / 256.0f));
+            signal.setSample (0, i, v); signal.setSample (1, i, v);
+        }
+        if (! writer) return Result::fail ("create streamed WAV bounce fixture");
+        for (int i = 0; i < 48; ++i)
+            if (! writer->writeFromAudioSampleBuffer (signal, 0, chunk)) return Result::fail ("write streamed WAV bounce fixture");
+    }
+    auto edit = te::createEmptyEdit (engine, folder.getChildFile ("Streamed Bounce.tracktionedit"));
+    if (! edit) return Result::fail ("create streamed sampler bounce edit");
+    auto* track = te::getAudioTracks (*edit).getFirst();
+    auto plugin = edit->getPluginCache().createNewPlugin (sampler::Plugin::xmlTypeName, {});
+    if (! plugin) return Result::fail ("create streamed sampler plugin");
+    track->pluginList.insertPlugin (plugin, 0, nullptr);
+    auto* samplerPlugin = dynamic_cast<sampler::Plugin*> (plugin.get());
+    if (samplerPlugin == nullptr || samplerPlugin->loadSample (media).failed())
+        return Result::fail ("load streamed WAV for bounce");
+    auto zone = samplerPlugin->instrument().zones[0].mapping;
+    if (! zone.sample || ! zone.sample->stream) return Result::fail ("fixture must stream");
+    zone.start = 4 * sampler::streamPageFrames + 100;
+    zone.root = 60;
+    samplerPlugin->editZone (0, zone);
+    auto clip = track->insertMIDIClip ("Long note", { 0_tp, 2_tp }, nullptr);
+    if (! clip) return Result::fail ("create long sampler note");
+    clip->getSequence().addNote (60, 0_bp, 3.5_bd, 110, 0, nullptr);
+    edit->clickTrackEnabled = false;
+    edit->dispatchPendingUpdatesSynchronously();
+
+    bounce::Options options;
+    options.range = { 0_tp, 2_tp };
+    options.tail = 0;
+    options.destination = folder.getChildFile ("Streamed bounce.wav");
+    if (auto result = run (*edit, options); result.failed()) return result;
+    AudioBuffer<float> rendered;
+    if (auto result = readWave (options.destination, 2, 48000, 24, 2.0, rendered); result.failed()) return result;
+    // Several page boundaries beyond the attack must contain real audio.
+    // Check every 4096-frame window while the MIDI note is still held.
+    for (int offset = 4096; offset < 64000; offset += 4096)
+        if (rendered.getRMSLevel (0, offset, 4096) < 0.001f)
+            return Result::fail ("streamed bounce contains an unexpected silent page");
+    if (! media.deleteFile()) return Result::fail ("remove streamed bounce fixture");
+    options.destination = folder.getChildFile ("Streamed missing.wav");
+    if (run (*edit, options).wasOk() || options.destination.exists())
+        return Result::fail ("prevent export with missing streamed sample");
     return Result::ok();
 }
 
@@ -171,6 +230,7 @@ Result verify (te::Engine& engine, const File& folder)
         return Result::fail ("dry and wet stems do not reconstruct the unity-master mix (error " + String (error) + ")");
 
     if (auto result = verifyFilmDelivery (*edit, *track, folder); result.failed()) return result;
+    if (auto result = verifyStreamedBounce (engine, folder); result.failed()) return result;
 
     options.stems = false;
     options.tail = 5;
@@ -215,6 +275,7 @@ int runComposerBounceTest (const juce::File& artifacts)
     const juce::ScopeGuard cleanup { [&] { if (artifacts == juce::File()) folder.deleteRecursively(); } };
     tracktion::Engine engine ("Studio Composer Bounce Test");
     synth::registerPlugin (engine);
+    sampler::registerPlugin (engine);
     spatial::registerPlugins (engine);
     const auto result = verify (engine, folder);
     if (result.failed())
