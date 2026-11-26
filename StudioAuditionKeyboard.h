@@ -24,6 +24,105 @@ inline const juce::Colour parchment  { 0xfff1e2c7 };
 inline const juce::Colour secondary  { 0xffc5b49d };
 }
 
+
+// The dock surrounds an Atelier keyboard with dark, subtly illuminated
+// orchestral manuscript engraving. It draws into empty dock margins only;
+// instruments and note keys remain separate, unobscured components.
+class AtelierKeyboardDockSurround final : public juce::Component
+{
+public:
+    AtelierKeyboardDockSurround()
+    {
+        setInterceptsMouseClicks (false, false);
+        setAccessible (false);
+    }
+
+    void setKeyboardArea (juce::Rectangle<int> area)
+    {
+        if (keyboardArea == area) return;
+        keyboardArea = area;
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().toFloat();
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff17212b),
+                                                area.getTopLeft(), juce::Colour (0xff211b18),
+                                                area.getBottomRight(), false));
+        g.fillRect (area);
+        if (keyboardArea.isEmpty()) return;
+
+        const int gap = 10;
+        auto left = getLocalBounds().withRight (juce::jmax (0, keyboardArea.getX() - gap));
+        auto right = getLocalBounds().withLeft (
+            juce::jmin (getWidth(), keyboardArea.getRight() + gap));
+        drawManuscript (g, left.reduced (7, 8), false);
+        drawManuscript (g, right.reduced (7, 8), true);
+    }
+
+private:
+    juce::Rectangle<int> keyboardArea;
+
+    static void drawManuscript (juce::Graphics& g, juce::Rectangle<int> area,
+                                bool answerPhrase)
+    {
+        // Skip extremely narrow dock margins; never let art crowd the keys.
+        if (area.getWidth() < 66 || area.getHeight() < 90) return;
+        g.saveState();
+        g.reduceClipRegion (area);
+        auto paper = area.toFloat().reduced (2.0f);
+        g.setGradientFill (juce::ColourGradient (
+            juce::Colour (0xff6a4a30).withAlpha (0.34f), paper.getTopLeft(),
+            juce::Colour (0xff302a25).withAlpha (0.20f), paper.getBottomRight(),
+            false));
+        g.fillRoundedRectangle (paper, 6.0f);
+        g.setColour (atelierKeyboard::faintGold.withAlpha (0.32f));
+        g.drawRoundedRectangle (paper.reduced (0.5f), 6.0f, 0.85f);
+
+        const float x1 = paper.getX() + 12.0f;
+        const float x2 = paper.getRight() - 12.0f;
+        if (x2 - x1 < 43.0f) { g.restoreState(); return; }
+        const float midY = paper.getCentreY();
+        const float staffGap = juce::jlimit (7.0f, 11.0f, paper.getHeight() / 18.0f);
+        const auto ink = atelierKeyboard::gold.withAlpha (0.44f);
+
+        // Two etched five-line staves, like an aged conductor's sketchbook.
+        for (int staff = 0; staff < 2; ++staff)
+        {
+            const float centre = midY + (staff == 0 ? -3.4f : 3.4f) * staffGap;
+            for (int rule = -2; rule <= 2; ++rule)
+            {
+                g.setColour (ink.withAlpha (0.36f));
+                const float y = centre + (float) rule * staffGap;
+                g.drawLine (x1, y, x2, y, 0.8f);
+            }
+            if (x2 - x1 < 64.0f) continue;
+
+            // Quiet noteheads and stems, not text glyphs or external artwork.
+            for (int note = 0; note < 3; ++note)
+            {
+                const float progress = (note + 1.0f) / 4.0f;
+                const float x = x1 + (x2 - x1) * progress;
+                const int step = ((note * 2 + staff + (answerPhrase ? 2 : 0)) % 5) - 2;
+                const float y = centre - step * staffGap * 0.5f;
+                g.setColour (ink.withAlpha (note == 1 ? 0.68f : 0.53f));
+                g.fillEllipse (x - 4.1f, y - 2.8f, 8.2f, 5.6f);
+                g.drawLine (x + 3.5f, y, x + 3.5f, y - staffGap * 2.3f, 1.0f);
+                if (note == 1)
+                {
+                    juce::Path flag;
+                    flag.startNewSubPath (x + 3.5f, y - staffGap * 2.3f);
+                    flag.quadraticTo (x + 9.5f, y - staffGap * 2.0f,
+                                      x + 7.5f, y - staffGap * 1.2f);
+                    g.strokePath (flag, juce::PathStrokeType (1.0f));
+                }
+            }
+        }
+        g.restoreState();
+    }
+};
+
 // Performance sliders use compact brushed-bronze wheels and rotary controls.
 // This is a local LookAndFeel; other Studio controls remain unchanged.
 class AtelierKeyboardControls final : public juce::LookAndFeel_V4
@@ -262,7 +361,11 @@ public:
         dockModeButton.setTooltip (docked
             ? "Open the Atelier keyboard in a floating window"
             : "Attach this keyboard to the bottom of Studio");
-        hideButton.setVisible (docked);
+        // The dock has no separate header: controls are in Studio's View menu.
+        dockModeButton.setVisible (! docked);
+        hideButton.setVisible (false);
+        channel.setVisible (! docked);
+        status.setVisible (! docked);
         // A new panel has not yet received bounds from its parent. Do not
         // lay out child controls against a zero-sized rectangle.
         if (getWidth() > 0 && getHeight() > 0)
@@ -337,14 +440,16 @@ public:
                         (float) row + 3.0f, 0.7f);
         g.setColour (atelierKeyboard::gold.withAlpha (0.85f));
         g.drawRoundedRectangle (outer.reduced (1.0f), 8.0f, 1.1f);
-        g.setColour (atelierKeyboard::faintGold);
-        g.drawLine (13.0f, (float) topEdge, (float) getWidth() - 13.0f,
-                    (float) topEdge, 1.0f);
-
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.setColour (atelierKeyboard::gold);
-        g.drawFittedText ("CINEMATIC ATELIER", juce::Rectangle<int> (19, 11, 196, 23),
-                          juce::Justification::centredLeft, 1);
+        if (! dockedMode)
+        {
+            g.setColour (atelierKeyboard::faintGold);
+            g.drawLine (13.0f, (float) topEdge, (float) getWidth() - 13.0f,
+                        (float) topEdge, 1.0f);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.setColour (atelierKeyboard::gold);
+            g.drawFittedText ("CINEMATIC ATELIER", juce::Rectangle<int> (19, 11, 196, 23),
+                              juce::Justification::centredLeft, 1);
+        }
 
         for (const auto plate : { leftPlate, keyPlate, rightPlate })
         {
@@ -374,17 +479,24 @@ public:
 
     void resized() override
     {
-        auto content = getLocalBounds().reduced (12, 10);
-        auto top = content.removeFromTop (topEdge - 12);
-        channel.setBounds (top.removeFromRight (91).reduced (2, 3));
-        if (dockedMode)
-            hideButton.setBounds (top.removeFromRight (53).reduced (2, 3));
-        else
+        auto content = getLocalBounds().reduced (10, 7);
+        if (! dockedMode)
+        {
+            auto top = content.removeFromTop (topEdge - 7);
+            channel.setBounds (top.removeFromRight (91).reduced (2, 3));
             hideButton.setBounds ({});
-        dockModeButton.setBounds (top.removeFromRight (72).reduced (2, 3));
-        top.removeFromLeft (juce::jmin (203, top.getWidth() / 3));
-        status.setBounds (top.reduced (5, 2));
-        content.removeFromTop (6);
+            dockModeButton.setBounds (top.removeFromRight (72).reduced (2, 3));
+            top.removeFromLeft (juce::jmin (203, top.getWidth() / 3));
+            status.setBounds (top.reduced (5, 2));
+            content.removeFromTop (5);
+        }
+        else
+        {
+            channel.setBounds ({});
+            hideButton.setBounds ({});
+            dockModeButton.setBounds ({});
+            status.setBounds ({});
+        }
 
         const int fullWidth = content.getWidth();
         int leftW = juce::jlimit (90, 147, fullWidth / 7);

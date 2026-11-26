@@ -9,6 +9,7 @@ on:
       - feature/studio-keyboard-live-playback-feedback-m10
       - feature/studio-cinematic-keyboard-console-m11
       - feature/studio-atelier-keyboard-docking-m12
+      - feature/studio-keyboard-dock-streamline-m13
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13

@@ -376,6 +376,8 @@ public:
         showTransportMeter = prefs.getBoolValue ("studio.transportMeter", true);
         showTransportCapture = prefs.getBoolValue ("studio.transportCapture", true);
         keyboardDocked = prefs.getBoolValue ("studio.keyboardDocked", false);
+        keyboardPreferredDocked = prefs.getBoolValue ("studio.keyboardPreferredDocked",
+                                                     prefs.getBoolValue ("studio.keyboardDocked", true));
         transportSize = jlimit (0, 2, prefs.getIntValue ("studio.transportSize", 1));
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
@@ -480,8 +482,8 @@ public:
         addAndMakeVisible (transportOptions);
         addAndMakeVisible (flashbackButton);
         addAndMakeVisible (keyboardButton);
-        keyboardButton.setTooltip ("Dock, float or hide the Cinematic Atelier MIDI keyboard (Shift-Command-K)");
-        keyboardButton.onClick = [this] { showKeyboardChoices(); };
+        keyboardButton.setTooltip ("Show or hide the MIDI keyboard (Shift-Command-K); Dock/Float in View menu");
+        keyboardButton.onClick = [this] { toggleAuditionKeyboard(); };
         flashbackButton.setTooltip ("Capture MIDI — recover recent unrecorded MIDI on the selected track");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
@@ -720,6 +722,7 @@ public:
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
+        addChildComponent (keyboardDockSurround);
         addChildComponent (dockedKeyboard);
         dockedKeyboard.setDocked (true);
         const SafePointer<StudioView> keyboardHost (this);
@@ -1336,6 +1339,8 @@ public:
         music.setVisible (showMusicMenu);
         flashbackButton.setVisible (showFlashback);
         keyboardButton.setVisible (showKeyboard);
+        keyboardButton.setToggleState (keyboardDocked || midiKeyboardWindow != nullptr,
+                                       dontSendNotification);
         const int readoutWidth = readoutBase + (showElapsed ? elapsedW : 0);
         const int totalWidth = fixed + buttonCount * key + (showElapsed ? elapsedW : 0);
         auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
@@ -1414,16 +1419,26 @@ public:
         layoutDock (area);
         if (keyboardDocked)
         {
-            // Center the Atelier console rather than stretching the keys
-            // across every available pixel in the arrangement.
-            const int height = jlimit (m.px (178), m.px (228), area.getHeight() / 2);
+            // A single low-profile dock: Atelier controls fill the center, while
+            // a non-interactive engraved orchestral manuscript fills side gaps.
+            const int height = jlimit (m.px (160), m.px (202), area.getHeight() / 2);
             const auto dockArea = area.removeFromBottom (height);
-            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1180));
-            dockedKeyboard.setBounds (dockArea.withSizeKeepingCentre (
-                jmax (1, width), jmax (1, height - m.px (5))));
+            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1040));
+            const auto instrumentBounds = dockArea.withSizeKeepingCentre (
+                jmax (1, width), jmax (1, height - m.px (5)));
+            keyboardDockSurround.setBounds (dockArea);
+            keyboardDockSurround.setKeyboardArea (instrumentBounds.translated (
+                -dockArea.getX(), -dockArea.getY()));
+            keyboardDockSurround.setVisible (true);
+            dockedKeyboard.setBounds (instrumentBounds);
             dockedKeyboard.setVisible (true);
+            dockedKeyboard.toFront (false);
         }
-        else dockedKeyboard.setVisible (false);
+        else
+        {
+            dockedKeyboard.setVisible (false);
+            keyboardDockSurround.setVisible (false);
+        }
         arrangementTools = area.removeFromTop (m.control (29));
         auto tools = arrangementTools.reduced (m.px (5), m.px (2));
        #if JUCE_MAC
@@ -1800,7 +1815,8 @@ public:
         mAddInstrument, mAddSynth, mAddSampler, mAddAudio, mAddMidiClip, mNewGroup, mGroupSelected,
         mRegionActions, mRewind, mRecord, mFlashback, mCycle, mClick,
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
-        mMidiMonitor, mResources, mAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
+        mMidiMonitor, mResources, mAuditionKeyboard, mDockAuditionKeyboard, mFloatAuditionKeyboard,
+        mHideAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
@@ -1878,7 +1894,13 @@ public:
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
                 add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
-                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
+                add (mAuditionKeyboard, "Show On-Screen MIDI Keyboard  ⇧⌘K",
+                     true, keyboardDocked || midiKeyboardWindow != nullptr);
+                add (mDockAuditionKeyboard, "Dock Keyboard at Bottom", true, keyboardDocked);
+                add (mFloatAuditionKeyboard, "Float Keyboard", true,
+                     ! keyboardDocked && midiKeyboardWindow != nullptr);
+                add (mHideAuditionKeyboard, "Hide Keyboard",
+                     keyboardDocked || midiKeyboardWindow != nullptr);
                 menu.addSeparator();
                 add (mTransportCycle, "Transport: Cycle", true, showTransportCycle);
                 add (mTransportClick, "Transport: Metronome", true, showTransportClick);
@@ -1905,7 +1927,6 @@ public:
                 add (mPerformanceArticulation, "Articulations Only", true, performanceMode.getSelectedId() == 2);
                 add (mPerformanceNone, "Hide Performance Panel", true, performanceMode.getSelectedId() == 3);
                 menu.addSeparator();
-                add (mAuditionKeyboard, "On-Screen MIDI Keyboard  ⇧⌘K");
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
@@ -1967,6 +1988,9 @@ public:
             case mRoomReturnArrangement: setRoomReturnTrackVisible (! showRoomReturnTrack); break;
             case mEnvironments: environmentWelcome.open (false); break;
             case mAuditionKeyboard: toggleAuditionKeyboard(); break;
+            case mDockAuditionKeyboard: setKeyboardDocked (true); break;
+            case mFloatAuditionKeyboard: setKeyboardDocked (false); break;
+            case mHideAuditionKeyboard: hideAuditionKeyboard(); break;
             case mMidiMonitor: invoke (monitorButton); break;
             case mResources: if (resources.onOpen) resources.onOpen(); break;
             case mAboutStudio:
@@ -2095,8 +2119,10 @@ private:
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
+    bool keyboardPreferredDocked = true;
     te::EditItemID dockedKeyboardTarget;
     te::EditItemID displayedKeyboardTrack;
     studio::KeyboardInputActivity keyboardInputActivity;
@@ -2717,24 +2743,8 @@ private:
         }
     }
 
-    void showKeyboardChoices()
-    {
-        PopupMenu menu;
-        const SafePointer<StudioView> safe (this);
-        menu.addItem ("Dock at bottom", true, keyboardDocked, [safe]
-        {
-            if (safe != nullptr) safe->setKeyboardDocked (true);
-        });
-        menu.addItem ("Float keyboard", true, midiKeyboardWindow != nullptr, [safe]
-        {
-            if (safe != nullptr) safe->setKeyboardDocked (false);
-        });
-        menu.addItem ("Hide keyboard", keyboardDocked || midiKeyboardWindow != nullptr, false, [safe]
-        {
-            if (safe != nullptr) safe->hideAuditionKeyboard();
-        });
-        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardButton));
-    }
+    // The transport button is a one-click toggle; all placement options
+    // are in the macOS View menu rather than a button dropdown.
 
     void hideAuditionKeyboard()
     {
@@ -2789,12 +2799,14 @@ private:
             dockedKeyboard.releaseNotes();
             dockedKeyboard.send = {};
             keyboardDocked = false;
-            if (midiKeyboardWindow == nullptr) toggleAuditionKeyboard();
+            if (midiKeyboardWindow == nullptr) openFloatingAuditionKeyboard();
             if (midiKeyboardWindow != nullptr)
                 midiKeyboardWindow->panel.reflectPerformance (positions);
         }
+        keyboardPreferredDocked = dock;
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         prefs.setValue ("studio.keyboardDocked", keyboardDocked);
+        prefs.setValue ("studio.keyboardPreferredDocked", keyboardPreferredDocked);
         prefs.saveIfNeeded();
         resized();
     }
@@ -2814,22 +2826,18 @@ private:
 
     void toggleAuditionKeyboard()
     {
-        if (keyboardDocked)
+        if (keyboardDocked || midiKeyboardWindow != nullptr)
         {
-            dockedKeyboard.releaseNotes();
-            dockedKeyboard.send = {};
-            keyboardDocked = false;
-            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
-            prefs.setValue ("studio.keyboardDocked", false);
-            prefs.saveIfNeeded();
-            resized();
+            hideAuditionKeyboard();
             return;
         }
-        if (midiKeyboardWindow != nullptr)
-        {
-            closeAuditionKeyboard();
-            return;
-        }
+        // Reopen in the last chosen placement, defaulting to the bottom dock.
+        setKeyboardDocked (keyboardPreferredDocked);
+    }
+
+    void openFloatingAuditionKeyboard()
+    {
+        if (midiKeyboardWindow != nullptr) return;
         midiKeyboardWindow = std::make_unique<studio::AuditionKeyboardWindow>();
         midiKeyboardWindow->panel.setDocked (false);
         const SafePointer<StudioView> dockHost (this);
@@ -6224,6 +6232,22 @@ int StudioView::runInterfaceReview (const File& output)
         if (keyboardReview.isDocked()
             || ! capture ("atelier-keyboard-floating-1080x228.png", &keyboardReview))
             return fail ("capture floating Cinematic Atelier performance keyboard");
+    }
+
+    // Capture the actual dock within the arrangement, including the
+    // manuscript engraving in the two side margins and no redundant header.
+    if (writeImages)
+    {
+        setSize (1536, 900);
+        setKeyboardDocked (true);
+        if (! dockedKeyboard.isDocked()
+            || ! keyboardDockSurround.isVisible()
+            || dockedKeyboard.getWidth() >= keyboardDockSurround.getWidth())
+            return fail ("Atelier dock is centered over visible staff margins");
+        if (! capture ("atelier-keyboard-docked-staff-surround-1536x900.png"))
+            return fail ("capture Atelier keyboard embedded in arrangement");
+        hideAuditionKeyboard();
+        setSize (1280, 800);
     }
 
     if (performance.isVisible() || articulationStrip.isVisible())
