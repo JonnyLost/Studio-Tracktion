@@ -281,7 +281,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     {
         auto next = plugin.instrument();
         auto chosen = selectedZones; if (chosen.empty()) chosen.insert (selection);
-        if (next.zones.size() + chosen.size() > maxZones) { setStatus ("Zone limit reached (128)."); return; }
+        if (next.zones.size() + chosen.size() > maxZones) { setStatus ("Zone limit reached (" + String(maxZones) + ")."); return; }
         for (int i : chosen) if (isPositiveAndBelow (i, static_cast<int> (plugin.instrument().zones.size()))) next.zones.push_back (plugin.instrument().zones[static_cast<std::size_t> (i)]);
         plugin.commitImport (std::move (next)); refresh();
     };
@@ -301,7 +301,7 @@ Editor::Editor (Plugin& p) : plugin (p)
             {
                 std::vector<SampleZone> copies;
                 for (auto z : next.zones) if (z.folder == original) { z.folder = id; copies.push_back (z); }
-                if (next.zones.size() + copies.size() > maxZones) { setStatus ("Zone limit reached (128)."); return; }
+                if (next.zones.size() + copies.size() > maxZones) { setStatus ("Zone limit reached (" + String(maxZones) + ")."); return; }
                 auto copied = *std::find_if (next.groups.begin(), next.groups.end(), [original] (const auto& g) { return g.id == original; });
                 copied.id = id; copied.playback.id = id; copied.name += " copy"; next.groups.push_back (copied);
                 next.zones.insert (next.zones.end(), copies.begin(), copies.end());
