@@ -125,8 +125,8 @@ void Engine::release (Voice& voice) noexcept
 
 void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity, bool releasing, int firstOverride, int endOverride, bool direct) noexcept
 {
-    if (! zone.sample || zone.sample->left.size() < 2 || zone.start < 0 || zone.start >= static_cast<int> (zone.sample->left.size())
-        || zone.end < 0 || (zone.end && (zone.end <= zone.start || zone.end > static_cast<int> (zone.sample->left.size())))) return;
+    if (! zone.sample || zone.sample->frameCount() < 2 || zone.start < 0 || zone.start >= zone.sample->frameCount()
+        || zone.end < 0 || (zone.end && (zone.end <= zone.start || zone.end > zone.sample->frameCount()))) return;
     Voice* voice = nullptr;
     for (int i = 0; i < settings.polyphony; ++i)
     {
@@ -143,7 +143,7 @@ void Engine::trigger (const Zone& zone, int source, int channel, int note, int v
 
     *voice = {};
     voice->sample = zone.sample.get();
-    const int frames = static_cast<int> (zone.sample->left.size());
+    const int frames = zone.sample->frameCount();
     voice->position = std::clamp (zone.start, 0, frames - 1);
     voice->end = zone.end > 0 ? std::clamp (zone.end, zone.start + 1, frames) : frames;
     voice->channel = channel;
@@ -155,7 +155,7 @@ void Engine::trigger (const Zone& zone, int source, int channel, int note, int v
     voice->folder = zone.folder;
     voice->baseStep = zone.sample->rate / outputRate * pitchRatio (note - zone.root + zone.cents * 0.01);
     voice->oneShot = zone.oneShot || releasing;
-    voice->loop = ! releasing && ! zone.oneShot && zone.loop && validLoop (zone, static_cast<int> (zone.sample->left.size()));
+    voice->loop = ! releasing && ! zone.oneShot && zone.loop && validLoop (zone, zone.sample->frameCount());
     voice->loopStart = zone.loopStart;
     voice->loopEnd = zone.loopEnd;
     voice->blend = std::min (zone.loopCrossfade < 0 ? 64 : zone.loopCrossfade, (zone.loopEnd - zone.loopStart) / 4);
@@ -190,7 +190,7 @@ void Engine::playZones (int source, int channel, int note, int velocity, bool re
         const auto* g = groupFor (z.folder);
         const bool enabled = g ? (releasing ? (mask & (1u << g->id)) != 0 : groupMatches (*g, channel)) : true;
         return enabled && audible (z.folder) && (g && g->releaseTrigger) == releasing
-            && z.sample && ! z.sample->left.empty() && validMapping (z)
+            && z.sample && z.sample->frameCount() >= 2 && validMapping (z)
             && note >= z.low && note <= z.high && velocity >= z.soft && velocity <= z.hard;
     };
 
@@ -307,7 +307,7 @@ void Engine::midi (int status, int data1, int data2) noexcept
     }
 }
 
-void Engine::render (float* left, float* right, int frames) noexcept
+void Engine::render (float* left, float* right, int frames, bool offline) noexcept
 {
     const auto attackStep = static_cast<float> (1 / std::max (1.0, settings.attack * outputRate));
     const auto decayStep = static_cast<float> ((1 - settings.sustain) / std::max (1.0, settings.decay * outputRate));
@@ -324,6 +324,24 @@ void Engine::render (float* left, float* right, int frames) noexcept
         const int length = v.end;
         const int blend = v.blend;
         auto phase = basePhase;
+        auto* stream = v.sample->stream.get();
+        StreamCache::Cursor mainCursor, nextCursor, loopCursor, loopNextCursor;
+        bool missed = false;
+        if (stream && ! offline)
+        {
+            const auto position = static_cast<int> (v.position);
+            stream->requestFrame (position);
+            if (position <= v.sample->frameCount() - streamPageFrames - 1)
+                stream->requestFrame (position + streamPageFrames);
+            if (position <= v.sample->frameCount() - 2 * streamPageFrames - 1)
+                stream->requestFrame (position + 2 * streamPageFrames);
+            if (v.loop && v.loopEnd - position <= 2 * streamPageFrames)
+            {
+                stream->requestFrame (v.loopStart);
+                if (v.loopStart <= v.sample->frameCount() - streamPageFrames - 1)
+                    stream->requestFrame (v.loopStart + streamPageFrames);
+            }
+        }
 
         for (int i = 0; i < frames; ++i, phase += phaseStep)
         {
@@ -364,8 +382,50 @@ void Engine::render (float* left, float* right, int frames) noexcept
             const double advance = vibrato == 0 ? step : step * pitchRatio (vibrato * std::sin (phase));
             const auto endFade = v.loop ? 1.0 : std::min (1.0, (length - v.position) / (32 * advance));
             const auto level = v.level * gain * static_cast<float> (endFade);
-            const float l = input (v.sample->left) * level;
-            const float r = v.sample->right.empty() ? l : input (v.sample->right) * level;
+            float l = 0, r = 0;
+            if (! stream)
+            {
+                l = input (v.sample->left) * level;
+                r = v.sample->right.empty() ? l : input (v.sample->right) * level;
+            }
+            else
+            {
+                auto pair = [&] (int a, int b, StreamCache::Cursor& c1, StreamCache::Cursor& c2,
+                                 float& outL, float& outR)
+                {
+                    float al = 0, ar = 0, bl = 0, br = 0;
+                    const bool firstOK = v.sample->readFrame (a, c1, al, ar, offline);
+                    const bool nextOK = v.sample->readFrame (b, c2, bl, br, offline);
+                    if (! firstOK || ! nextOK) return false;
+                    outL = std::lerp (al, bl, fraction);
+                    outR = std::lerp (ar, br, fraction);
+                    return true;
+                };
+                float x = 0, y = 0;
+                bool ready = pair (first, next, mainCursor, nextCursor, x, y);
+                if (v.loop && blend > 0 && first >= v.loopEnd - blend)
+                {
+                    const int head = v.loopStart + first - (v.loopEnd - blend);
+                    float hl = 0, hr = 0;
+                    const bool headReady = pair (head, head + 1, loopCursor, loopNextCursor, hl, hr);
+                    ready = ready && headReady;
+                    const auto mix = (static_cast<float> (first - (v.loopEnd - blend)) + fraction) / static_cast<float> (blend);
+                    x = std::lerp (x, hl, mix);
+                    y = std::lerp (y, hr, mix);
+                }
+                if (ready)
+                {
+                    v.lastLeft = x; v.lastRight = y;
+                    v.streamGain = std::min (1.0f, v.streamGain + 1.0f / 32);
+                }
+                else
+                {
+                    missed = true;
+                    v.streamGain = std::max (0.0f, v.streamGain - 1.0f / 32);
+                }
+                l = v.lastLeft * level * v.streamGain;
+                r = v.lastRight * level * v.streamGain;
+            }
             left[i] += right != nullptr ? l : (l + r) * 0.5f;
             if (right != nullptr) right[i] += r;
 
@@ -376,6 +436,7 @@ void Engine::render (float* left, float* right, int frames) noexcept
                 v.position = firstFrame + std::fmod (v.position - v.loopEnd, v.loopEnd - firstFrame);
             }
         }
+        if (stream && missed) stream->recordMiss (offline);
     }
     vibratoPhase = std::fmod (basePhase + frames * phaseStep, 2 * std::numbers::pi);
 }

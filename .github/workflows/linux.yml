@@ -15,8 +15,10 @@ on:
       - feature/studio-atelier-slate-inspector-m16
       - feature/studio-apple-sounds-effects-browser-m17
       - feature/studio-dls-general-midi-library-m18
+      - feature/studio-sampler-disk-streaming-m19
   pull_request:
     branches:
+      - feature/studio-dls-general-midi-library-m18
       - feature/studio-mixer-inspector-m13
       - feature/studio-transport-header-m14
       - feature/studio-cinematic-atelier-m1
@@ -50,6 +52,10 @@ jobs:
           sudo apt-get install -y ninja-build ladspa-sdk libasound2-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libxi-dev libxcomposite-dev \
             libxrender-dev libxkbcommon-dev libgl1-mesa-dev xvfb xauth
+      - name: Check streaming engine with sanitizers
+        run: |
+          clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread tests/SamplerStreamingTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-streaming-tests"
+          "$RUNNER_TEMP/studio-streaming-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"

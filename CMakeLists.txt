@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 project(Studio VERSION 0.2.0 LANGUAGES C CXX)
+find_package(Threads REQUIRED)
 
 set(TRACKTION_ROOT "" CACHE PATH "Existing Tracktion Engine checkout with JUCE")
 if(NOT EXISTS "${TRACKTION_ROOT}/modules/juce/CMakeLists.txt")
@@ -742,7 +743,7 @@ target_compile_definitions(Studio PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
 target_link_libraries(Studio PRIVATE
-    StudioNativeSynth StudioSynthData StudioEnvironmentsAssets
+    StudioNativeSynth StudioSynthData StudioEnvironmentsAssets Threads::Threads
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
@@ -799,7 +800,7 @@ if(BUILD_TESTING)
     add_test(NAME StudioFilmStemDelivery COMMAND StudioFilmStemDeliveryTests)
 
     add_executable(StudioSynthBench tests/SynthBench.cpp SamplerEngine.cpp)
-    target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth)
+    target_link_libraries(StudioSynthBench PRIVATE StudioNativeSynth Threads::Threads)
     add_custom_target(StudioSynthValidation DEPENDS StudioSynthBench)
     foreach(family IN LISTS studio_synth_families)
         set(target "StudioSynth${family}Original")
@@ -849,18 +850,30 @@ if(BUILD_TESTING)
 
     add_executable(StudioSamplerMappingTests tests/SamplerMappingTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerMappingTests PRIVATE cxx_std_20)
+    target_link_libraries(StudioSamplerMappingTests PRIVATE Threads::Threads)
     add_test(NAME StudioSamplerMapping COMMAND StudioSamplerMappingTests)
 
     add_executable(StudioSamplerBench tests/SamplerBench.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerBench PRIVATE cxx_std_20)
+    target_link_libraries(StudioSamplerBench PRIVATE Threads::Threads)
 
     add_executable(StudioSamplerArticulationTests tests/SamplerArticulationTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerArticulationTests PRIVATE cxx_std_20)
+    target_link_libraries(StudioSamplerArticulationTests PRIVATE Threads::Threads)
     add_test(NAME StudioSamplerArticulations COMMAND StudioSamplerArticulationTests)
 
     add_executable(StudioSamplerEngineTests tests/SamplerEngineTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerEngineTests PRIVATE cxx_std_20)
+    target_link_libraries(StudioSamplerEngineTests PRIVATE Threads::Threads)
     add_test(NAME StudioSamplerEngine COMMAND StudioSamplerEngineTests)
+
+    add_executable(StudioSamplerStreamingTests tests/SamplerStreamingTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerStreamingTests PRIVATE cxx_std_20)
+    target_compile_options(StudioSamplerStreamingTests PRIVATE -UNDEBUG)
+    target_link_libraries(StudioSamplerStreamingTests PRIVATE Threads::Threads)
+    add_test(NAME StudioSamplerStreaming COMMAND StudioSamplerStreamingTests)
+    set_tests_properties(StudioSamplerStreaming PROPERTIES TIMEOUT 30)
+
 
     target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp)
     add_test(NAME StudioComposerMidi COMMAND $<TARGET_FILE:Studio> --studio-test-composer-midi)

@@ -91,6 +91,80 @@ bool testSample (const File& file, AudioFormat& format, double frequency, int ch
     return writer->writeFromAudioSampleBuffer (data, 0, data.getNumSamples());
 }
 
+bool longSample (const File& file, AudioFormat& format, int frames, int channels)
+{
+    std::unique_ptr<OutputStream> stream = file.createOutputStream();
+    if (! stream) return false;
+    auto writer = format.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000)
+        .withNumChannels (channels).withBitsPerSample (24));
+    if (! writer) return false;
+    constexpr int chunk = 8192;
+    AudioBuffer<float> data (channels, chunk);
+    for (int ch = 0; ch < channels; ++ch)
+        for (int i = 0; i < chunk; ++i)
+            data.setSample (ch, i, static_cast<float> (0.3 * std::sin (2 * std::numbers::pi * (i % 256) / 256 + ch * 0.6)));
+    for (int offset = 0; offset < frames; offset += chunk)
+        if (! writer->writeFromAudioSampleBuffer (data, 0, jmin (chunk, frames - offset))) return false;
+    return true;
+}
+
+Result verifyStreamingImport (const File& directory, Plugin& sampler, WavAudioFormat& wav, AiffAudioFormat& aiff)
+{
+    // Stereo recording exceeds the former 64 MiB decoded sample limit.
+    constexpr int bigFrames = 9 * 1024 * 1024 + 123;
+    constexpr int aiffFrames = 16 * streamPageFrames + 77;
+    const auto big = directory.getChildFile ("Stream C4.wav");
+    const auto other = directory.getChildFile ("Stream G4.aiff");
+    const auto preset = directory.getChildFile ("Stream test.studiosampler");
+    if (! longSample (big, wav, bigFrames, 2) || ! longSample (other, aiff, aiffFrames, 1))
+        return Result::fail ("create long WAV/AIFF stream fixtures");
+    Instrument proposal; String summary;
+    if (Plugin::prepareImport ({}, { big, other }, true, proposal, summary).failed()
+        || proposal.zones.size() != 2)
+        return Result::fail ("import long WAV and AIFF files");
+    for (const auto& entry : proposal.zones)
+    {
+        const auto& sample = entry.mapping.sample;
+        const bool isWav = entry.file == big;
+        const auto expected = isWav ? bigFrames : aiffFrames;
+        if (! sample || ! sample->stream || sample->frameCount() != expected
+            || sample->left.size() != streamPreloadFrames || entry.mapping.loopEnd != expected
+            || sample->bytes() != (isWav ? 1048576u : 524288u))
+            return Result::fail ("bounded preload, cache, and full recording length");
+        StreamCache::Cursor cursor;
+        float l = 0, r = 0;
+        const int deep = expected - 2;
+        if (! sample->readFrame (deep, cursor, l, r, true)) return Result::fail ("read actual source near EOF");
+        const auto wantL = static_cast<float> (0.3 * std::sin (2 * std::numbers::pi * (deep % 256) / 256));
+        const auto wantR = isWav ? static_cast<float> (0.3 * std::sin (2 * std::numbers::pi * (deep % 256) / 256 + 0.6)) : wantL;
+        if (std::abs (l - wantL) > 1e-5f || std::abs (r - wantR) > 1e-5f)
+            return Result::fail ("correct samples from deep disk page");
+    }
+    // Move a zone's start and loop well beyond the resident attack, then
+    // persist it and reconstruct with an empty cache.
+    auto& zone = proposal.zones[0].mapping;
+    zone.start = 5 * streamPageFrames + 27;
+    zone.loop = true;
+    zone.loopStart = 6 * streamPageFrames;
+    zone.loopEnd = 10 * streamPageFrames + 11;
+    sampler.commitImport (proposal);
+    if (sampler.savePreset (preset).failed()) return Result::fail ("save streamed preset");
+    Instrument reopened;
+    if (Plugin::preparePreset (preset, {}, reopened).failed() || reopened.zones.size() != 2
+        || reopened.zones[0].mapping.start != zone.start || reopened.zones[0].mapping.loopEnd != zone.loopEnd
+        || ! reopened.zones[0].mapping.sample || ! reopened.zones[0].mapping.sample->stream)
+        return Result::fail ("restore long-source preset and loop");
+    const auto stats = sampler.resourceSnapshot();
+    if (stats.memoryBytes.value_or (0) != 1572864u || stats.cacheBytes.value_or (0) != 1179648u
+        || stats.streamingBytes.value_or (0) <= 64u * 1024u * 1024u)
+        return Result::fail ("report resident/cache memory separately from decoded stream size");
+    if (sampler.verifyStreamSources (true).failed()) return Result::fail ("verify healthy stream sources");
+    if (! big.deleteFile() || sampler.verifyStreamSources (false).wasOk())
+        return Result::fail ("detect vanished streamed source");
+    sampler.commitImport ({}, false);
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -237,6 +311,8 @@ Result run (const File& screenshots)
         || proposal.zones[0].mapping.root != 60 || proposal.zones[0].mapping.high != 63
         || proposal.zones[1].mapping.low != 64 || ! summary.contains ("1 unsupported"))
         return Result::fail ("deterministic bulk import preview and cancellation");
+    if (auto streamed = verifyStreamingImport (directory, *other, wav, aiff); streamed.failed())
+        return streamed;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;

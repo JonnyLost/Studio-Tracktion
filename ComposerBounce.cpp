@@ -23,6 +23,7 @@ Result checkSources (te::Edit& edit)
         {
             if (sampler->stateError().isNotEmpty())
                 return Result::fail (sampler->stateError());
+            if (auto streaming = sampler->verifyStreamSources (false); streaming.failed()) return streaming;
             for (const auto& zone : sampler->instrument().zones)
                 if (zone.problem.isNotEmpty() || ! zone.file.existsAsFile())
                     return Result::fail ("Sampler source unavailable: " + zone.file.getFileName());
@@ -43,6 +44,17 @@ bool tooLarge (const Options& options)
     const auto seconds = options.range.getLength().inSeconds() + options.tail;
     return seconds * options.sampleRate * (options.bitDepth / 8) * (options.mono ? 1 : 2) >= 4294960000.0;
 }
+}
+
+Result verifySamplerSources (te::Edit& edit, bool checkOfflineErrors)
+{
+    for (auto* plugin : te::getAllPlugins (edit, true))
+        if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin))
+        {
+            if (sampler->stateError().isNotEmpty()) return Result::fail (sampler->stateError());
+            if (auto result = sampler->verifyStreamSources (checkOfflineErrors); result.failed()) return result;
+        }
+    return Result::ok();
 }
 
 std::unique_ptr<tracktion::Edit> createRenderSnapshot (tracktion::Edit& source)
@@ -85,6 +97,7 @@ Result Job::create (te::Edit& source, const Options& options, std::unique_ptr<Jo
     if (next->snapshot == nullptr)
         return Result::fail ("Could not create the offline render graph.");
     auto& edit = *next->snapshot;
+    if (auto streaming = verifySamplerSources (edit, false); streaming.failed()) return streaming;
 
     // End the source at the requested boundary on the render copy. Keep the
     // graph clock running for an exact, common decay window across all outputs.
@@ -185,6 +198,10 @@ Result Job::publish()
     for (const auto& job : queue.getJobs())
         if (job->getState() == te::RenderQueue::Job::State::failed)
             return Result::fail ("Render failed: " + job->getError());
+    // Never publish an apparently successful render with a silent stream
+    // read failure or a source file that changed during the render.
+    if (snapshot != nullptr)
+        if (auto streaming = verifySamplerSources (*snapshot, true); streaming.failed()) return streaming;
     for (const auto& output : outputs)
         if (! output.staged->getFile().existsAsFile())
             return Result::fail ("No render was produced for " + output.destination.getFileName() + ".");

@@ -157,7 +157,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
         z.loopCrossfade = child->getIntAttribute ("loopCrossfade", -1);
         z.fadeIn = child->getIntAttribute ("fadeIn"); z.fadeOut = child->getIntAttribute ("fadeOut");
         if (! validMapping (z) || z.loopStart < 0 || z.loopEnd < z.loopStart
-            || (z.loop && ! validLoop (z, static_cast<int> (maxSampleBytes / sizeof (float)))))
+            || (z.loop && ! validLoop (z, std::numeric_limits<int>::max())))
             return Result::fail ("A sample zone has an invalid key, velocity or loop range.");
         model.zones.push_back (std::move (entry));
     }
@@ -182,23 +182,86 @@ std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullpt
     return bytes;
 }
 
-Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
+std::unique_ptr<AudioFormatReader> openSampleReader (const File& file)
 {
-    if (! file.existsAsFile()) return Result::fail ("Missing sample");
     AudioFormatManager formats;
     formats.registerFormat (new WavAudioFormat(), true);
     formats.registerFormat (new AiffAudioFormat(), false);
-    std::unique_ptr<AudioFormatReader> reader (formats.createReaderFor (file));
-    if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
-        || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
-        return Result::fail ("Choose a readable mono or stereo WAV or AIFF sample.");
+    return std::unique_ptr<AudioFormatReader> (formats.createReaderFor (file));
+}
 
+bool decodeFrames (AudioFormatReader& reader, int first, int count, float* left, float* right)
+{
+    float* channels[] { left, right };
+    AudioBuffer<float> buffer (channels, right ? 2 : 1, count);
+    if (! reader.read (&buffer, 0, count, first, true, right != nullptr)) return false;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        for (int frame = 0; frame < count; ++frame)
+        {
+            auto& value = channels[ch][frame];
+            value = std::isfinite (value) ? jlimit (-1.0f, 1.0f, value) : 0.0f;
+        }
+    return true;
+}
+
+// Keep a bounded number of seekable file readers across all instruments.
+// Only import, disk-worker and offline render threads can call this pool.
+class SampleReaderPool
+{
+    struct Entry
+    {
+        File file;
+        int64 size = 0, modified = 0;
+        std::unique_ptr<AudioFormatReader> reader;
+    };
+public:
+    bool read (const File& file, int64 size, int64 modified, int first, int count, float* left, float* right)
+    {
+        std::lock_guard lock (mutex);
+        if (! file.existsAsFile() || file.getSize() != size
+            || file.getLastModificationTime().toMilliseconds() != modified) return false;
+        auto found = std::find_if (entries.begin(), entries.end(), [&] (const auto& e)
+        { return e.file == file && e.size == size && e.modified == modified; });
+        if (found == entries.end())
+        {
+            auto reader = openSampleReader (file);
+            if (! reader || reader->numChannels != (right ? 2u : 1u)
+                || static_cast<int64> (first) + count > reader->lengthInSamples) return false;
+            if (entries.size() >= 24) entries.erase (entries.begin());
+            entries.push_back ({ file, size, modified, std::move (reader) });
+        }
+        else if (found != entries.end() - 1)
+            std::rotate (found, found + 1, entries.end());
+        return decodeFrames (*entries.back().reader, first, count, left, right);
+    }
+private:
+    std::mutex mutex;
+    std::vector<Entry> entries;
+};
+
+Result readSample (const File& file, std::size_t budget, std::shared_ptr<const Sample>& output, std::atomic<bool>* cancelled = nullptr)
+{
+    if (! file.existsAsFile()) return Result::fail ("Missing sample");
+    auto reader = openSampleReader (file);
+    if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
+        || reader->lengthInSamples >= std::numeric_limits<int>::max()
+        || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
+        return Result::fail ("Choose a readable mono or stereo WAV or AIFF sample within Studio's frame limit.");
+
+    const int frames = static_cast<int> (reader->lengthInSamples);
     const auto floatFrameBytes = reader->numChannels * sizeof (float);
-    if (reader->lengthInSamples > static_cast<int64> (std::min (budget, maxSampleBytes) / floatFrameBytes))
-        return Result::fail ("Sample exceeds Studio's memory limit.");
+    const auto fullBytes = static_cast<std::uint64_t> (frames) * floatFrameBytes;
+    const bool stereo = reader->numChannels == 2;
+    const bool streamed = frames > residentSampleFrames || fullBytes > std::min (budget, maxSampleBytes);
+    const auto preload = streamed ? std::min (frames, streamPreloadFrames) : frames;
+    const auto memory = static_cast<std::size_t> (preload) * floatFrameBytes
+        + (streamed ? StreamCache::capacityBytes (stereo) : 0);
+    if (memory > budget || (streamed && frames <= streamPreloadFrames))
+        return Result::fail ("Sample exceeds Studio's resident/preload and stream-cache memory budget.");
 
     auto sample = std::make_shared<Sample>();
     sample->rate = reader->sampleRate;
+    sample->totalFrames = frames;
     sample->sourceBytes = file.getSize(); sample->sourceTime = file.getLastModificationTime().toMilliseconds();
     for (const auto& key : { String ("MidiUnityNote"), String (AiffAudioFormat::appleRootNote) })
         if (reader->metadataValues.containsKey (key))
@@ -206,23 +269,45 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
             const auto text = reader->metadataValues.getValue (key, {});
             if (text.isNotEmpty() && text.containsOnly ("0123456789") && text.getIntValue() <= 127) { sample->rootNote = text.getIntValue(); break; }
         }
-    const auto frames = static_cast<int> (reader->lengthInSamples);
-    sample->left.resize (static_cast<std::size_t> (frames));
-    if (reader->numChannels == 2) sample->right.resize (static_cast<std::size_t> (frames));
-    for (int offset = 0; offset < frames; offset += 4096)
+    sample->left.resize (static_cast<std::size_t> (preload));
+    if (stereo) sample->right.resize (static_cast<std::size_t> (preload));
+    for (int offset = 0; offset < preload; offset += 4096)
     {
         if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
-        const int count = jmin (4096, frames - offset);
-        float* channels[] { sample->left.data() + offset, sample->right.empty() ? nullptr : sample->right.data() + offset };
-        AudioBuffer<float> buffer (channels, static_cast<int> (reader->numChannels), count);
-        if (! reader->read (&buffer, 0, count, offset, true, reader->numChannels == 2)) return Result::fail ("Could not decode the sample.");
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            for (int frame = 0; frame < count; ++frame)
-            { auto& value = channels[ch][frame]; value = std::isfinite (value) ? jlimit (-1.0f, 1.0f, value) : 0.0f; }
+        const int count = jmin (4096, preload - offset);
+        if (! decodeFrames (*reader, offset, count, sample->left.data() + offset,
+                           stereo ? sample->right.data() + offset : nullptr))
+            return Result::fail ("Could not decode the sample attack.");
     }
-
+    if (streamed)
+    {
+        static const auto pool = std::make_shared<SampleReaderPool>();
+        auto sharedPool = pool;
+        const auto size = sample->sourceBytes, modified = sample->sourceTime;
+        sample->stream = std::make_shared<StreamCache> (frames, stereo,
+            [sharedPool, file, size, modified] (int first, int count, float* left, float* right)
+            { return sharedPool->read (file, size, modified, first, count, left, right); });
+        if (! sample->stream->prime (preload))
+            return Result::fail ("Could not read the first streaming page.");
+        if (preload + streamPageFrames < frames && ! sample->stream->prime (preload + streamPageFrames))
+            return Result::fail ("Could not read the second streaming page.");
+        StreamWorker::instance().add (sample->stream);
+    }
     output = std::move (sample);
     return Result::ok();
+}
+
+bool primeZone (const Zone& z)
+{
+    if (! z.sample || ! z.sample->stream) return true;
+    auto& stream = *z.sample->stream;
+    const auto prime = [&] (int frame)
+    {
+        return stream.prime (frame)
+            && (frame > z.sample->frameCount() - streamPageFrames - 1 || stream.prime (frame + streamPageFrames));
+    };
+    return prime (z.start) && (! z.loop || (prime (z.loopStart)
+        && stream.prime (std::max (z.loopStart, z.loopEnd - 1))));
 }
 
 bool currentSample (const SampleZone& z, const File& file)
@@ -249,14 +334,15 @@ void prepareSamples (Instrument& next, const Instrument& current, std::atomic<bo
             entry.problem = readSample (entry.file, maxBankBytes - sampleBytes (next), sample, cancelled).getErrorMessage();
 
         if (! sample) continue;
-        if (entry.mapping.start >= static_cast<int> (sample->left.size()) || entry.mapping.end > static_cast<int> (sample->left.size()))
+        if (entry.mapping.start >= sample->frameCount() || entry.mapping.end > sample->frameCount())
         { entry.problem = "Sample boundaries exceed file length"; sample.reset(); continue; }
-        const auto frames = static_cast<int> (sample->left.size());
+        const auto frames = sample->frameCount();
         if (entry.mapping.loopEnd == 0) entry.mapping.loopEnd = frames;
         if (entry.mapping.loop && ! validLoop (entry.mapping, frames))
         {
             entry.problem = "Loop is outside the sample. Adjust the loop in Loops.";
         }
+        if (! primeZone (entry.mapping)) entry.problem = "Could not prime sample start or loop from disk.";
     }
 }
 }
@@ -397,7 +483,7 @@ Result Plugin::prepareSample (Instrument initial, const File& file, int replace,
     else if (const auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample, cancelled); result.failed())
         return result;
 
-    const auto frames = static_cast<int> (entry.mapping.sample->left.size());
+    const auto frames = entry.mapping.sample->frameCount();
     if (entry.mapping.start >= frames || entry.mapping.end > frames) return Result::fail ("Replacement is shorter than the saved sample boundaries. Reset the boundaries first.");
     if (entry.mapping.loopEnd == 0) entry.mapping.loopEnd = frames;
     if (! validLoop (entry.mapping, frames))
@@ -406,6 +492,7 @@ Result Plugin::prepareSample (Instrument initial, const File& file, int replace,
         entry.mapping.loopStart = 0;
         entry.mapping.loopEnd = frames;
     }
+    if (! primeZone (entry.mapping)) return Result::fail ("Could not prime replacement sample from disk.");
     if (replace >= 0)
         next.zones[static_cast<std::size_t> (replace)] = std::move (entry);
     else
@@ -493,7 +580,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
         if (cached != next.zones.end()) entry.mapping.sample = cached->mapping.sample;
         else if (auto result = readSample (file, maxBankBytes - sampleBytes (next), entry.mapping.sample, cancelled); result.failed())
         { errors.add (file.getFileName() + ": " + result.getErrorMessage()); continue; }
-        entry.mapping.loopEnd = static_cast<int> (entry.mapping.sample->left.size());
+        entry.mapping.loopEnd = entry.mapping.sample->frameCount();
         if (auto note = filenameNote (file.getFileName().toStdString())) entry.mapping.root = *note;
         else if (entry.mapping.sample->rootNote >= 0) entry.mapping.root = entry.mapping.sample->rootNote;
         else { entry.mapping.root = jlimit (0, 127, 48 + accepted); ++provisional; }
@@ -533,9 +620,11 @@ Result Plugin::editZones (const std::vector<std::pair<int, Zone>>& edits)
         auto& entry = next.zones[static_cast<std::size_t> (i)];
         if (z.sample != entry.mapping.sample || z.start < 0 || z.end < 0 || (z.end && z.end <= z.start)
             || z.loopStart < 0 || z.loopEnd < z.loopStart
-            || (z.sample && (z.start >= static_cast<int> (z.sample->left.size()) || z.end > static_cast<int> (z.sample->left.size())))
-            || (z.loop && z.sample && ! validLoop (z, static_cast<int> (z.sample->left.size()))))
+            || (z.sample && (z.start >= z.sample->frameCount() || z.end > z.sample->frameCount()))
+            || (z.loop && z.sample && ! validLoop (z, z.sample->frameCount())))
             return Result::fail ("Keep loops inside sample boundaries with at least two frames. Disable Loop before trimming past it. No selected zones were changed.");
+        if ((z.start != entry.mapping.start || z.loopStart != entry.mapping.loopStart || z.loopEnd != entry.mapping.loopEnd || z.loop != entry.mapping.loop)
+            && ! primeZone (z)) return Result::fail ("Could not read the selected start or loop from disk.");
         entry.mapping = z; entry.problem.clear();
     }
     change (std::move (next), true); return Result::ok();
@@ -543,7 +632,9 @@ Result Plugin::editZones (const std::vector<std::pair<int, Zone>>& edits)
 void Plugin::previewRange (int index, int first, int end)
 {
     if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size()))) return;
-    preview (3, 1, model.zones[static_cast<std::size_t> (index)].mapping.root, 100, index, first, end);
+    const auto& z = model.zones[static_cast<std::size_t> (index)].mapping;
+    if (z.sample && z.sample->stream && ! z.sample->stream->prime (first)) return;
+    preview (3, 1, z.root, 100, index, first, end);
 }
 
 void Plugin::editZone (int index, const Zone& z)
@@ -551,13 +642,15 @@ void Plugin::editZone (int index, const Zone& z)
     if (! isPositiveAndBelow (index, static_cast<int> (model.zones.size())) || ! validMapping (z)) return;
     auto next = model;
     auto& entry = next.zones[static_cast<std::size_t> (index)];
-    if (z.start < 0 || (z.end && z.end <= z.start) || (z.sample && (z.start >= static_cast<int> (z.sample->left.size()) || z.end > static_cast<int> (z.sample->left.size())))) return;
+    if (z.start < 0 || (z.end && z.end <= z.start) || (z.sample && (z.start >= z.sample->frameCount() || z.end > z.sample->frameCount()))) return;
     if (z.sample != entry.mapping.sample || z.loopStart < 0 || z.loopEnd < z.loopStart) return;
-    if (z.loop && z.sample && ! validLoop (z, static_cast<int> (z.sample->left.size()))
+    if (z.loop && z.sample && ! validLoop (z, z.sample->frameCount())
         && (z.loopStart != entry.mapping.loopStart || z.loopEnd != entry.mapping.loopEnd || ! entry.mapping.loop))
         return;
+    if ((z.start != entry.mapping.start || z.loopStart != entry.mapping.loopStart || z.loopEnd != entry.mapping.loopEnd || z.loop != entry.mapping.loop)
+        && ! primeZone (z)) return;
     entry.mapping = z;
-    if (z.sample && (! z.loop || validLoop (z, static_cast<int> (z.sample->left.size())))) entry.problem.clear();
+    if (z.sample && (! z.loop || validLoop (z, z.sample->frameCount()))) entry.problem.clear();
     change (std::move (next), true);
 }
 
@@ -609,15 +702,56 @@ Result Plugin::preparePreset (const File& file, const Instrument& cache, Instrum
     return Result::ok();
 }
 
+Result Plugin::verifyStreamSources (bool checkOfflineErrors) const
+{
+    for (const auto& zone : model.zones)
+    {
+        const auto& sample = zone.mapping.sample;
+        if (! sample || zone.problem.isNotEmpty() || ! zone.file.existsAsFile())
+            return Result::fail ("Sampler source unavailable: " + zone.file.getFileName());
+        if (sample->stream)
+        {
+            if (! currentSample (zone, zone.file))
+                return Result::fail ("Streamed sample changed or disappeared: " + zone.file.getFileName());
+            if (checkOfflineErrors && sample->stream->offlineErrors() != 0)
+                return Result::fail ("Offline sample read failed: " + zone.file.getFileName());
+        }
+    }
+    return Result::ok();
+}
+
 InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
 {
     InstrumentDiagnosticSnapshot stats;
     stats.attribution = ResourceAttribution::measured;
-    stats.sampleBytes = loadedBytes;
-    stats.memoryBytes = stats.sampleBytes;
+    std::array<const Sample*, maxZones> counted {};
+    std::size_t count = 0;
+    std::uint64_t resident = 0, cache = 0, streamed = 0, misses = 0, errors = 0;
+    unsigned streams = 0;
+    for (const auto& zone : model.zones)
+        if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
+            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+        {
+            counted[count++] = sample;
+            resident += sample->residentBytes();
+            cache += sample->cacheBytes();
+            if (sample->stream)
+            {
+                ++streams;
+                streamed += static_cast<std::uint64_t> (sample->frameCount()) * (sample->stereo() ? 2u : 1u) * sizeof (float);
+                misses += sample->stream->misses();
+                errors += sample->stream->errors();
+            }
+        }
+    stats.sampleBytes = resident;
+    stats.cacheBytes = cache;
+    stats.streamingBytes = streamed;
+    stats.memoryBytes = loadedBytes;
     stats.activeVoices = renderer.activeVoices();
-    stats.detail = String (loadedSamples)
-                 + " loaded sample(s) | " + String (model.settings.polyphony) + " max voices.";
+    stats.detail = String (loadedSamples) + " sample(s) | " + String (streams) + " streamed | "
+        + String (model.settings.polyphony) + " max voices | "
+        + String (static_cast<juce::int64> (misses)) + " stream underruns | "
+        + String (static_cast<juce::int64> (errors)) + " read errors.";
     return stats;
 }
 
@@ -742,14 +876,14 @@ void Plugin::applyToBuffer (const te::PluginRenderContext& context)
             const auto frame = static_cast<int> (jlimit (0.0, static_cast<double> (size), time * rate + 0.5));
             if (frame > offset)
             {
-                renderer.render (left + offset, right ? right + offset : nullptr, frame - offset);
+                renderer.render (left + offset, right ? right + offset : nullptr, frame - offset, context.isRendering);
                 offset = frame;
             }
             renderer.midi (bytes[0], bytes[1] & 127, length == 3 ? bytes[2] & 127 : 0);
         }
     }
 
-    renderer.render (left + offset, right ? right + offset : nullptr, size - offset);
+    renderer.render (left + offset, right ? right + offset : nullptr, size - offset, context.isRendering);
     renderer.publishMeters();
     borrowed.store (nullptr);
 }

@@ -83,6 +83,7 @@ public:
     juce::Result savePreset (const juce::File&);
     juce::Result loadPreset (const juce::File&);
     InstrumentDiagnosticSnapshot resourceSnapshot() const override;
+    juce::Result verifyStreamSources (bool checkOfflineErrors) const;
 
 private:
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;

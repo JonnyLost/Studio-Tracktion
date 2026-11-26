@@ -42,10 +42,12 @@ private:
         juce::Slider slider;
     };
 
-    class Display final : public juce::Component, public juce::FileDragAndDropTarget
+    class Display final : public juce::Component, public juce::FileDragAndDropTarget,
+                          private juce::ChangeListener
     {
     public:
         explicit Display (Editor&);
+        ~Display() override;
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
@@ -55,7 +57,23 @@ private:
         void fileDragExit (const juce::StringArray&) override;
         void filesDropped (const juce::StringArray&, int, int) override;
     private:
+        struct StreamThumbnail
+        {
+            juce::AudioFormatManager formats;
+            juce::AudioThumbnailCache cache { 1 };
+            juce::AudioThumbnail thumbnail;
+            StreamThumbnail (int resolution) : thumbnail (resolution, formats, cache)
+            {
+                formats.registerFormat (new juce::WavAudioFormat(), true);
+                formats.registerFormat (new juce::AiffAudioFormat(), false);
+            }
+        };
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+        void clearThumbnail();
         Editor& owner;
+        std::unique_ptr<StreamThumbnail> streamThumbnail;
+        juce::File thumbnailFile;
+        std::int64_t thumbnailTime = 0, thumbnailSize = -1;
         int marker = 0;
         unsigned dragRevision = 0;
         int dragSelection = 0;
