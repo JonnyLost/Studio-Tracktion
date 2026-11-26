@@ -2755,11 +2755,19 @@ private:
 
     void setKeyboardDocked (bool dock)
     {
+        // Re-selecting the current mode is a no-op; never discard its values.
+        if (dock && keyboardDocked && midiKeyboardWindow == nullptr) return;
+        if (! dock && ! keyboardDocked && midiKeyboardWindow != nullptr) return;
+
+        const auto positions = dock && midiKeyboardWindow != nullptr
+            ? midiKeyboardWindow->panel.performanceSnapshot()
+            : dockedKeyboard.performanceSnapshot();
         if (dock)
         {
             closeAuditionKeyboard();
             keyboardDocked = true;
             dockedKeyboard.setDocked (true);
+            dockedKeyboard.reflectPerformance (positions);
             if (auto* track = workflowTrack())
             {
                 dockedKeyboardTarget = track->itemID;
@@ -2782,6 +2790,8 @@ private:
             dockedKeyboard.send = {};
             keyboardDocked = false;
             if (midiKeyboardWindow == nullptr) toggleAuditionKeyboard();
+            if (midiKeyboardWindow != nullptr)
+                midiKeyboardWindow->panel.reflectPerformance (positions);
         }
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         prefs.setValue ("studio.keyboardDocked", keyboardDocked);
