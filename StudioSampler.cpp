@@ -702,15 +702,51 @@ Result Plugin::preparePreset (const File& file, const Instrument& cache, Instrum
     return Result::ok();
 }
 
+Result Plugin::verifyStreamSources (bool checkOfflineErrors) const
+{
+    for (const auto& zone : model.zones)
+        if (const auto& sample = zone.mapping.sample; sample && sample->stream)
+        {
+            if (! currentSample (zone, zone.file))
+                return Result::fail ("Streamed sample changed or disappeared: " + zone.file.getFileName());
+            if (checkOfflineErrors && sample->stream->offlineErrors() != 0)
+                return Result::fail ("Offline sample read failed: " + zone.file.getFileName());
+        }
+    return Result::ok();
+}
+
 InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
 {
     InstrumentDiagnosticSnapshot stats;
     stats.attribution = ResourceAttribution::measured;
-    stats.sampleBytes = loadedBytes;
-    stats.memoryBytes = stats.sampleBytes;
+    std::array<const Sample*, maxZones> counted {};
+    std::size_t count = 0;
+    std::uint64_t resident = 0, cache = 0, streamed = 0, misses = 0, errors = 0;
+    unsigned streams = 0;
+    for (const auto& zone : model.zones)
+        if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
+            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+        {
+            counted[count++] = sample;
+            resident += sample->residentBytes();
+            cache += sample->cacheBytes();
+            if (sample->stream)
+            {
+                ++streams;
+                streamed += static_cast<std::uint64_t> (sample->frameCount()) * (sample->stereo() ? 2u : 1u) * sizeof (float);
+                misses += sample->stream->misses();
+                errors += sample->stream->errors();
+            }
+        }
+    stats.sampleBytes = resident;
+    stats.cacheBytes = cache;
+    stats.streamingBytes = streamed;
+    stats.memoryBytes = resident + cache;
     stats.activeVoices = renderer.activeVoices();
-    stats.detail = String (loadedSamples)
-                 + " loaded sample(s) | " + String (model.settings.polyphony) + " max voices.";
+    stats.detail = String (loadedSamples) + " sample(s) | " + String (streams) + " streamed | "
+        + String (model.settings.polyphony) + " max voices | "
+        + String (static_cast<juce::int64> (misses)) + " stream underruns | "
+        + String (static_cast<juce::int64> (errors)) + " read errors.";
     return stats;
 }
 
