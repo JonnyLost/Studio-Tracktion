@@ -287,7 +287,7 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || reader->lengthInSamples >= std::numeric_limits<int>::max()
         || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
-        return Result::fail ("Choose a readable mono/stereo WAV, AIFF or supported macOS CAF sample within Studio's frame limit.");
+        return Result::fail ("Choose a readable mono/stereo WAV, AIFF, FLAC (when enabled), or supported macOS CAF sample within Studio's frame limit.");
 
     const int frames = static_cast<int> (reader->lengthInSamples);
     const auto floatFrameBytes = reader->numChannels * sizeof (float);
@@ -1267,7 +1267,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 const auto* e=archive.getEntry(i);
                 if(!e||e->isSymbolicLink||e->uncompressedSize<0)fail("Invalid or symbolic-link ZIP entry.");
                 const auto name=e->filename.replaceCharacter('\\','/');
-                if(name.isEmpty()||name.startsWithChar('/')||name.containsChar(':')||name.containsChar('\0'))
+                if(name.isEmpty()||name.startsWithChar('/')||name.containsChar(':'))
                     fail("Unsafe ZIP path.");
                 const auto parts=StringArray::fromTokens(name,"/","");
                 for(const auto& part:parts)if(part==".."||part==".")fail("Unsafe ZIP path component.");
@@ -1318,26 +1318,39 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
             if(length==0||length>xmlLimit)return {};
             const auto xml=String::fromUTF8(static_cast<const char*>(bytes),static_cast<int>(length));
             if(xml.containsIgnoreCase("<!DOCTYPE")||xml.containsIgnoreCase("<!ENTITY"))return {};
-            // Bound element count and nesting before passing untrusted XML to JUCE.
-            int tags=0,depth=0;bool quoted=false;juce_wchar quote=0;
-            for(int i=0;i<xml.length();++i)
+            // Bound structural nesting before invoking the recursive XML parser.
+            const auto rawXml=xml.toStdString();
+            int tags=0,depth=0;
+            for(std::size_t i=0;i<rawXml.size();)
             {
-                const auto c=xml[i];
-                if(c=='<'&&!quoted)
+                if(rawXml[i]!='<'){++i;continue;}
+                if(rawXml.compare(i,4,"<!--")==0)
+                {auto end=rawXml.find("-->",i+4);if(end==std::string::npos)return {};i=end+3;continue;}
+                if(rawXml.compare(i,9,"<![CDATA[")==0)
+                {auto end=rawXml.find("]]>",i+9);if(end==std::string::npos)return {};i=end+3;continue;}
+                if(rawXml.compare(i,2,"<?")==0)
+                {auto end=rawXml.find("?>",i+2);if(end==std::string::npos)return {};i=end+2;continue;}
+                if(i+1>=rawXml.size()||rawXml[i+1]=='!'||++tags>50000)return {};
+                const bool close=rawXml[i+1]=='/';
+                char quote=0;auto end=i+1;
+                for(;end<rawXml.size();++end)
                 {
-                    if(++tags>50000)return {};
-                    const auto n=xml[i+1];
-                    if(n=='/')--depth;
-                    else if(n!='!'&&n!='?')++depth;
-                    if(depth>64||depth<0)return {};
+                    const char c=rawXml[end];
+                    if(quote){if(c==quote)quote=0;}
+                    else if(c=='"'||c=='\'')quote=c;
+                    else if(c=='>')break;
+                    else if(c=='<')return {};
                 }
-                else if((c=='"'||c=='\'')&&depth>0)
-                {if(!quoted){quoted=true;quote=c;}else if(c==quote)quoted=false;}
-                else if(c=='>'&&!quoted&&i>0&&xml[i-1]=='/')--depth;
+                if(end>=rawXml.size())return {};
+                if(close)--depth;else if(rawXml[end-1]!='/')++depth;
+                if(depth<0||depth>64)return {};
+                i=end+1;
             }
+            if(depth!=0)return {};
             return XmlDocument::parse(xml);
         };
         std::unique_ptr<XmlElement> xml;
+        if(data.getSize()==0)fail("Empty instrument definition.");
         const auto* raw=static_cast<const unsigned char*>(data.getData());
         if(!kontakt)xml=parse(raw,data.getSize());
         else
@@ -1473,7 +1486,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                     path=get(za,"sampleFile");
                     z.root=integer(za,"rootKey",60,0,127);z.low=integer(za,"lowKey",0,0,127);z.high=integer(za,"highKey",127,0,127);
                     z.soft=std::max(1,integer(za,"lowVelo",0,0,127));z.hard=integer(za,"highVelo",127,0,127);
-                    for(const auto* level:{&top,&ga})
+                    for(const Attr* level:std::array<const Attr*,2>{&top,&ga})
                     {
                         z.low=std::max(z.low,integer(*level,"lowKey",0,0,127));z.high=std::min(z.high,integer(*level,"highKey",127,0,127));
                         z.soft=std::max(z.soft,integer(*level,"lowVelocity",0,0,127));z.hard=std::min(z.hard,integer(*level,"highVelocity",127,0,127));
@@ -1552,7 +1565,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 if(z.low>z.high||z.soft>z.hard){++omitted;continue;}
                 if(path.empty())fail("Sample path missing.");
                 const auto name=String(path).replaceCharacter('\\','/');
-                if(name.containsChar('\0')||name.containsChar(':'))fail("Unsupported encoded or drive-relative sample reference.");
+                if(name.containsChar(':'))fail("Unsupported encoded or drive-relative sample reference.");
                 e.file=File::isAbsolutePath(name)?File(name):definition.getParentDirectory().getChildFile(name);
                 if(media.directory!=File()&&!e.file.isAChildOf(media.directory))fail("Archive preset refers outside extracted library.");
                 if(!e.file.hasFileExtension("wav;wave;aif;aiff;aifc;caf;flac"))
