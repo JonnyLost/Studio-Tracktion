@@ -69,6 +69,7 @@ public:
         }
         refreshRoots();rebuildFormats();filter();
         if(validCatalog)status.setText("Browse instruments, or open Manage library to add folders and convert.",dontSendNotification);
+        manage.setToggleState(catalog.roots.isEmpty(),dontSendNotification);
         updateManagement();setSize(840,560);startTimerHz(8);
     }
     ~Manager() override
@@ -132,7 +133,7 @@ private:
         enum Kind{scanTask,batchTask,loadTask} kind=scanTask;
         Catalog proposal;sampler::Instrument instrument;Presentation presentation;
         std::atomic<bool> cancel{false},done{false};std::atomic<int> progress{0};
-        String message,error;std::thread worker;
+        String message,error,entryKey;std::thread worker;
         ~Task(){cancel.store(true);if(worker.joinable())worker.join();}
     };
     StudioLookAndFeel look;Load onLoad;Catalog catalog;bool validCatalog=true;
@@ -173,7 +174,7 @@ private:
         for(int i=0;i<values.size();++i)format.addItem(values[i],i+2);
         const int i=values.indexOf(previous);format.setSelectedId(i<0?1:i+2,dontSendNotification);
     }
-    void filter()
+    void filter(const StringArray& preserve={})
     {
         const auto q=search.getText().trim();const auto f=format.getSelectedId()>1?format.getText():String();
         const auto group=family.getSelectedId()>1?family.getText():String();
@@ -184,7 +185,9 @@ private:
             if(!matches(e,q,group,favorites.getToggleState(),f))continue;
             filtered.push_back(i);
         }
-        rows.deselectAllRows();rows.updateContent();rows.repaint();refreshSelection();
+        rows.deselectAllRows();rows.updateContent();
+        for(int i=0;i<getNumRowsConst();++i)if(preserve.contains(catalog.entries[filtered[static_cast<std::size_t>(i)]].key()))rows.selectRow(i,false,false);
+        rows.repaint();refreshSelection();
     }
     int getNumRows() override{return static_cast<int>(filtered.size());}
     void paintListBoxItem(int row,Graphics& g,int width,int height,bool selected) override
@@ -218,7 +221,11 @@ private:
         convertSelected.setEnabled(validCatalog&&!task&&!selected.empty()&&selected.size()<=128);
         assignArt.setEnabled(validCatalog&&!task&&selected.size()==1);
         repairSelected.setEnabled(validCatalog&&!task&&selected.size()==1&&catalog.entries[selected.front()].converted!=File());
-        loadSelected.setEnabled(!task&&selected.size()==1&&onLoad&&(catalog.entries[selected.front()].converted!=File()||catalog.entries[selected.front()].source.hasFileExtension("studiosampler")));
+        const Entry* entry=selected.size()==1?&catalog.entries[selected.front()]:nullptr;
+        const bool native=entry&&(entry->converted!=File()||entry->source.hasFileExtension("studiosampler"));
+        const bool convertible=entry&&entry->available&&(!bank(entry->source)||entry->program>=0);
+        loadSelected.setButtonText(native?"Load as new track":"Prepare instrument");
+        loadSelected.setEnabled(validCatalog&&!task&&onLoad&&(native||convertible));
         familyEdit.setEnabled(validCatalog&&!task&&!selected.empty());favoriteEntry.setEnabled(validCatalog&&!task&&!selected.empty());
         const ScopedValueSetter<bool> hold(updating,true);
         familyEdit.setSelectedId(0,dontSendNotification);
@@ -228,7 +235,7 @@ private:
         {details.setText(String(static_cast<int>(selected.size()))+" selected / "+String(getNumRowsConst())+" shown. Select up to 128 for batch conversion.",false);return;}
         const auto& e=catalog.entries[selected.front()];
         familyEdit.setSelectedId(families().indexOf(e.family)+1,dontSendNotification);
-        details.setText(e.name+"\n"+e.family+"\n"+(e.converted!=File()||e.source.hasFileExtension("studiosampler")?"Native instrument":"Source instrument — use Manage library to convert")+
+        details.setText(e.name+"\n"+e.family+"\n"+(e.converted!=File()||e.source.hasFileExtension("studiosampler")?"Native instrument":"Source instrument — Prepare instrument, review notes, then load")+
             "\n"+(manage.getToggleState()?e.source.getFullPathName()+"\n"+(e.converted!=File()?"Native: "+e.converted.getFullPathName()+"\n":String())+"\n"+e.report:e.report.substring(0,1200)),false);
         art.setImage(previewImage(e.portrait.isNotEmpty()?portraitFile(e.portrait):e.artwork));
     }
@@ -341,10 +348,11 @@ private:
     {
         auto chosen=selectedIndices();if(task||chosen.size()!=1||!onLoad)return;
         const auto entry=catalog.entries[chosen.front()];
+        if(entry.converted==File()&&!entry.source.hasFileExtension("studiosampler")){startBatch();return;}
         const auto file=entry.converted==File()&&entry.source.hasFileExtension("studiosampler")?entry.source:entry.converted;
         if(!file.existsAsFile()){status.setText("Native preset missing; convert again.",dontSendNotification);return;}
         task=std::make_unique<Task>();auto* t=task.get();t->kind=Task::loadTask;
-        t->presentation={entry.name,entry.family,entry.portrait};
+        t->presentation={entry.name,entry.family,entry.portrait};t->entryKey=entry.key();
         t->worker=std::thread([t,file,entry]
         {
             try
@@ -375,6 +383,8 @@ private:
         {
             if(!t->cancel.load()&&onLoad)
             {
+                for(auto& e:catalog.entries)if(e.key()==t->entryKey&&e.portrait.isEmpty()&&t->presentation.portrait.isNotEmpty())
+                {e.portrait=t->presentation.portrait;persist();break;}
                 auto callback=onLoad;auto instrument=std::move(t->instrument);auto presentation=std::move(t->presentation);
                 if(auto* dialog=findParentComponentOfClass<DialogWindow>())dialog->exitModalState(0);
                 MessageManager::callAsync([callback=std::move(callback),instrument=std::move(instrument),presentation=std::move(presentation)]() mutable
@@ -383,7 +393,8 @@ private:
         }
         else
         {
-            catalog=std::move(t->proposal);rebuildFormats();filter();status.setText(t->message,dontSendNotification);persist();
+            StringArray keep;for(auto i:selectedIndices())keep.add(catalog.entries[i].key());
+            catalog=std::move(t->proposal);rebuildFormats();filter(keep);status.setText(t->message,dontSendNotification);persist();
         }
         refreshSelection();
     }
