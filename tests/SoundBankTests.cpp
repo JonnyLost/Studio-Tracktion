@@ -20,7 +20,7 @@ int main()
     assert(r.low==64&&r.high==80&&r.soft==32&&r.hard==127);
     assert(r.root==60&&r.cents==5&&r.gainDb==-5&&r.pan==-20);
     assert(std::abs(r.attack-0.5f)<1e-6f&&r.loop&&r.sustainLoop&&r.loopStart==1024&&r.loopEnd==16384);
-    assert(r.audio.frames==65536&&r.audio.encoding==Encoding::pcm16);
+    assert(r.audio.frames==196608&&r.audio.encoding==Encoding::pcm16);
     assert(s16(a.read(r.audio.offset,2),0)==-16384);
     assert(a.resolve(1).regions[0].low==48);
     Bank b(sf24);const auto ext=b.resolve(0).regions[0];
@@ -30,7 +30,7 @@ int main()
     Bank d(dls);assert(d.isDls&&d.programs.size()==1&&d.programs[0].drums&&d.programs[0].bank==130&&d.programs[0].number==10);
     auto dm=d.resolve(0);const auto& dr=dm.regions[0];
     assert(dr.low==48&&dr.high==72&&dr.soft==10&&dr.hard==110&&dr.root==62&&dr.cents==25);
-    assert(dr.loop&&dr.loopStart==1024&&dr.loopEnd==9216&&dr.audio.frames==65536);
+    assert(dr.loop&&dr.loopStart==1024&&dr.loopEnd==9216&&dr.audio.frames==196608);
     fixtures::write(bad,fixtures::sf(false,false,true));
     bool failed=false;try { Bank invalid(bad);invalid.resolve(0); }catch(const std::exception&){failed=true;}assert(failed);
     fixtures::write(bad,fixtures::dls(true));
