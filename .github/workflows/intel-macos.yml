@@ -12,6 +12,7 @@ on:
       - feature/studio-keyboard-dock-streamline-m13
       - feature/studio-atelier-piano-case-m14
       - feature/studio-keyboard-slate-theme-m15
+      - feature/studio-atelier-slate-inspector-m16
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
