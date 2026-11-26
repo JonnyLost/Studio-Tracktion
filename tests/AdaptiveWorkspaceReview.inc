@@ -100,7 +100,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         std::unique_ptr<OutputStream> stream = media.createOutputStream();
         auto writer = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000)
                                              .withNumChannels (1).withBitsPerSample (16));
-        AudioBuffer<float> signal (1, 24000);
+        juce::AudioBuffer<float> signal (1, 24000);
         for (int i = 0; i < signal.getNumSamples(); ++i)
             signal.setSample (0, i, .32f * std::sin (i * .03425f) * std::exp (-i / 11000.f));
         if (! writer || ! writer->writeFromAudioSampleBuffer (signal, 0, signal.getNumSamples()))
@@ -268,7 +268,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     edit->getTransport().looping = false;
     edit->getTransport().ensureContextAllocated (true);
     sampler->preview (1, 1, 60, 100);
-    AudioBuffer<float> buffer (2, blockSize);
+    juce::AudioBuffer<float> buffer (2, blockSize);
     MidiBuffer midi;
     const auto audible = [&]
     {
@@ -464,7 +464,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
         return fail ("Atelier redocks at its fixed, readable height without a scrollbar");
 
-    for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1600, 960) })
+    for (const auto size : { juce::Point<int> (1024, 640), juce::Point<int> (1280, 800), juce::Point<int> (1600, 960) })
         for (const auto scale : studio::AppearanceMetrics::interfaceOptions)
         {
             applyAppearance (scale, scale == 175 ? 130 : 100, false);
