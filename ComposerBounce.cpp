@@ -46,6 +46,17 @@ bool tooLarge (const Options& options)
 }
 }
 
+Result verifySamplerSources (te::Edit& edit, bool checkOfflineErrors)
+{
+    for (auto* plugin : te::getAllPlugins (edit, true))
+        if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin))
+        {
+            if (sampler->stateError().isNotEmpty()) return Result::fail (sampler->stateError());
+            if (auto result = sampler->verifyStreamSources (checkOfflineErrors); result.failed()) return result;
+        }
+    return Result::ok();
+}
+
 std::unique_ptr<tracktion::Edit> createRenderSnapshot (tracktion::Edit& source)
 {
     source.flushState();
@@ -86,6 +97,7 @@ Result Job::create (te::Edit& source, const Options& options, std::unique_ptr<Jo
     if (next->snapshot == nullptr)
         return Result::fail ("Could not create the offline render graph.");
     auto& edit = *next->snapshot;
+    if (auto streaming = verifySamplerSources (edit, false); streaming.failed()) return streaming;
 
     // End the source at the requested boundary on the render copy. Keep the
     // graph clock running for an exact, common decay window across all outputs.
@@ -189,9 +201,7 @@ Result Job::publish()
     // Never publish an apparently successful render with a silent stream
     // read failure or a source file that changed during the render.
     if (snapshot != nullptr)
-        for (auto* plugin : te::getAllPlugins (*snapshot, true))
-            if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin))
-                if (auto streaming = sampler->verifyStreamSources (true); streaming.failed()) return streaming;
+        if (auto streaming = verifySamplerSources (*snapshot, true); streaming.failed()) return streaming;
     for (const auto& output : outputs)
         if (! output.staged->getFile().existsAsFile())
             return Result::fail ("No render was produced for " + output.destination.getFileName() + ".");
