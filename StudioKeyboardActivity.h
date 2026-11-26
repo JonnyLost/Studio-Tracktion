@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <bitset>
 #include <cmath>
+#include <cstddef>
 #include <memory>
 #include <limits>
 #include <optional>
@@ -160,7 +161,7 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
             const bool sustainedNote = pedalDown && start <= nowBeat
                 && end >= pedalDownBeat && end <= nowBeat;
             if (sounding || justPlayed || sustainedNote)
-                lit.set (static_cast<size_t> (pitch));
+                lit.set (static_cast<std::size_t> (pitch));
         }
     }
     return lit;
