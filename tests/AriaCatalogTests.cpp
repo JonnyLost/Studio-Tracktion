@@ -30,6 +30,7 @@ int main()
         const String definition = "<control> default_path=Samples/\n#include \"violin.inc\"\n";
         require (violin.replaceWithText (definition), "write definition");
         const auto originalBytes = violin.loadFileAsString();
+        require (violin.setLastModificationTime (Time (1'700'000'000'321LL)), "set fixture timestamp");
         require (include.replaceWithText ("<region> sample=violin A3.wav lokey=55 hikey=88 sw_label=Legato\n"
                                           "// sample=ignored.wav\n"), "write include");
         require (duplicateName.replaceWithText ("<region> sample=absent.wav key=60"), "write missing sample");
@@ -48,6 +49,7 @@ int main()
         require (resumed.pendingRoots().isEmpty(), "finish resume");
         require (resumed.patches().size() == 4, "preserve duplicate display names and classify distinct formats");
         const auto& patch = resumed.patches().at (violin.getFullPathName());
+        require (patch.modified == violin.getLastModificationTime().toMilliseconds(), "preserve file timestamp precision");
         require (patch.library == "Personal Orchestra 5" && patch.family == "Strings", "library and family");
         require (patch.health == "Literal sample references present", "include and path with spaces");
         require (patch.midiRange == "55-88" && patch.articulations.contains ("Legato"), "explicit SFZ metadata");
@@ -70,7 +72,8 @@ int main()
         const auto& single = snapshotCatalog.patches().at (singleSlot.getFullPathName());
         require (snapshotCatalog.registerPreset (single, capture).wasOk()
                  && snapshotCatalog.preset (single).state == capture.state, "accept an explicitly confirmed single-slot snapshot");
-        require (resumed.registerPreset (patch, capture).wasOk(), "register fixture state");
+        const auto registered = resumed.registerPreset (patch, capture);
+        require (registered.wasOk(), registered.getErrorMessage().toRawUTF8());
         require (resumed.registerPreset (patch, capture).failed(), "refuse silent overwrite");
         require (resumed.report().contains ("user-auditioned capture): 1"), "report registered state");
         require (resumed.save().wasOk(), "write registered catalog");

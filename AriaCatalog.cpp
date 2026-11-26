@@ -333,7 +333,9 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
             const auto id = file.getFullPathName();
             if (! seen.insert (id).second) continue;
             const auto size = entry.getFileSize();
-            const auto modified = entry.getModificationTime().toMilliseconds();
+            // The iterator rounds timestamps on macOS. Use the same precision
+            // here and when validating a capture against its source.
+            const auto modified = file.getLastModificationTime().toMilliseconds();
             if (const auto it = entries.find (id); resuming.contains (root) && it != entries.end()
                 && it->second.present && it->second.modified == modified && it->second.size == size)
             {
