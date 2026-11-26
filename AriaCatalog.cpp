@@ -359,7 +359,7 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
                 patch.missingSamples = inspection.missing;
                 patch.articulations = std::move (inspection.articulations);
                 if (inspection.low <= inspection.high)
-                    patch.midiRange = String (inspection.low) + "–" + String (inspection.high);
+                    patch.midiRange = String (inspection.low) + "-" + String (inspection.high);
             }
             ++progress.discovered;
             if (patch.missingSamples > 0) ++progress.missing;
@@ -384,7 +384,7 @@ File Catalog::presetFile (const Patch& patch) const
 
 Preset Catalog::preset (const Patch& patch) const
 {
-    if (patch.kind != "sfz" || ! patch.present) return {};
+    if (! patch.canCapture()) return {};
     const auto data = readJson (presetFile (patch), int64 (maxStateSize * 2));
     if (int (data["schema"]) != 1 || data["id"].toString() != patch.id
         || int64 (data["modified"]) != patch.modified || int64 (data["size"]) != patch.size)
@@ -397,7 +397,7 @@ Preset Catalog::preset (const Patch& patch) const
 
 Result Catalog::registerPreset (const Patch& patch, const Preset& value)
 {
-    if (patch.kind != "sfz" || ! matchesSource (patch) || value.pluginId.isEmpty()
+    if (! patch.canCapture() || ! matchesSource (patch) || value.pluginId.isEmpty()
         || ! validState (value.state))
         return Result::fail ("The source changed or the Audio Unit did not supply a reusable state.");
     const auto file = presetFile (patch);
@@ -413,9 +413,10 @@ String Catalog::status (const Patch& patch) const
 {
     if (! patch.present) return "Source unavailable";
     if (patch.kind == "original") return "Original player / native importer";
-    if (patch.kind == "snapshot") return "ARIA snapshot / possible ensemble";
+
     if (patch.kind == "bank") return "Bank or instrument container / program mapping unresolved";
     if (preset (patch).state.isNotEmpty()) return "Audition-confirmed ARIA capture";
+    if (patch.kind == "snapshot") return "ARIA snapshot / possible ensemble";
     if (patch.health.startsWith ("Missing")) return "ARIA required / check samples";
     return "ARIA required / choose patch in ARIA";
 }
@@ -431,7 +432,7 @@ String Catalog::report() const
         if (state.startsWith ("Audition-confirmed")) ++captured;
         else if (patch.present && patch.kind == "original") ++original;
         else ++unresolved;
-        if (patch.present && patch.kind == "snapshot") ++snapshots;
+        if (state.startsWith ("ARIA snapshot")) ++snapshots;
         if (patch.present && patch.kind == "sfz" && ! state.startsWith ("Audition-confirmed")) ++selectable;
         if (patch.present && patch.health.startsWith ("Missing")) ++missing;
     }
@@ -448,7 +449,7 @@ String Catalog::report() const
         + "\nUnavailable roots: " + String (errors)
         + "\nPending roots: " + String (pending.size()) + "\n";
     for (const auto& [library, count] : libraries)
-        summary << "\n" << library << " — " << count;
+        summary << "\n" << library << ": " << count;
     return summary;
 }
 }

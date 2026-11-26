@@ -17,6 +17,6 @@ Use the Studio build from `feature/studio-aria-catalog-60`. If you build locally
 ## Reading the results
 
 - SFZ entries are candidates. The scanner inventories literal sample paths, includes and some explicit metadata. Macros, encrypted banks and vendor-specific identifiers may require selection inside ARIA.
-- `.aria` and `.ariax` entries are snapshots with unverified slot layout. Load these through ARIA when appropriate. Other player formats remain in the report with their original-player or importer route.
+- `.aria` and `.ariax` entries are snapshots with unverified slot layout. Open the generic ARIA Player on a fresh track to load one of these files. You can register its browser entry after confirming it contains a single working patch in slot 1. Other player formats remain in the report with their original-player or importer route.
 - Audition confirmation applies to the loaded source instance. Playback on a fresh track and after reopening a project should be checked on your Mac. An updated Audio Unit version may require a new capture. A changed or disconnected source can invalidate the previous capture.
 - Library definitions, sample files and artwork stay in their original locations. Keep the local catalog and state manifests private because they can contain installation paths and Audio Unit state.

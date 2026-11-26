@@ -165,7 +165,7 @@ void InstrumentBrowser::setAriaCatalog (const aria::Catalog& catalog)
 std::optional<aria::Patch> InstrumentBrowser::selectedAriaPatch() const
 {
     if (const auto* item = selected(); item != nullptr && item->patch != nullptr
-        && item->patch->kind == "sfz" && item->patch->present)
+        && item->patch->canCapture())
         return *item->patch;
     return {};
 }
@@ -208,13 +208,16 @@ void InstrumentBrowser::rebuildCatalog()
                 unit = candidate;
                 if (candidate.name.equalsIgnoreCase ("ARIA Player")) break;
             }
-            const bool available = patch.present && patch.kind == "sfz" && unit.name.isNotEmpty();
+            const bool available = unit.name.isNotEmpty() && patch.present
+                && (patch.kind == "sfz" || capture.state.isNotEmpty());
             const auto description = capture.state.isNotEmpty() && ! available
                 ? String ("Requires the ARIA Audio Unit version used to capture this preset.")
                 : ariaCatalog->status (patch);
-            const auto patchStatus = ! available ? "Unavailable" : capture.state.isNotEmpty() ? "Recall preset"
+            const auto patchStatus = ! available && patch.present && patch.kind == "snapshot" && capture.state.isEmpty()
+                ? "Possible ensemble" : ! available ? "Unavailable" : capture.state.isNotEmpty() ? "Recall preset"
                 : patch.missingSamples > 0 ? "Check samples in ARIA" : "Choose patch in ARIA";
-            entries.push_back ({ "aria:" + id, patch.name + " — " + patch.library + " — ARIA",
+            const auto separator = String::fromUTF8 (" — ");
+            entries.push_back ({ "aria:" + id, patch.name + separator + patch.library + separator + "ARIA",
                 patch.family, patch.library, "ARIA Player required",
                 description + " | " + patch.health + " | " + patch.source.getFullPathName(),
                 unit, available, &patch, patchStatus });

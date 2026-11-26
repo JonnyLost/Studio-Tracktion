@@ -50,7 +50,7 @@ int main()
         const auto& patch = resumed.patches().at (violin.getFullPathName());
         require (patch.library == "Personal Orchestra 5" && patch.family == "Strings", "library and family");
         require (patch.health == "Literal sample references present", "include and path with spaces");
-        require (patch.midiRange == "55–88" && patch.articulations.contains ("Legato"), "explicit SFZ metadata");
+        require (patch.midiRange == "55-88" && patch.articulations.contains ("Legato"), "explicit SFZ metadata");
         require (resumed.status (patch).contains ("choose patch"), "SFZ recognition does not prove playback");
         const auto& missing = resumed.patches().at (duplicateName.getFullPathName());
         require (resumed.status (missing).contains ("check samples"), "missing literal dependency");
@@ -61,7 +61,15 @@ int main()
         require (resumed.registerPreset (patch, { "fake-test-au", "1", "malformed", 0 }).failed(), "reject invalid state");
         require (resumed.registerPreset (patch, { "fake-test-au", "1", "-1.A", 0 }).failed(), "reject invalid state size");
         const Preset capture { "fake-test-au", "1", MemoryBlock ("state", 5).toBase64Encoding(), 2 };
-        require (resumed.registerPreset (snapshot, capture).failed(), "refuse an ensemble as a single patch");
+        require (resumed.registerPreset (other, capture).failed(), "refuse other-player files as ARIA");
+        const auto singleSlot = extras.getChildFile ("Confirmed single.aria");
+        require (singleSlot.replaceWithText ("synthetic single-slot snapshot"), "write single-slot fixture");
+        require (resumed.preset (snapshot).state.isEmpty(), "snapshot needs an explicit capture");
+        Catalog snapshotCatalog (temp.getChildFile ("Snapshot registry"));
+        snapshotCatalog.scan ({ extras }, [] (const Progress&) { return false; });
+        const auto& single = snapshotCatalog.patches().at (singleSlot.getFullPathName());
+        require (snapshotCatalog.registerPreset (single, capture).wasOk()
+                 && snapshotCatalog.preset (single).state == capture.state, "accept an explicitly confirmed single-slot snapshot");
         require (resumed.registerPreset (patch, capture).wasOk(), "register fixture state");
         require (resumed.registerPreset (patch, capture).failed(), "refuse silent overwrite");
         require (resumed.report().contains ("user-auditioned capture): 1"), "report registered state");

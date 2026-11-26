@@ -76,7 +76,7 @@ private:
     juce::ComboBox compactFamily, compactType;
     juce::TextEditor search;
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
-    juce::TextButton manage { "Plug-ins..." }, ariaTools { "ARIA…" }, load { "Load on Selected Track" }, add { "Add as New Track" },
+    juce::TextButton manage { "Plug-ins..." }, ariaTools { "ARIA..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;

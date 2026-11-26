@@ -2199,7 +2199,7 @@ private:
         AriaScan (studio::aria::Catalog previous, Array<File> roots, Component& owner)
             : Thread ("ARIA library discovery"), catalog (std::move (previous)),
               selectedRoots (std::move (roots)),
-              window ("Discover Garritan/ARIA instruments", "Preparing scan…", MessageBoxIconType::NoIcon, &owner)
+              window ("Discover Garritan/ARIA instruments", "Preparing scan...", MessageBoxIconType::NoIcon, &owner)
         {
             window.addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
             window.addProgressBarComponent (indeterminate);
@@ -4728,7 +4728,7 @@ private:
         auto defaults = studio::aria::Catalog::defaultRoots();
         menu.addItem ("Discover Garritan/ARIA instruments in standard locations", ! defaults.isEmpty(), false,
                       guard ([defaults] (StudioView& view) { view.scanAriaRoots (defaults); }));
-        menu.addItem ("Scan a library folder…", guard ([] (StudioView& view)
+        menu.addItem ("Scan a library folder...", guard ([] (StudioView& view)
         {
             view.ariaRootChooser = std::make_unique<FileChooser> ("Choose a Garritan/ARIA library folder");
             view.ariaRootChooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories,
@@ -4744,7 +4744,7 @@ private:
                       guard ([] (StudioView& view) { view.scanAriaRoots (view.ariaCatalog.pendingRoots()); }));
         menu.addSeparator();
         const auto patch = browser.selectedAriaPatch();
-        menu.addItem ("Register auditioned patch from selected track…", patch.has_value(), false,
+        menu.addItem ("Register auditioned patch from selected track...", patch.has_value(), false,
                       guard ([patch] (StudioView& view) { if (patch) view.confirmAriaCapture (*patch); }));
         menu.addItem ("Show local catalog and reports", []
         {
@@ -4810,6 +4810,11 @@ private:
                 return;
             }
             auto preset = ariaCatalog.preset (patch);
+            if (patch.kind == "snapshot" && preset.state.isEmpty())
+            {
+                pluginStatus ("This snapshot needs a current single-slot ARIA capture.");
+                return;
+            }
             if (preset.state.isNotEmpty()
                 && (preset.pluginId != plugin.createIdentifierString() || preset.pluginVersion != plugin.version))
             {

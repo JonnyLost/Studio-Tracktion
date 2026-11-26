@@ -13,6 +13,7 @@ struct Patch
     juce::File source;
     juce::StringArray articulations;
     juce::int64 modified = 0, size = 0;
+    bool canCapture() const { return present && (kind == "sfz" || kind == "snapshot"); }
     bool present = true;
     int literalSamples = 0, missingSamples = 0;
     juce::String libraryVersion;
