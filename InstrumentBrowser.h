@@ -29,6 +29,7 @@ public:
                          bool canInsertEffect = false, juce::String hostedAppleIdentifier = {});
     void setStatus (const juce::String&);
     void browseAppleEffects();
+    void browseGeneralMidi();
     void appearanceChanged();
     int minimumContentHeight (int width) const;
     void resized() override;
