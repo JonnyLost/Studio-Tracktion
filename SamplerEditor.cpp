@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SamplerEditor.h"
 #include "SamplerGuidedBuilder.h"
+#include "StudioInstrumentHelp.h"
 #include "StudioLibraryPresentation.h"
 #include "SamplerReviewCapture.h"
 #include <algorithm>
@@ -201,14 +202,14 @@ Editor::Editor (Plugin& p) : plugin (p)
     limits.setSizeLimits (460, 320, 1600, 1000);
     limits.setMinimumOnscreenAmounts (0x10000, 30, 28, 30);
     for (Component* c : std::initializer_list<Component*> { &name, &preset, &loadPreset, &savePreset, &audition,
-             &play, &basic, &build, &mapping, &groups, &loops, &advanced, &keyboard, &viewport, &cancelImport })
+             &play, &basic, &build, &mapping, &groups, &loops, &advanced, &keyboard, &viewport, &cancelImport, &helpButton })
         addAndMakeVisible (*c);
 
     viewport.setViewedComponent (&body, false);
     viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
-             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView, &playSummary, &playHelp, &articulationLabel, &soundScope, &articulationChoice, &applyArticulation, &createInstrument })
+             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView, &playSummary, &playHelp, &articulationLabel, &soundScope, &articulationChoice, &applyArticulation, &createInstrument, &findMissing })
         body.addAndMakeVisible (*c);
 
     auto* plot = owned.add (new EnvelopePlot (p, [this] { return zone(); }));
@@ -275,6 +276,19 @@ Editor::Editor (Plugin& p) : plugin (p)
     loadPreset.onClick = [this] { choose (true, false, false); };
     loadPreset.setTooltip ("Load a Studio preset or import SFZ, EXS, Decent Sampler, legacy Kontakt, SoundFont, DLS, GIG or extracted Akai.");
     savePreset.onClick = [this] { choose (true, true, false); };
+    helpButton.onClick=[this]{showContextHelp();};
+    helpButton.setTitle("Help for the current sampler page");
+    helpButton.setTooltip("Explain the current page and its controls.");
+    findMissing.setTitle("Locate the first unavailable recording");
+    findMissing.setTooltip("Choose the original audio file to restore a missing recording without changing its mapping.");
+    findMissing.onClick=[this]
+    {
+        const auto& zones=plugin.instrument().zones;
+        auto missing=std::find_if(zones.begin(),zones.end(),[](const auto& z){return !z.mapping.sample;});
+        if(missing==zones.end())return;
+        selectZone(static_cast<int>(missing-zones.begin()));
+        choose(false,false,true);
+    };
     createInstrument.onClick = [this] { openGuidedBuilder(); };
     createInstrument.setTooltip ("Create a playable instrument from your recordings with guided mapping.");
     play.onClick = [this] { setPage (Page::perform); };
@@ -512,6 +526,7 @@ Editor::~Editor()
     importTask.reset();
     if (importReview) importReview->exitModalState (0);
     if (guidedWindow) guidedWindow->exitModalState (0);
+    if (helpWindow) helpWindow->exitModalState (0);
     keys.removeListener (this);
     setLookAndFeel (nullptr);
     plugin.preview (1, 1, -1, 0);
@@ -566,6 +581,15 @@ void Editor::selectZone (int index)
     selection = index;
     selectedZones = { index };
     refresh();
+}
+
+void Editor::showContextHelp()
+{
+    if(helpWindow){helpWindow->exitModalState(0);helpWindow=nullptr;}
+    using T=studio::help::Topic;
+    const auto topic=page==Page::perform?T::play:page==Page::basic?T::sound:page==Page::mapping?T::mapping:
+                     page==Page::groups?T::groups:page==Page::loops?T::waveform:T::advanced;
+    helpWindow=studio::help::show(*this,topic);
 }
 
 void Editor::openGuidedBuilder()
@@ -645,6 +669,7 @@ void Editor::refresh()
     filename.setTooltip (entry ? entry->file.getFullPathName() : String());
     if (plugin.stateError().isNotEmpty()) setStatus (plugin.stateError());
     else if (entry && entry->problem.isNotEmpty()) setStatus (entry->problem + " | " + entry->file.getFileName());
+    else if(page==Page::perform||page==Page::basic) setStatus({});
     else
     {
         int overlaps = 0, keyGaps = 0, velocityGaps = 0;
@@ -683,8 +708,11 @@ void Editor::refresh()
         decay.slider.setSkewFactorFromMidPoint (200);
         release.slider.setSkewFactorFromMidPoint (250);
     }
-    for (auto* c : { &attack, &decay, &sustain, &release })
-        c->slider.setTooltip (sfzEnvelope ? "Imported envelope for the selected SFZ region." : "Instrument amplitude envelope.");
+    const String scope=sfzEnvelope?" Selected recording only.":" Entire instrument.";
+    attack.slider.setTooltip("Time from pressing a key until the sound reaches full level."+scope);
+    decay.slider.setTooltip("Time for the sound to settle from its peak to the sustain level."+scope);
+    sustain.slider.setTooltip("Level while a key is held."+scope);
+    release.slider.setTooltip("Time for the sound to fade after you release the key."+scope);
     value (attack, (sfzEnvelope ? z.sfz.attack : s.attack) * 1000);
     value (decay, (sfzEnvelope ? z.sfz.decay : s.decay) * 1000);
     value (sustain, (sfzEnvelope ? z.sfz.sustain : s.sustain) * 100);
@@ -804,6 +832,7 @@ void Editor::refreshPerformance()
         c->setVisible (performing);
     soundScope.setVisible (sound);
     createInstrument.setVisible(performing);
+    findMissing.setVisible(false);
     createInstrument.setEnabled(!importTask&&!importReview);
     if (sound)
     {
@@ -822,8 +851,11 @@ void Editor::refreshPerformance()
         if (z.mapping.sample && z.problem.isEmpty()) ++available; else ++missing;
     playSummary.setText (model.zones.empty() ? "No instrument loaded" : String (available) + " playable recordings" +
         (missing ? " | " + String (missing) + " unavailable" : " | Ready to play"), dontSendNotification);
-    playHelp.setText (model.zones.empty() ? "Open an instrument or choose Build." :
-        "Play your keyboard. Shape the sound in Sound.", dontSendNotification);
+    const bool canRepair=std::any_of(model.zones.begin(),model.zones.end(),[](const auto& z){return !z.mapping.sample;});
+    findMissing.setVisible(canRepair);
+    findMissing.setEnabled(!importTask&&!importReview&&!guidedWindow);
+    playHelp.setText(model.zones.empty()?"Open an instrument or create one.":
+                     missing?"Some recordings need attention.":"Play your keyboard. Use Sound to shape the instrument.",dontSendNotification);
     const auto previous = articulationChoice.getSelectedId();
     auto next = plugin.articulations();
     std::erase_if (next, [&model] (const auto& a)
@@ -909,6 +941,8 @@ void Editor::resized()
 
     area.removeFromTop (gap);
     auto tabs = area.removeFromTop (button);
+    helpButton.setBounds(tabs.removeFromRight(jmin(m.span(70),tabs.getWidth()/4)));
+    tabs.removeFromRight(gap);
     const int tabWidth = jmax (0, jmin (m.span (130), (tabs.getWidth() - 2 * gap) / 3));
     for (auto* tab : { &play, &basic, &build }) put (tabs, *tab, tabWidth);
     if (page != Page::perform && page != Page::basic)
@@ -932,6 +966,11 @@ void Editor::resized()
         playSummary.setBounds (content.removeFromTop (line));
         playHelp.setBounds (content.removeFromTop (line));
         auto newRow=content.removeFromTop(button);
+        if(findMissing.isVisible())
+        {
+            findMissing.setBounds(newRow.removeFromRight(newRow.getWidth()/2).reduced(2));
+            newRow.removeFromRight(gap);
+        }
         createInstrument.setBounds(newRow.removeFromLeft(jmin(m.span(190),newRow.getWidth())));
         content.removeFromTop (gap);
         auto row = content.removeFromTop (button);
@@ -1773,7 +1812,16 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
     if (page != Page::perform || zone() || audition.isVisible() || mapping.isVisible() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
-    if(!createInstrument.isVisible()||createInstrument.getBounds().isEmpty())return reviewFailure(__LINE__);
+    if(!createInstrument.isVisible()||createInstrument.getBounds().isEmpty()||findMissing.isVisible()||helpButton.getBounds().isEmpty())return reviewFailure(__LINE__);
+    helpButton.onClick();
+    if(!helpWindow||!helpWindow->getContentComponent())return reviewFailure(__LINE__);
+    if(output!=File())
+    {
+        FileOutputStream file(output.getChildFile("sampler-context-help.png"));
+        if(!PNGImageFormat().writeImageToStream(helpWindow->createComponentSnapshot(helpWindow->getLocalBounds()),file))return reviewFailure(__LINE__);
+    }
+    helpWindow->exitModalState(0);
+    MessageManager::getInstance()->runDispatchLoopUntil(20);
     createInstrument.onClick();
     if(!guidedWindow||!guidedWindow->getContentComponent())return reviewFailure(__LINE__);
     if(output!=File())
