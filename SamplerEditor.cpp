@@ -223,7 +223,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     name.setTitle ("Instrument name");
     name.onTextChange = [this] { plugin.rename (name.getText()); };
 
-    for (auto* button : { &loadPreset, &savePreset, &basic, &mapping, &groups, &loops, &advanced,
+    for (auto* button : { &loadPreset, &savePreset, &play, &basic, &build, &mapping, &groups, &loops, &advanced,
                           &load, &locate, &remove, &audition })
     {
         button->setTitle (button->getButtonText());
@@ -279,11 +279,14 @@ Editor::Editor (Plugin& p) : plugin (p)
     play.setTooltip ("Play the complete instrument with its configured articulations.");
     basic.setTooltip ("Adjust instrument volume, tuning and amplitude envelope.");
     build.setTooltip ("Edit individual recordings, keyboard mapping, groups and loops.");
-    loadPreset.setButtonText ("Open Instrument");
-    savePreset.setButtonText ("Save Instrument");
+    loadPreset.setButtonText ("Open");
+    loadPreset.setTitle ("Open instrument");
+    savePreset.setButtonText ("Save");
+    savePreset.setTitle ("Save instrument");
     articulationLabel.setText ("Articulation", dontSendNotification);
     articulationChoice.setTextWhenNothingSelected ("No articulation selected");
     articulationChoice.setTitle ("Available instrument articulations");
+    articulationChoice.onChange = [this] { applyArticulation.setEnabled (articulationChoice.getSelectedId() > 0); };
     applyArticulation.setTooltip ("Send the selected instrument's actual keyswitch or MIDI controller message.");
     applyArticulation.onClick = [this]
     {
@@ -783,8 +786,8 @@ void Editor::refreshPerformance()
         if (z.mapping.sample && z.problem.isEmpty()) ++available; else ++missing;
     playSummary.setText (model.zones.empty() ? "No instrument loaded" : String (available) + " playable recordings" +
         (missing ? " | " + String (missing) + " unavailable" : " | Ready to play"), dontSendNotification);
-    playHelp.setText (model.zones.empty() ? "Open an instrument or choose Build to create one." :
-        "Play your MIDI keyboard or the keys below. Use Sound to shape the instrument.", dontSendNotification);
+    playHelp.setText (model.zones.empty() ? "Open an instrument or choose Build." :
+        "Play your keyboard. Shape the sound in Sound.", dontSendNotification);
     const auto previous = articulationChoice.getSelectedId();
     auto next = plugin.articulations();
     std::erase_if (next, [&model] (const auto& a)
@@ -807,7 +810,7 @@ void Editor::refreshPerformance()
     else articulationChoice.setSelectedId (previous, dontSendNotification);
     articulationChoice.setEnabled (! playableArticulations.empty());
     articulationChoice.setTextWhenNothingSelected (playableArticulations.empty() ? "No mapped articulations" : "Choose an articulation");
-    applyArticulation.setEnabled (! playableArticulations.empty());
+    applyArticulation.setEnabled (articulationChoice.getSelectedId() > 0);
     for (auto* c : std::initializer_list<Component*> { &display, &samples, &filename, &mode, &loopEnabled, &envelope, &load, &locate, &remove, &editMapping, &meter, &audition })
         c->setVisible (false);
     for (auto* c : { &attack, &decay, &sustain, &release, &gain, &tune, &root, &low, &high, &soft, &hard,
@@ -1231,7 +1234,9 @@ void Editor::finishImport()
     {
         const int replaced = task->replace;
         plugin.commitImport (std::move (task->proposal), ! task->preset);
-        selection = replaced >= 0 ? replaced : initialZone(); refresh(); return;
+        selection = replaced >= 0 ? replaced : initialZone();
+        if (task->preset) setPage (Page::perform); else refresh();
+        return;
     }
     auto proposal = std::make_shared<Instrument> (std::move (task->proposal));
     const auto summary = task->summary; const auto revision = task->revision;
