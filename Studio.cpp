@@ -692,7 +692,7 @@ public:
         addAndMakeVisible (addTrackButton);
         addAndMakeVisible (removeTrackButton);
         addTrackButton.setTooltip ("Add instrument track");
-        removeTrackButton.setTooltip ("Delete selected track (disabled when track has protected state)");
+        removeTrackButton.setTooltip ("Track actions, including Delete (protected tracks cannot be removed)");
         addTrackButton.onClick = [this] { if (canEditRegions()) addTrack ("Instrument"); };
         removeTrackButton.onClick = [this]
         {
@@ -720,6 +720,12 @@ public:
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
         addChildComponent (dockedKeyboard);
+        if (keyboardDocked)
+        {
+            // Restore the persisted dock with the same live-MIDI routing as a manual dock.
+            keyboardDocked = false;
+            setKeyboardDocked (true);
+        }
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
         workspaceBody.addChildComponent (piano);
@@ -2614,6 +2620,9 @@ private:
             safe->keyboardDocked = false;
             safe->dockedKeyboard.releaseNotes();
             safe->closeAuditionKeyboard();
+            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.keyboardDocked", false);
+            prefs.saveIfNeeded();
             safe->resized();
         });
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardButton));
@@ -2670,7 +2679,11 @@ private:
         if (keyboardDocked)
         {
             dockedKeyboard.releaseNotes();
+            dockedKeyboard.send = {};
             keyboardDocked = false;
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.keyboardDocked", false);
+            prefs.saveIfNeeded();
             resized();
             return;
         }
