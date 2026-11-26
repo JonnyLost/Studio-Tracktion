@@ -51,6 +51,7 @@ public:
         queue.reset();  // Tracktion joins/cancels the render before Edit release.
         snapshot.reset();
         message.clear();
+        streamFailure.clear();
         renderedDirectory = juce::File();
         currentCue = {};
         currentRange = {};
@@ -65,6 +66,7 @@ public:
     juce::String description() const
     {
         if (queue == nullptr) return message;
+        if (streamFailure.isNotEmpty()) return "Cue delivery failed: " + streamFailure;
         if (! queue->hasFinished())
             return "Rendering cue " + juce::String (int (progress() * 100.0f)) + "%";
         int completed = 0, failed = 0, cancelled = 0;
@@ -107,12 +109,15 @@ public:
         if (! chosenDirectory.isDirectory())
             return juce::Result::fail ("Choose an existing output directory.");
 
+        if (auto valid = studio::bounce::verifySamplerSources (source, false); valid.failed()) return valid;
+
         // Per-track jobs temporarily mute routing dependencies. Apply those
         // changes to an offline Edit so the live project stays safe to save.
         auto renderEdit = studio::bounce::createRenderSnapshot (source);
         if (renderEdit == nullptr)
             return juce::Result::fail ("Could not create the offline cue render graph.");
         auto& edit = *renderEdit;
+        if (auto valid = studio::bounce::verifySamplerSources (edit, false); valid.failed()) return valid;
 
         const juce::String stem (deliveryStem (cue));
         const juce::String folderName = stem + (mode == Mode::individualTracks ? "-Tracks"
@@ -209,6 +214,19 @@ public:
         queue->onJobFinished = [this] (te::RenderQueue::Job&) { notify(); };
         queue->onFinished = [this]
         {
+            if (snapshot)
+                if (auto valid = studio::bounce::verifySamplerSources (*snapshot, true); valid.failed())
+                {
+                    streamFailure = valid.getErrorMessage();
+                    // This session created a new, unique directory. Remove
+                    // invalid audio rather than mark it as completed delivery.
+                    for (const auto& job : queue->getJobs())
+                    {
+                        const auto file = job->getParameters().destFile;
+                        if (file.isAChildOf (renderedDirectory) && file.existsAsFile() && ! file.deleteFile())
+                            streamFailure += " | Could not remove invalid " + file.getFileName();
+                    }
+                }
             writeDeliveryReport();
             finished = true;
             notify();
@@ -245,6 +263,8 @@ private:
                 case State::cancelled: result = "cancelled"; break;
                 default: break;
             }
+            if (streamFailure.isNotEmpty() && result == "completed") result = "failed";
+            const auto error = streamFailure.isNotEmpty() ? streamFailure : job->getError();
             csv << csvText (currentCue.id) << ','
                 << csvText (currentCue.title) << ','
                 << cueTimecode (currentRange.startFrame, currentRate) << ','
@@ -252,7 +272,7 @@ private:
                 << std::fixed << std::setprecision (6) << currentRange.timelineStart << ','
                 << std::fixed << std::setprecision (6) << currentRange.timelineEnd << ','
                 << csvText (job->getParameters().destFile.getFileName().toStdString()) << ','
-                << result << ',' << csvText (job->getError().toStdString()) << "\r\n";
+                << result << ',' << csvText (error.toStdString()) << "\r\n";
         }
         const auto file = renderedDirectory.getChildFile ("Delivery-Report.csv");
         if (! file.replaceWithText (juce::String (csv.str())))
@@ -265,7 +285,7 @@ private:
     DeliveryRange currentRange;
     Rate currentRate = Rate::fps24;
     juce::File renderedDirectory;
-    juce::String message;
+    juce::String message, streamFailure;
     bool finished = false;
 };
 } // namespace studio::film
