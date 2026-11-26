@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
+#include "SoundBankFixtures.h"
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
 #include "../StudioMixing.h"
@@ -233,6 +234,83 @@ xfin_lovel=20 xfin_hivel=80 xf_velcurve=gain
     return Result::ok();
 }
 
+Result verifySoundBankImport (const File& directory, Plugin& sampler)
+{
+    namespace sb = studio::soundbank;
+    const auto root = directory.getChildFile ("Bank conversion fixtures");
+    if (root.createDirectory().failed()) return Result::fail ("create bank fixture root");
+    const auto sf = root.getChildFile ("Test.sf2"), dls = root.getChildFile ("Test.dls");
+    try
+    {
+        sb::fixtures::write (std::filesystem::u8path (sf.getFullPathName().toStdString()), sb::fixtures::sf (false,true));
+        sb::fixtures::write (std::filesystem::u8path (dls.getFullPathName().toStdString()), sb::fixtures::dls());
+    }
+    catch (...) { return Result::fail ("write bank fixtures"); }
+    const auto revision = sampler.changeCount();
+    std::vector<BankProgram> catalog;
+    if (Plugin::catalogSoundBank (sf,catalog).failed() || catalog.size()!=2 || catalog[0].number!=40)
+        return Result::fail ("catalog SoundFont fixture");
+    {
+        BankImportMedia media; media.parent=root;
+        Instrument imported; String report;
+        if (auto result=Plugin::prepareSoundBank (sf,0,imported,report,media); result.failed()) return result;
+        if (sampler.changeCount()!=revision || imported.zones.size()!=1 || !report.contains ("Bank 0 | Program 40"))
+            return Result::fail ("bank conversion proposal must not alter live instrument");
+        const auto& z=imported.zones[0].mapping;
+        if (!z.sample || !z.sample->stream || z.sample->frameCount()!=196608 || z.low!=64 || z.high!=80
+            || !z.loop || !z.sfz.sustainLoop || z.loopEnd!=16384 || z.gainDb!=-5 || z.sfz.pan!=-20)
+            return Result::fail ("preserve native streaming SoundFont mapping");
+        StreamCache::Cursor cursor; float l=0,r=0;
+        if (!z.sample->readFrame (131072,cursor,l,r,true) || std::abs(l-(-16384*256+64)/8388608.f)>2e-6f)
+            return Result::fail ("24-bit SoundFont sample extraction differs");
+        sampler.commitImport (imported); media.keep=true;
+        const auto preset=root.getChildFile ("Converted.studiosampler");
+        if (sampler.savePreset (preset).failed() || sampler.loadPreset (preset).failed()
+            || !sampler.instrument().zones[0].mapping.sample->stream)
+            return Result::fail ("persist and restore converted bank instrument");
+        sampler.commitImport ({},false);
+    }
+    File staged;
+    {
+        BankImportMedia media; media.parent=root;
+        Instrument imported; String report;
+        if (auto result=Plugin::prepareSoundBank (dls,0,imported,report,media); result.failed()) return result;
+        staged=media.directory;
+        const auto& z=imported.zones[0].mapping;
+        if (!z.sample || !z.sample->stream || z.root!=62 || z.cents!=25 || z.loopEnd!=9216)
+            return Result::fail ("DLS native mapping and wave extraction");
+    }
+    if (staged.exists()) return Result::fail ("cancelled bank conversion did not remove staged media");
+   #if JUCE_USE_OGGVORBIS
+    const auto oggFile=root.getChildFile ("Test.ogg");
+    {
+        OggVorbisAudioFormat ogg;
+        std::unique_ptr<OutputStream> stream=oggFile.createOutputStream();
+        auto writer=ogg.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate(48000).withNumChannels(1).withBitsPerSample(16));
+        if (!writer) return Result::fail ("create Vorbis fixture");
+        AudioBuffer<float> signal(1,8192);
+        for (int i=0;i<8192;++i) signal.setSample(0,i,0.25f*std::sin(i*0.02f));
+        for (int b=0;b<24;++b)
+            if (!writer->writeFromAudioSampleBuffer(signal,0,8192)) return Result::fail ("write Vorbis fixture");
+    }
+    MemoryBlock data;
+    if (!oggFile.loadFileAsData(data)) return Result::fail ("read Vorbis fixture");
+    const auto* bytes=static_cast<const unsigned char*>(data.getData());
+    const auto sf3=root.getChildFile("Test.sf3");
+    try { sb::fixtures::write(std::filesystem::u8path(sf3.getFullPathName().toStdString()),sb::fixtures::sf(true,false,false,sb::Bytes(bytes,bytes+data.getSize()))); }
+    catch (...) { return Result::fail ("write SF3 fixture"); }
+    {
+        BankImportMedia media; media.parent=root;
+        Instrument imported; String report;
+        if (auto result=Plugin::prepareSoundBank(sf3,0,imported,report,media);result.failed()) return result;
+        const auto& z=imported.zones[0].mapping;
+        if (!z.sample || !z.sample->stream || z.sample->frameCount()!=196608 || z.loopEnd!=16384)
+            return Result::fail ("SF3 actual Vorbis decoding, loop and streaming");
+    }
+   #endif
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -382,6 +460,7 @@ Result run (const File& screenshots)
     if (auto streamed = verifyStreamingImport (directory, *other, wav, aiff); streamed.failed())
         return streamed;
     if (auto imported = verifySfzImport (directory, *other, wav); imported.failed()) return imported;
+    if (auto bank = verifySoundBankImport (directory, *other); bank.failed()) return bank;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;
