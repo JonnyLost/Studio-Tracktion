@@ -133,7 +133,8 @@ private:
                       juce::File exsRoot = {}, bool exsRootChosen = false);
     void chooseExsRoot (const juce::File&);
     void openGuidedBuilder();
-    juce::Component::SafePointer<juce::DialogWindow> guidedWindow;
+    juce::Component::SafePointer<juce::DialogWindow> guidedWindow, helpWindow;
+    void showContextHelp();
     void showBankCatalog (const ImportTask&);
     juce::Component::SafePointer<juce::DialogWindow> importReview;
     void finishImport();
@@ -162,7 +163,7 @@ private:
     juce::TextButton play { "Play" }, basic { "Sound" }, build { "Build" }, mapping { "Mapping" }, loops { "Waveform" }, advanced { "Advanced" };
     juce::Label playSummary, playHelp, articulationLabel, soundScope;
     juce::ComboBox articulationChoice;
-    juce::TextButton applyArticulation { "Select articulation" }, createInstrument { "New Instrument" };
+    juce::TextButton applyArticulation { "Select articulation" }, createInstrument { "New Instrument" }, findMissing { "Find missing sample" }, helpButton { "Help" };
     std::vector<studio::ArticulationMapping> playableArticulations;
     void refreshPerformance();
     juce::TextButton load { "Load Sample" }, locate { "Locate Sample" }, remove { "Remove Zone" }, audition { "Audition" };
