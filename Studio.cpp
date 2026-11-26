@@ -2224,7 +2224,7 @@ private:
     };
 
     std::optional<PendingPlugin> pendingPlugin;
-    StringArray appliedDlsPrograms; // per-project instance IDs, reset when project changes
+    StringPairArray appliedDlsPrograms; // id -> last sent program, reset when project changes
     uint64 projectGeneration = 0;
     unsigned workspaceTicks = 0;
     StudioMidiMonitor monitor;
@@ -4669,7 +4669,7 @@ private:
                                       &edit->getUndoManager());
         }
         const auto key = plugin.state.getProperty ("id").toString();
-        if (key.isNotEmpty()) appliedDlsPrograms.addIfNotAlreadyThere (key);
+        if (key.isNotEmpty()) appliedDlsPrograms.set (key, String (index));
         return true;
     }
 
@@ -4689,10 +4689,10 @@ private:
                         || ! dls->state.hasProperty (Identifier ("studioDlsGmProgram"))) continue;
                     const int index = (int) dls->state.getProperty (Identifier ("studioDlsGmProgram"));
                     const auto key = dls->state.getProperty ("id").toString();
-                    if (key.isEmpty() || appliedDlsPrograms.contains (key)
-                        || ! studio::gm::valid (index)) continue;
+                    if (key.isEmpty() || ! studio::gm::valid (index)
+                        || appliedDlsPrograms.getValue (key, "-1").getIntValue() == index) continue;
                     if (sendDlsProgram (*dls, index))
-                        appliedDlsPrograms.addIfNotAlreadyThere (key);
+                        appliedDlsPrograms.set (key, String (index));
                 }
     }
 
