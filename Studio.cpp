@@ -5841,15 +5841,51 @@ int StudioView::runUnifiedStageReview (const File& output)
     mixer.refresh (te::getAudioTracks (*edit), group.get(), true, true);
     if (! mixer.hasChannelForTrack (group->itemID))
         return fail ("submix group appears as a real Mixer channel");
-    const int openRows = editor->getVisibleTrackCount();
-    group->state.setProperty ("studioFolderCollapsed", true, &edit->getUndoManager());
-    edit->dispatchPendingUpdatesSynchronously();
-    if (editor->getVisibleTrackCount() != openRows - 2)
-        return fail ("collapsed group hides children only, without removing audio tracks");
-    group->state.setProperty ("studioFolderCollapsed", false, &edit->getUndoManager());
-    edit->dispatchPendingUpdatesSynchronously();
-    if (editor->getVisibleTrackCount() != openRows)
-        return fail ("expanded folder restores original arrangement tracks");
+    // The arrangement is rebuilt by an AsyncUpdater, not by Edit's
+    // dispatchPendingUpdatesSynchronously. Wait for the normal UI event
+    // path and assert identities as well as counts and routing.
+    const auto memberA=legacy->itemID, memberB=sectionMate->itemID;
+    const int audioCount=te::getAudioTracks(*edit).size();
+    const int expectedOpen=audioCount; // hidden room return, plus one visible folder
+    const auto waitForFolder=[&](bool collapsed)
+    {
+        for(int attempt=0;attempt<40;++attempt)
+        {
+            const bool visibleA=editor->isStudioTrackVisible(memberA);
+            const bool visibleB=editor->isStudioTrackVisible(memberB);
+            if(editor->getVisibleTrackCount()==expectedOpen-(collapsed?2:0)
+               &&editor->isStudioTrackVisible(group->itemID)&&visibleA==!collapsed&&visibleB==!collapsed)
+                return true;
+            MessageManager::getInstance()->runDispatchLoopUntil(35);
+        }
+        std::fprintf(stderr,"Folder rows: expected %d, actual %d, group %d, members %d/%d\\n",
+                     expectedOpen-(collapsed?2:0),editor->getVisibleTrackCount(),
+                     int(editor->isStudioTrackVisible(group->itemID)),
+                     int(editor->isStudioTrackVisible(memberA)),int(editor->isStudioTrackVisible(memberB)));
+        return false;
+    };
+    if(!waitForFolder(false))return fail("wait for open submix arrangement rows");
+    const auto routingIntact=[&]
+    {
+        return te::getAudioTracks(*edit).size()==audioCount&&trackById(memberA)==legacy&&trackById(memberB)==sectionMate
+            &&legacy->getParentFolderTrack()==group.get()&&sectionMate->getParentFolderTrack()==group.get()
+            &&hasRoomSend(*legacy)&&group->getVolumePlugin()!=nullptr;
+    };
+    auto& folderUndo=edit->getUndoManager();
+    folderUndo.beginNewTransaction("Review collapse folder");
+    group->state.setProperty("studioFolderCollapsed",true,&folderUndo);
+    folderUndo.beginNewTransaction();
+    if(!waitForFolder(true)||!routingIntact()||!capture("stage-folder-collapsed.png"))
+        return fail("collapsed group hides its two children only, preserves audio and mixer routing");
+    if(!folderUndo.undo()||!waitForFolder(false)||!routingIntact())
+        return fail("undo collapse restores original arrangement tracks");
+    if(!folderUndo.redo()||!waitForFolder(true)||!routingIntact())
+        return fail("redo collapse restores folder visibility only");
+    folderUndo.beginNewTransaction("Review expand folder");
+    group->state.setProperty("studioFolderCollapsed",false,&folderUndo);
+    folderUndo.beginNewTransaction();
+    if(!waitForFolder(false)||!routingIntact()||!capture("stage-folder-expanded.png"))
+        return fail("expanded folder restores original arrangement tracks");
     const auto groupId = group->itemID;
     if (! saveToDisk()) return fail ("save native section submix");
     loadProject (fixture, false);
