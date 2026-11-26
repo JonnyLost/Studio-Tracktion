@@ -514,7 +514,19 @@ Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
     std::atomic<bool> cancel{false};std::atomic<int> progress{0};String report;
     if(auto r=lib::scan(catalog,cancel,progress,report);r.failed())return r;
     if(catalog.entries.size()!=1||catalog.entries[0].source!=sfz)return Result::fail("deduplicate overlapping scan roots and ignore raw audio");
-    auto& e=catalog.entries[0];e.artwork=source.getChildFile("Art.png");
+    if(catalog.entries[0].family!="Strings"||lib::suggestedFamily("Violin and Trumpet")!="Unclassified"||lib::suggestedFamily("Mystery patch")!="Unclassified")
+        return Result::fail("conservative family classification");
+    auto& e=catalog.entries[0];e.artwork=source.getChildFile("Art.png");e.family="Other";e.favorite=true;
+    {
+        Image image(Image::RGB,64,48,true);Graphics g(image);g.fillAll(Colours::brown);
+        auto out=e.artwork.createOutputStream();if(!out||!PNGImageFormat().writeImageToStream(image,*out))return Result::fail("write portrait fixture");
+    }
+    const auto managed=output.getChildFile("Artwork");
+    if(auto r=lib::retainPortrait(e.artwork,e.portrait,managed);r.failed())return r;
+    if(!lib::previewImage(lib::portraitFile(e.portrait,managed)).isValid()||!e.artwork.existsAsFile()||lib::portraitFile("../Art.png",managed)!=File())
+        return Result::fail("managed portrait and safe path");
+    if(!lib::matches(e,"strings","Other",true,"sfz")||lib::matches(e,"","Strings",false,{})||lib::matches(e,"","Other",false,"nki"))
+        return Result::fail("family/favorites/search filtering");
     if(auto r=lib::convert(e,output,cancel);r.failed())return r;
     const auto originalPreset=e.converted;
     if(!originalPreset.existsAsFile())return Result::fail("native batch preset missing");
@@ -522,8 +534,11 @@ Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
     const auto index=output.getChildFile("Catalog.xml");
     if(lib::save(catalog,index).failed())return Result::fail("persist catalog");
     lib::Catalog reopened;if(lib::read(index,reopened).failed()||reopened.entries.size()!=1||
-        reopened.entries[0].converted!=originalPreset||reopened.entries[0].artwork!=e.artwork)
-        return Result::fail("restore catalog, converted preset and artwork");
+        reopened.entries[0].converted!=originalPreset||reopened.entries[0].artwork!=e.artwork||
+        reopened.entries[0].family!="Other"||!reopened.entries[0].favorite||reopened.entries[0].portrait!=e.portrait)
+        return Result::fail("restore catalog, converted preset, family, favorite and artwork");
+    if(lib::scan(reopened,cancel,progress,report).failed()||reopened.entries[0].family!="Other"||!reopened.entries[0].favorite||reopened.entries[0].portrait!=e.portrait)
+        return Result::fail("rescan preserves explicit family and portrait");
     if(!wavFile.moveFileTo(relocated.getChildFile(wavFile.getFileName())))return Result::fail("move source recording");
     if(lib::convert(reopened.entries[0],output,cancel).wasOk())return Result::fail("existing conversion with missing source must not report success");
     if(auto r=lib::repair(reopened.entries[0],output,relocated,cancel);r.failed())return r;
@@ -772,6 +787,7 @@ Result run (const File& screenshots)
 
     if (auto recorded = recordMidi (*edit, *second, playback); recorded.failed()) return recorded;
 
+    studio::library::writePresentation(*sampler,{"Fixture strings","Strings","fixture.png"});
     if (! te::EditFileOperations (*edit).writeToFile (project, false))
         return Result::fail ("write Tracktion edit");
     clip = nullptr;
@@ -788,6 +804,9 @@ Result run (const File& screenshots)
         else if (track->getName() == "Second sampler") other = dynamic_cast<Plugin*> (findInstrument (*track));
     if (! sampler || ! other || sampler->instrument().zones.size() != 2 || other->instrument().zones.size() != 1)
         return Result::fail ("restore both instances");
+    const auto presentation=studio::library::readPresentation(*sampler);
+    if(presentation.name!="Fixture strings"||presentation.family!="Strings"||presentation.portrait!="fixture.png"||
+       studio::library::readPresentation(*other).portrait.isNotEmpty())return Result::fail("restore instance-specific library presentation");
     auto firstZone = sampler->instrument().zones[0];
     auto missing = sampler->instrument().zones[1];
     if (! firstZone.mapping.sample || ! firstZone.mapping.loop || firstZone.mapping.high != 64

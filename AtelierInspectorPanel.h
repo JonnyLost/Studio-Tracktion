@@ -42,14 +42,15 @@ private:
     tracktion::Edit* edit = nullptr;
     tracktion::EditItemID trackId;
     juce::Image portraitImage;
-    juce::String portraitName, cachedMappingXml, cachedCCState;
+    juce::String portraitName, cachedMappingXml, cachedCCState, nativePortraitToken;
     juce::ComboBox artworkPicker, midiChannel;
     juce::Label heading, instrumentName, artCaption, mappingsHeading, ccHeading, mixHeading, midiStatus, micStatus;
     std::array<juce::TextButton, 8> articulationPads;
     std::array<juce::Slider, 8> ccKnobs;
     std::array<juce::Label, 8> ccLabels;
     std::vector<ArticulationMapping> mappings;
-    juce::String activeMapping;
+    juce::String activeMapping, nativeMappingInstance;
+    unsigned nativeMappingRevision = 0;
     juce::TextButton mappingsButton { "Edit Articulations" }, sendValues { "Send CC" },
                      fullInstrument { "Full Instrument" }, originalInstrument { "Open Plug-in" },
                      stageButton { "Stage & Mics" };

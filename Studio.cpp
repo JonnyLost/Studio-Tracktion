@@ -4902,14 +4902,15 @@ private:
             auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
             commitPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true);
         };
-        browser.loadLibraryInstrument = [this] (studio::sampler::Instrument instrument)
+        browser.loadLibraryInstrument = [this] (studio::sampler::Instrument instrument, studio::library::Presentation presentation)
         {
             if (! canInsertPlugin()) { pluginStatus ("Stop playback before loading a library instrument."); return; }
             auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
             auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin.get());
             if (sampler == nullptr) { pluginStatus ("Could not create Studio Sampler."); return; }
-            const auto name = instrument.name;
+            const auto name = presentation.name.isNotEmpty() ? presentation.name : instrument.name;
             sampler->commitImport (std::move (instrument), false);
+            studio::library::writePresentation (*sampler, presentation);
             commitPlugin (plugin, {}, true, true);
             if (auto* track = dynamic_cast<te::AudioTrack*> (plugin->getOwnerTrack()))
             {
