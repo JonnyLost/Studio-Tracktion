@@ -499,6 +499,56 @@ Result verifyXmlInstrumentImport (const File& directory, Plugin& sampler, WavAud
     return Result::ok();
 }
 
+Result verifyGuidedBuilder (const File& directory,WavAudioFormat& wav)
+{
+    const auto folder=directory.getChildFile("Guided recordings");
+    if(folder.createDirectory().failed())return Result::fail("create guided fixtures");
+    const auto low=folder.getChildFile("Cello_C4_v1-63.wav");
+    const auto high=folder.getChildFile("Cello_C4_v64-127.wav");
+    const auto upper=folder.getChildFile("Cello_G4.wav");
+    const auto alternate=folder.getChildFile("Cello_C4_v1-63_take2.wav");
+    const auto unknown=folder.getChildFile("Unknown.wav");
+    for(const auto& f:{low,high,upper,alternate,unknown})
+        if(!longSample(f,wav,4096,1))return Result::fail("write guided recording");
+    GuidedBuild options;options.name="Guided cello";
+    Instrument out;String report;std::atomic<bool> cancel{false};
+    if(auto r=Plugin::prepareGuided(options,{upper,high,low},out,report,&cancel);r.failed())return r;
+    if(out.name!="Guided cello"||out.zones.size()!=3||out.zones[0].mapping.root!=60||
+       out.zones[0].mapping.low!=0||out.zones[0].mapping.high!=63||
+       out.zones[0].mapping.hard!=63||out.zones[1].mapping.soft!=64||
+       out.zones[2].mapping.low!=64||out.zones[2].mapping.root!=67)
+        return Result::fail("guided pitched ranges and velocity layers");
+    const auto native=directory.getChildFile("Guided cello.studiosampler");
+    if(Plugin::writeConvertedPreset(out,native).failed())return Result::fail("save guided preset");
+    Instrument reopened;
+    if(Plugin::preparePreset(native,{},reopened).failed()||reopened.zones.size()!=3||
+       reopened.zones[0].mapping.high!=63||!reopened.zones[2].mapping.sample)
+        return Result::fail("reopen guided preset");
+    if(Plugin::prepareGuided(options,{low,alternate},out,report).wasOk()||out.zones.size()!=3)
+        return Result::fail("reject implicit overlapping takes transactionally");
+    options.roundRobin=true;
+    if(auto r=Plugin::prepareGuided(options,{low,alternate,high},out,report);r.failed())return r;
+    if(out.zones.size()!=3||out.zones[0].mapping.group==0||out.zones[0].mapping.group!=out.zones[1].mapping.group||
+       out.zones[2].mapping.group!=0)return Result::fail("explicit alternate take sequence");
+    options.roundRobin=false;options.spread=false;
+    if(auto r=Plugin::prepareGuided(options,{low,upper},out,report);r.failed())return r;
+    if(out.zones[0].mapping.low!=60||out.zones[0].mapping.high!=60)return Result::fail("original keys only");
+    if(Plugin::prepareGuided(options,{low,unknown},out,report).wasOk())return Result::fail("reject unknown pitch among multisamples");
+    options.firstNote=55;
+    if(auto r=Plugin::prepareGuided(options,{unknown},out,report);r.failed())return r;
+    if(out.zones[0].mapping.root!=55)return Result::fail("explicit single-sample root");
+    options.layout=GuidedBuild::Layout::percussion;options.firstNote=36;options.playback=GuidedBuild::Playback::oneShot;
+    if(auto r=Plugin::prepareGuided(options,{upper,low},out,report);r.failed())return r;
+    if(out.zones.size()!=2||out.zones[0].file!=low||out.zones[0].mapping.root!=36||
+       out.zones[0].mapping.low!=36||out.zones[0].mapping.high!=36||!out.zones[1].mapping.oneShot||
+       out.zones[1].mapping.root!=37)return Result::fail("natural-order drum keys and one-shot");
+    options.playback=GuidedBuild::Playback::embeddedLoop;
+    if(Plugin::prepareGuided(options,{low},out,report).wasOk())return Result::fail("must not invent a loop");
+    cancel.store(true);
+    if(Plugin::prepareGuided(options,{low},out,report,&cancel).wasOk())return Result::fail("cancel guided preparation");
+    return Result::ok();
+}
+
 Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
 {
     namespace lib=studio::library;
@@ -712,6 +762,7 @@ Result run (const File& screenshots)
     if (auto legacy = verifyLegacyBankImport (directory, *other); legacy.failed()) return legacy;
     if (auto xml = verifyXmlInstrumentImport (directory, *other, wav); xml.failed()) return xml;
     if (auto library = verifyUniversalLibrary (directory, wav); library.failed()) return library;
+    if (auto guided = verifyGuidedBuilder (directory, wav); guided.failed()) return guided;
     {
         const auto shared=directory.getChildFile("Shared sample M26.wav");
         if(!longSample(shared,wav,196608,2))return Result::fail("write shared sampler recording");

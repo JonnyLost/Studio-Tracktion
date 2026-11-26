@@ -670,6 +670,132 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
     return accepted ? Result::ok() : Result::fail (summary);
 }
 
+Result Plugin::prepareGuided (const GuidedBuild& options, const juce::Array<File>& paths, Instrument& output,
+                              String& report, std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    const auto aborted=[&]{return cancelled&&cancelled->load();};
+    const auto fail=[&](String why){report=why;return Result::fail(why);};
+    if(aborted())return fail("Cancelled.");
+    if(options.name.trim().isEmpty()||options.name.length()>120||options.firstNote<0||options.firstNote>127)
+        return fail("Enter a name and a valid first note (0–127).");
+    const bool drums=options.layout==GuidedBuild::Layout::percussion;
+    if(drums&&options.roundRobin)return fail("Round robin is available for pitched recordings with matching root/velocity ranges.");
+    juce::Array<File> files;
+    int visited=0, ignored=0;
+    const auto consider=[&](const File& file)
+    {
+        if(file.hasFileExtension("wav;wave;aif;aiff;aifc;caf;flac")&&file.existsAsFile()&&!file.isSymbolicLink())
+            files.addIfNotAlreadyThere(file);
+        else ++ignored;
+    };
+    for(const auto& path:paths)
+    {
+        if(aborted())return fail("Cancelled.");
+        if(path.isDirectory())
+        {
+            if(path.isSymbolicLink()||path==File::getSpecialLocation(File::userHomeDirectory)||path.getParentDirectory()==path)
+                return fail("Choose a specific recordings folder.");
+            for(const auto& item:RangedDirectoryIterator(path,true,"*",File::findFiles,File::FollowSymlinks::no))
+            {
+                if(aborted())return fail("Cancelled.");
+                if(++visited>20000)return fail("Folder exceeds 20,000 entries. Choose a smaller folder.");
+                consider(item.getFile());
+                if(files.size()>maxZones)return fail("Too many recordings for one instrument.");
+            }
+        }
+        else consider(path);
+    }
+    if(files.isEmpty()||files.size()>maxZones)return fail("Choose 1–"+String(maxZones)+" supported recordings.");
+    if(drums&&files.size()>128-options.firstNote)return fail("Not enough MIDI keys above the first drum note.");
+    std::sort(files.begin(),files.end(),[](const File& a,const File& b){
+        const int order=a.getFileName().compareNatural(b.getFileName());
+        return order!=0?order<0:a.getFullPathName()<b.getFullPathName();
+    });
+    Instrument proposed;proposed.name=options.name.trim();
+    if(drums)proposed.groups.front().name="Percussion";
+    using Layer=std::pair<int,int>;
+    std::map<int,std::map<Layer,std::vector<std::size_t>>> layers;
+    StringArray details;
+    int explicitRoots=0;
+    for(const auto& file:files)
+    {
+        if(aborted())return fail("Cancelled.");
+        SampleZone entry;entry.file=file;
+        auto& z=entry.mapping;
+        if(auto r=readSample(file,maxBankBytes-sampleBytes(proposed),z.sample,cancelled);r.failed())
+            return fail(file.getFileName()+": "+r.getErrorMessage());
+        if(drums)z.root=options.firstNote+static_cast<int>(proposed.zones.size());
+        else
+        {
+            const auto note=filenameNote(file.getFileName().toStdString());
+            const int embedded=z.sample->rootNote;
+            if(note&&embedded>=0&&*note!=embedded)
+                return fail(file.getFileName()+": filename and embedded root disagree. Use Build > Mapping to resolve.");
+            if(note||embedded>=0){z.root=note?*note:embedded;++explicitRoots;}
+            else if(files.size()==1)z.root=options.firstNote;
+            else return fail(file.getFileName()+": root note unknown. Rename with a note such as C4, or map in Build.");
+            if(auto velocity=filenameVelocity(file.getFileName().toStdString()))
+            {z.soft=velocity->first;z.hard=velocity->second;}
+        }
+        z.low=z.high=z.root;
+        z.loopEnd=z.sample->frameCount();
+        z.oneShot=options.playback==GuidedBuild::Playback::oneShot;
+        if(options.playback==GuidedBuild::Playback::embeddedLoop)
+        {
+            z.loop=true;z.loopStart=z.sample->embeddedLoopStart;z.loopEnd=z.sample->embeddedLoopEnd;
+            if(z.loopStart<0||z.loopEnd<0||!validLoop(z,z.sample->frameCount()))
+                return fail(file.getFileName()+": no valid embedded forward loop. Choose Held or set a loop in Build.");
+        }
+        if(!validMapping(z)||!primeZone(z))return fail(file.getFileName()+": cannot prepare mapping or stream.");
+        layers[z.root][{z.soft,z.hard}].push_back(proposed.zones.size());
+        proposed.zones.push_back(std::move(entry));
+        if(progress)progress->store(static_cast<int>(proposed.zones.size())*100/files.size());
+    }
+    int rr=0, gaps=0;
+    for(const auto& [root, ranges]:layers)
+    {
+        int last=0;
+        for(const auto& [range,indices]:ranges)
+        {
+            if(range.first<=last)return fail("Overlapping velocity layers at MIDI note "+String(root)+". Use non-overlapping ranges or edit Build.");
+            if(range.first>last+1)++gaps;
+            last=range.second;
+            if(indices.size()>1)
+            {
+                if(!options.roundRobin)return fail("Multiple recordings share a root and velocity range at MIDI note "+String(root)+". Enable alternate takes or define layers.");
+                if(++rr>maxGroups)return fail("More than "+String(maxGroups)+" independent alternate-take groups. Use Build for a smaller instrument.");
+                for(auto i:indices)proposed.zones[i].mapping.group=rr;
+            }
+        }
+        if(last<127)++gaps;
+    }
+    if(!drums&&options.spread)
+    {
+        std::vector<Zone> mapping;mapping.reserve(proposed.zones.size());
+        for(const auto& e:proposed.zones)mapping.push_back(e.mapping);
+        spreadMapping(mapping);
+        for(std::size_t i=0;i<mapping.size();++i)proposed.zones[i].mapping=std::move(mapping[i]);
+    }
+    if(aborted())return fail("Cancelled.");
+    for(const auto& e:proposed.zones)
+        if(!currentSample(e,e.file))return fail(e.file.getFileName()+": recording changed while preparing.");
+    report=proposed.name+"\n"+String(files.size())+" recordings; "+String(rr)+" alternate-take groups; "+String(ignored)+" unsupported/non-audio entries ignored.\n";
+    report+=drums?"Each recording uses one successive key, in natural filename order.\n":
+        (String(explicitRoots)+" roots read from names/metadata. "+(files.size()==1&&explicitRoots==0?String("Single recording uses your chosen root. "):String())+"No acoustic pitch detection.\n");
+    if(gaps)report+="Warning: "+String(gaps)+" velocity gaps will be silent.\n";
+    if(rr)report+="Alternate takes cycle in natural filename order.\n";
+    report+="Review the key and velocity ranges below. C4 = MIDI 60. Original files are referenced, not modified.\n\n";
+    for(const auto& e:proposed.zones)
+    {
+        const auto& z=e.mapping;
+        report+=e.file.getFileName()+" | root "+MidiMessage::getMidiNoteName(z.root,true,true,4)
+            +" | keys "+String(z.low)+"–"+String(z.high)+" | velocity "+String(z.soft)+"–"+String(z.hard)
+            +(z.group?" | alternate group "+String(z.group):String())+"\n";
+    }
+    output=std::move(proposed);
+    return Result::ok();
+}
+
 Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Instrument& next, String& report,
                            std::atomic<bool>* cancelled, std::atomic<int>* progress)
 {

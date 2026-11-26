@@ -47,6 +47,17 @@ struct Instrument
     std::vector<InstrumentGroup> groups { {} };
 };
 
+struct GuidedBuild
+{
+    enum class Layout { pitched, percussion };
+    enum class Playback { held, oneShot, embeddedLoop };
+    juce::String name;
+    Layout layout = Layout::pitched;
+    Playback playback = Playback::held;
+    int firstNote = 60; // explicit root for a single unknown recording, or first drum key
+    bool spread = true, roundRobin = false;
+};
+
 class Plugin final : public tracktion::Plugin, public InstrumentDiagnostics, private juce::Timer
 {
 public:
@@ -85,6 +96,8 @@ public:
     void duplicateZone (int);
     void editGroups (std::vector<InstrumentGroup>);
     std::vector<studio::ArticulationMapping> articulations() const;
+    static juce::Result prepareGuided(const GuidedBuild&, const juce::Array<juce::File>&, Instrument&, juce::String&,
+                                      std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     static juce::Result prepareImport (Instrument initial, const juce::Array<juce::File>& paths, bool automatic, Instrument&, juce::String& summary, std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);
     static juce::Result prepareSfz (const juce::File&, const Instrument& cache, Instrument&, juce::String& report,
                                    std::atomic<bool>* cancelled = nullptr, std::atomic<int>* progress = nullptr);

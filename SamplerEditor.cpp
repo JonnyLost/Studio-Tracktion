@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SamplerEditor.h"
+#include "SamplerGuidedBuilder.h"
+#include "StudioLibraryPresentation.h"
 #include "SamplerReviewCapture.h"
 #include <algorithm>
 #include <cmath>
@@ -206,7 +208,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     viewport.setTitle ("Sampler controls");
     viewport.setScrollBarsShown (true, false);
     for (Component* c : std::initializer_list<Component*> { &filename, &status, &meter, &samples, &mode,
-             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView, &playSummary, &playHelp, &articulationLabel, &soundScope, &articulationChoice, &applyArticulation })
+             &loopEnabled, &display, &load, &locate, &remove, &envelope, &groupList, &groupName, &addGroup, &copyGroup, &deleteGroup, &moveGroup, &groupRows, &duplicate, &undo, &redo, &editMapping, &groupMute, &groupSolo, &releaseTrigger, &triggerMode, &triggerChannel, &triggerLabel, &channelLabel, &playView, &playSummary, &playHelp, &articulationLabel, &soundScope, &articulationChoice, &applyArticulation, &createInstrument })
         body.addAndMakeVisible (*c);
 
     auto* plot = owned.add (new EnvelopePlot (p, [this] { return zone(); }));
@@ -273,6 +275,8 @@ Editor::Editor (Plugin& p) : plugin (p)
     loadPreset.onClick = [this] { choose (true, false, false); };
     loadPreset.setTooltip ("Load a Studio preset or import SFZ, EXS, Decent Sampler, legacy Kontakt, SoundFont, DLS, GIG or extracted Akai.");
     savePreset.onClick = [this] { choose (true, true, false); };
+    createInstrument.onClick = [this] { openGuidedBuilder(); };
+    createInstrument.setTooltip ("Create a playable instrument from your recordings with guided mapping.");
     play.onClick = [this] { setPage (Page::perform); };
     basic.onClick = [this] { setPage (Page::basic); };
     build.onClick = [this] { setPage (lastBuildPage); };
@@ -507,6 +511,7 @@ Editor::~Editor()
     stopTimer();
     importTask.reset();
     if (importReview) importReview->exitModalState (0);
+    if (guidedWindow) guidedWindow->exitModalState (0);
     keys.removeListener (this);
     setLookAndFeel (nullptr);
     plugin.preview (1, 1, -1, 0);
@@ -561,6 +566,35 @@ void Editor::selectZone (int index)
     selection = index;
     selectedZones = { index };
     refresh();
+}
+
+void Editor::openGuidedBuilder()
+{
+    if(importTask||importReview)return;
+    if(guidedWindow){guidedWindow->toFront(true);return;}
+    const auto safe=Component::SafePointer<Editor>(this);
+    const auto revision=plugin.changeCount();
+    DialogWindow::LaunchOptions options;
+    options.dialogTitle="Studio Instrument Builder";options.dialogBackgroundColour=colours::panel;
+    options.useNativeTitleBar=true;options.resizable=false;options.componentToCentreAround=this;
+    options.content.setOwned(new GuidedBuilder([safe,revision](Instrument proposal)->Result
+    {
+        if(!safe)return Result::fail("Sampler closed.");
+        if(safe->plugin.changeCount()!=revision||safe->importTask||safe->importReview)
+            return Result::fail("Instrument changed. Close and reopen the builder.");
+        // Check sources once more before replacing the live instrument.
+        for(const auto& e:proposal.zones)
+            if(!e.mapping.sample||!e.file.existsAsFile()||e.file.getSize()!=e.mapping.sample->sourceBytes
+               ||e.file.getLastModificationTime().toMilliseconds()!=e.mapping.sample->sourceTime)
+                return Result::fail("A recording changed. Preview again before creating.");
+        safe->plugin.commitImport(std::move(proposal));
+        if(safe->plugin.changeCount()==revision)return Result::fail("Instrument exceeds native state size limit.");
+        library::writePresentation(safe->plugin,{}); // previous patch's portrait must not label a new instrument
+        safe->selection=safe->initialZone();safe->selectedZones={safe->selection};
+        safe->setPage(Page::perform);safe->setStatus("Instrument created. Play it, then Save to keep a native preset.");
+        return Result::ok();
+    }));
+    guidedWindow=options.launchAsync();
 }
 
 void Editor::setPage (Page value)
@@ -769,6 +803,8 @@ void Editor::refreshPerformance()
     for (auto* c : std::initializer_list<Component*> { &playSummary, &playHelp, &articulationLabel, &articulationChoice, &applyArticulation })
         c->setVisible (performing);
     soundScope.setVisible (sound);
+    createInstrument.setVisible(performing);
+    createInstrument.setEnabled(!importTask&&!importReview);
     if (sound)
     {
         // Imported envelopes belong to the selected region, not the whole patch.
@@ -890,11 +926,13 @@ void Editor::resized()
     const int width = jmax (1, viewport.getMaximumVisibleWidth() - viewport.getScrollBarThickness());
     if (page == Page::perform)
     {
-        const int height = line * 3 + button * 2 + gap * 4;
+        const int height = line * 3 + button * 3 + gap * 5;
         body.setSize (width, jmax (viewport.getHeight(), height));
         auto content = body.getLocalBounds();
         playSummary.setBounds (content.removeFromTop (line));
         playHelp.setBounds (content.removeFromTop (line));
+        auto newRow=content.removeFromTop(button);
+        createInstrument.setBounds(newRow.removeFromLeft(jmin(m.span(190),newRow.getWidth())));
         content.removeFromTop (gap);
         auto row = content.removeFromTop (button);
         put (row, articulationLabel, m.span (85));
@@ -1735,6 +1773,18 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
     if (page != Page::perform || zone() || audition.isVisible() || mapping.isVisible() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
+    if(!createInstrument.isVisible()||createInstrument.getBounds().isEmpty())return reviewFailure(__LINE__);
+    createInstrument.onClick();
+    if(!guidedWindow||!guidedWindow->getContentComponent())return reviewFailure(__LINE__);
+    if(output!=File())
+    {
+        FileOutputStream file(output.getChildFile("sampler-guided-builder.png"));
+        if(!PNGImageFormat().writeImageToStream(guidedWindow->createComponentSnapshot(guidedWindow->getLocalBounds()),file))
+            return reviewFailure(__LINE__);
+    }
+    guidedWindow->exitModalState(0);
+    MessageManager::getInstance()->runDispatchLoopUntil(20);
+    if(!plugin.instrument().zones.empty())return reviewFailure(__LINE__);
     startImport ({ first, second }, true);
     cancelImport.onClick();
     const auto importDeadline = Time::getMillisecondCounter() + 5000;
