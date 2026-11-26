@@ -2237,7 +2237,9 @@ private:
                     lastUpdate = now;
                     const ScopedLock lock (progressLock);
                     status = progress.root.getFullPathName() + "\nFiles examined: "
-                           + String (progress.examined) + " | Root errors: " + String (progress.errors);
+                           + String (progress.examined) + " | Candidates: " + String (progress.discovered)
+                           + " | Missing samples: " + String (progress.missing)
+                           + " | Root errors: " + String (progress.errors);
                 }
                 return threadShouldExit();
             });

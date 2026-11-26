@@ -12,6 +12,21 @@ namespace
 constexpr int64 maxDefinitionSize = 4 * 1024 * 1024;
 constexpr size_t maxStateSize = 4 * 1024 * 1024;
 
+bool validState (const String& encoded)
+{
+    const auto separator = encoded.indexOfChar ('.');
+    if (! isPositiveAndBelow (separator, 9) || separator == 0)
+        return false;
+    const auto prefix = encoded.substring (0, separator);
+    if (! prefix.containsOnly ("0123456789"))
+        return false;
+    const auto size = prefix.getIntValue();
+    return size > 0 && size <= int (maxStateSize)
+        && encoded.length() - separator - 1 == (size * 8 + 5) / 6
+        && encoded.substring (separator + 1).containsOnly (
+            ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+");
+}
+
 var object (std::initializer_list<std::pair<const char*, var>> values)
 {
     auto result = std::make_unique<DynamicObject>();
@@ -269,11 +284,15 @@ Result Catalog::save() const
     {
         Array<var> labels;
         for (const auto& label : patch.articulations) labels.add (label);
+        const auto availability = status (patch);
+        const auto manifest = availability.startsWith ("Audition-confirmed")
+            ? presetFile (patch).getRelativePathFrom (directory) : String();
         patches.add (object ({ { "id", id }, { "source", patch.source.getFullPathName() },
             { "name", patch.name }, { "library", patch.library }, { "family", patch.family },
             { "kind", patch.kind }, { "health", patch.health }, { "midiRange", patch.midiRange },
             { "articulations", var (labels) }, { "modified", patch.modified }, { "size", patch.size },
-            { "present", patch.present }, { "status", status (patch) }, { "libraryVersion", patch.libraryVersion },
+            { "present", patch.present }, { "status", availability }, { "presetManifest", manifest },
+            { "libraryVersion", patch.libraryVersion },
             { "literalSamples", patch.literalSamples }, { "missingSamples", patch.missingSamples } }));
     }
     const auto result = writeJson (directory.getChildFile ("catalog.json"),
@@ -312,12 +331,16 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
             const auto kind = classify (file);
             if (kind.isEmpty()) continue;
             const auto id = file.getFullPathName();
-            seen.insert (id);
+            if (! seen.insert (id).second) continue;
             const auto size = entry.getFileSize();
             const auto modified = entry.getModificationTime().toMilliseconds();
             if (const auto it = entries.find (id); resuming.contains (root) && it != entries.end()
                 && it->second.present && it->second.modified == modified && it->second.size == size)
+            {
+                ++progress.discovered;
+                if (it->second.missingSamples > 0) ++progress.missing;
                 continue;
+            }
 
             Patch patch { id, file.getFileNameWithoutExtension(), libraryName (file, root), familyName (file),
                           kind, "Unknown", {}, file, {}, modified, size, true, 0, 0, {} };
@@ -338,6 +361,8 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
                 if (inspection.low <= inspection.high)
                     patch.midiRange = String (inspection.low) + "–" + String (inspection.high);
             }
+            ++progress.discovered;
+            if (patch.missingSamples > 0) ++progress.missing;
             entries.insert_or_assign (id, std::move (patch));
         }
         if (cancelled()) break;
@@ -359,23 +384,21 @@ File Catalog::presetFile (const Patch& patch) const
 
 Preset Catalog::preset (const Patch& patch) const
 {
-    if (patch.kind != "sfz" || ! matchesSource (patch)) return {};
+    if (patch.kind != "sfz" || ! patch.present) return {};
     const auto data = readJson (presetFile (patch), int64 (maxStateSize * 2));
     if (int (data["schema"]) != 1 || data["id"].toString() != patch.id
         || int64 (data["modified"]) != patch.modified || int64 (data["size"]) != patch.size)
         return {};
     const auto state = data["state"].toString();
-    if (state.isEmpty() || state.length() > int (maxStateSize * 2) || data["plugin"].toString().isEmpty())
+    if (! validState (state) || data["plugin"].toString().isEmpty() || ! matchesSource (patch))
         return {};
     return { data["plugin"].toString(), data["pluginVersion"].toString(), state, int (data["program"]) };
 }
 
 Result Catalog::registerPreset (const Patch& patch, const Preset& value)
 {
-    MemoryBlock bytes;
     if (patch.kind != "sfz" || ! matchesSource (patch) || value.pluginId.isEmpty()
-        || value.state.length() > int (maxStateSize * 2)
-        || ! bytes.fromBase64Encoding (value.state) || bytes.isEmpty() || bytes.getSize() > maxStateSize)
+        || ! validState (value.state))
         return Result::fail ("The source changed or the Audio Unit did not supply a reusable state.");
     const auto file = presetFile (patch);
     if (file.exists())

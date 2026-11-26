@@ -59,6 +59,7 @@ int main()
         require (resumed.status (snapshot).contains ("ensemble"), "snapshot is not a single patch");
         require (resumed.status (other).startsWith ("Original player"), "other player filtered from ARIA");
         require (resumed.registerPreset (patch, { "fake-test-au", "1", "malformed", 0 }).failed(), "reject invalid state");
+        require (resumed.registerPreset (patch, { "fake-test-au", "1", "-1.A", 0 }).failed(), "reject invalid state size");
         const Preset capture { "fake-test-au", "1", MemoryBlock ("state", 5).toBase64Encoding(), 2 };
         require (resumed.registerPreset (snapshot, capture).failed(), "refuse an ensemble as a single patch");
         require (resumed.registerPreset (patch, capture).wasOk(), "register fixture state");

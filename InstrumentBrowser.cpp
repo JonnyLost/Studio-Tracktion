@@ -212,10 +212,12 @@ void InstrumentBrowser::rebuildCatalog()
             const auto description = capture.state.isNotEmpty() && ! available
                 ? String ("Requires the ARIA Audio Unit version used to capture this preset.")
                 : ariaCatalog->status (patch);
+            const auto patchStatus = ! available ? "Unavailable" : capture.state.isNotEmpty() ? "Recall preset"
+                : patch.missingSamples > 0 ? "Check samples in ARIA" : "Choose patch in ARIA";
             entries.push_back ({ "aria:" + id, patch.name + " — " + patch.library + " — ARIA",
                 patch.family, patch.library, "ARIA Player required",
                 description + " | " + patch.health + " | " + patch.source.getFullPathName(),
-                unit, available, &patch });
+                unit, available, &patch, patchStatus });
         }
     for (int i = 0; i < 7; ++i)
     {
@@ -379,6 +381,8 @@ String InstrumentBrowser::Rows::getNameForRow (int row)
     if (! isPositiveAndBelow (row, getNumRows())) return {};
     if (kind != results) return (kind == families ? browser.families : browser.types)[row];
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
+    if (entry.patch != nullptr)
+        return entry.name + ", " + entry.vendor + ", " + entry.patchStatus;
     return (browser.favouriteKeys.contains (entry.key) ? "Favorite: " : String())
              + entry.name + ", " + entry.type + ", " + (entry.available ? "available"
              : entry.family == "Studio" ? "planned" : "unavailable");
@@ -404,12 +408,13 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
         return;
     }
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", colours::action);
+    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(),
+                    entry.patch != nullptr || entry.family == "Orchestral", colours::action);
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
     g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
-    g.drawFittedText (entry.type + " | " + (entry.patch != nullptr ? "ARIA Player required"
+    g.drawFittedText (entry.type + " | " + (entry.patch != nullptr ? entry.patchStatus
         : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }

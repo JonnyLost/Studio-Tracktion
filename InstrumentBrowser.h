@@ -42,6 +42,7 @@ private:
         juce::PluginDescription plugin;
         bool available = false;
         const aria::Patch* patch = nullptr;
+        juce::String patchStatus {};
     };
 
     struct Rows final : juce::ListBoxModel

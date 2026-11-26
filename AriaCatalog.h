@@ -29,7 +29,7 @@ using Patches = std::map<juce::String, Patch>;
 struct Progress
 {
     juce::File root;
-    int examined = 0, errors = 0;
+    int examined = 0, discovered = 0, missing = 0, errors = 0;
 };
 
 class Catalog
