@@ -7,6 +7,7 @@
 #include "StudioExs.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace studio::sampler
 {
@@ -205,16 +206,15 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
 std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullptr)
 {
     std::size_t bytes = 0;
-    std::array<const Sample*, maxZones> counted {};
-    std::size_t count = 0;
+    std::unordered_set<const Sample*> counted;
+    counted.reserve(model.zones.size());
     for (const auto& zone : model.zones)
         if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
-            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+            && counted.insert(sample).second)
         {
-            counted[count++] = sample;
             bytes += sample->bytes();
         }
-    if (sampleCount) *sampleCount = static_cast<unsigned> (count);
+    if (sampleCount) *sampleCount = static_cast<unsigned> (counted.size());
     return bytes;
 }
 
@@ -2013,15 +2013,14 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
 {
     InstrumentDiagnosticSnapshot stats;
     stats.attribution = ResourceAttribution::measured;
-    std::array<const Sample*, maxZones> counted {};
-    std::size_t count = 0;
+    std::unordered_set<const Sample*> counted;
+    counted.reserve(model.zones.size());
     std::uint64_t resident = 0, cache = 0, streamed = 0, misses = 0, errors = 0;
     unsigned streams = 0;
     for (const auto& zone : model.zones)
         if (const auto* sample = zone.mapping.sample.get(); sample != nullptr
-            && std::find (counted.begin(), counted.begin() + count, sample) == counted.begin() + count)
+            && counted.insert(sample).second)
         {
-            counted[count++] = sample;
             resident += sample->residentBytes();
             cache += sample->cacheBytes();
             if (sample->stream)
