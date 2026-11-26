@@ -694,6 +694,15 @@ Result run (const File& screenshots)
     if (auto legacy = verifyLegacyBankImport (directory, *other); legacy.failed()) return legacy;
     if (auto xml = verifyXmlInstrumentImport (directory, *other, wav); xml.failed()) return xml;
     if (auto library = verifyUniversalLibrary (directory, wav); library.failed()) return library;
+    {
+        const auto shared=directory.getChildFile("Shared sample M26.wav");
+        if(!longSample(shared,wav,196608,2))return Result::fail("write shared sampler recording");
+        Instrument first,second;
+        if(Plugin::prepareSample({},shared,-1,first).failed()||Plugin::prepareSample({},shared,-1,second).failed()
+            ||!first.zones[0].mapping.sample||first.zones[0].mapping.sample!=second.zones[0].mapping.sample
+            ||!first.zones[0].mapping.sample->stream)
+            return Result::fail("independent sampler proposals must share source PCM and stream cache");
+    }
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;
