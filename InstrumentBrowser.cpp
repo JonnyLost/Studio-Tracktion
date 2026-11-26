@@ -91,7 +91,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
         // Preserve family/type filters inside each collection where possible.
         family = "All Instruments";
         type = "All Types";
-        rebuildTypes();
+        rebuildCatalog();
     };
     compactFamily.setTitle ("Instrument family");
     compactFamily.onChange = [this]
@@ -428,7 +428,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
     g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
-    g.drawFittedText (entry.type + (entry.effect ? " | Insert effect" : " | ") + (entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
+    g.drawFittedText (entry.type + " | " + (entry.effect ? "Insert Effect" : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
@@ -526,7 +526,7 @@ void InstrumentBrowser::resized()
         resultList.setBounds (area);
     }
     const auto shortActions = detailPanel.getWidth() < m.span (222);
-    load.setButtonText (shortActions ? "Load on Track" : "Load on Selected Track");
+    // The selected entry owns the action label (instrument, AU editor or effect).
     auto detail = detailPanel.reduced (m.px (8), m.px (2));
     if (add.isVisible()) add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
     else add.setBounds ({});
