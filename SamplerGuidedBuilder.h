@@ -73,6 +73,42 @@ public:
         };
         updateControls();setSize(660,510);startTimerHz(10);
     }
+#if STUDIO_SPATIAL_TESTS
+    bool review(const juce::File& recording,const juce::File& output)
+    {
+        using namespace juce;
+        const ScopedValueSetter<AppearanceMetrics> restore(appearance,appearance);
+        for(int text:{100,130})
+        {
+            appearance.set(100,text);setSize(660,510);resized();
+            if(scroll.getHeight()<=0||!getLocalBounds().contains(prepare.getBounds())||
+               !getLocalBounds().contains(accept.getBounds())||!getLocalBounds().contains(cancel.getBounds())||
+               prepare.getBounds().intersects(accept.getBounds())||accept.getBounds().intersects(cancel.getBounds())||
+               !form.getLocalBounds().contains(report.getBounds())||report.getHeight()<=0)
+                return false;
+            if(output!=File())
+            {
+                FileOutputStream stream(output.getChildFile("m32-builder-text"+String(text)+".png"));
+                if(!stream.openedOk()||!stream.setPosition(0)||stream.truncate().failed()||
+                   !PNGImageFormat().writeImageToStream(createComponentSnapshot(getLocalBounds()),stream))return false;
+            }
+        }
+        appearance.set(100,100);resized();
+        paths={recording};name.setText("M32 guided review",false);invalidate();prepare.onClick();
+        const auto deadline=Time::getMillisecondCounter()+10000;
+        while(task&&Time::getMillisecondCounter()<deadline)
+        {timerCallback();MessageManager::getInstance()->runDispatchLoopUntil(10);}
+        if(task||!ready||!accept.isEnabled()||proposal.zones.size()!=1)return false;
+        name.setText("M32 revised review",true);
+        if(ready||accept.isEnabled())return false;
+        prepare.onClick();
+        const auto nextDeadline=Time::getMillisecondCounter()+10000;
+        while(task&&Time::getMillisecondCounter()<nextDeadline)
+        {timerCallback();MessageManager::getInstance()->runDispatchLoopUntil(10);}
+        if(task||!ready||proposal.name!="M32 revised review")return false;
+        accept.onClick();return true;
+    }
+#endif
     ~GuidedBuilder() override {stopTimer();if(helpWindow)helpWindow->exitModalState(0);task.reset();scroll.setViewedComponent(nullptr,false);setLookAndFeel(nullptr);}
     void resized() override
     {
