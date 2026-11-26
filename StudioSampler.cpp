@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
+#include "SamplerSharedPool.h"
 #include "StudioSfz.h"
 #include "StudioSoundBank.h"
 #include "StudioExs.h"
@@ -297,13 +298,20 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     const auto preload = streamed ? std::min (frames, streamPreloadFrames) : frames;
     const auto memory = static_cast<std::size_t> (preload) * floatFrameBytes
         + (streamed ? StreamCache::capacityBytes (stereo) : 0);
-    if (memory > budget || (streamed && frames <= streamPreloadFrames))
-        return Result::fail ("Sample exceeds Studio's resident/preload and stream-cache memory budget.");
+    if (streamed && frames <= streamPreloadFrames)
+        return Result::fail ("Sample exceeds Studio's resident/preload memory budget.");
 
+    const auto sizeBefore=file.getSize(), timeBefore=file.getLastModificationTime().toMilliseconds();
+    const SharedSamplePool::Key key{file.getFullPathName().toStdString(),sizeBefore,timeBefore};
+    String failure;
+    const auto outcome=sharedSamples().acquire(key,budget,memory,output,[&]() -> std::shared_ptr<const Sample>
+    {
+    const auto reject=[&](String message)->std::shared_ptr<const Sample>{failure=std::move(message);return {};};
+    if(cancelled&&cancelled->load())return reject("Import cancelled.");
     auto sample = std::make_shared<Sample>();
     sample->rate = reader->sampleRate;
     sample->totalFrames = frames;
-    sample->sourceBytes = file.getSize(); sample->sourceTime = file.getLastModificationTime().toMilliseconds();
+    sample->sourceBytes = sizeBefore; sample->sourceTime = timeBefore;
     for (const auto& key : { String ("MidiUnityNote"), String (AiffAudioFormat::appleRootNote) })
         if (reader->metadataValues.containsKey (key))
         {
@@ -322,11 +330,11 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if (stereo) sample->right.resize (static_cast<std::size_t> (preload));
     for (int offset = 0; offset < preload; offset += 4096)
     {
-        if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+        if (cancelled && cancelled->load()) return reject ("Import cancelled.");
         const int count = jmin (4096, preload - offset);
         if (! decodeFrames (*reader, offset, count, sample->left.data() + offset,
                            stereo ? sample->right.data() + offset : nullptr))
-            return Result::fail ("Could not decode the sample attack.");
+            return reject ("Could not decode the sample attack.");
     }
     if (streamed)
     {
@@ -337,12 +345,19 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
             [sharedPool, file, size, modified] (int first, int count, float* left, float* right)
             { return sharedPool->read (file, size, modified, first, count, left, right); });
         if (! sample->stream->prime (preload))
-            return Result::fail ("Could not read the first streaming page.");
+            return reject ("Could not read the first streaming page.");
         if (preload + streamPageFrames < frames && ! sample->stream->prime (preload + streamPageFrames))
-            return Result::fail ("Could not read the second streaming page.");
+            return reject ("Could not read the second streaming page.");
         StreamWorker::instance().add (sample->stream);
     }
-    output = std::move (sample);
+    if(file.getSize()!=sizeBefore||file.getLastModificationTime().toMilliseconds()!=timeBefore)
+        return reject("Sample changed during loading.");
+    return sample;
+    });
+    if(cancelled&&cancelled->load()){output.reset();return Result::fail("Import cancelled.");}
+    if(outcome==SharedSamplePool::Outcome::budgetExceeded)
+        return Result::fail("Sampler memory budget reached (256 MiB per instrument, 768 MiB shared PCM/cache pool). Unload instruments or use smaller mappings.");
+    if(outcome!=SharedSamplePool::Outcome::ready)return Result::fail(failure.isEmpty()?"Cannot load sample.":failure);
     return Result::ok();
 }
 
@@ -2025,7 +2040,7 @@ InstrumentDiagnosticSnapshot Plugin::resourceSnapshot() const
     stats.detail = String (loadedSamples) + " sample(s) | " + String (streams) + " streamed | "
         + String (model.settings.polyphony) + " max voices | "
         + String (static_cast<juce::int64> (misses)) + " stream underruns | "
-        + String (static_cast<juce::int64> (errors)) + " read errors.";
+        + String (static_cast<juce::int64> (errors)) + " read errors. Shared recordings may appear in multiple track totals.";
     return stats;
 }
 
