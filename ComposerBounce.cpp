@@ -23,6 +23,7 @@ Result checkSources (te::Edit& edit)
         {
             if (sampler->stateError().isNotEmpty())
                 return Result::fail (sampler->stateError());
+            if (auto streaming = sampler->verifyStreamSources (false); streaming.failed()) return streaming;
             for (const auto& zone : sampler->instrument().zones)
                 if (zone.problem.isNotEmpty() || ! zone.file.existsAsFile())
                     return Result::fail ("Sampler source unavailable: " + zone.file.getFileName());
@@ -185,6 +186,12 @@ Result Job::publish()
     for (const auto& job : queue.getJobs())
         if (job->getState() == te::RenderQueue::Job::State::failed)
             return Result::fail ("Render failed: " + job->getError());
+    // Never publish an apparently successful render with a silent stream
+    // read failure or a source file that changed during the render.
+    if (snapshot != nullptr)
+        for (auto* plugin : te::getAllPlugins (*snapshot, true))
+            if (auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin))
+                if (auto streaming = sampler->verifyStreamSources (true); streaming.failed()) return streaming;
     for (const auto& output : outputs)
         if (! output.staged->getFile().existsAsFile())
             return Result::fail ("No render was produced for " + output.destination.getFileName() + ".");
