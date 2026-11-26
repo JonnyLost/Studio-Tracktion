@@ -3,6 +3,7 @@
 #include "SamplerMapping.h"
 #include "StudioSfz.h"
 #include "StudioSoundBank.h"
+#include "StudioExs.h"
 #include <algorithm>
 #include <cmath>
 
@@ -221,6 +222,9 @@ std::unique_ptr<AudioFormatReader> openSampleReader (const File& file)
     AudioFormatManager formats;
     formats.registerFormat (new WavAudioFormat(), true);
     formats.registerFormat (new AiffAudioFormat(), false);
+   #if JUCE_MAC
+    if (file.hasFileExtension ("caf")) formats.registerFormat (new CoreAudioFormat (CoreAudioFormat::StreamKind::kCaf), false);
+   #endif
     return std::unique_ptr<AudioFormatReader> (formats.createReaderFor (file));
 }
 
@@ -280,7 +284,7 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || reader->lengthInSamples >= std::numeric_limits<int>::max()
         || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
-        return Result::fail ("Choose a readable mono or stereo WAV or AIFF sample within Studio's frame limit.");
+        return Result::fail ("Choose a readable mono/stereo WAV, AIFF or supported macOS CAF sample within Studio's frame limit.");
 
     const int frames = static_cast<int> (reader->lengthInSamples);
     const auto floatFrameBytes = reader->numChannels * sizeof (float);
@@ -616,7 +620,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
     {
         if (aborted()) return Result::fail ("Import cancelled.");
         if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
-        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc")) { ++unsupported; continue; }
+        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf")) { ++unsupported; continue; }
         if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
         SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
         auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
@@ -857,7 +861,7 @@ Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Inst
         else if (auto old = std::find_if (cache.zones.begin(), cache.zones.end(), reuse);
                  old != cache.zones.end() && old->mapping.sample->bytes() <= maxBankBytes - sampleBytes (converted))
             z.sample = old->mapping.sample;
-        else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc"))
+        else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf"))
             entry.problem = "Unsupported sample encoding (WAV/AIFF required)";
         else if (auto result = readSample (entry.file, maxBankBytes - sampleBytes (converted), z.sample, cancelled); result.failed())
             entry.problem = result.getErrorMessage();
@@ -958,6 +962,269 @@ Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Inst
             + ", keys " + String (entry.mapping.low) + "-" + String (entry.mapping.high)
             + (entry.problem.isNotEmpty() ? " | " + entry.problem : String()) + "\n";
     next = std::move (converted);
+    return Result::ok();
+}
+
+Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const Instrument& cache,
+                           Instrument& next, String& report, std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    const auto aborted = [&] { return cancelled && cancelled->load(); };
+    if (aborted()) return Result::fail ("Import cancelled.");
+    if (! definition.existsAsFile() || ! definition.hasFileExtension ("exs") || definition.getSize() > 32*1024*1024)
+        return Result::fail ("Select a readable binary EXS instrument (maximum 32 MiB).");
+    if (sampleRoot != File() && ! sampleRoot.isDirectory())
+        return Result::fail ("The selected sample folder no longer exists.");
+    MemoryBlock data;
+    if (! definition.loadFileAsData (data) || data.getSize() < 84 || data.getSize() > 32*1024*1024)
+        return Result::fail ("Cannot read EXS instrument.");
+    exs::Document source;
+    try
+    {
+        const auto* p = static_cast<const unsigned char*> (data.getData());
+        source = exs::Parser::parse (exs::Bytes (p,p+data.getSize()), maxZones);
+    }
+    catch (const std::exception& e) { return Result::fail ("EXS: " + String (e.what())); }
+    data.reset();
+    auto warnings = std::move (source.warnings);
+    const auto base = definition.getParentDirectory();
+    const auto normalized = [] (const std::string& s) { return String (s).replaceCharacter ('\\','/'); };
+    // A bounded local index is built lazily only when stored paths fail.
+    // Never scan an entire disk, follow symlinks or pick among duplicate names.
+    std::map<String, std::vector<File>> localFiles;
+    bool indexed = false, truncated = false;
+    auto indexLocal = [&]
+    {
+        if (indexed) return;
+        indexed = true;
+        Array<File> roots;
+        if (sampleRoot.isDirectory()) roots.add (sampleRoot);
+        else
+        {
+            roots.add (base);
+            for (const auto& name : { "Samples", "Sampler Files", "EXSamples" })
+            {
+                const auto folder = base.getParentDirectory().getChildFile (name);
+                if (folder.isDirectory()) roots.addIfNotAlreadyThere (folder);
+            }
+        }
+        int count = 0;
+        std::set<String> seen;
+        for (const auto& root : roots)
+        {
+            if (root == File::getSpecialLocation (File::userHomeDirectory) || root.getParentDirectory() == root)
+            { truncated = true; continue; }
+            for (const auto& item : RangedDirectoryIterator (root, true, "*", File::findFiles, File::FollowSymlinks::no))
+            {
+                if (aborted()) return;
+                if (++count > 20000) { truncated = true; return; }
+                const auto file = item.getFile();
+                if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf")) continue;
+                if (seen.insert (file.getFullPathName()).second)
+                    localFiles[file.getFileName().toLowerCase()].push_back (file);
+            }
+        }
+    };
+    struct Resolved { File file; String problem; };
+    auto resolve = [&] (const exs::Source& sample) -> Resolved
+    {
+        const auto filename = normalized (sample.filename);
+        const auto name = filename.fromLastOccurrenceOf ("/", false, false);
+        const auto directory = normalized (sample.directory);
+        const auto fallback = base.getChildFile (name);
+        if (name.isEmpty() || name == "." || name == "..") return { fallback, "Invalid sample name" };
+        // Prefer exact stored paths over basename matching. A user-chosen
+        // relocated folder takes precedence over an obsolete stored path.
+        const auto relative = [&](const File& folder, const String& path) -> File
+        {
+            if (path.isEmpty() || File::isAbsolutePath (path)) return {};
+            const auto candidate = folder.getChildFile (path);
+            return candidate.isAChildOf (folder) ? candidate : File();
+        };
+        Array<File> candidates;
+        if (sampleRoot.isDirectory())
+        {
+            candidates.add (relative (sampleRoot, filename));
+            candidates.add (sampleRoot.getChildFile (name));
+        }
+        if (File::isAbsolutePath (filename)) candidates.add (File (filename));
+        if (File::isAbsolutePath (directory)) candidates.add (File (directory).getChildFile (name));
+        else if (auto folder = relative (base, directory); folder != File()) candidates.add (folder.getChildFile (name));
+        candidates.add (relative (base, filename)); candidates.add (fallback);
+        for (const auto& candidate : candidates)
+            if (candidate != File() && candidate.existsAsFile()) return { candidate, {} };
+        indexLocal();
+        if (truncated) return { fallback, "Local sample search limit reached; choose a narrower folder or locate sample" };
+        const auto it = localFiles.find (name.toLowerCase());
+        if (it != localFiles.end())
+        {
+            if (it->second.size() == 1) return { it->second.front(), {} };
+            return { fallback, "Ambiguous sample filename; locate the original recording manually" };
+        }
+        return { fallback, "Sample not found; use Locate Sample or choose a relocated sample folder" };
+    };
+    std::map<int,Resolved> resolved;
+    std::map<int,int> groupIds;
+    std::map<int,std::set<int>> rrPositions;
+    Instrument converted;
+    converted.name = definition.getFileNameWithoutExtension().substring (0,120);
+    converted.settings.gainDb = -6;
+    converted.groups.clear();
+    int playable=0, missing=0, omitted=0, streaming=0;
+    struct Sequence { std::map<int,int> positions; };
+    std::map<String,Sequence> sequences;
+    std::set<int> expectedRR;
+    for (const auto& [id,g] : source.groups)
+        if (g.condition==2 && !g.mute && !g.unsupported)
+            if (!expectedRR.insert(g.sequence).second)
+                return Result::fail ("EXS has multiple round-robin groups sharing a sequence position; cannot safely merge them.");
+    if (!expectedRR.empty())
+    {
+        int pos=*expectedRR.begin();
+        if (pos != -1 && pos != 0) return Result::fail ("Unsupported EXS round-robin start position.");
+        for (int n:expectedRR) if(n!=pos++) return Result::fail ("Incomplete EXS round-robin group positions.");
+    }
+
+    for (std::size_t n=0;n<source.regions.size();++n)
+    {
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (progress) progress->store (static_cast<int>(100*(n+1)/source.regions.size()));
+        const auto& r=source.regions[n];
+        const auto prefix="Region "+std::to_string(n+1)+": ";
+        exs::Group g;
+        if (r.group>=0) g=source.groups.at(r.group);
+        if (r.unsupported || g.unsupported || r.source<0)
+        { ++omitted; warnings.insert(prefix+"unsupported playback rule or empty zone omitted."); continue; }
+        SampleZone entry;
+        auto& z=entry.mapping;
+        z.root=r.root; z.low=std::max(r.low,g.low); z.high=std::min(r.high,g.high);
+        z.soft=std::max(r.soft,g.soft); z.hard=std::min(r.hard,g.hard);
+        if (z.low>z.high || z.soft>z.hard)
+        { ++omitted; warnings.insert(prefix+"empty intersection of group and zone ranges."); continue; }
+        z.start=r.start; z.end=r.end;
+        z.oneShot=r.oneShot; z.loop=r.loop; z.loopStart=r.loopStart; z.loopEnd=r.loopEnd;
+        z.loopCrossfade=0;
+        z.sfz.enabled=true; z.sfz.sustainLoop=r.releaseTail; z.sfz.keyTrack=r.pitch?100:0;
+        z.sfz.attack=converted.settings.attack; z.sfz.decay=converted.settings.decay;
+        z.sfz.sustain=converted.settings.sustain; z.sfz.release=converted.settings.release;
+        const int cents=r.fine+100*r.coarse;
+        z.sfz.transpose=cents/100; z.cents=static_cast<float>(cents%100);
+        z.gainDb=static_cast<float>(std::clamp(r.gain+g.volume,-60,12));
+        z.sfz.pan=static_cast<float>(std::clamp((r.pan+g.pan)*2,-100,100));
+        if(r.gain+g.volume < -60 || r.gain+g.volume > 12)
+            warnings.insert("Combined group and zone gain limited to native range.");
+        if (!validMapping(z)) return Result::fail (String(prefix+"unsupported tuning or native mapping."));
+        auto existing=groupIds.find(r.group);
+        if(existing==groupIds.end())
+        {
+            if(converted.groups.size()>=maxGroups) return Result::fail("EXS exceeds Studio's 16 group limit.");
+            const int id=static_cast<int>(converted.groups.size());
+            Group playback; playback.id=id; playback.mute=g.mute; playback.releaseTrigger=g.release;
+            if(g.condition==1){playback.trigger=GroupTrigger::keyswitch;playback.key=g.key;playback.switchDefault=-1;}
+            else if(g.condition==3){playback.trigger=GroupTrigger::controller;playback.controller=g.controller;playback.ccLow=g.ccLow;playback.ccHigh=g.ccHigh;}
+            else if(g.condition==5)playback.channel=g.channel;
+            if(!validGroup(playback))return Result::fail("Invalid EXS group mapping.");
+            auto name=String(g.name).trim();
+            if(name.isEmpty())name=r.group<0?"Ungrouped":"Group "+String(r.group);
+            converted.groups.push_back({id,name.substring(0,120),playback});
+            groupIds.emplace(r.group,id); entry.folder=id;
+        }
+        else entry.folder=existing->second;
+        z.folder=entry.folder;
+        const auto& sample=source.samples.at(r.source);
+        if (!resolved.count(r.source)) resolved.emplace(r.source,resolve(sample));
+        const auto& found=resolved.at(r.source);
+        entry.file=found.file; entry.problem=found.problem;
+        if (aborted())return Result::fail("Import cancelled.");
+        if(entry.problem.isEmpty())
+        {
+            const auto reuse=[&](const auto& e){return currentSample(e,entry.file);};
+            auto same=std::find_if(converted.zones.begin(),converted.zones.end(),reuse);
+            if(same!=converted.zones.end())z.sample=same->mapping.sample;
+            else if(auto old=std::find_if(cache.zones.begin(),cache.zones.end(),reuse);
+                    old!=cache.zones.end() && old->mapping.sample->bytes()<=maxBankBytes-sampleBytes(converted))
+                z.sample=old->mapping.sample;
+            else if(auto result=readSample(entry.file,maxBankBytes-sampleBytes(converted),z.sample,cancelled);result.failed())
+                entry.problem=result.getErrorMessage();
+        }
+        if(aborted())return Result::fail("Import cancelled.");
+        if(z.sample)
+        {
+            if((sample.frames>0 && sample.frames!=z.sample->frameCount()) ||
+               (sample.rate>0 && std::abs(sample.rate-z.sample->rate)>0.5) ||
+               (sample.channels>0 && sample.channels!=(z.sample->stereo()?2:1)))
+            { entry.problem="Recording does not match EXS length/rate/channel metadata; locate original";z.sample.reset(); }
+        }
+        if(z.sample)
+        {
+            const auto frames=z.sample->frameCount();
+            if(z.start>=frames || z.end>frames || (z.loop&&!validLoop(z,frames)))
+            {entry.problem="EXS trim or loop exceeds source length";z.sample.reset();}
+            else
+            {
+                if(z.loop)
+                {
+                    const double wanted=r.crossfadeMs*z.sample->rate/1000.0;
+                    z.loopCrossfade=static_cast<int>(std::min<double>(1000000,wanted));
+                    if(z.loopCrossfade>(z.loopEnd-z.loopStart)/4)
+                        warnings.insert("Loop crossfade limited to a quarter of native loop length.");
+                }
+                else z.loopEnd=frames;
+                if(!primeZone(z)){entry.problem="Cannot prime disk-streamed zone";z.sample.reset();}
+            }
+        }
+        if(z.sample){++playable;if(z.sample->stream)++streaming;}
+        else
+        {
+            ++missing;
+            if(z.loop && sample.rate>0)z.loopCrossfade=static_cast<int>(std::min<double>(1000000,r.crossfadeMs*sample.rate/1000.0));
+            warnings.insert(prefix+entry.file.getFileName().toStdString()+": "+entry.problem.toStdString());
+        }
+        if(g.condition==2 && !g.mute)
+        {
+            if(g.release)return Result::fail("Release-trigger round robin not representable in this EXS conversion.");
+            const auto key=String(z.low)+":"+String(z.high)+":"+String(z.soft)+":"+String(z.hard);
+            if(!sequences[key].positions.emplace(g.sequence,static_cast<int>(converted.zones.size())).second)
+                return Result::fail("Overlapping layers in EXS round robin cannot be safely converted.");
+        }
+        converted.zones.push_back(std::move(entry));
+    }
+    if(aborted())return Result::fail("Import cancelled.");
+    if(playable==0)
+    {
+        report="No playable EXS zones. "+String(missing)+" unavailable, "+String(omitted)+" omitted.\n";
+        for(const auto& w:warnings)report+=String(w)+"\n";
+        return Result::fail(report);
+    }
+    if(sequences.size()>maxGroups)return Result::fail("EXS exceeds native 16 round-robin sequence limit.");
+    if(!sequences.empty())
+    {
+        std::vector<SampleZone> ordered;
+        std::set<int> used;int rr=0;
+        for(const auto& [key,seq]:sequences)
+        {
+            if(seq.positions.size()!=expectedRR.size())return Result::fail("Incomplete round-robin layers in EXS; no partial conversion.");
+            ++rr;
+            for(const auto& [position,index]:seq.positions)
+            {
+                if(!expectedRR.count(position))return Result::fail("Unexpected EXS round-robin position.");
+                auto& e=converted.zones[static_cast<std::size_t>(index)];
+                if(!e.mapping.sample)return Result::fail("Round-robin source unavailable; resolve all sequence samples before import.");
+                e.mapping.group=rr; used.insert(index); ordered.push_back(std::move(e));
+            }
+        }
+        for(int i=0;i<static_cast<int>(converted.zones.size());++i)
+            if(!used.count(i))ordered.push_back(std::move(converted.zones[static_cast<std::size_t>(i)]));
+        converted.zones=std::move(ordered);
+        warnings.insert("Round robin uses native matched-range counters, not Logic's complete group rule engine.");
+    }
+    warnings.insert("Native ADSR, velocity response and -6 dB headroom are used; EXS synth parameters and modulation are not reproduced.");
+    report="EXS24: "+converted.name+"\n"+String(playable)+" playable zones | "+String(streaming)+" streamed | "
+        +String(missing)+" unavailable | "+String(omitted)+" omitted.\n"
+        +String(static_cast<int>(converted.groups.size()))+" groups, "+String(static_cast<int>(sequences.size()))+" round-robin sequences.\n"
+        +"Original recordings are referenced directly; no files are copied or modified.\n"
+        +"Confirm to replace this instrument only.\n\nCompatibility notes:\n";
+    for(const auto& w:warnings)report+=String(w)+"\n";
+    next=std::move(converted);
     return Result::ok();
 }
 
