@@ -28,8 +28,10 @@ on:
       - feature/studio-visual-library-m29
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-contextual-help-m31
+      - feature/studio-usability-acceptance-m32
   pull_request:
     branches:
+      - feature/studio-contextual-help-m31
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-visual-library-m29
       - feature/studio-sampler-interface-m28
@@ -122,6 +124,9 @@ jobs:
           cmake --build build --parallel 3
       - name: Run complete regression suite
         env:
+          STUDIO_SAMPLER_SCREENSHOTS: ${{ runner.temp }}/studio-sampler-review
+          STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
+          STUDIO_UNIFIED_STAGE_SCREENSHOTS: ${{ runner.temp }}/studio-unified-stage
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-composer-images
           STUDIO_FILM_SCORING_SCREENSHOTS: ${{ runner.temp }}/studio-film-scoring
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
@@ -137,6 +142,9 @@ jobs:
           name: Studio-composer-linux
           path: |
             ${{ runner.temp }}/studio-composer-images/
+            ${{ runner.temp }}/studio-sampler-review/
+            ${{ runner.temp }}/studio-instrument-workspace/
+            ${{ runner.temp }}/studio-unified-stage/
             ${{ runner.temp }}/studio-film-scoring/
             ${{ runner.temp }}/studio-composer-audio/
             ${{ runner.temp }}/studio-composer-bench.tsv

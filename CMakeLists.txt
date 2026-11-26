@@ -74,7 +74,7 @@ if(edit_view_match EQUAL -1)
     message(FATAL_ERROR "Tracktion example EditComponent accessor has changed.")
 endif()
 string(REPLACE "${edit_view_accessor}"
-    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    void refreshStudioLayout() { resized(); repaint(); }\n    int getStudioContentHeight() const;\n    void setStudioRoomReturnVisible (bool shouldShow)\n    {\n        if (editViewState.showStudioRoomReturn == shouldShow) return;\n        editViewState.showStudioRoomReturn = shouldShow;\n        buildTracks();\n    }"
+    "${edit_view_accessor}\n    int getVisibleTrackCount() const { return tracks.size(); }\n    bool isStudioTrackVisible (te::EditItemID id) const { for (auto* row : tracks) if (row->getTrack()->itemID == id) return true; return false; }\n    void refreshStudioLayout() { resized(); repaint(); }\n    int getStudioContentHeight() const;\n    void setStudioRoomReturnVisible (bool shouldShow)\n    {\n        if (editViewState.showStudioRoomReturn == shouldShow) return;\n        editViewState.showStudioRoomReturn = shouldShow;\n        buildTracks();\n    }"
     editor_header "${editor_header}")
 
 # The track header is Studio's only per-track control area. The pinned

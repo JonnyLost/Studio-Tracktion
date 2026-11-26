@@ -2,6 +2,7 @@
 #include "SamplerEditor.h"
 #include "SamplerGuidedBuilder.h"
 #include "StudioInstrumentHelp.h"
+#include "StudioLibraryManager.h"
 #include "SamplerNoteText.h"
 #include "StudioLibraryPresentation.h"
 #include "SamplerReviewCapture.h"
@@ -2008,7 +2009,63 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         || ! body.getLocalBounds().contains (gain.slider.getBounds())
         || ! getLocalBounds().contains (loadPreset.getBounds()) || loadPreset.getBounds().intersects (savePreset.getBounds()))
         return reviewFailure (__LINE__);
-    return std::abs (plugin.instrument().settings.attack - .023f) < .0001f;
+    if(std::abs(plugin.instrument().settings.attack-.023f)>=.0001f)return reviewFailure(__LINE__);
+    // Capture the actual editor across laptop dimensions at normal and
+    // largest text settings. Controls in the scrollable body must have
+    // usable bounds, not necessarily be visible simultaneously.
+    const auto revision=plugin.changeCount();
+    for(int text:{100,130})
+        for(const auto size:{Point<int>(1024,640),Point<int>(1280,800)})
+        {
+            appearance.set(100,text);appearanceChanged();setSize(size.x,size.y);
+            for(const auto view:{Page::perform,Page::basic,Page::mapping})
+            {
+                setPage(view);
+                for(auto* c:{&play,&basic,&build,&helpButton,&loadPreset,&savePreset})
+                    if(!c->isVisible()||c->getBounds().isEmpty()||!getLocalBounds().contains(c->getBounds()))
+                        return reviewFailure(__LINE__);
+                if(play.getBounds().intersects(basic.getBounds())||basic.getBounds().intersects(build.getBounds())
+                   ||build.getBounds().intersects(helpButton.getBounds())||viewport.getHeight()<=0
+                   ||viewport.getBounds().intersects(keyboard.getBounds())||!getLocalBounds().contains(keyboard.getBounds()))
+                    return reviewFailure(__LINE__);
+                if(view==Page::perform&&(!body.getLocalBounds().contains(createInstrument.getBounds())||
+                    !body.getLocalBounds().contains(gain.slider.getBounds())||mapping.isVisible()))
+                    return reviewFailure(__LINE__);
+                if(view==Page::basic&&(!body.getLocalBounds().contains(attack.slider.getBounds())||
+                    !body.getLocalBounds().contains(tune.slider.getBounds())))
+                    return reviewFailure(__LINE__);
+                if(view==Page::mapping&&(!mapping.isVisible()||!body.getLocalBounds().contains(root.slider.getBounds())))
+                    return reviewFailure(__LINE__);
+                const auto mode=view==Page::perform?"play":view==Page::basic?"sound":"build";
+                const auto file="m32-sampler-"+String(mode)+"-"+String(size.x)+"x"+String(size.y)+"-text"+String(text)+".png";
+                if(output!=File())
+                {
+                    FileOutputStream stream(output.getChildFile(file));
+                    if(!stream.openedOk()||!stream.setPosition(0)||stream.truncate().failed()||
+                       !PNGImageFormat().writeImageToStream(createComponentSnapshot(getLocalBounds()),stream))
+                        return reviewFailure(__LINE__);
+                }
+            }
+        }
+    if(plugin.changeCount()!=revision)return reviewFailure(__LINE__);
+    appearance.set(100,100);appearanceChanged();setSize(800,564);setPage(Page::perform);
+    openGuidedBuilder();
+    auto* guided=guidedWindow?dynamic_cast<GuidedBuilder*>(guidedWindow->getContentComponent()):nullptr;
+    if(!guided||!guided->review(first,output))return reviewFailure(__LINE__);
+    MessageManager::getInstance()->runDispatchLoopUntil(20);
+    if(plugin.instrument().name!="M32 revised review"||plugin.instrument().zones.size()!=1||
+       !plugin.instrument().zones[0].mapping.sample||page!=Page::perform)
+        return reviewFailure(__LINE__);
+    // The review catalog is isolated from the user's real catalog.
+    TemporaryFile libraryFixture(".xml");
+    library::Catalog catalog;library::Entry catalogViolin,catalogCello;
+    catalogViolin.name="Review Violin";catalogViolin.family="Strings";catalogViolin.source=first;catalogViolin.format="sfz";
+    catalogCello.name="Review Cello";catalogCello.family="Strings";catalogCello.source=second;catalogCello.format="sfz";
+    catalog.entries={catalogViolin,catalogCello};
+    if(library::save(catalog,libraryFixture.getFile()).failed())return reviewFailure(__LINE__);
+    library::Manager manager([](Instrument,library::Presentation){},libraryFixture.getFile());
+    if(!manager.review(output))return reviewFailure(__LINE__);
+    return true;
 }
 #endif
 
