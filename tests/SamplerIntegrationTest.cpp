@@ -403,6 +403,101 @@ Result verifyLegacyBankImport (const File& directory, Plugin& sampler)
     return Result::ok();
 }
 
+Result verifyXmlInstrumentImport (const File& directory, Plugin& sampler, WavAudioFormat& wav)
+{
+    const auto root=directory.getChildFile("XML instrument fixtures");
+    if(root.createDirectory().failed())return Result::fail("create XML fixture directory");
+    const auto sample=root.getChildFile("Long C4.wav");
+    if(!longSample(sample,wav,196608,2))return Result::fail("write XML fixture WAV");
+    const auto ds=root.getChildFile("Strings.dspreset");
+    const String preset=R"xml(<?xml version="1.0"?>
+<DecentSampler>
+<groups globalVolume="0.5" globalPan="5" ampEnvAttack="0.1" release="0.3">
+ <group name="Sustain" groupVolume="0.5" groupPan="-10" loCC1="64" hiCC1="127" seqMode="round_robin" seqLength="2">
+  <sample path="Long C4.wav" rootNote="60" loNote="48" hiNote="72" seqPosition="2" volume="1" start="65536" loopEnabled="true" loopStart="70000" loopEnd="99999"/>
+  <sample path="Long C4.wav" rootNote="60" loNote="48" hiNote="72" seqPosition="1" volume="1" attack="0.02" tuning="0.25" start="65536" loopEnabled="true" loopStart="70000" loopEnd="99999" loopDuringRelease="false"/>
+ </group>
+ <group trigger="legato"><sample path="Long C4.wav" rootNote="60"/></group>
+</groups>
+</DecentSampler>)xml";
+    if(!ds.replaceWithText(preset))return Result::fail("write Decent fixture");
+    const auto revision=sampler.changeCount();
+    {
+        BankImportMedia media;media.parent=root;
+        Instrument result;String report;
+        if(auto r=Plugin::prepareXmlInstrument(ds,sampler.instrument(),result,report,media);r.failed())return r;
+        if(sampler.changeCount()!=revision||result.zones.size()!=2||result.groups.size()!=1||!report.contains("1 omitted"))
+            return Result::fail("Decent conversion review must be transactional");
+        const auto& z=result.zones[0].mapping;
+        const auto& g=result.groups[0].playback;
+        if(!z.sample||!z.sample->stream||z.sample!=result.zones[1].mapping.sample||z.group==0||z.group!=result.zones[1].mapping.group||
+           z.root!=60||z.low!=48||z.high!=72||z.start!=65536||z.loopEnd!=100000||!z.sfz.sustainLoop||
+           std::abs(z.gainDb+12.0412f)>0.001f||std::abs(z.sfz.attack-0.02f)>1e-6f||z.cents!=25||z.sfz.pan!=-5||
+           g.trigger!=GroupTrigger::controller||g.controller!=1||g.ccLow!=64)
+            return Result::fail("Decent gain inheritance, CC, ordered RR, ADSR, trim, tuning and streamed loop");
+        sampler.commitImport(result);
+        const auto native=root.getChildFile("Decent.studiosampler");
+        if(sampler.savePreset(native).failed()||sampler.loadPreset(native).failed()||
+           !sampler.instrument().zones[0].mapping.sample||!sampler.instrument().zones[0].mapping.sample->stream)
+            return Result::fail("reopen native Decent conversion");
+        sampler.commitImport({},false);
+    }
+    const auto zip=root.getChildFile("Strings.dslibrary");
+    {
+        ZipFile::Builder builder;builder.addFile(ds,6,"Strings.dspreset");builder.addFile(sample,6,"Long C4.wav");
+        auto out=zip.createOutputStream();
+        if(!out||!builder.writeToStream(*out,nullptr))return Result::fail("create Decent archive fixture");
+    }
+    File staged;
+    {
+        BankImportMedia media;media.parent=root;Instrument result;String report;
+        if(auto r=Plugin::prepareXmlInstrument(zip,{},result,report,media);r.failed())return r;
+        staged=media.directory;
+        if(result.zones.size()!=2||!result.zones[0].file.isAChildOf(staged)||!result.zones[0].mapping.sample->stream)
+            return Result::fail("extract and stream Decent library");
+    }
+    if(staged.exists())return Result::fail("cancelled Decent extraction not cleaned");
+    const auto hostile=root.getChildFile("Unsafe.dslibrary");
+    {
+        ZipFile::Builder builder;builder.addFile(ds,6,"../Escape.dspreset");
+        auto out=hostile.createOutputStream();if(!out||!builder.writeToStream(*out,nullptr))return Result::fail("create unsafe ZIP fixture");
+    }
+    {
+        BankImportMedia media;media.parent=root;Instrument result;String report;
+        if(Plugin::prepareXmlInstrument(hostile,{},result,report,media).wasOk()||root.getChildFile("Escape.dspreset").exists())
+            return Result::fail("reject ZIP traversal");
+    }
+    const auto nki=root.getChildFile("Legacy.nki");
+    const String k2=R"xml(<K2_Container><Programs><K2_Program><Groups><K2_Group><Parameters><V name="volume" value="0.5"/></Parameters><Zones><Zone>
+<V name="sampleFile" value="Long C4.wav"/><V name="rootKey" value="60"/><V name="lowKey" value="48"/><V name="highKey" value="72"/>
+<V name="lowVelo" value="10"/><V name="highVelo" value="100"/><V name="zoneVolume" value="0.5"/>
+<V name="sampleStart" value="65536"/><V name="loopMode" value="1"/><V name="loopStart" value="70000"/><V name="loopEnd" value="100000"/>
+</Zone></Zones></K2_Group></Groups></K2_Program></Programs></K2_Container>)xml";
+    {
+        auto out=nki.createOutputStream();if(!out)return Result::fail("create NKI fixture");
+        std::array<char,170> header {};if(!out->write(header.data(),header.size()))return Result::fail("write NKI header");
+        GZIPCompressorOutputStream compressor(*out,6);
+        const auto bytes=k2.toStdString();
+        if(!compressor.write(bytes.data(),bytes.size()))return Result::fail("compress NKI XML");
+        compressor.flush();
+    }
+    {
+        BankImportMedia media;Instrument result;String report;
+        if(auto r=Plugin::prepareXmlInstrument(nki,{},result,report,media);r.failed())return r;
+        const auto& z=result.zones[0].mapping;
+        if(result.zones.size()!=1||!z.sample||!z.sample->stream||z.start!=65536||z.loopEnd!=100000||
+           !z.sfz.sustainLoop||z.soft!=10||z.hard!=100||std::abs(z.gainDb+12.0412f)>0.001f)
+            return Result::fail("legacy readable K2 XML sample mapping");
+    }
+    const auto bad=root.getChildFile("Unsupported.nki");
+    if(!bad.replaceWithText("not a supported Kontakt mapping"))return Result::fail("write invalid NKI fixture");
+    BankImportMedia media;Instrument result;String report;
+    if(Plugin::prepareXmlInstrument(bad,{},result,report,media).wasOk())return Result::fail("reject unknown NKI container");
+    std::atomic<bool> cancel{true};
+    if(Plugin::prepareXmlInstrument(ds,{},result,report,media,&cancel).wasOk())return Result::fail("cancel XML instrument conversion");
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -555,6 +650,7 @@ Result run (const File& screenshots)
     if (auto bank = verifySoundBankImport (directory, *other); bank.failed()) return bank;
     if (auto exs = verifyExsImport (directory, *other, wav); exs.failed()) return exs;
     if (auto legacy = verifyLegacyBankImport (directory, *other); legacy.failed()) return legacy;
+    if (auto xml = verifyXmlInstrumentImport (directory, *other, wav); xml.failed()) return xml;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;
