@@ -482,6 +482,7 @@ void Editor::refresh()
     const auto& s = model.settings;
     const bool playable = entry && z.sample;
     filename.setText (entry ? entry->file.getFileName() + "  |  " + noteName (z.low) + " to " + noteName (z.high)
+                            + (z.sample && z.sample->stream ? "  |  Disk streaming" : "")
                             : String(), dontSendNotification);
     filename.setTooltip (entry ? entry->file.getFullPathName() : String());
     if (plugin.stateError().isNotEmpty()) setStatus (plugin.stateError());
