@@ -222,6 +222,9 @@ std::unique_ptr<AudioFormatReader> openSampleReader (const File& file)
     AudioFormatManager formats;
     formats.registerFormat (new WavAudioFormat(), true);
     formats.registerFormat (new AiffAudioFormat(), false);
+   #if JUCE_USE_FLAC
+    formats.registerFormat (new FlacAudioFormat(), false);
+   #endif
    #if JUCE_MAC
     if (file.hasFileExtension ("caf")) formats.registerFormat (new CoreAudioFormat (CoreAudioFormat::StreamKind::kCaf), false);
    #endif
@@ -284,7 +287,7 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if (! reader || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples < 2
         || reader->lengthInSamples >= std::numeric_limits<int>::max()
         || ! std::isfinite (reader->sampleRate) || reader->sampleRate < 1000 || reader->sampleRate > 768000)
-        return Result::fail ("Choose a readable mono/stereo WAV, AIFF or supported macOS CAF sample within Studio's frame limit.");
+        return Result::fail ("Choose a readable mono/stereo WAV, AIFF, FLAC (when enabled), or supported macOS CAF sample within Studio's frame limit.");
 
     const int frames = static_cast<int> (reader->lengthInSamples);
     const auto floatFrameBytes = reader->numChannels * sizeof (float);
@@ -620,7 +623,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
     {
         if (aborted()) return Result::fail ("Import cancelled.");
         if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
-        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf")) { ++unsupported; continue; }
+        if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf;flac")) { ++unsupported; continue; }
         if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
         SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
         auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
@@ -861,7 +864,7 @@ Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Inst
         else if (auto old = std::find_if (cache.zones.begin(), cache.zones.end(), reuse);
                  old != cache.zones.end() && old->mapping.sample->bytes() <= maxBankBytes - sampleBytes (converted))
             z.sample = old->mapping.sample;
-        else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf"))
+        else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf;flac"))
             entry.problem = "Unsupported sample encoding (WAV/AIFF or supported macOS CAF required)";
         else if (auto result = readSample (entry.file, maxBankBytes - sampleBytes (converted), z.sample, cancelled); result.failed())
             entry.problem = result.getErrorMessage();
@@ -1018,7 +1021,7 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
                 if (aborted()) return;
                 if (++count > 20000) { truncated = true; return; }
                 const auto file = item.getFile();
-                if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf")) continue;
+                if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf;flac")) continue;
                 if (seen.insert (file.getFullPathName()).second)
                     localFiles[file.getFileName().toLowerCase()].push_back (file);
             }
@@ -1225,6 +1228,441 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
     for(const auto& w:warnings)report+=String(w)+"\n";
     next=std::move(converted);
     return Result::ok();
+}
+
+Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache, Instrument& next,
+                                     String& report, BankImportMedia& media, std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    using Attr = std::map<std::string,std::string>;
+    const auto aborted=[&]{return cancelled&&cancelled->load();};
+    const auto fail=[](const std::string& message){throw std::runtime_error(message);};
+    constexpr int xmlLimit=8*1024*1024;
+    if(aborted())return Result::fail("Import cancelled.");
+    if(!input.existsAsFile()||!input.hasFileExtension("dspreset;dslibrary;nki")||media.directory!=File())
+        return Result::fail("Select an accessible Decent Sampler preset/library or legacy Kontakt NKI.");
+    const auto originalSize=input.getSize();
+    const auto originalTime=input.getLastModificationTime();
+    File definition=input;
+    const bool kontakt=input.hasFileExtension("nki");
+    std::set<std::string> warnings;
+    try
+    {
+        if(input.hasFileExtension("dslibrary"))
+        {
+            ZipFile archive(input);
+            if(archive.getNumEntries()<1||archive.getNumEntries()>8192)fail("Invalid or oversized Decent Sampler ZIP directory.");
+            const auto root=media.parent!=File()?media.parent:File::getSpecialLocation(File::userMusicDirectory).getChildFile("Studio").getChildFile("Imported Sound Banks");
+            if(auto r=root.createDirectory();r.failed())return r;
+            const auto dir=root.getChildFile(Uuid().toString());
+            if(dir.exists())fail("Cannot create unique library staging folder.");
+            if(auto r=dir.createDirectory();r.failed())return r;
+            media.directory=dir;
+            std::set<String> paths;
+            std::vector<std::pair<int,File>> entries;
+            std::int64_t total=0;
+            int presets=0;
+            for(int i=0;i<archive.getNumEntries();++i)
+            {
+                if(aborted())fail("Import cancelled.");
+                const auto* e=archive.getEntry(i);
+                if(!e||e->isSymbolicLink||e->uncompressedSize<0)fail("Invalid or symbolic-link ZIP entry.");
+                const auto name=e->filename.replaceCharacter('\\','/');
+                if(name.isEmpty()||name.startsWithChar('/')||name.containsChar(':'))
+                    fail("Unsafe ZIP path.");
+                const auto parts=StringArray::fromTokens(name,"/","");
+                for(const auto& part:parts)if(part==".."||part==".")fail("Unsafe ZIP path component.");
+                if(name.endsWithChar('/'))continue;
+                const auto target=dir.getChildFile(name);
+                if(!target.isAChildOf(dir)||!paths.insert(target.getFullPathName().toLowerCase()).second)
+                    fail("Unsafe or duplicate ZIP path.");
+                if(!target.hasFileExtension("dspreset;wav;wave;aif;aiff;aifc;flac;caf"))continue;
+                if(e->uncompressedSize>512ll*1024*1024||total>2ll*1024*1024*1024-e->uncompressedSize)
+                    fail("Decent library exceeds native extraction limits.");
+                total+=e->uncompressedSize;
+                if(target.hasFileExtension("dspreset"))
+                {
+                    if(e->uncompressedSize>xmlLimit)fail("Decent preset exceeds XML size limit.");
+                    definition=target;++presets;
+                }
+                entries.emplace_back(i,target);
+            }
+            if(presets!=1)fail("This version imports one-preset .dslibrary archives; extract a multi-preset library and choose its .dspreset.");
+            if(dir.getBytesFreeOnVolume()<total+16*1024*1024)fail("Not enough space for Decent library extraction.");
+            std::array<char,65536> buffer {};
+            for(const auto& [i,target]:entries)
+            {
+                if(aborted())fail("Import cancelled.");
+                if(auto r=target.getParentDirectory().createDirectory();r.failed())return r;
+                std::unique_ptr<InputStream> stream(archive.createStreamForEntry(i));
+                auto out=target.createOutputStream();
+                if(!stream||!out)fail("Cannot extract Decent library entry.");
+                const auto expected=archive.getEntry(i)->uncompressedSize;
+                std::int64_t written=0;
+                while(written<expected)
+                {
+                    if(aborted())fail("Import cancelled.");
+                    const auto n=stream->read(buffer.data(),static_cast<int>(std::min<std::int64_t>(buffer.size(),expected-written)));
+                    if(n<=0||!out->write(buffer.data(),static_cast<std::size_t>(n)))fail("Truncated or unwritable ZIP entry.");
+                    written+=n;
+                }
+                if(stream->read(buffer.data(),1)!=0)fail("ZIP entry exceeds declared size.");
+                out->flush();
+                if(out->getStatus().failed())fail("Cannot flush extracted library entry.");
+            }
+            warnings.insert("Accepted archive recordings are retained in the Studio imported media folder; back them up with presets.");
+        }
+        if(definition.getSize()<=0||definition.getSize()>32ll*1024*1024)fail("Definition exceeds size limit.");
+        MemoryBlock data;
+        if(!definition.loadFileAsData(data)||data.getSize()>32u*1024*1024)fail("Cannot read instrument definition.");
+        auto parse=[&](const void* bytes,std::size_t length)->std::unique_ptr<XmlElement>
+        {
+            if(length==0||length>xmlLimit)return {};
+            const auto xml=String::fromUTF8(static_cast<const char*>(bytes),static_cast<int>(length));
+            if(xml.containsIgnoreCase("<!DOCTYPE")||xml.containsIgnoreCase("<!ENTITY"))return {};
+            // Bound structural nesting before invoking the recursive XML parser.
+            const auto rawXml=xml.toStdString();
+            int tags=0,depth=0;
+            for(std::size_t i=0;i<rawXml.size();)
+            {
+                if(rawXml[i]!='<'){++i;continue;}
+                if(rawXml.compare(i,4,"<!--")==0)
+                {auto end=rawXml.find("-->",i+4);if(end==std::string::npos)return {};i=end+3;continue;}
+                if(rawXml.compare(i,9,"<![CDATA[")==0)
+                {auto end=rawXml.find("]]>",i+9);if(end==std::string::npos)return {};i=end+3;continue;}
+                if(rawXml.compare(i,2,"<?")==0)
+                {auto end=rawXml.find("?>",i+2);if(end==std::string::npos)return {};i=end+2;continue;}
+                if(i+1>=rawXml.size()||rawXml[i+1]=='!'||++tags>50000)return {};
+                const bool close=rawXml[i+1]=='/';
+                char quote=0;auto end=i+1;
+                for(;end<rawXml.size();++end)
+                {
+                    const char c=rawXml[end];
+                    if(quote){if(c==quote)quote=0;}
+                    else if(c=='"'||c=='\'')quote=c;
+                    else if(c=='>')break;
+                    else if(c=='<')return {};
+                }
+                if(end>=rawXml.size())return {};
+                if(close)--depth;else if(rawXml[end-1]!='/')++depth;
+                if(depth<0||depth>64)return {};
+                i=end+1;
+            }
+            if(depth!=0)return {};
+            return XmlDocument::parse(xml);
+        };
+        std::unique_ptr<XmlElement> xml;
+        if(data.getSize()==0)fail("Empty instrument definition.");
+        const auto* raw=static_cast<const unsigned char*>(data.getData());
+        if(!kontakt)xml=parse(raw,data.getSize());
+        else
+        {
+            // Only readable legacy K2 XML payloads. No encryption, monolith,
+            // NCW decompression or modern Kontakt container emulation.
+            if(raw[0]=='<'||(data.getSize()>=3&&raw[0]==0xef&&raw[1]==0xbb&&raw[2]==0xbf))
+                xml=parse(raw,data.getSize());
+            for(std::size_t pos=0;!xml&&pos+1<std::min<std::size_t>(256,data.getSize());++pos)
+            {
+                if(aborted())fail("Import cancelled.");
+                const bool gzip=pos==0&&raw[pos]==0x1f&&raw[pos+1]==0x8b;
+                const bool zlib=raw[pos]==0x78&&((int(raw[pos])*256+raw[pos+1])%31==0)&&!(raw[pos+1]&32);
+                if(!gzip&&!zlib)continue;
+                MemoryInputStream compressed(raw+pos,data.getSize()-pos,false);
+                GZIPDecompressorInputStream decoder(&compressed,false,gzip?GZIPDecompressorInputStream::gzipFormat:GZIPDecompressorInputStream::zlibFormat);
+                MemoryBlock decoded;std::array<char,8192> block {};
+                while(!aborted())
+                {
+                    const auto n=decoder.read(block.data(),static_cast<int>(block.size()));
+                    if(n<=0)break;
+                    if(decoded.getSize()+static_cast<std::size_t>(n)>xmlLimit){decoded.reset();break;}
+                    decoded.append(block.data(),static_cast<std::size_t>(n));
+                }
+                auto candidate=parse(decoded.getData(),decoded.getSize());
+                if(candidate&&candidate->hasTagName("K2_Container"))xml=std::move(candidate);
+            }
+        }
+        if(aborted())fail("Import cancelled.");
+        if(!xml||!xml->hasTagName(kontakt?"K2_Container":"DecentSampler"))
+            fail(kontakt?"No supported readable legacy Kontakt K2 XML mapping. Modern, protected or monolithic NKI is not supported.":"Invalid or unsupported Decent Sampler XML.");
+        const auto attrs=[](const XmlElement& element)
+        {
+            Attr a;for(int i=0;i<element.getNumAttributes();++i)a[element.getAttributeName(i).toStdString()]=element.getAttributeValue(i).toStdString();
+            for(const auto& [alias,key]:std::array<std::pair<const char*,const char*>,4>{{
+                {"ampEnvAttack","attack"},{"ampEnvDecay","decay"},{"ampEnvSustain","sustain"},{"ampEnvRelease","release"}}})
+                if(a.count(alias)){a[key]=a[alias];a.erase(alias);}
+            return a;
+        };
+        const auto values=[](const XmlElement& element)
+        {
+            Attr a;
+            const auto read=[&](const XmlElement& parent)
+            {
+                for(auto* v=parent.getFirstChildElement();v;v=v->getNextElement())
+                    if(v->hasTagName("V"))a[v->getStringAttribute("name").toStdString()]=v->getStringAttribute("value").toStdString();
+            };
+            if(auto* p=element.getChildByName("Parameters"))read(*p);
+            read(element);return a;
+        };
+        const auto get=[](const Attr& a,const std::string& k,std::string fallback={})
+        {auto it=a.find(k);return it==a.end()?fallback:it->second;};
+        const auto num=[&](const Attr& a,const std::string& k,double fallback,double lo,double hi)
+        {
+            if(!a.count(k))return fallback;
+            auto n=sfz::number(get(a,k));
+            if(!n||*n<lo||*n>hi)fail("Invalid or unsupported value: "+k+"="+get(a,k));
+            return *n;
+        };
+        const auto integer=[&](const Attr& a,const std::string& k,int fallback,int lo,int hi)
+        {
+            if(!a.count(k))return fallback;
+            auto n=sfz::integer(get(a,k));
+            if(!n||*n<lo||*n>hi)fail("Invalid integer: "+k+"="+get(a,k));
+            return *n;
+        };
+        const auto boolean=[&](const Attr& a,const std::string& k,bool fallback)
+        {
+            if(!a.count(k))return fallback;
+            auto v=sfz::lower(get(a,k));
+            if(v=="true"||v=="yes"||v=="1")return true;
+            if(v=="false"||v=="no"||v=="0")return false;
+            fail("Invalid boolean: "+k);return false;
+        };
+        const auto db=[&](const Attr& a,const std::string& k)
+        {
+            auto text=get(a,k,"1");
+            const auto low=sfz::lower(text);
+            if(!kontakt&&low.size()>2&&low.substr(low.size()-2)=="db")
+            {
+                auto n=sfz::number(text.substr(0,text.size()-2));if(!n||*n< -120||*n>24)fail("Invalid dB gain");return *n;
+            }
+            auto n=sfz::number(text);if(!n||*n<0||*n>16)fail("Invalid linear gain");
+            return *n==0?-120.0:20*std::log10(*n);
+        };
+        const auto overlay=[](Attr& a,const Attr& b){for(const auto& [k,v]:b)a[k]=v;};
+        const XmlElement* groups=nullptr;
+        Attr top;
+        if(kontakt)
+        {
+            const auto* programs=xml->getChildByName("Programs");
+            const auto* program=programs?programs->getChildByName("K2_Program"):nullptr;
+            if(!program||program->getNextElementWithTagName("K2_Program"))fail("Only single-program legacy Kontakt mappings are supported.");
+            groups=program->getChildByName("Groups");top=values(*program);
+            warnings.insert("Kontakt legacy XML mapping subset; scripts, group start conditions, modulators, effects, envelopes and native Kontakt tuning curves are not emulated.");
+        }
+        else
+        {
+            groups=xml->getChildByName("groups");
+            if(groups&&groups->getNextElementWithTagName("groups"))fail("Multiple Decent Sampler groups containers.");
+            if(groups)top=attrs(*groups);
+            warnings.insert("Decent Sampler UI bindings, effects, modulation, velocity response and envelope shapes are not reproduced; native equivalents are used.");
+        }
+        if(!groups)fail("Instrument has no supported groups.");
+        Instrument converted;converted.name=input.getFileNameWithoutExtension().substring(0,120);
+        converted.settings.gainDb=0;converted.groups.clear();
+        int playable=0,missing=0,omitted=0,streamed=0,seen=0,groupIndex=0;
+        std::map<String,int> groupIds;
+        struct Sequence{int length=0;std::map<int,int> positions;};
+        std::map<String,Sequence> sequences;
+        for(auto* group=groups->getFirstChildElement();group;group=group->getNextElement())
+        {
+            if(!group->hasTagName(kontakt?"K2_Group":"group"))continue;
+            ++groupIndex;
+            const auto ga=kontakt?values(*group):attrs(*group);
+            const auto* zones=kontakt?group->getChildByName("Zones"):group;
+            if(!zones)continue;
+            for(auto* node=zones->getFirstChildElement();node;node=node->getNextElement())
+            {
+                if(aborted())fail("Import cancelled.");
+                if(!node->hasTagName(kontakt?"Zone":"sample"))
+                {if(node->hasTagName("oscillator")){++omitted;warnings.insert("Generated oscillator omitted.");}continue;}
+                if(++seen>maxZones)fail("Instrument exceeds Studio's 128-region limit; no partial conversion.");
+                const auto za=kontakt?values(*node):attrs(*node);
+                Attr a=top;overlay(a,ga);overlay(a,za);
+                SampleZone e;auto& z=e.mapping;auto& x=z.sfz;x.enabled=true;
+                Group g;
+                std::string seqMode="always";int seqLength=0,seqPosition=1;
+                std::string path;
+                const auto frameMax=std::numeric_limits<int>::max()-2;
+                if(kontakt)
+                {
+                    // Explicit legacy XML group start rules are not evaluated.
+                    if(group->getChildByName("StartOptions")||group->getChildByName("GroupStartOptions")||group->getChildByName("StartConditions")||
+                       boolean(a,"reverse",false))
+                    {++omitted;warnings.insert("Kontakt start-condition or reverse group omitted.");continue;}
+                    path=get(za,"sampleFile");
+                    z.root=integer(za,"rootKey",60,0,127);z.low=integer(za,"lowKey",0,0,127);z.high=integer(za,"highKey",127,0,127);
+                    z.soft=std::max(1,integer(za,"lowVelo",0,0,127));z.hard=integer(za,"highVelo",127,0,127);
+                    for(const Attr* level:std::array<const Attr*,2>{&top,&ga})
+                    {
+                        z.low=std::max(z.low,integer(*level,"lowKey",0,0,127));z.high=std::min(z.high,integer(*level,"highKey",127,0,127));
+                        z.soft=std::max(z.soft,integer(*level,"lowVelocity",0,0,127));z.hard=std::min(z.hard,integer(*level,"highVelocity",127,0,127));
+                    }
+                    z.gainDb=static_cast<float>(std::clamp(db(top,"volume")+db(ga,"volume")+db(za,"zoneVolume"),-60.0,12.0));
+                    if(db(top,"volume")<=-120||db(ga,"volume")<=-120||db(za,"zoneVolume")<=-120){++omitted;continue;}
+                    x.keyTrack=boolean(a,"keyTracking",true)?100:0;
+                    g.releaseTrigger=boolean(a,"releaseTrigger",false);
+                    z.oneShot=g.releaseTrigger;
+                    z.start=integer(za,"sampleStart",0,0,frameMax);z.end=integer(za,"sampleEnd",0,0,frameMax);
+                    const int mode=integer(za,"loopMode",0,0,2);
+                    z.loop=mode!=0&&!z.oneShot;x.sustainLoop=mode==1;
+                    z.loopStart=integer(za,"loopStart",0,0,frameMax);z.loopEnd=integer(za,"loopEnd",0,0,frameMax);
+                    x.attack=converted.settings.attack;x.decay=converted.settings.decay;x.sustain=converted.settings.sustain;x.release=converted.settings.release;
+                    warnings.insert("Kontakt tuning/pan and loop endpoint conventions vary by writer; pitch/pan adjustments are not converted in this initial subset.");
+                    if(get(za,"zoneTune","1")!="1"||a.count("tune"))warnings.insert("Kontakt tuning fields require reference-player comparison.");
+                }
+                else
+                {
+                    const auto trigger=get(a,"trigger","attack");seqMode=get(a,"seqMode","always");
+                    bool unsupported=trigger!="attack"&&trigger!="release";
+                    unsupported|=get(a,"sampleMode","normal")!="normal"||boolean(a,"retriggerEnabled",false)||
+                        boolean(a,"reverse",false)||num(a,"delay",0,0,100000)>0||a.count("silencedByTags")||
+                        a.count("loHoldTime")||a.count("hiHoldTime")||num(a,"glideTime",0,0,100)>0;
+                    unsupported|=seqMode!="always"&&seqMode!="round_robin";
+                    unsupported|=integer(top,"globalTranspose",0,-48,48)!=0||integer(ga,"transpose",0,-48,48)!=0;
+                    std::set<int> cc;
+                    for(const auto& [k,v]:a)
+                    {
+                        if(k.rfind("onLoCC",0)==0||k.rfind("onHiCC",0)==0)unsupported=true;
+                        if(k.rfind("loCC",0)==0||k.rfind("hiCC",0)==0)
+                        {auto n=sfz::integer(std::string_view(k).substr(4));if(!n||*n<0||*n>=120)unsupported=true;else cc.insert(*n);}
+                    }
+                    if(cc.size()>1)unsupported=true;
+                    const int loCh=integer(a,"loChannel",1,1,16),hiCh=integer(a,"hiChannel",16,1,16);
+                    if(loCh==hiCh)g.channel=loCh;else if(loCh!=1||hiCh!=16)unsupported=true;
+                    if(unsupported){++omitted;warnings.insert("Unsupported Decent trigger, sequence, transpose, stretch or gating rule omitted.");continue;}
+                    if(!cc.empty())
+                    {
+                        const auto suffix=std::to_string(*cc.begin());
+                        if(!a.count("loCC"+suffix)||!a.count("hiCC"+suffix))fail("Incomplete Decent CC condition.");
+                        g.trigger=GroupTrigger::controller;g.controller=*cc.begin();
+                        g.ccLow=integer(a,"loCC"+suffix,0,0,127);g.ccHigh=integer(a,"hiCC"+suffix,127,0,127);
+                    }
+                    path=get(za,"path");
+                    if(!a.count("rootNote"))fail("Decent sample missing rootNote.");
+                    z.root=integer(a,"rootNote",60,0,127);z.low=integer(a,"loNote",0,0,127);z.high=integer(a,"hiNote",127,0,127);
+                    z.soft=std::max(1,integer(a,"loVel",0,0,127));z.hard=integer(a,"hiVel",127,0,127);
+                    const auto globalGain=db(top,top.count("globalVolume")?"globalVolume":"volume");
+                    const auto groupGain=db(ga,ga.count("groupVolume")?"groupVolume":"volume");
+                    const auto sampleGain=db(za,"volume");
+                    const auto gain=globalGain+groupGain+sampleGain;
+                    if(globalGain<=-120||groupGain<=-120||sampleGain<=-120){++omitted;continue;}
+                    if(gain< -60||gain>12)warnings.insert("Combined Decent sample gain limited to native range.");
+                    z.gainDb=static_cast<float>(std::clamp(gain,-60.0,12.0));
+                    x.pan=static_cast<float>(std::clamp(num(a,"pan",0,-100,100)+num(ga,"groupPan",0,-100,100)+num(top,"globalPan",0,-100,100),-100.0,100.0));
+                    const auto track=num(a,"pitchKeyTrack",1,0,1);x.keyTrack=roundToInt(track*100);
+                    const auto tune=(num(top,"globalTuning",0,-48,48)+num(ga,"groupTuning",0,-48,48)+num(a,"tuning",0,-48,48))*(boolean(a,"tuningIgnoresKeyTrack",false)?1:track);
+                    x.transpose=static_cast<int>(tune);z.cents=static_cast<float>((tune-x.transpose)*100);
+                    x.velocityTrack=static_cast<float>(100*num(a,"ampVelTrack",1,0,1));
+                    const auto env=[&](const char* alias,const char* key,double fallback,double hi)
+                    {return static_cast<float>(num(a,a.count(alias)?alias:key,fallback,0,hi));};
+                    x.attack=env("ampEnvAttack","attack",converted.settings.attack,100);
+                    x.decay=env("ampEnvDecay","decay",converted.settings.decay,100);
+                    x.sustain=env("ampEnvSustain","sustain",1,1);
+                    x.release=env("ampEnvRelease","release",converted.settings.release,100);
+                    g.mute=!boolean(a,"enabled",true);g.releaseTrigger=trigger=="release";
+                    z.oneShot=!boolean(a,"ampEnvEnabled",true)||g.releaseTrigger;
+                    if(!boolean(a,"ampEnvEnabled",true)){x.attack=0;x.decay=0;x.sustain=1;}
+                    z.start=integer(a,"start",0,0,frameMax);
+                    z.end=a.count("end")?integer(a,"end",0,0,frameMax)+1:0;
+                    z.loop=boolean(a,"loopEnabled",false)&&!z.oneShot;x.sustainLoop=!boolean(a,"loopDuringRelease",true);
+                    z.loopStart=integer(a,"loopStart",0,0,frameMax);
+                    z.loopEnd=a.count("loopEnd")?integer(a,"loopEnd",0,0,frameMax)+1:0;
+                    z.loopCrossfade=integer(a,"loopCrossfade",0,0,1000000);
+                    if(z.loopCrossfade&&get(a,"loopCrossfadeMode","equal_power")!="linear")warnings.insert("Equal-power loop crossfade approximated by native linear crossfade.");
+                    if(seqMode=="round_robin"){seqLength=integer(a,"seqLength",0,0,128);seqPosition=integer(a,"seqPosition",1,1,128);}
+                }
+                if(z.low>z.high||z.soft>z.hard){++omitted;continue;}
+                if(path.empty())fail("Sample path missing.");
+                const auto name=String(path).replaceCharacter('\\','/');
+                if(name.containsChar(':'))fail("Unsupported encoded or drive-relative sample reference.");
+                e.file=File::isAbsolutePath(name)?File(name):definition.getParentDirectory().getChildFile(name);
+                if(media.directory!=File()&&!e.file.isAChildOf(media.directory))fail("Archive preset refers outside extracted library.");
+                if(!e.file.hasFileExtension("wav;wave;aif;aiff;aifc;caf;flac"))
+                    e.problem="Unsupported sample encoding (protected/NCW/embedded audio not supported)";
+                else
+                {
+                    const auto reuse=[&](const auto& old){return currentSample(old,e.file);};
+                    auto found=std::find_if(converted.zones.begin(),converted.zones.end(),reuse);
+                    if(found!=converted.zones.end())z.sample=found->mapping.sample;
+                    else if(auto old=std::find_if(cache.zones.begin(),cache.zones.end(),reuse);old!=cache.zones.end()&&old->mapping.sample->bytes()<=maxBankBytes-sampleBytes(converted))z.sample=old->mapping.sample;
+                    else if(auto r=readSample(e.file,maxBankBytes-sampleBytes(converted),z.sample,cancelled);r.failed())e.problem=r.getErrorMessage();
+                }
+                if(z.sample)
+                {
+                    const int frames=z.sample->frameCount();
+                    if(z.start>=frames||z.end>frames)fail("Sample trim exceeds recording length.");
+                    if(z.loop)
+                    {
+                        if(!kontakt&&!a.count("loopStart")&&z.sample->embeddedLoopStart>=0)z.loopStart=z.sample->embeddedLoopStart;
+                        if(z.loopEnd==0)z.loopEnd=z.sample->embeddedLoopEnd>0?z.sample->embeddedLoopEnd:(z.end?z.end:frames);
+                        if(!validLoop(z,frames))fail("Invalid imported sample loop.");
+                    }
+                    else z.loopEnd=frames;
+                    if(!primeZone(z))fail("Cannot prime streamed recording.");
+                    ++playable;if(z.sample->stream)++streamed;
+                }
+                else
+                {
+                    ++missing;warnings.insert(e.file.getFullPathName().toStdString()+": "+e.problem.toStdString());
+                    if(z.loop&&z.loopEnd<=z.loopStart+1){z.loop=false;x.sustainLoop=false;warnings.insert("Unavailable sample has unresolved loop; restore after locating it.");}
+                }
+                if((z.end&&z.end<=z.start)||!validMapping(z)||!validGroup(g))fail("Imported mapping exceeds native sampler limits.");
+                const String groupKey=String(groupIndex)+":"+String(static_cast<int>(g.trigger))+":"+String(g.controller)+":"+String(g.ccLow)+":"+String(g.ccHigh)+":"+String(g.channel)+":"+String(int(g.releaseTrigger))+":"+String(int(g.mute));
+                auto existing=groupIds.find(groupKey);
+                if(existing==groupIds.end())
+                {
+                    if(converted.groups.size()>=maxGroups)fail("Instrument exceeds Studio's 16 group limit.");
+                    g.id=static_cast<int>(converted.groups.size());
+                    auto label=group->getStringAttribute("name","Group "+String(groupIndex));
+                    converted.groups.push_back({g.id,label.substring(0,120),g});groupIds.emplace(groupKey,g.id);e.folder=g.id;
+                }
+                else e.folder=existing->second;
+                z.folder=e.folder;
+                if(seqMode=="round_robin")
+                {
+                    if(g.releaseTrigger||g.mute)fail("Disabled or release-triggered round robin is not representable.");
+                    const auto key=String(z.low)+":"+String(z.high)+":"+String(z.soft)+":"+String(z.hard)+":"+String(static_cast<int>(g.trigger))+":"+String(g.controller)+":"+String(g.ccLow)+":"+String(g.ccHigh)+":"+String(g.channel);
+                    auto& seq=sequences[key];
+                    if(seq.length&&seqLength&&seq.length!=seqLength)fail("Conflicting round-robin lengths.");
+                    if(seqLength)seq.length=seqLength;
+                    if(!seq.positions.emplace(seqPosition,static_cast<int>(converted.zones.size())).second)fail("Overlapping round-robin layers not representable.");
+                }
+                converted.zones.push_back(std::move(e));
+                if(progress)progress->store(std::min(95,seen*95/maxZones));
+            }
+        }
+        if(aborted())fail("Import cancelled.");
+        if(!playable){std::string reason="No playable accessible recordings found.\n";for(const auto& w:warnings)reason+=w+"\n";fail(reason);}
+        if(sequences.size()>maxGroups)fail("Too many independent round-robin sequences.");
+        if(!sequences.empty())
+        {
+            std::vector<SampleZone> ordered;std::set<int> used;int rr=0;
+            for(const auto& [key,seq]:sequences)
+            {
+                const int length=seq.length?seq.length:static_cast<int>(seq.positions.size());
+                if(length!=static_cast<int>(seq.positions.size()))fail("Incomplete round-robin sequence.");
+                int position=1;++rr;
+                for(const auto& [p,index]:seq.positions)
+                {
+                    if(p!=position++)fail("Nonconsecutive round-robin positions.");
+                    auto& e=converted.zones[static_cast<std::size_t>(index)];
+                    if(!e.mapping.sample)fail("Round robin has missing sample; locate all members before conversion.");
+                    e.mapping.group=rr;used.insert(index);ordered.push_back(std::move(e));
+                }
+            }
+            for(int i=0;i<static_cast<int>(converted.zones.size());++i)if(!used.count(i))ordered.push_back(std::move(converted.zones[static_cast<std::size_t>(i)]));
+            converted.zones=std::move(ordered);
+            warnings.insert("Round robin uses native matched-range sequence counters.");
+        }
+        if(input.getSize()!=originalSize||input.getLastModificationTime()!=originalTime)fail("Source definition changed during import.");
+        report=String(kontakt?"Legacy Kontakt XML: ":"Decent Sampler: ")+converted.name+"\n"+
+            String(playable)+" playable regions | "+String(streamed)+" streamed | "+String(missing)+" unavailable | "+String(omitted)+" omitted.\n"+
+            "Confirm to replace this instrument only. Original files unchanged.\n\nCompatibility notes:\n";
+        for(const auto& w:warnings)report+=String(w)+"\n";
+        if(media.directory!=File())report+="Retain extracted media: "+media.directory.getFullPathName()+"\n";
+        if(progress)progress->store(100);
+        next=std::move(converted);return Result::ok();
+    }
+    catch(const std::exception& e){return Result::fail("Instrument conversion: "+String(e.what()));}
 }
 
 Result Plugin::catalogSoundBank (const File& file, std::vector<BankProgram>& output, std::atomic<bool>* cancelled)
