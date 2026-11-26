@@ -324,6 +324,15 @@ void InstrumentBrowser::setLoadContext (bool ready, String name, String restrict
     updateDetails();
 }
 
+void InstrumentBrowser::browseAppleEffects()
+{
+    collection = Collection::appleEffects;
+    libraryView.setSelectedId (3, dontSendNotification);
+    family = "All Instruments";
+    type = "All Types";
+    rebuildCatalog();
+}
+
 void InstrumentBrowser::setStatus (const String& message)
 {
     statusMessage = message;
