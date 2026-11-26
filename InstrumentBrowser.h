@@ -57,6 +57,7 @@ private:
         juce::String getNameForRow (int) override;
         void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
         void selectedRowsChanged (int) override;
+        void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
         InstrumentBrowser& browser;
         Kind kind;
     };
