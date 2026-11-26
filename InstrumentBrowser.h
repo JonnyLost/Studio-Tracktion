@@ -19,15 +19,18 @@ public:
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     std::function<void(const juce::PluginDescription&)> insertAppleEffect;
+    std::function<void(const juce::PluginDescription&, int gmProgram, bool newTrack)> loadGeneralMidi;
     // Browse only the actual programs exposed by the *loaded* Audio Unit.
     // Never substitute a fictitious GM list for a bank the AU cannot open.
     std::function<void(const juce::PluginDescription&, juce::Component&)> browseApplePrograms;
     std::function<void(const juce::PluginDescription&)> openLoadedAppleEditor;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction,
                          bool samplerOnTrack = false, bool synthOnTrack = false,
-                         bool canInsertEffect = false, juce::String hostedAppleIdentifier = {});
+                         bool canInsertEffect = false, juce::String hostedAppleIdentifier = {},
+                         int selectedGmProgram = -1);
     void setStatus (const juce::String&);
     void browseAppleEffects();
+    void browseGeneralMidi();
     void appearanceChanged();
     int minimumContentHeight (int width) const;
     void resized() override;
@@ -43,6 +46,7 @@ private:
         juce::String key, name, family, type, vendor, description;
         juce::PluginDescription plugin;
         bool available = false, effect = false, apple = false;
+        int gmProgram = -1; // MIDI 0-127, -1 means native AU entry rather than a GM sound
     };
 
     struct Rows final : juce::ListBoxModel
@@ -53,6 +57,7 @@ private:
         juce::String getNameForRow (int) override;
         void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
         void selectedRowsChanged (int) override;
+        void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
         InstrumentBrowser& browser;
         Kind kind;
     };
@@ -73,6 +78,7 @@ private:
     Collection collection = Collection::instruments;
     bool canCreate = false, samplerOnTarget = false, synthOnTarget = false;
     bool canInsertEffect = false, refreshing = false, compact = false;
+    int currentGmProgram = -1;
     Rows familyRows { *this, Rows::families }, typeRows { *this, Rows::types }, resultRows { *this, Rows::results };
     juce::ListBox familyList, typeList, resultList;
     juce::ComboBox compactFamily, compactType, libraryView;

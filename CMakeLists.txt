@@ -726,7 +726,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
@@ -746,6 +746,8 @@ target_link_libraries(Studio PRIVATE
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
+    # The Apple DLS bridge calls MusicDeviceMIDIEvent in AudioToolbox.
+    target_link_libraries(Studio PRIVATE "-framework AudioToolbox")
     target_compile_options(Studio PRIVATE "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-aligned-allocation>")
     set_target_properties(Studio PROPERTIES LINKER_LANGUAGE CXX)
     set(CMAKE_Swift_LANGUAGE_VERSION 5)
@@ -807,6 +809,11 @@ if(BUILD_TESTING)
         add_dependencies(StudioSynthValidation "${target}")
         add_test(NAME "${target}" COMMAND "${target}")
     endforeach()
+    add_executable(StudioGeneralMidiBankTests tests/GeneralMidiBankTests.cpp)
+    target_compile_features(StudioGeneralMidiBankTests PRIVATE cxx_std_20)
+    target_compile_options(StudioGeneralMidiBankTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioGeneralMidiBank COMMAND StudioGeneralMidiBankTests)
+
     add_executable(StudioKeyboardPerformanceStateTests tests/KeyboardPerformanceStateTests.cpp)
     target_compile_features(StudioKeyboardPerformanceStateTests PRIVATE cxx_std_20)
     target_compile_options(StudioKeyboardPerformanceStateTests PRIVATE -UNDEBUG)
@@ -872,6 +879,10 @@ if(BUILD_TESTING)
     add_test(NAME StudioAdaptiveWorkspace COMMAND $<TARGET_FILE:Studio> --studio-adaptive-workspace-review)
     set_tests_properties(StudioAdaptiveWorkspace PROPERTIES TIMEOUT 150)
     add_test(NAME StudioInstrumentWorkspace COMMAND $<TARGET_FILE:Studio> --studio-instrument-workspace-review)
+    if(APPLE)
+        add_test(NAME StudioDlsPlayback COMMAND $<TARGET_FILE:Studio> --studio-test-dls-playback)
+        set_tests_properties(StudioDlsPlayback PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
     set_tests_properties(StudioInstrumentWorkspace PROPERTIES TIMEOUT 120)
     add_test(NAME StudioInterfaceReview COMMAND $<TARGET_FILE:Studio> --studio-interface-review)
     set_tests_properties(StudioInterfaceReview PROPERTIES TIMEOUT 120)

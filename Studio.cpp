@@ -30,6 +30,8 @@ using namespace tracktion::literals;
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
 #include "StudioSynth.h"
+#include "StudioGeneralMidi.h"
+#include <cstdint>
 #include "InstrumentWorkspace.h"
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
@@ -356,6 +358,9 @@ public:
     int runSeatingProjectReview (const File& output);
     int runUnifiedStageReview (const File& output);
     int runFilmScoringReview (const File& output);
+   #if JUCE_MAC
+    int runDlsPlaybackReview();
+   #endif
    #endif
 
     StudioView()
@@ -2216,9 +2221,12 @@ private:
         te::EditItemID destination;
         bool addTrack = false, instrument = false;
         uint32 startedAt = 0;
+        int gmProgram = -1; // deferred Apple DLS Program Change, not a generic AU preset
     };
 
     std::optional<PendingPlugin> pendingPlugin;
+    StringPairArray appliedDlsPrograms; // id -> queued program + AU/context identity
+    StringPairArray settlingDlsPrograms; // wait for a stable playback graph before enqueueing
     uint64 projectGeneration = 0;
     unsigned workspaceTicks = 0;
     StudioMidiMonitor monitor;
@@ -3542,6 +3550,7 @@ private:
         // available and have had a short settling interval (not audio callback).
         maybeAutoRestoreAria();
         completePendingPlugin();
+        restoreDlsPrograms();
         updateWavExport();
         filmWorkspace.tick();
         // AVKit is embedded as a native view. Track its screen bounds for tooltips.
@@ -4184,6 +4193,8 @@ private:
         seatingWorkspace.setEdit (nullptr);
        #endif
         ++projectGeneration;
+        appliedDlsPrograms.clear();
+        settlingDlsPrograms.clear();
         cycleAnchor.reset();
         edit = std::move (next);
         music.setEdit (edit.get());
@@ -4614,6 +4625,105 @@ private:
         return true;
     }
 
+
+    // DLS patch selection must travel through the same Tracktion/JUCE MIDI
+    // render path as notes. Direct MusicDeviceMIDIEvent on the UI thread can
+    // report noErr without applying the patch heard in the next audio block.
+    static bool isAppleDls (const te::ExternalPlugin& plugin)
+    {
+        return plugin.isAU() && plugin.desc.manufacturerName.containsIgnoreCase ("Apple")
+            && plugin.desc.name.containsIgnoreCase ("DLSMusicDevice");
+    }
+
+    static void queueDlsProgram (te::AudioTrack& track, int index)
+    {
+        // A browser-selected GM instrument is one melodic sound per track.
+        // Initialize every melodic channel so clips or controllers on channels
+        // other than 1 cannot silently play the default piano. Channel 10 is
+        // reserved for drums. Do not continually reset expression or bend.
+        studio::gm::emitSelection (index, [&track] (studio::gm::SelectionMessage packet)
+        {
+            const juce::uint8 bytes[] { static_cast<juce::uint8> (packet.status),
+                static_cast<juce::uint8> (packet.data1), static_cast<juce::uint8> (packet.data2) };
+            track.injectLiveMidiMessage (MidiMessage (bytes, packet.size, 0.0), {});
+        });
+    }
+
+    bool selectDlsProgram (te::ExternalPlugin& plugin, int index, bool updateStoredState)
+    {
+        if (edit == nullptr || ! studio::gm::valid (index) || ! isAppleDls (plugin)
+            || busy || edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+            return false;
+        auto* track = dynamic_cast<te::AudioTrack*> (plugin.getOwnerTrack());
+        if (track == nullptr || track->isFrozen (te::Track::anyFreeze)) return false;
+        if (updateStoredState)
+        {
+            edit->getUndoManager().beginNewTransaction ("Select General MIDI instrument");
+            plugin.state.setProperty (Identifier ("studioDlsGmProgram"), index,
+                                      &edit->getUndoManager());
+        }
+        const auto key = plugin.state.getProperty ("id").toString();
+        if (key.isNotEmpty())
+        {
+            appliedDlsPrograms.remove (key);
+            settlingDlsPrograms.remove (key);
+        }
+        // Save intent now; the timer queues actual MIDI once the graph is ready.
+        return true;
+    }
+
+    void restoreDlsPrograms()
+    {
+        if (edit == nullptr || busy || ariaReviewPending
+            || edit->getTransport().isPlaying() || edit->getTransport().isRecording())
+            return;
+        auto* context = edit->getTransport().getCurrentPlaybackContext();
+        if (context == nullptr)
+        {
+            appliedDlsPrograms.clear();
+            settlingDlsPrograms.clear();
+            return;
+        }
+
+        for (auto* track : te::getAudioTracks (*edit))
+            for (auto* item : track->pluginList.getPlugins())
+                if (auto* dls = dynamic_cast<te::ExternalPlugin*> (item))
+                {
+                    if (! isAppleDls (*dls)
+                        || ! dls->isEnabled() || track->isFrozen (te::Track::anyFreeze)
+                        || ! dls->state.hasProperty (Identifier ("studioDlsGmProgram"))) continue;
+                    const int index = (int) dls->state.getProperty (Identifier ("studioDlsGmProgram"));
+                    const auto key = dls->state.getProperty ("id").toString();
+                    auto* instance = dls->getAudioPluginInstance();
+                    if (key.isEmpty() || ! studio::gm::valid (index)) continue;
+                    if (instance == nullptr || instance->getSampleRate() <= 0 || instance->getBlockSize() <= 0)
+                    {
+                        appliedDlsPrograms.remove (key);
+                        settlingDlsPrograms.remove (key);
+                        continue;
+                    }
+
+                    // An AU can be recreated on reopen or when the audio
+                    // device changes. Never reuse a dispatch stamp across
+                    // those instances. Two timer passes let graph insertion
+                    // settle before using its live MIDI input node.
+                    const auto stamp = String (index) + ":" + String::toHexString (
+                        static_cast<juce::int64> (reinterpret_cast<std::uintptr_t> (instance)))
+                        + ":" + String::toHexString (
+                        static_cast<juce::int64> (reinterpret_cast<std::uintptr_t> (context)))
+                        + ":" + String (instance->getSampleRate()) + ":" + String (instance->getBlockSize());
+                    if (appliedDlsPrograms.getValue (key, {}) == stamp) continue;
+                    if (settlingDlsPrograms.getValue (key, {}) != stamp)
+                    {
+                        settlingDlsPrograms.set (key, stamp);
+                        continue;
+                    }
+                    queueDlsProgram (*track, index);
+                    appliedDlsPrograms.set (key, stamp);
+                    settlingDlsPrograms.remove (key);
+                }
+    }
+
     // Apple's installed Audio Unit may expose a factory sound bank through its
     // native program API. Enumerate the *actual* names; no invented DLS,
     // GarageBand, Logic or EXS patches are presented as playable.
@@ -4629,6 +4739,16 @@ private:
             || au->getAudioPluginInstance() == nullptr)
         {
             pluginStatus ("Load this Apple instrument on the selected track to browse its programs.");
+            return;
+        }
+        if (isAppleDls (*au))
+        {
+            // The Apple DLS synth exposes General MIDI using MIDI program
+            // change, not necessarily the AU's getNumPrograms() interface.
+            showWorkspace (Workspace::instruments);
+            browser.browseGeneralMidi();
+            pluginStatus ("Choose any General MIDI instrument in Apple Sounds. "
+                         "Double-click or use Select GM Sound to hear it.");
             return;
         }
 
@@ -4706,6 +4826,32 @@ private:
     void configureInstrumentWorkflow()
     {
         browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
+        browser.loadGeneralMidi = [this] (const PluginDescription& description, int gmProgram, bool newTrack)
+        {
+            if (! studio::gm::valid (gmProgram)) return;
+            if (busy || ! canInsertPlugin())
+            {
+                pluginStatus ("Stop playback or recording before changing a General MIDI instrument.");
+                return;
+            }
+            auto* selected = workflowTrack();
+            if (! newTrack && selected != nullptr)
+                if (auto* dls = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*selected)))
+                    if (isAppleDls (*dls))
+                    {
+                        if (selectDlsProgram (*dls, gmProgram, true))
+                            pluginStatus ("Queued GM " + String (studio::gm::displayNumber (gmProgram))
+                                + ": " + studio::gm::name (gmProgram) + " on " + selected->getName()
+                                + ". Save the project to keep this sound.");
+                        else
+                            pluginStatus ("Could not select the GM sound in Apple DLSMusicDevice.");
+                        return;
+                    }
+            // When no DLS instance is on this track, use Studio's existing
+            // async Audio Unit loader with the requested GM program attached.
+            startExternalPlugin (description, selected != nullptr ? selected->itemID : te::EditItemID {},
+                                 newTrack, true, gmProgram);
+        };
         browser.insertAppleEffect = [this] (const PluginDescription& effect)
         {
             if (auto* target = workflowTrack(); target != nullptr)
@@ -4958,16 +5104,22 @@ private:
             const bool hasSynth = target != nullptr && ! busy
                 && dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)) != nullptr;
             String selectedAppleInstrument;
+            int currentGeneralMidi = -1;
             if (target != nullptr)
                 if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
                     if (hosted->isAU() && hosted->desc.manufacturerName.containsIgnoreCase ("Apple")
                         && hosted->getAudioPluginInstance() != nullptr)
+                    {
                         selectedAppleInstrument = hosted->desc.createIdentifierString();
+                        if (isAppleDls (*hosted)
+                            && hosted->state.hasProperty (Identifier ("studioDlsGmProgram")))
+                            currentGeneralMidi = (int) hosted->state.getProperty (Identifier ("studioDlsGmProgram"));
+                    }
             browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(),
                                     restriction, hasSampler, hasSynth,
                                     canInsertPlugin() && target != nullptr
                                         && ! target->isFrozen (te::Track::anyFreeze),
-                                    selectedAppleInstrument);
+                                    selectedAppleInstrument, currentGeneralMidi);
         }
         else if (workspace == Workspace::channel)
         {
@@ -5013,7 +5165,8 @@ private:
         message.setText (status, dontSendNotification);
     }
 
-    void startExternalPlugin (PluginDescription description, te::EditItemID target, bool addNew, bool instrument)
+    void startExternalPlugin (PluginDescription description, te::EditItemID target, bool addNew,
+                              bool instrument, int gmProgram = -1)
     {
         if (! canInsertPlugin())
         {
@@ -5048,7 +5201,7 @@ private:
                 pluginStatus ("Could not create " + description.name + ".");
                 return;
             }
-            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter() };
+            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter(), gmProgram };
             plugin->initialiseFully();
         }
         completePendingPlugin();
@@ -5079,10 +5232,12 @@ private:
             pluginStatus (plugin.getName() + " could not be loaded. " + plugin.getLoadError());
             return;
         }
-        commitPlugin (requested.plugin, requested.destination, requested.addTrack, requested.instrument);
+        commitPlugin (requested.plugin, requested.destination, requested.addTrack,
+                      requested.instrument, requested.gmProgram);
     }
 
-    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew, bool instrument)
+    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew,
+                       bool instrument, int gmProgram = -1)
     {
         if (! canInsertPlugin() || plugin == nullptr) return;
         auto* track = trackById (target);
@@ -5104,7 +5259,8 @@ private:
                 return;
             }
             track = newTrack.get();
-            track->setName (plugin->getName());
+            track->setName (studio::gm::valid (gmProgram)
+                ? String (studio::gm::name (gmProgram)) : plugin->getName());
         }
 
         const auto* volume = track->getVolumePlugin();
@@ -5118,6 +5274,33 @@ private:
             return;
         }
         if (newTrack != nullptr) selection.selectOnly (track);
+        if (studio::gm::valid (gmProgram))
+        {
+            if (auto* dls = dynamic_cast<te::ExternalPlugin*> (plugin.get());
+                dls != nullptr && selectDlsProgram (*dls, gmProgram, true))
+            {
+                pluginStatus ("Loaded DLSMusicDevice; queued GM " + String (studio::gm::displayNumber (gmProgram))
+                             + ": " + studio::gm::name (gmProgram)
+                             + " on " + track->getName() + ".");
+                return;
+            }
+            // An AU can finish asynchronous initialization after Tracktion
+            // has inserted it. Persist the requested program as a retryable
+            // intent; restoreDlsPrograms applies it when the AU is ready.
+            if (auto* dls = dynamic_cast<te::ExternalPlugin*> (plugin.get());
+                dls != nullptr && isAppleDls (*dls))
+            {
+                dls->state.setProperty (Identifier ("studioDlsGmProgram"), gmProgram,
+                                        &edit->getUndoManager());
+                pluginStatus ("Loaded DLSMusicDevice. Applying GM "
+                             + String (studio::gm::displayNumber (gmProgram))
+                             + ": " + studio::gm::name (gmProgram)
+                             + " when the Audio Unit is ready.");
+            }
+            else
+                pluginStatus ("Could not initialize the requested GM instrument.");
+            return;
+        }
         auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
         if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
@@ -5460,6 +5643,7 @@ static bool hasArrangementRegion (const Component& component)
 }
 
 #include "tests/AdaptiveWorkspaceReview.inc"
+#include "tests/DlsPlaybackReview.inc"
 
 int StudioView::runUnifiedStageReview (const File& output)
 {
@@ -5934,7 +6118,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (! snapshot (*this, "synth-preset-browser")) return fail ("capture preset browser");
     synthEditor->restoreView ("1,0");
 
-    AudioBuffer<float> audio (2, 256);
+    juce::AudioBuffer<float> audio (2, 256);
     MidiBuffer midi;
     edit->dispatchPendingUpdatesSynchronously();
     edit->getTransport().ensureContextAllocated (true);
@@ -5978,7 +6162,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         std::unique_ptr<OutputStream> stream = sample.createOutputStream();
         auto wave = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000).withNumChannels (1).withBitsPerSample (16));
         if (! wave) return false;
-        AudioBuffer<float> signal (1, 96000);
+        juce::AudioBuffer<float> signal (1, 96000);
         for (int t = 0; t < signal.getNumSamples(); ++t)
         {
             const float second = t / 48000.0f;
@@ -6251,7 +6435,7 @@ int StudioView::runInterfaceReview (const File& output)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {
             applyAppearance (scale, text, false);
-            for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1536, 960) })
+            for (const auto size : { juce::Point<int> (1024, 640), juce::Point<int> (1280, 800), juce::Point<int> (1536, 960) })
             {
                 setSize (size.x, size.y);
                 auto previous = Rectangle<int>();
@@ -6288,7 +6472,7 @@ int StudioView::runInterfaceReview (const File& output)
                     const auto end = start.translated (0.0f, (float) -distance);
                     const auto time = Time::getCurrentTime();
                     const auto source = Desktop::getInstance().getMainMouseSource();
-                    const auto event = [&] (Point<float> point, int flags, bool moved)
+                    const auto event = [&] (juce::Point<float> point, int flags, bool moved)
                     {
                         return MouseEvent (source, point, ModifierKeys (flags), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                            &workspaceDivider, &workspaceDivider, time, start, time, 1, moved);
@@ -6576,6 +6760,15 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        #if JUCE_MAC
+        if (commandLine == "--studio-test-dls-playback")
+        {
+            StudioView view;
+            setApplicationReturnValue (view.runDlsPlaybackReview());
+            quit();
+            return;
+        }
+        #endif
         if (commandLine == "--studio-test-film-scoring-workspace")
         {
             StudioView view;

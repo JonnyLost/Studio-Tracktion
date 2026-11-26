@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentBrowser.h"
 #include "StudioSynth.h"
+#include "StudioGeneralMidi.h"
 #include "StudioUI.h"
 #include <algorithm>
+#include <optional>
 
 using namespace juce;
 
@@ -192,12 +194,15 @@ void InstrumentBrowser::rebuildCatalog()
 {
     entries.clear();
     bool hasAria = false;
+    std::optional<PluginDescription> dls;
     for (const auto& plugin : known.getTypes())
     {
         if (plugin.pluginFormatName != "AudioUnit") continue;
         const bool aria = isAria (plugin);
         const bool apple = ! aria && plugin.manufacturerName.containsIgnoreCase ("Apple");
         const bool effect = apple && ! plugin.isInstrument;
+        if (apple && plugin.isInstrument && plugin.name.containsIgnoreCase ("DLSMusicDevice"))
+            dls = plugin;
         if (! plugin.isInstrument && ! aria && ! effect) continue;
         hasAria |= aria;
         const String type = plugin.category.isNotEmpty()
@@ -211,6 +216,19 @@ void InstrumentBrowser::rebuildCatalog()
                       : "Scanned Audio Unit instrument.",
             plugin, true, effect, apple });
     }
+    // DLSMusicDevice is a General MIDI sound bank, not just a generic
+    // AU editor. Offer its real 128 GM1 program numbers as library entries.
+    // These are named GM slots in the standard Apple bank; they are not
+    // claims about patches in custom SF2/DLS files.
+    if (dls.has_value())
+        for (int index = 0; index < 128; ++index)
+            entries.push_back ({ "apple-dls-gm-" + String (index),
+                String (gm::displayNumber (index)).paddedLeft ('0', 3) + "  " + gm::name (index),
+                "Apple GM Sounds", gm::family (index), "Apple DLSMusicDevice | General MIDI",
+                "GM program " + String (gm::displayNumber (index))
+                    + " on MIDI channel 1. Load through the installed Apple DLSMusicDevice.",
+                *dls, true, false, true, index });
+
     if (! hasAria)
         entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan | Audio Unit",
                              "Install and scan the ARIA Audio Unit in Plug-ins.", {}, false });
@@ -232,7 +250,8 @@ void InstrumentBrowser::rebuildCatalog()
     families.add ("All Instruments");
     for (const auto& entry : entries)
         if ((collection == Collection::appleEffects) == entry.effect
-            && (collection != Collection::appleSounds || entry.apple))
+            && (collection != Collection::appleSounds || entry.apple)
+            && (collection != Collection::instruments || entry.gmProgram < 0))
             families.addIfNotAlreadyThere (entry.family);
     families.sortNatural();
     if (! families.contains (family) || family.isEmpty()) family = "All Instruments";
@@ -254,6 +273,7 @@ void InstrumentBrowser::rebuildTypes()
     for (const auto& entry : entries)
         if ((collection == Collection::appleEffects) == entry.effect
             && (collection != Collection::appleSounds || entry.apple)
+            && (collection != Collection::instruments || entry.gmProgram < 0)
             && (family == "All Instruments" || entry.family == family))
             types.addIfNotAlreadyThere (entry.type);
     types.sortNatural();
@@ -280,6 +300,7 @@ void InstrumentBrowser::rebuildResults()
         const auto& e = entries[i];
         if ((collection == Collection::appleEffects) != e.effect
             || (collection == Collection::appleSounds && ! e.apple)
+            || (collection == Collection::instruments && e.gmProgram >= 0)
             || (family != "All Instruments" && family != e.family)
             || (type != "All Types" && type != e.type)
             || (favouritesOnly && ! favouriteKeys.contains (e.key)))
@@ -309,16 +330,18 @@ const InstrumentBrowser::Entry* InstrumentBrowser::selected() const
 
 void InstrumentBrowser::setLoadContext (bool ready, String name, String restriction,
                                          bool samplerOnTrack, bool synthOnTrack,
-                                         bool effectReady, String loadedAppleId)
+                                         bool effectReady, String loadedAppleId, int selectedGmProgram)
 {
     if (canCreate == ready && targetName == name && targetRestriction == restriction
         && samplerOnTarget == samplerOnTrack && synthOnTarget == synthOnTrack
-        && canInsertEffect == effectReady && hostedAppleIdentifier == loadedAppleId) return;
+        && canInsertEffect == effectReady && hostedAppleIdentifier == loadedAppleId
+        && currentGmProgram == selectedGmProgram) return;
     canCreate = ready;
     samplerOnTarget = samplerOnTrack;
     synthOnTarget = synthOnTrack;
     canInsertEffect = effectReady;
     hostedAppleIdentifier = std::move (loadedAppleId);
+    currentGmProgram = selectedGmProgram;
     targetName = std::move (name);
     targetRestriction = std::move (restriction);
     updateDetails();
@@ -333,6 +356,15 @@ void InstrumentBrowser::browseAppleEffects()
     rebuildCatalog();
 }
 
+void InstrumentBrowser::browseGeneralMidi()
+{
+    collection = Collection::appleSounds;
+    libraryView.setSelectedId (2, dontSendNotification);
+    family = "Apple GM Sounds";
+    type = "All Types";
+    rebuildCatalog();
+}
+
 void InstrumentBrowser::setStatus (const String& message)
 {
     statusMessage = message;
@@ -343,7 +375,11 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
-    if (entry->effect)
+    if (entry->gmProgram >= 0)
+    {
+        if (loadGeneralMidi) loadGeneralMidi (entry->plugin, entry->gmProgram, newTrack);
+    }
+    else if (entry->effect)
     {
         if (! newTrack && canInsertEffect && insertAppleEffect)
             insertAppleEffect (entry->plugin);
@@ -381,28 +417,39 @@ void InstrumentBrowser::updateDetails()
     explanation.setTooltip (explanation.getText());
     const bool appleHosted = available && e->apple && ! e->effect
         && e->plugin.createIdentifierString() == hostedAppleIdentifier;
+    const bool gmEntry = available && e->gmProgram >= 0;
+    const bool gmOnTrack = gmEntry && appleHosted;
+    const bool gmSelected = gmOnTrack && currentGmProgram == e->gmProgram;
     const bool openNative = available && ((e->key == "studio-sampler" && samplerOnTarget)
         || (e->key.startsWith ("studio-synth-") && synthOnTarget));
     const bool effect = available && e->effect;
     load.setButtonText (effect ? "Insert Apple Effect"
-                               : appleHosted ? "Open Apple AU" : openNative ? "Open Instrument"
-                               : "Load on Selected Track");
-    load.setEnabled (effect ? canInsertEffect : appleHosted || openNative
+                               : gmSelected ? "Reselect GM Sound"
+                               : gmOnTrack ? "Select GM Sound"
+                               : gmEntry ? "Load GM Sound" : appleHosted ? "Open Apple AU"
+                               : openNative ? "Open Instrument" : "Load on Selected Track");
+    load.setEnabled (effect ? canInsertEffect : gmOnTrack
+                      ? canCreate : appleHosted || openNative
                       || (available && canCreate && targetRestriction.isEmpty()));
     add.setVisible (! effect);
     add.setEnabled (! effect && available && canCreate);
-    programs.setVisible (e != nullptr && e->apple && ! e->effect);
+    programs.setVisible (e != nullptr && e->apple && ! e->effect && e->gmProgram < 0);
     programs.setEnabled (appleHosted);
     programs.setTooltip (appleHosted ? "Browse programs supported by this hosted Apple Audio Unit"
                         : "Load this Apple sound device on the selected track first");
     load.setTooltip (effect ? (canInsertEffect ? "Add Apple AU effect after existing inserts, before the track fader"
                                              : "Select an unfrozen track and stop recording")
+                    : gmEntry ? (gmOnTrack ? "Change DLSMusicDevice to this GM program"
+                          : "Load this sound in Apple DLSMusicDevice on a compatible track")
                     : appleHosted ? "Open the original Apple instrument editor" : openNative
                     ? "Open the native instrument on " + targetName
                     : targetRestriction.isEmpty() ? "Load on " + targetName : targetRestriction);
     load.setTitle (load.getTooltip());
     add.setTooltip (available ? "Create a track and load the selected instrument" : "The selected instrument is unavailable");
     status.setText (statusMessage.isNotEmpty() ? statusMessage
+                   : gmSelected ? "GM " + String (gm::displayNumber (e->gmProgram)) 
+                                    + " selected | " + targetName
+                   : gmOnTrack ? "DLSMusicDevice ready | " + targetName
                    : effect ? (canInsertEffect ? "Apple effect target | " + targetName
                           : "Select an unfrozen track and stop recording to insert an effect")
                    : targetRestriction.isNotEmpty() ? targetRestriction : "Selected track | " + targetName,
@@ -451,9 +498,29 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
-    g.setColour (entry.available ? colours::signal : entry.family == "Studio" ? colours::secondary : colours::warning);
-    g.drawFittedText (entry.type + " | " + (entry.effect ? "Insert Effect" : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
+    const bool activeGm = entry.gmProgram >= 0
+        && entry.plugin.createIdentifierString() == browser.hostedAppleIdentifier
+        && entry.gmProgram == browser.currentGmProgram;
+    g.setColour (activeGm ? colours::focus : entry.available ? colours::signal
+                           : entry.family == "Studio" ? colours::secondary : colours::warning);
+    g.drawFittedText (entry.type + " | " + (activeGm ? "Selected on track"
+                    : entry.effect ? "Insert Effect"
+                    : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
+}
+
+void InstrumentBrowser::Rows::listBoxItemDoubleClicked (int row, const MouseEvent&)
+{
+    if (kind != results || ! isPositiveAndBelow (row, (int) browser.filtered.size()))
+        return;
+    const auto& entry = browser.entries[browser.filtered[(size_t) row]];
+    // Loading is explicit on double-click, not automatic as the user
+    // navigates categories or presses cursor keys in a large GM catalog.
+    if (entry.gmProgram >= 0)
+    {
+        browser.selectedKey = entry.key;
+        browser.loadSelected (false);
+    }
 }
 
 void InstrumentBrowser::Rows::selectedRowsChanged (int row)

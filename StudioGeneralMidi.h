@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// General MIDI Level 1 Program Change map, numbered 0-127 on the MIDI wire.
+// Names and 8-program family grouping are standard metadata, not sample assets.
+#pragma once
+#include <array>
+
+namespace studio::gm
+{
+inline constexpr std::array<const char*, 16> families {{
+    "Pianos",
+    "Chromatic Percussion",
+    "Organs",
+    "Guitars",
+    "Bass",
+    "Orchestral Strings",
+    "Ensembles & Choir",
+    "Brass",
+    "Reeds",
+    "Flutes & Pipes",
+    "Synth Leads",
+    "Synth Pads",
+    "Synth Effects",
+    "World Instruments",
+    "Percussion",
+    "Sound Effects"
+}};
+
+inline constexpr std::array<const char*, 128> names {{
+    "Acoustic Grand Piano",
+    "Bright Acoustic Piano",
+    "Electric Grand Piano",
+    "Honky-tonk Piano",
+    "Electric Piano 1",
+    "Electric Piano 2",
+    "Harpsichord",
+    "Clavinet",
+    "Celesta",
+    "Glockenspiel",
+    "Music Box",
+    "Vibraphone",
+    "Marimba",
+    "Xylophone",
+    "Tubular Bells",
+    "Dulcimer",
+    "Drawbar Organ",
+    "Percussive Organ",
+    "Rock Organ",
+    "Church Organ",
+    "Reed Organ",
+    "Accordion",
+    "Harmonica",
+    "Tango Accordion",
+    "Acoustic Guitar (Nylon)",
+    "Acoustic Guitar (Steel)",
+    "Electric Guitar (Jazz)",
+    "Electric Guitar (Clean)",
+    "Electric Guitar (Muted)",
+    "Overdriven Guitar",
+    "Distortion Guitar",
+    "Guitar Harmonics",
+    "Acoustic Bass",
+    "Electric Bass (Finger)",
+    "Electric Bass (Pick)",
+    "Fretless Bass",
+    "Slap Bass 1",
+    "Slap Bass 2",
+    "Synth Bass 1",
+    "Synth Bass 2",
+    "Violin",
+    "Viola",
+    "Cello",
+    "Contrabass",
+    "Tremolo Strings",
+    "Pizzicato Strings",
+    "Orchestral Harp",
+    "Timpani",
+    "String Ensemble 1",
+    "String Ensemble 2",
+    "Synth Strings 1",
+    "Synth Strings 2",
+    "Choir Aahs",
+    "Voice Oohs",
+    "Synth Voice",
+    "Orchestra Hit",
+    "Trumpet",
+    "Trombone",
+    "Tuba",
+    "Muted Trumpet",
+    "French Horn",
+    "Brass Section",
+    "Synth Brass 1",
+    "Synth Brass 2",
+    "Soprano Sax",
+    "Alto Sax",
+    "Tenor Sax",
+    "Baritone Sax",
+    "Oboe",
+    "English Horn",
+    "Bassoon",
+    "Clarinet",
+    "Piccolo",
+    "Flute",
+    "Recorder",
+    "Pan Flute",
+    "Blown Bottle",
+    "Shakuhachi",
+    "Whistle",
+    "Ocarina",
+    "Lead 1 (Square)",
+    "Lead 2 (Sawtooth)",
+    "Lead 3 (Calliope)",
+    "Lead 4 (Chiff)",
+    "Lead 5 (Charang)",
+    "Lead 6 (Voice)",
+    "Lead 7 (Fifths)",
+    "Lead 8 (Bass + Lead)",
+    "Pad 1 (New Age)",
+    "Pad 2 (Warm)",
+    "Pad 3 (Polysynth)",
+    "Pad 4 (Choir)",
+    "Pad 5 (Bowed)",
+    "Pad 6 (Metallic)",
+    "Pad 7 (Halo)",
+    "Pad 8 (Sweep)",
+    "FX 1 (Rain)",
+    "FX 2 (Soundtrack)",
+    "FX 3 (Crystal)",
+    "FX 4 (Atmosphere)",
+    "FX 5 (Brightness)",
+    "FX 6 (Goblins)",
+    "FX 7 (Echoes)",
+    "FX 8 (Sci-Fi)",
+    "Sitar",
+    "Banjo",
+    "Shamisen",
+    "Koto",
+    "Kalimba",
+    "Bag Pipe",
+    "Fiddle",
+    "Shanai",
+    "Tinkle Bell",
+    "Agogo",
+    "Steel Drums",
+    "Woodblock",
+    "Taiko Drum",
+    "Melodic Tom",
+    "Synth Drum",
+    "Reverse Cymbal",
+    "Guitar Fret Noise",
+    "Breath Noise",
+    "Seashore",
+    "Bird Tweet",
+    "Telephone Ring",
+    "Helicopter",
+    "Applause",
+    "Gunshot"
+}};
+
+constexpr bool valid (int zeroBasedProgram) noexcept
+{
+    return zeroBasedProgram >= 0 && zeroBasedProgram < static_cast<int> (names.size());
+}
+
+constexpr const char* family (int zeroBasedProgram) noexcept
+{
+    return valid (zeroBasedProgram) ? families[static_cast<unsigned> (zeroBasedProgram) / 8] : "";
+}
+
+constexpr const char* name (int zeroBasedProgram) noexcept
+{
+    return valid (zeroBasedProgram) ? names[static_cast<unsigned> (zeroBasedProgram)] : "";
+}
+
+// Ordered MIDI selection messages for a single-patch GM track. Keep the
+// mapping independent of the host so it can be exercised on Linux as well.
+struct SelectionMessage
+{
+    int status, data1, data2, size;
+};
+
+template <typename Emit>
+constexpr bool emitSelection (int program, Emit&& emit)
+{
+    if (! valid (program)) return false;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        if (channel == 9) continue; // GM drum channel, not a melodic patch
+        emit (SelectionMessage { 0xb0 | channel, 64, 0, 3 }); // sustain off
+        emit (SelectionMessage { 0xb0 | channel, 123, 0, 3 }); // all notes off
+        emit (SelectionMessage { 0xe0 | channel, 0, 64, 3 }); // pitch 8192
+        emit (SelectionMessage { 0xb0 | channel, 0, 0, 3 }); // bank MSB
+        emit (SelectionMessage { 0xb0 | channel, 32, 0, 3 }); // bank LSB
+        emit (SelectionMessage { 0xc0 | channel, program, 0, 2 });
+    }
+    return true;
+}
+
+// Keep the visible GM numbering 1-128 separate from MIDI's 0-127.
+constexpr int displayNumber (int zeroBasedProgram) noexcept
+{
+    return valid (zeroBasedProgram) ? zeroBasedProgram + 1 : 0;
+}
+}
