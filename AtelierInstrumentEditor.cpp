@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AtelierInstrumentEditor.h"
+#include "StudioUI.h"
 #include "SpatialState.h"
 #include "SpatialRouting.h"
 #include <StudioEnvironmentData.h>
@@ -10,12 +11,12 @@ using namespace juce;
 namespace te = tracktion;
 namespace
 {
-const Colour walnut { 0xff231913 };
-const Colour wood   { 0xff39271c };
-const Colour amber  { 0xffdca95e };
-const Colour ivory  { 0xfff1e2c7 };
-const Colour muted  { 0xffc5b49d };
-const Colour blue   { 0xff294660 };
+// Match the host Studio color tokens; ARIA states and original artwork remain unchanged.
+const Colour base      = colours::well;
+const Colour control   = colours::control;
+const Colour accent    = colours::focus;
+const Colour white     = colours::text;
+const Colour secondary = colours::secondary;
 
 // MIDI 1.0 channel controllers sent to the hosted instrument, not host
 // parameters. CC7 is different from track fader; CC91 is not Stage reverb.
@@ -80,10 +81,10 @@ void initLabel (Label& label, const String& text, float size, Colour colour, boo
 
 void initButton (TextButton& button)
 {
-    button.setColour (TextButton::buttonColourId, wood);
-    button.setColour (TextButton::textColourOffId, ivory);
-    button.setColour (TextButton::buttonOnColourId, amber.darker (0.45f));
-    button.setColour (TextButton::textColourOnId, ivory);
+    button.setColour (TextButton::buttonColourId, control);
+    button.setColour (TextButton::textColourOffId, white);
+    button.setColour (TextButton::buttonOnColourId, accent.darker (0.45f));
+    button.setColour (TextButton::textColourOnId, white);
 }
 
 // Atelier-only visual vocabulary. It is owned by this editor so the rest of
@@ -93,7 +94,7 @@ class AtelierLookAndFeel final : public LookAndFeel_V4
 public:
     Font getTextButtonFont (TextButton&, int height) override
     {
-        return FontOptions (Font::getDefaultSerifFontName(), jmin (16.0f, (float) height * .48f), Font::plain);
+        return FontOptions (Font::getDefaultSansSerifFontName(), jmin (16.0f, (float) height * .48f), Font::plain);
     }
 
     void drawButtonBackground (Graphics& g, Button& button, const Colour&, bool hovered, bool down) override
@@ -101,21 +102,21 @@ public:
         const auto r = button.getLocalBounds().toFloat().reduced (1.0f);
         if (r.isEmpty()) return;
         const bool active = button.getToggleState();
-        const auto top = active ? Colour (0xff75451d) : down ? Colour (0xff51321f)
-                     : hovered ? Colour (0xff483023) : Colour (0xff261b17);
-        const auto bottom = active ? Colour (0xff372117) : Colour (0xff171315);
+        const auto top = active ? colours::selected : down ? colours::raised
+                     : hovered ? colours::control.brighter (0.12f) : colours::control;
+        const auto bottom = active ? colours::control : colours::well;
         g.setGradientFill (ColourGradient (top, r.getTopLeft(), bottom, r.getBottomLeft(), false));
         g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (active ? amber : amber.withAlpha (hovered ? .76f : .32f));
+        g.setColour (active ? accent : accent.withAlpha (hovered ? .76f : .32f));
         g.drawRoundedRectangle (r.reduced (.5f), 7.0f, active ? 1.6f : .9f);
         if (active)
         {
-            g.setColour (amber.withAlpha (.28f));
+            g.setColour (accent.withAlpha (.28f));
             g.drawRoundedRectangle (r.reduced (2.5f), 5.0f, .8f);
         }
         if (button.hasKeyboardFocus (false))
         {
-            g.setColour (Colour (0xffffdeaa));
+            g.setColour (colours::focus);
             g.drawRoundedRectangle (r.reduced (3.0f), 5.0f, 1.0f);
         }
     }
@@ -131,21 +132,21 @@ public:
         const float angle = startAngle + sliderPos * (endAngle - startAngle);
         Path track;
         track.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, endAngle, true);
-        g.setColour (Colour (0xff6c5240));
+        g.setColour (colours::divider);
         g.strokePath (track, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
         Path value;
         value.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, angle, true);
-        g.setColour (slider.isEnabled() ? amber : muted.withAlpha (.5f));
+        g.setColour (slider.isEnabled() ? accent : secondary.withAlpha (.5f));
         g.strokePath (value, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
         circle = circle.reduced (radius * .22f);
-        g.setGradientFill (ColourGradient (Colour (0xffbc884a), circle.getTopLeft(),
-                                           Colour (0xff50301b), circle.getBottomRight(), false));
+        g.setGradientFill (ColourGradient (colours::raised.brighter (0.13f), circle.getTopLeft(),
+                                           colours::well, circle.getBottomRight(), false));
         g.fillEllipse (circle);
-        g.setColour (Colour (0xffffd08a).withAlpha (.65f));
+        g.setColour (colours::focus.withAlpha (.65f));
         g.drawEllipse (circle.reduced (.5f), 1.3f);
         const auto hand = Point<float> (centre.x + std::sin (angle) * radius * .42f,
                                         centre.y - std::cos (angle) * radius * .42f);
-        g.setColour (Colour (0xfffce2ad));
+        g.setColour (colours::text);
         g.drawLine (centre.x, centre.y, hand.x, hand.y, 2.3f);
         g.fillEllipse (centre.x - 2.0f, centre.y - 2.0f, 4.0f, 4.0f);
     }
@@ -153,12 +154,12 @@ public:
     void drawComboBox (Graphics& g, int width, int height, bool, int, int, int, int, ComboBox&) override
     {
         auto r = Rectangle<float> (0.0f, 0.0f, (float) width, (float) height).reduced (.75f);
-        g.setGradientFill (ColourGradient (Colour (0xff39271b), r.getTopLeft(),
-                                           Colour (0xff1e1716), r.getBottomRight(), false));
+        g.setGradientFill (ColourGradient (colours::control, r.getTopLeft(),
+                                           colours::well, r.getBottomRight(), false));
         g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (amber.withAlpha (.48f));
+        g.setColour (accent.withAlpha (.48f));
         g.drawRoundedRectangle (r, 7.0f, 1.0f);
-        g.setColour (amber);
+        g.setColour (accent);
         Path arrow;
         const float cx = r.getRight() - 17.0f, cy = r.getCentreY();
         arrow.startNewSubPath (cx - 5, cy - 2);
@@ -186,27 +187,27 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
                          &stagePanLabel, &stageDepthLabel, &sendTrimLabel })
         addAndMakeVisible (*label);
 
-    initLabel (title, audioTrack.getName(), 23.0f, ivory, true);
-    initLabel (subtitle, source.getName() + "  |  CINEMATIC ATELIER", 11.5f, muted);
-    initLabel (mixHeading, "CHANNEL", 12.0f, amber, true);
-    initLabel (volumeLabel, "VOLUME", 12.0f, ivory, true);
-    initLabel (panLabel, "PAN", 12.0f, ivory, true);
+    initLabel (title, audioTrack.getName(), 23.0f, white, true);
+    initLabel (subtitle, source.getName() + "  |  CINEMATIC ATELIER", 11.5f, secondary);
+    initLabel (mixHeading, "CHANNEL", 12.0f, accent, true);
+    initLabel (volumeLabel, "VOLUME", 12.0f, white, true);
+    initLabel (panLabel, "PAN", 12.0f, white, true);
     volumeLabel.setJustificationType (Justification::centred);
     panLabel.setJustificationType (Justification::centred);
-    initLabel (expressionHeading, "EXPRESSION", 12.0f, ivory, true);
+    initLabel (expressionHeading, "EXPRESSION", 12.0f, white, true);
     expressionHeading.setJustificationType (Justification::centred);
     initLabel (hint, "Only supported controls are shown. Detailed instrument editing remains available.",
-               10.5f, muted);
-    initLabel (sceneCaption, "BLUE-HOUR STUDY", 11.0f, ivory, true);
+               10.5f, secondary);
+    initLabel (sceneCaption, "BLUE-HOUR STUDY", 11.0f, white, true);
     sceneCaption.setJustificationType (Justification::centred);
-    initLabel (stageHeading, "ORCHESTRAL STAGE", 12.0f, amber, true);
-    initLabel (stageSummary, "Stage placement is not set", 12.0f, ivory);
-    initLabel (routingSummary, "Audio routing follows the Studio mixer", 11.0f, muted);
-    initLabel (mappingSummary, "No verified mappings for this instrument", 12.0f, ivory);
-    initLabel (keyboardSummary, "LIVE KEYBOARD  •  click to audition", 10.5f, amber);
-    initLabel (stagePanLabel, "PAN", 10.5f, muted);
-    initLabel (stageDepthLabel, "DEPTH", 10.5f, muted);
-    initLabel (sendTrimLabel, "ROOM SEND", 10.5f, muted);
+    initLabel (stageHeading, "ORCHESTRAL STAGE", 12.0f, accent, true);
+    initLabel (stageSummary, "Stage placement is not set", 12.0f, white);
+    initLabel (routingSummary, "Audio routing follows the Studio mixer", 11.0f, secondary);
+    initLabel (mappingSummary, "No verified mappings for this instrument", 12.0f, white);
+    initLabel (keyboardSummary, "LIVE KEYBOARD  |  click to audition", 10.5f, accent);
+    initLabel (stagePanLabel, "PAN", 10.5f, secondary);
+    initLabel (stageDepthLabel, "DEPTH", 10.5f, secondary);
+    initLabel (sendTrimLabel, "ROOM SEND", 10.5f, secondary);
 
     portraitChoice.setTitle ("Instrument artwork");
     portraitChoice.setTooltip ("Choose the artwork for this instrument. The image does not change its patch.");
@@ -269,7 +270,7 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
     fullView.setTooltip ("Enlarge this editor to show the full Cinematic Atelier layout");
     fullView.onClick = [this] { if (onFullView) onFullView(); };
 
-    initLabel (ccStatus, "Live MIDI controllers  •  select a channel and turn a knob", 11.0f, muted);
+    initLabel (ccStatus, "Live MIDI controllers  |  select a channel and turn a knob", 11.0f, secondary);
     addAndMakeVisible (ccStatus);
     addAndMakeVisible (sendAllCC);
     initButton (sendAllCC);
@@ -281,19 +282,19 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         auto& label = ccLabels[i];
         addAndMakeVisible (slider);
         addAndMakeVisible (label);
-        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 12.4f, ivory);
+        initLabel (label, String (liveCC[i].name) + "  ·  CC" + String (liveCC[i].number), 12.4f, white);
         label.setJustificationType (Justification::centred);
         slider.setName (String (liveCC[i].name) + " (CC" + String (liveCC[i].number) + ")");
         slider.setTooltip (String (liveCC[i].meaning) + ". Sends MIDI CC" + String (liveCC[i].number)
             + " (0–127) on the preview channel. Requires a loaded Audio Unit.");
         slider.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle (Slider::TextBoxBelow, false, 60, 19);
-        slider.setColour (Slider::rotarySliderFillColourId, amber);
-        slider.setColour (Slider::rotarySliderOutlineColourId, wood);
-        slider.setColour (Slider::thumbColourId, ivory);
-        slider.setColour (Slider::textBoxTextColourId, ivory);
-        slider.setColour (Slider::textBoxBackgroundColourId, walnut);
-        slider.setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.3f));
+        slider.setColour (Slider::rotarySliderFillColourId, accent);
+        slider.setColour (Slider::rotarySliderOutlineColourId, control);
+        slider.setColour (Slider::thumbColourId, white);
+        slider.setColour (Slider::textBoxTextColourId, white);
+        slider.setColour (Slider::textBoxBackgroundColourId, base);
+        slider.setColour (Slider::textBoxOutlineColourId, accent.withAlpha (.3f));
         slider.setRange (0, 127, i == 4 ? 127 : 1);
         slider.setValue (liveCC[i].initialValue, dontSendNotification);
         slider.onValueChange = [this, i]
@@ -344,12 +345,12 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         control.setName (name);
         control.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         control.setTextBoxStyle (Slider::TextBoxBelow, false, 78, 20);
-        control.setColour (Slider::rotarySliderFillColourId, amber);
-        control.setColour (Slider::rotarySliderOutlineColourId, wood.brighter (0.4f));
-        control.setColour (Slider::thumbColourId, ivory);
-        control.setColour (Slider::textBoxTextColourId, ivory);
-        control.setColour (Slider::textBoxBackgroundColourId, walnut);
-        control.setColour (Slider::textBoxOutlineColourId, amber.withAlpha (0.28f));
+        control.setColour (Slider::rotarySliderFillColourId, accent);
+        control.setColour (Slider::rotarySliderOutlineColourId, control.brighter (0.4f));
+        control.setColour (Slider::thumbColourId, white);
+        control.setColour (Slider::textBoxTextColourId, white);
+        control.setColour (Slider::textBoxBackgroundColourId, base);
+        control.setColour (Slider::textBoxOutlineColourId, accent.withAlpha (0.28f));
     };
     configureSlider (volume, "Volume (dB)");
     volume.setRange (-100.0, 6.0, 0.1);
@@ -366,12 +367,12 @@ AtelierInstrumentEditor::AtelierInstrumentEditor (te::Plugin& source, te::AudioT
         addAndMakeVisible (*slider);
         slider->setSliderStyle (Slider::LinearHorizontal);
         slider->setTextBoxStyle (Slider::TextBoxRight, false, 74, 20);
-        slider->setColour (Slider::trackColourId, amber);
-        slider->setColour (Slider::thumbColourId, Colour (0xfff3ce8a));
-        slider->setColour (Slider::backgroundColourId, Colour (0xff3f2b22));
-        slider->setColour (Slider::textBoxTextColourId, ivory);
-        slider->setColour (Slider::textBoxBackgroundColourId, walnut);
-        slider->setColour (Slider::textBoxOutlineColourId, amber.withAlpha (.24f));
+        slider->setColour (Slider::trackColourId, accent);
+        slider->setColour (Slider::thumbColourId, colours::action);
+        slider->setColour (Slider::backgroundColourId, colours::well);
+        slider->setColour (Slider::textBoxTextColourId, white);
+        slider->setColour (Slider::textBoxBackgroundColourId, base);
+        slider->setColour (Slider::textBoxOutlineColourId, accent.withAlpha (.24f));
     }
     stagePan.setRange (-1.0, 1.0, 0.01);
     stagePan.setDoubleClickReturnValue (true, 0);
@@ -517,17 +518,17 @@ void AtelierInstrumentEditor::refreshControls()
             if (! sendTrim.isMouseButtonDown())
                 sendTrim.setValue (value.sendTrim, dontSendNotification);
         }
-        String stageText = placed ? "Placed  •  " : "Not yet placed on the Stage";
+        String stageText = placed ? "Placed  |  " : "Not yet placed on the Stage";
         if (placed)
         {
             const auto position = spatial::readSeat (seat).position;
-            stageText << "Pan " << String (roundToInt (position.x * 100)) << "  •  Depth "
+            stageText << "Pan " << String (roundToInt (position.x * 100)) << "  |  Depth "
                       << String (roundToInt (position.depth * 100)) << "%";
         }
         const auto room = spatial::activeRoomSendDb (*source);
         const String routeText = room.has_value()
             ? "Shared room send  " + String (*room, 1) + " dB"
-            : "Shared room send off  •  Studio track output";
+            : "Shared room send off  |  Studio track output";
         if (stageSummary.getText() != stageText) stageSummary.setText (stageText, dontSendNotification);
         if (routingSummary.getText() != routeText) routingSummary.setText (routeText, dontSendNotification);
     }
@@ -551,8 +552,8 @@ void AtelierInstrumentEditor::timerCallback()
     refreshArticulations();
     syncInspectorControls();
     updateMIDIControls();
-    const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  •  click keys to audition"
-                                            : "KEYBOARD  •  load an active Audio Unit to audition";
+    const String help = canPreviewKeyboard() ? "LIVE KEYBOARD  |  click keys to audition"
+                                            : "KEYBOARD  |  load an active Audio Unit to audition";
     if (keyboardSummary.getText() != help)
         keyboardSummary.setText (help, dontSendNotification);
 }
@@ -630,8 +631,8 @@ void AtelierInstrumentEditor::updateMIDIControls()
     for (auto& knob : ccKnobs) knob.setEnabled (available);
     sendAllCC.setEnabled (available);
     const String message = available
-        ? "LIVE MIDI  •  CC values go to the hosted instrument. Patch support varies; not MIDI clip automation."
-        : "MIDI unavailable  •  load/enable an Audio Unit with an active playback context.";
+        ? "LIVE MIDI  |  CC values go to the hosted instrument. Patch support varies; not MIDI clip automation."
+        : "MIDI unavailable  |  load/enable an Audio Unit with an active playback context.";
     if (ccStatus.getText() != message) ccStatus.setText (message, dontSendNotification);
 }
 
@@ -712,9 +713,9 @@ void AtelierInstrumentEditor::refreshArticulations()
                 break;
             }
     mappingSummary.setText (currentMappings.empty()
-        ? "No verified articulations yet  •  Use Edit Mappings to assign them."
+        ? "No verified articulations yet  |  Use Edit Mappings to assign them."
         : String (currentMappings.size()) + " verified articulations"
-          + (currentMappings.size() > mappingPads.size() ? "  •  More in Mappings" : String()),
+          + (currentMappings.size() > mappingPads.size() ? "  |  More in Mappings" : String()),
         dontSendNotification);
     for (size_t i = 0; i < mappingPads.size(); ++i)
     {
@@ -722,8 +723,8 @@ void AtelierInstrumentEditor::refreshArticulations()
         if (i >= currentMappings.size()) continue;
         const auto& mapping = currentMappings[i];
         button.setButtonText (mapping.name);
-        button.setTooltip ("Select " + mapping.name + "  •  " + (mapping.message == ArticulationMessage::keyswitch
-            ? "note " : "CC ") + String (mapping.number) + "  •  channel " + String (mapping.channel)
+        button.setTooltip ("Select " + mapping.name + "  |  " + (mapping.message == ArticulationMessage::keyswitch
+            ? "note " : "CC ") + String (mapping.number) + "  |  channel " + String (mapping.channel)
             + ". Selection does not send a MIDI audition.");
         button.setToggleState (mapping.id == activeMappingId, dontSendNotification);
     }
@@ -963,18 +964,18 @@ void AtelierInstrumentEditor::drawAtelierSurface (Graphics& g, Rectangle<int> bo
 {
     if (bounds.isEmpty()) return;
     const auto card = bounds.toFloat().reduced (1.0f);
-    g.setGradientFill (ColourGradient (Colour (0xff32231b), card.getTopLeft(),
-                                      Colour (0xff1a1515), card.getBottomRight(), false));
+    g.setGradientFill (ColourGradient (colours::panel, card.getTopLeft(),
+                                      colours::well, card.getBottomRight(), false));
     g.fillRoundedRectangle (card, 8.0f);
-    g.setColour (amber.withAlpha (.47f));
+    g.setColour (accent.withAlpha (.47f));
     g.drawRoundedRectangle (card.reduced (.5f), 8.0f, .8f);
-    g.setColour (amber.withAlpha (.17f));
+    g.setColour (accent.withAlpha (.17f));
     g.drawLine (card.getX() + 13, card.getY() + 28,
                 card.getRight() - 13, card.getY() + 28, .8f);
     if (caption.isNotEmpty())
     {
-        g.setColour (amber);
-        g.setFont (FontOptions (Font::getDefaultSerifFontName(), appearance.fontSize (13.0f), Font::plain));
+        g.setColour (accent);
+        g.setFont (FontOptions (Font::getDefaultSansSerifFontName(), appearance.fontSize (13.0f), Font::plain));
         g.drawFittedText (caption.toUpperCase(), bounds.reduced (appearance.px (14))
               .removeFromTop (appearance.control (23, 10)), Justification::centredLeft, 1, .85f);
     }
@@ -984,10 +985,10 @@ void AtelierInstrumentEditor::paintKeyboardReference (Graphics& g) const
 {
     if (keyboardBounds.isEmpty()) return;
     auto background = keyboardBounds.toFloat();
-    g.setGradientFill (ColourGradient (Colour (0xff432918), background.getTopLeft(),
-                                       Colour (0xff130f12), background.getBottomLeft(), false));
+    g.setGradientFill (ColourGradient (colours::control, background.getTopLeft(),
+                                       colours::well, background.getBottomLeft(), false));
     g.fillRoundedRectangle (background.reduced (1), 8.0f);
-    g.setColour (amber.withAlpha (.65f));
+    g.setColour (accent.withAlpha (.65f));
     g.drawRoundedRectangle (background.reduced (1.5f), 8.0f, 1.1f);
     auto keys = keyboardBounds.reduced (appearance.px (12), appearance.px (7));
     keys.removeFromTop (appearance.control (18, 9));
@@ -998,10 +999,10 @@ void AtelierInstrumentEditor::paintKeyboardReference (Graphics& g) const
     {
         auto key = Rectangle<float> (keys.getX() + keyW * index, (float) keys.getY(),
                                      keyW - .6f, (float) keys.getHeight());
-        g.setGradientFill (ColourGradient (Colour (0xfffff5db), key.getTopLeft(),
-                                           Colour (0xffba916a), key.getBottomLeft(), false));
+        g.setGradientFill (ColourGradient (colours::text, key.getTopLeft(),
+                                           Colour (0xffdce5ed), key.getBottomLeft(), false));
         g.fillRoundedRectangle (key, 2.5f);
-        g.setColour (Colour (0xff5a3825));
+        g.setColour (colours::divider);
         g.drawRoundedRectangle (key, 2.5f, .65f);
     }
     constexpr std::array<bool, 7> blackAfter { true, true, false, true, true, true, false };
@@ -1010,10 +1011,10 @@ void AtelierInstrumentEditor::paintKeyboardReference (Graphics& g) const
         {
             auto key = Rectangle<float> (keys.getX() + keyW * (index + 1) - keyW * .31f,
                 (float) keys.getY(), keyW * .62f, (float) keys.getHeight() * .62f);
-            g.setGradientFill (ColourGradient (Colour (0xff45332b), key.getTopLeft(),
-                                               Colour (0xff0c0b0f), key.getBottomLeft(), false));
+            g.setGradientFill (ColourGradient (colours::raised, key.getTopLeft(),
+                                               colours::well, key.getBottomLeft(), false));
             g.fillRoundedRectangle (key, 2.0f);
-            g.setColour (amber.withAlpha (.52f));
+            g.setColour (accent.withAlpha (.52f));
             g.drawRoundedRectangle (key, 2.0f, .6f);
         }
 }
@@ -1124,40 +1125,37 @@ void AtelierInstrumentEditor::focusLost (FocusChangeType)
 void AtelierInstrumentEditor::paint (Graphics& g)
 {
     auto canvas = getLocalBounds().toFloat();
-    g.setGradientFill (ColourGradient (Colour (0xff171317), canvas.getTopLeft(),
-                                        Colour (0xff312019), canvas.getBottomRight(), false));
+    g.setGradientFill (ColourGradient (colours::canvas, canvas.getTopLeft(),
+                                        colours::timeline, canvas.getBottomRight(), false));
     g.fillRect (canvas);
 
-    // Fine wood-grain lines are deterministic vector paint, not bitmap assets
-    // or any additional DSP/audio work.
-    g.setColour (amber.withAlpha (.018f));
-    for (int y = 0; y < getHeight(); y += 11)
-        g.drawHorizontalLine (y, 0.0f, (float) getWidth());
+    // Clean slate Studio surface: portraits provide visual character without
+    // faux wood grain or ornamentation behind production controls.
 
     if (! instrumentHeaderBounds.isEmpty())
     {
         const auto bar = instrumentHeaderBounds.toFloat();
-        g.setGradientFill (ColourGradient (Colour (0xff3f291b), bar.getTopLeft(),
-                                            Colour (0xff1b1516), bar.getBottomRight(), false));
+        g.setGradientFill (ColourGradient (colours::control, bar.getTopLeft(),
+                                            colours::well, bar.getBottomRight(), false));
         g.fillRect (bar);
-        g.setColour (amber.withAlpha (.46f));
+        g.setColour (accent.withAlpha (.46f));
         g.drawHorizontalLine (instrumentHeaderBounds.getBottom() - 1, bar.getX(), bar.getRight());
     }
 
     if (! portraitBounds.isEmpty())
     {
         auto outer = portraitBounds.toFloat().reduced (.5f);
-        g.setColour (Colour (0xff120f12));
+        g.setColour (colours::well);
         g.fillRoundedRectangle (outer, 11.0f);
-        g.setColour (amber.withAlpha (.87f));
+        g.setColour (colours::divider);
         g.drawRoundedRectangle (outer.reduced (1.0f), 10.0f, 1.4f);
-        g.setColour (amber.withAlpha (.27f));
+        g.setColour (colours::focus.withAlpha (.18f));
         g.drawRoundedRectangle (outer.reduced (3.4f), 8.0f, .8f);
         Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (portraitBounds.reduced (appearance.px (5)));
         auto imageArea = portraitBounds.reduced (appearance.px (6));
         imageArea.removeFromBottom (appearance.control (24, 10));
-        g.setColour (Colour (0xff332219));
+        g.setColour (colours::panel);
         g.fillRect (imageArea);
         drawContained (g, portraitImage.isValid() ? portraitImage : blueHour, imageArea);
     }
@@ -1166,7 +1164,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
     drawAtelierSurface (g, mixerBounds, page == 2 ? "Channel Mixer" : "Volume & Expression");
     drawAtelierSurface (g, stageBounds, "Stage & Room");
     drawAtelierSurface (g, routingBounds, page == 3 ? "Instrument & Routing" : "Routing");
-    drawAtelierSurface (g, controllerBounds, "MIDI Controllers  •  Live CC");
+    drawAtelierSurface (g, controllerBounds, "MIDI Controllers  |  Live CC");
     paintKeyboardReference (g);
 
     // Read-only placement overview is derived from the actual saved seat,
@@ -1184,7 +1182,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
                 auto plot = field.toFloat().withSizeKeepingCentre (
                     jmin ((float) field.getWidth(), 260.0f),
                     jmin ((float) field.getHeight(), 90.0f));
-                g.setColour (amber.withAlpha (.32f));
+                g.setColour (accent.withAlpha (.32f));
                 Path arc;
                 arc.addCentredArc (plot.getCentreX(), plot.getBottom(),
                                   plot.getWidth() * .5f, plot.getHeight() * .9f,
@@ -1192,13 +1190,13 @@ void AtelierInstrumentEditor::paint (Graphics& g)
                 g.strokePath (arc, PathStrokeType (1.0f));
                 const float x = plot.getCentreX() + position.x * plot.getWidth() * .43f;
                 const float y = plot.getBottom() - (1.0f - position.depth) * plot.getHeight() * .83f;
-                g.setColour (amber);
+                g.setColour (accent);
                 g.fillEllipse (x - 4.0f, y - 4.0f, 8.0f, 8.0f);
             }
         }
 
     auto bottomLine = getLocalBounds().toFloat().reduced (appearance.px (8));
-    g.setColour (amber.withAlpha (.38f));
+    g.setColour (accent.withAlpha (.38f));
     g.drawHorizontalLine ((int) bottomLine.getBottom() - 1,
                           bottomLine.getX(), bottomLine.getRight());
 }
