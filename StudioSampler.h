@@ -27,7 +27,7 @@ struct InstrumentGroup
 // Accepted media stays on disk for undo, presets and project reopen.
 struct BankImportMedia
 {
-    juce::File directory;
+    juce::File directory, parent; // optional caller-selected library root
     bool keep = false;
     ~BankImportMedia() { if (! keep && directory.isDirectory()) directory.deleteRecursively(); }
 };
