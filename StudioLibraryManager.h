@@ -94,7 +94,7 @@ public:
         if(!validCatalog||catalog.entries.size()!=2)return false;
         manage.setToggleState(false,dontSendNotification);updateManagement();filter();
         if(getNumRowsConst()!=2||addRoot.isVisible()||!loadSelected.isVisible())return false;
-        search.setText("Violin",true);
+        search.setText("Violin",true);filter();
         if(getNumRowsConst()!=1)return false;
         rows.selectRow(0);favoriteEntry.onClick();
         if(selectedIndices().size()!=1||!catalog.entries[selectedIndices().front()].favorite)return false;
