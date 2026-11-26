@@ -77,7 +77,7 @@ private:
     juce::Rectangle<int> keyboardArea;
 };
 
-// Performance sliders use compact brushed-bronze wheels and rotary controls.
+// Performance sliders use compact steel-blue wheels and rotary controls.
 // This is a local LookAndFeel; other Studio controls remain unchanged.
 class AtelierKeyboardControls final : public juce::LookAndFeel_V4
 {
@@ -387,7 +387,7 @@ public:
         g.fillRoundedRectangle (outer, 9.0f);
 
         // Clean steel/slate casing with a single low-contrast border.
-        // Avoid drawing wood grain or gold pinstripes across the keybed.
+        // Avoid decorative pinstripes across the keybed.
         g.setColour (studioKeyboardColours::outline.withAlpha (0.9f));
         g.drawRoundedRectangle (outer.reduced (0.5f), 8.0f, 1.0f);
         if (! dockedMode)
@@ -521,7 +521,7 @@ class AuditionKeyboardWindow final : public juce::DocumentWindow
 public:
     AuditionKeyboardWindow()
         : juce::DocumentWindow ("Studio - Cinematic Atelier Keyboard",
-              juce::Colour (0xff241912), juce::DocumentWindow::closeButton)
+              studioKeyboardColours::base, juce::DocumentWindow::closeButton)
     {
         setUsingNativeTitleBar (true);
         setResizable (true, false);
