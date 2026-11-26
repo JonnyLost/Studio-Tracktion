@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <JuceHeader.h>
-// Import Apple C APIs before the translation unit's JUCE using-directive.
-// MacTypes declares global Point and AudioBuffer types of its own.
-#if JUCE_MAC
- #include <AudioToolbox/AudioToolbox.h>
-#endif
 #include <array>
 #include <vector>
 #include <functional>
@@ -36,6 +31,7 @@ using namespace tracktion::literals;
 #include "SamplerReviewCapture.h"
 #include "StudioSynth.h"
 #include "StudioGeneralMidi.h"
+#include "StudioDlsAudioUnit.h"
 #include "InstrumentWorkspace.h"
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
@@ -4643,15 +4639,7 @@ private:
         if (instance == nullptr) return false;
         auto* client = instance->getAudioUnitClient();
         if (client == nullptr) return false;
-        const auto unit = static_cast<AudioUnit> (client->getAudioUnitHandle());
-        if (unit == nullptr) return false;
-
-        // GM bank 0 on channel 1, zero-based MIDI program 0..127.
-        // Only call from UI/timer while stopped, never the audio callback.
-        const auto msb = MusicDeviceMIDIEvent (unit, 0xb0, 0, 0, 0);
-        const auto lsb = MusicDeviceMIDIEvent (unit, 0xb0, 32, 0, 0);
-        const auto change = MusicDeviceMIDIEvent (unit, 0xc0, (UInt32) index, 0, 0);
-        return msb == noErr && lsb == noErr && change == noErr;
+        return studio::dls::selectGeneralMidiProgram (client->getAudioUnitHandle(), index);
        #else
         juce::ignoreUnused (plugin, index);
         return false;
