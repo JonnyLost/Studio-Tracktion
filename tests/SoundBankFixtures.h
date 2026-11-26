@@ -17,7 +17,7 @@ inline Bytes gen(std::initializer_list<std::pair<int,int>> pairs)
 { Bytes b;for(auto [op,v]:pairs){word(b,op);word(b,v);}return b; }
 inline Bytes bags(std::initializer_list<int> offsets)
 { Bytes b;for(auto v:offsets){word(b,v);word(b,0);}return b; }
-inline Bytes sf(bool compressed=false,bool extended=false,bool corrupt=false)
+inline Bytes sf(bool compressed=false,bool extended=false,bool corrupt=false,const Bytes& ogg={})
 {
     Bytes ph,ins,sh,pcm,low;
     const auto preset=[&](std::string n,int program,int bank,int bag)
@@ -26,10 +26,10 @@ inline Bytes sf(bool compressed=false,bool extended=false,bool corrupt=false)
     name(ins,"Test instrument",20);word(ins,0);name(ins,"EOI",20);word(ins,2);
     const auto sample=[&](std::string n,U32 a,U32 b,U32 l,U32 r,int type)
     { name(sh,n,20);dword(sh,a);dword(sh,b);dword(sh,l);dword(sh,r);dword(sh,48000);sh.push_back(60);sh.push_back(5);word(sh,0);word(sh,type); };
-    sample("Test sample",0,corrupt?999999:compressed?64:65536,1024,16384,compressed?17:1);
+    sample("Test sample",0,corrupt?999999:compressed?(ogg.empty()?64:static_cast<U32>(ogg.size())):196608,1024,16384,compressed?17:1);
     sample("EOS",0,0,0,0,1);
-    if(compressed) { pcm.resize(64);name(low,"",0); }
-    else for(int i=0;i<65582;++i) { word(pcm,(i%256-128)*128);low.push_back(64); }
+    if(compressed) { pcm=ogg; if(pcm.empty()) pcm.resize(64); }
+    else for(int i=0;i<196654;++i) { word(pcm,(i%256-128)*128);low.push_back(64); }
     auto data=extended?list("sdta",{chunk("smpl",pcm),chunk("sm24",low)}):list("sdta",{chunk("smpl",pcm)});
     // Preset global attenuation; preset local range intersects instrument range.
     auto pd=list("pdta",{chunk("phdr",ph),chunk("pbag",bags({0,1,3,4})),
@@ -42,7 +42,7 @@ inline Bytes dls(bool corrupt=false)
 {
     Bytes fmt,pcm,ws,rh,wl,ih,pt;
     word(fmt,1);word(fmt,1);dword(fmt,48000);dword(fmt,96000);word(fmt,2);word(fmt,16);
-    for(int i=0;i<65536;++i) word(pcm,(i%256-128)*128);
+    for(int i=0;i<196608;++i) word(pcm,(i%256-128)*128);
     dword(ws,20);word(ws,62);word(ws,25);dword(ws,0);dword(ws,0);dword(ws,1);
     dword(ws,16);dword(ws,0);dword(ws,1024);dword(ws,8192);
     word(rh,48);word(rh,72);word(rh,10);word(rh,110);word(rh,0);word(rh,0);
