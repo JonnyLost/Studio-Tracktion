@@ -285,7 +285,10 @@ private:
             "Transport  |  Right-click button or readout  |  Customize Transport",
             "Arrangement  |  Right-click track header  |  Track / Group Actions",
             "Arrangement  |  Right-click MIDI or audio region  |  Region Actions",
-            "Window  |  Mixer / Stage / Piano Roll"
+            "Window  |  Mixer / Stage / Piano Roll",
+            "Instruments  |  Apple Sounds / Apple Effects  |  Browser collection selector",
+            "Apple Sounds  |  Apple Sound Bank  |  Host-reported programs after loading AU",
+            "Apple Effects  |  Insert Effect  |  Selected audio or instrument track"
         })
             if (query.isEmpty() || String (item).containsIgnoreCase (query))
                 lines.add (item);
@@ -4611,9 +4614,116 @@ private:
         return true;
     }
 
+    // Apple's installed Audio Unit may expose a factory sound bank through its
+    // native program API. Enumerate the *actual* names; no invented DLS,
+    // GarageBand, Logic or EXS patches are presented as playable.
+    void showApplePrograms (const PluginDescription& description, Component& anchor)
+    {
+        if (edit == nullptr || busy) return;
+        auto* track = workflowTrack();
+        if (track == nullptr) return;
+        auto* au = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*track));
+        if (au == nullptr || ! au->isAU()
+            || au->desc.createIdentifierString() != description.createIdentifierString()
+            || ! au->desc.manufacturerName.containsIgnoreCase ("Apple")
+            || au->getAudioPluginInstance() == nullptr)
+        {
+            pluginStatus ("Load this Apple instrument on the selected track to browse its programs.");
+            return;
+        }
+
+        PopupMenu menu;
+        menu.addSectionHeader (au->getName() + " | Installed Apple AU");
+        const int reported = jmax (0, au->getNumPrograms());
+        const int limit = jmin (512, reported);
+        const int current = au->getCurrentProgram();
+        const auto id = track->itemID;
+        const auto pluginId = au->itemID;
+        const auto generation = projectGeneration;
+        const SafePointer<StudioView> safe (this);
+        const bool editable = ! edit->getTransport().isPlaying()
+            && ! edit->getTransport().isRecording() && ! ariaReviewPending;
+
+        if (limit <= 0)
+            menu.addItem ("No host-accessible programs reported by this AU", false, false, [] {});
+        else
+        {
+            for (int start = 0; start < limit; start += 24)
+            {
+                PopupMenu page;
+                for (int index = start; index < jmin (start + 24, limit); ++index)
+                {
+                    const auto name = au->getProgramName (index).trim();
+                    const auto label = name.isNotEmpty() ? name
+                        : "Program " + String (index + 1) + " (unnamed)";
+                    page.addItem (String (index + 1) + " | " + label, editable, current == index,
+                        [safe, generation, id, pluginId, index]
+                        {
+                            if (safe == nullptr || safe->edit == nullptr || safe->projectGeneration != generation
+                                || safe->busy || safe->ariaReviewPending
+                                || safe->edit->getTransport().isPlaying()
+                                || safe->edit->getTransport().isRecording()) return;
+                            auto* track = safe->trackById (id);
+                            if (track == nullptr || track->isFrozen (te::Track::anyFreeze)) return;
+                            for (auto* item : track->pluginList.getPlugins())
+                                if (item != nullptr && item->itemID == pluginId)
+                                    if (auto* apple = dynamic_cast<te::ExternalPlugin*> (item))
+                                    {
+                                        if (! apple->isAU() || apple->getAudioPluginInstance() == nullptr
+                                            || ! apple->desc.manufacturerName.containsIgnoreCase ("Apple")
+                                            || index >= apple->getNumPrograms()) return;
+                                        safe->edit->getUndoManager().beginNewTransaction ("Select Apple AU program");
+                                        apple->setCurrentProgram (index, true);
+                                        apple->flushPluginStateToValueTree();
+                                        safe->pluginStatus ("Apple AU program: " + apple->getCurrentProgramName()
+                                            + ". Save the project to retain the instrument state.");
+                                        return;
+                                    }
+                        });
+                }
+                menu.addSubMenu ("Programs " + String (start + 1) + "-"
+                                 + String (jmin (start + 24, limit)), page);
+            }
+            if (reported > limit)
+                menu.addItem ("Showing the first " + String (limit) + " of "
+                              + String (reported) + " programs", false, false, [] {});
+        }
+        menu.addSeparator();
+        menu.addItem ("Open Original Apple Interface", [safe, generation, id, pluginId]
+        {
+            if (safe == nullptr || safe->edit == nullptr || safe->projectGeneration != generation) return;
+            if (auto* track = safe->trackById (id))
+                for (auto* item : track->pluginList.getPlugins())
+                    if (item != nullptr && item->itemID == pluginId)
+                    {
+                        item->showWindowExplicitly();
+                        break;
+                    }
+        });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
     void configureInstrumentWorkflow()
     {
         browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
+        browser.insertAppleEffect = [this] (const PluginDescription& effect)
+        {
+            if (auto* target = workflowTrack(); target != nullptr)
+                startExternalPlugin (effect, target->itemID, false, false);
+            else pluginStatus ("Select an audio or instrument track for the Apple effect.");
+        };
+        browser.browseApplePrograms = [this] (const PluginDescription& sound, Component& anchor)
+        {
+            showApplePrograms (sound, anchor);
+        };
+        browser.openLoadedAppleEditor = [this] (const PluginDescription& sound)
+        {
+            if (auto* track = workflowTrack())
+                if (auto* installed = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*track)))
+                    if (installed->desc.createIdentifierString() == sound.createIdentifierString()
+                        && installed->isAU())
+                        installed->showWindowExplicitly();
+        };
         browser.loadInstrument = [this] (const PluginDescription& plugin, bool addNew)
         {
             auto* target = workflowTrack();
@@ -4847,7 +4957,17 @@ private:
                 && dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*target)) != nullptr;
             const bool hasSynth = target != nullptr && ! busy
                 && dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)) != nullptr;
-            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(), restriction, hasSampler, hasSynth);
+            String selectedAppleInstrument;
+            if (target != nullptr)
+                if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
+                    if (hosted->isAU() && hosted->desc.manufacturerName.containsIgnoreCase ("Apple")
+                        && hosted->getAudioPluginInstance() != nullptr)
+                        selectedAppleInstrument = hosted->desc.createIdentifierString();
+            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(),
+                                    restriction, hasSampler, hasSynth,
+                                    canInsertPlugin() && target != nullptr
+                                        && ! target->isFrozen (te::Track::anyFreeze),
+                                    selectedAppleInstrument);
         }
         else if (workspace == Workspace::channel)
         {
