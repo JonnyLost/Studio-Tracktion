@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
+#include "StudioSfz.h"
 #include <algorithm>
 #include <cmath>
 
@@ -12,7 +13,7 @@ namespace
 {
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
-constexpr int version = 3;
+constexpr int version = 4;
 constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
@@ -47,6 +48,7 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         child->setAttribute ("cc", g.controller); child->setAttribute ("ccLow", g.ccLow); child->setAttribute ("ccHigh", g.ccHigh);
         child->setAttribute ("channel", g.channel); child->setAttribute ("mute", g.mute); child->setAttribute ("solo", g.solo);
         child->setAttribute ("releaseTrigger", g.releaseTrigger);
+        child->setAttribute ("switchDefault", g.switchDefault);
     }
     for (const auto& entry : model.zones)
     {
@@ -77,6 +79,18 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         node.setAttribute ("group", z.group);
         node.setAttribute ("loopCrossfade", z.loopCrossfade);
         node.setAttribute ("fadeIn", z.fadeIn); node.setAttribute ("fadeOut", z.fadeOut);
+        if (z.sfz.enabled)
+        {
+            const auto& f = z.sfz;
+            node.setAttribute ("sfz", true);
+            node.setAttribute ("sfzAttack", f.attack); node.setAttribute ("sfzDecay", f.decay);
+            node.setAttribute ("sfzSustain", f.sustain); node.setAttribute ("sfzRelease", f.release);
+            node.setAttribute ("sfzSustainLoop", f.sustainLoop); node.setAttribute ("sfzPowerFade", f.powerFade);
+            node.setAttribute ("sfzVelocityTrack", f.velocityTrack); node.setAttribute ("sfzPan", f.pan);
+            node.setAttribute ("sfzTranspose", f.transpose); node.setAttribute ("sfzKeyTrack", f.keyTrack);
+            node.setAttribute ("sfzFadeInLow", f.fadeInLow); node.setAttribute ("sfzFadeInHigh", f.fadeInHigh);
+            node.setAttribute ("sfzFadeOutLow", f.fadeOutLow); node.setAttribute ("sfzFadeOutHigh", f.fadeOutHigh);
+        }
     }
     return xml;
 }
@@ -118,6 +132,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
                 p.ccLow = child->getIntAttribute ("ccLow", 0); p.ccHigh = child->getIntAttribute ("ccHigh", 127);
                 p.channel = child->getIntAttribute ("channel"); p.mute = child->getBoolAttribute ("mute"); p.solo = child->getBoolAttribute ("solo");
                 p.releaseTrigger = child->getBoolAttribute ("releaseTrigger");
+                p.switchDefault = child->getIntAttribute ("switchDefault", -2);
                 if (! validGroup (p)) return Result::fail ("Invalid group trigger configuration.");
                 model.groups.push_back (std::move (g));
             }
@@ -156,6 +171,24 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
         z.group = child->getIntAttribute ("group");
         z.loopCrossfade = child->getIntAttribute ("loopCrossfade", -1);
         z.fadeIn = child->getIntAttribute ("fadeIn"); z.fadeOut = child->getIntAttribute ("fadeOut");
+        if (child->getBoolAttribute ("sfz"))
+        {
+            auto& f = z.sfz; f.enabled = true;
+            f.attack = bounded (*child, "sfzAttack", 0, 0, 100);
+            f.decay = bounded (*child, "sfzDecay", 0, 0, 100);
+            f.sustain = bounded (*child, "sfzSustain", 1, 0, 1);
+            f.release = bounded (*child, "sfzRelease", 0.001f, 0, 100);
+            f.sustainLoop = child->getBoolAttribute ("sfzSustainLoop");
+            f.powerFade = child->getBoolAttribute ("sfzPowerFade", true);
+            f.velocityTrack = bounded (*child, "sfzVelocityTrack", 100, -100, 100);
+            f.pan = bounded (*child, "sfzPan", 0, -100, 100);
+            f.transpose = child->getIntAttribute ("sfzTranspose");
+            f.keyTrack = child->getIntAttribute ("sfzKeyTrack", 100);
+            f.fadeInLow = child->getIntAttribute ("sfzFadeInLow");
+            f.fadeInHigh = child->getIntAttribute ("sfzFadeInHigh");
+            f.fadeOutLow = child->getIntAttribute ("sfzFadeOutLow", 127);
+            f.fadeOutHigh = child->getIntAttribute ("sfzFadeOutHigh", 127);
+        }
         if (! validMapping (z) || z.loopStart < 0 || z.loopEnd < z.loopStart
             || (z.loop && ! validLoop (z, std::numeric_limits<int>::max())))
             return Result::fail ("A sample zone has an invalid key, velocity or loop range.");
@@ -269,6 +302,14 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
             const auto text = reader->metadataValues.getValue (key, {});
             if (text.isNotEmpty() && text.containsOnly ("0123456789") && text.getIntValue() <= 127) { sample->rootNote = text.getIntValue(); break; }
         }
+    if (reader->metadataValues.getValue ("NumSampleLoops", "0").getIntValue() > 0
+        && reader->metadataValues.getValue ("Loop0Type", "-1") == "0")
+    {
+        const auto a = sfz::integer (reader->metadataValues.getValue ("Loop0Start", "").toStdString());
+        const auto b = sfz::integer (reader->metadataValues.getValue ("Loop0End", "").toStdString());
+        if (a && b && *a >= 0 && *b > *a && *b < frames)
+        { sample->embeddedLoopStart = *a; sample->embeddedLoopEnd = *b + 1; }
+    }
     sample->left.resize (static_cast<std::size_t> (preload));
     if (stereo) sample->right.resize (static_cast<std::size_t> (preload));
     for (int offset = 0; offset < preload; offset += 4096)
@@ -428,7 +469,8 @@ void Plugin::publish (Instrument next)
     {
         const auto& x = a.playback; const auto& y = b.playback;
         return a.id == b.id && x.trigger == y.trigger && x.key == y.key && x.controller == y.controller
-            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger;
+            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger
+             && x.switchDefault == y.switchDefault;
     });
     if (! sameSwitches) ++switchRevision;
     auto bank = std::make_unique<Bank>();
@@ -600,6 +642,322 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
     }
     summary += errors.joinIntoString ("\n");
     return accepted ? Result::ok() : Result::fail (summary);
+}
+
+Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Instrument& next, String& report,
+                           std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    const auto aborted = [&] { return cancelled && cancelled->load(); };
+    if (aborted()) return Result::fail ("Import cancelled.");
+    if (! definition.existsAsFile() || ! definition.hasFileExtension ("sfz"))
+        return Result::fail ("Choose an existing SFZ instrument.");
+    const auto pathToFile = [] (const sfz::Path& path)
+    {
+        const auto utf8 = path.u8string();
+        return File (String::fromUTF8 (reinterpret_cast<const char*> (utf8.data()), static_cast<int> (utf8.size())));
+    };
+    sfz::Document document;
+    try
+    {
+        document = sfz::Parser().parse (sfz::path (definition.getFullPathName().toStdString()),
+            [&] (const sfz::Path& path) -> std::optional<std::string>
+            {
+                if (aborted()) return {};
+                const auto file = pathToFile (path);
+                if (! file.existsAsFile() || file.getSize() > 8 * 1024 * 1024) return {};
+                MemoryBlock bytes;
+                if (! file.loadFileAsData (bytes)) return {};
+                if (bytes.getSize() == 0) return std::string();
+                return std::string (static_cast<const char*> (bytes.getData()), bytes.getSize());
+            }, maxZones);
+    }
+    catch (const std::exception& e) { return Result::fail ("Cannot parse SFZ: " + String (e.what())); }
+    if (aborted()) return Result::fail ("Import cancelled.");
+    if (! document.error.empty()) return Result::fail (String (document.error));
+    Instrument converted;
+    converted.name = definition.getFileNameWithoutExtension().substring (0, 120);
+    converted.settings.gainDb = 0;
+    converted.groups.clear();
+    std::set<std::string> warnings = std::move (document.warnings);
+    std::map<std::string, int> groupIds;
+    struct Sequence { int length = 0; std::map<int, int> positions; };
+    std::map<std::string, Sequence> sequences;
+    int playable = 0, missing = 0, omitted = 0, streamed = 0;
+    const std::set<std::string> supported {
+        "sample", "default_path", "lokey", "hikey", "pitch_keycenter", "lovel", "hivel",
+        "offset", "end", "loop_mode", "loop_start", "loop_end", "loop_crossfade", "loop_type",
+        "volume", "tune", "transpose", "pitch_keytrack", "pan", "amp_veltrack",
+        "ampeg_attack", "ampeg_decay", "ampeg_sustain", "ampeg_release",
+        "xfin_lovel", "xfin_hivel", "xfout_lovel", "xfout_hivel", "xf_velcurve",
+        "trigger", "seq_length", "seq_position", "sw_last", "sw_default", "sw_lokey", "sw_hikey",
+        "sw_label", "group_label", "region_label", "lochan", "hichan"
+    };
+    for (std::size_t n = 0; n < document.regions.size(); ++n)
+    {
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (progress) progress->store (static_cast<int> (100 * (n + 1) / document.regions.size()));
+        const auto& o = document.regions[n].ops;
+        std::string invalid;
+        const auto prefix = "Region " + std::to_string (n + 1) + ": ";
+        const auto warn = [&] (std::string reason) { warnings.insert (std::move (reason)); };
+        const auto has = [&] (const std::string& k) { return o.count (k) != 0; };
+        const auto get = [&] (const std::string& k, std::string fallback = {}) { return sfz::get (o, k, std::move (fallback)); };
+        const auto integer = [&] (const std::string& k, int fallback, int lo, int hi)
+        {
+            if (! has (k)) return fallback;
+            const auto v = sfz::integer (get (k));
+            if (! v || *v < lo || *v > hi) { if (invalid.empty()) invalid = k + "=" + get (k); return fallback; }
+            return *v;
+        };
+        const auto number = [&] (const std::string& k, double fallback, double lo, double hi)
+        {
+            if (! has (k)) return static_cast<float> (fallback);
+            const auto v = sfz::number (get (k));
+            if (! v || *v < lo || *v > hi) { if (invalid.empty()) invalid = k + "=" + get (k); return static_cast<float> (fallback); }
+            return static_cast<float> (*v);
+        };
+        const auto note = [&] (const std::string& k, int fallback)
+        {
+            if (! has (k)) return fallback;
+            const auto v = sfz::note (get (k));
+            if (! v) { if (invalid.empty()) invalid = k + "=" + get (k); return fallback; }
+            return *v;
+        };
+        std::set<int> controllers;
+        bool unsupportedCondition = false;
+        for (const auto& [key, value] : o)
+        {
+            if (supported.count (key)) continue;
+            if (key.rfind ("locc", 0) == 0 || key.rfind ("hicc", 0) == 0)
+            {
+                const auto cc = sfz::integer (std::string_view (key).substr (4));
+                if (cc && *cc >= 0 && *cc < 120) { controllers.insert (*cc); continue; }
+                unsupportedCondition = true;
+            }
+            // Never turn an unsupported gating condition into an always-on layer.
+            if (key.rfind ("sw_", 0) == 0 || key.rfind ("on_", 0) == 0
+                || key.rfind ("start_", 0) == 0 || key.rfind ("lo", 0) == 0 || key.rfind ("hi", 0) == 0
+                || key == "group" || key == "off_by" || key == "off_mode" || key == "count")
+                unsupportedCondition = true;
+            warn ("Unsupported opcode: " + key);
+        }
+        const auto trigger = sfz::lower (get ("trigger", "attack"));
+        if (unsupportedCondition || (trigger != "attack" && trigger != "release")
+            || controllers.size() > 1 || (! controllers.empty() && has ("sw_last")))
+        {
+            ++omitted;
+            warn (prefix + "omitted: unsupported or combined trigger/condition (including choke groups).");
+            continue;
+        }
+        const auto sampleName = get ("sample");
+        if (sampleName.empty() || sampleName.front() == '*')
+        {
+            ++omitted; warn (prefix + "omitted: missing sample opcode or unsupported generated sample."); continue;
+        }
+        SampleZone entry;
+        auto& z = entry.mapping;
+        z.sfz.enabled = true;
+        auto& x = z.sfz;
+        z.root = note ("pitch_keycenter", 60);
+        z.low = note ("lokey", 0); z.high = note ("hikey", 127);
+        z.soft = std::max (1, integer ("lovel", 1, 0, 127)); z.hard = integer ("hivel", 127, 1, 127);
+        z.gainDb = number ("volume", 0, -60, 12); z.cents = number ("tune", 0, -100, 100);
+        x.transpose = integer ("transpose", 0, -48, 48); x.keyTrack = integer ("pitch_keytrack", 100, 0, 200);
+        x.pan = number ("pan", 0, -100, 100); x.velocityTrack = number ("amp_veltrack", 100, -100, 100);
+        x.attack = number ("ampeg_attack", 0, 0, 100); x.decay = number ("ampeg_decay", 0, 0, 100);
+        x.sustain = number ("ampeg_sustain", 100, 0, 100) / 100;
+        x.release = number ("ampeg_release", 0.001, 0, 100);
+        x.fadeInLow = integer ("xfin_lovel", 0, 0, 127); x.fadeInHigh = integer ("xfin_hivel", 0, 0, 127);
+        x.fadeOutLow = integer ("xfout_lovel", 127, 0, 127); x.fadeOutHigh = integer ("xfout_hivel", 127, 0, 127);
+        const auto curve = sfz::lower (get ("xf_velcurve", "power"));
+        x.powerFade = curve != "gain";
+        if (curve != "power" && curve != "gain") invalid = "xf_velcurve=" + curve;
+        z.start = integer ("offset", 0, 0, std::numeric_limits<int>::max() - 2);
+        if (has ("end")) z.end = integer ("end", 0, 0, std::numeric_limits<int>::max() - 2) + 1;
+        const auto mode = sfz::lower (get ("loop_mode"));
+        if (! mode.empty() && mode != "no_loop" && mode != "one_shot" && mode != "loop_continuous" && mode != "loop_sustain")
+            invalid = "loop_mode=" + mode;
+        if (sfz::lower (get ("loop_type", "forward")) != "forward")
+        { ++omitted; warn (prefix + "omitted: non-forward loop."); continue; }
+        z.oneShot = mode == "one_shot" || trigger == "release";
+        z.loop = ! z.oneShot && (mode == "loop_continuous" || mode == "loop_sustain");
+        x.sustainLoop = mode == "loop_sustain";
+        if (has ("loop_start")) z.loopStart = integer ("loop_start", 0, 0, std::numeric_limits<int>::max() - 2);
+        if (has ("loop_end")) z.loopEnd = integer ("loop_end", 0, 0, std::numeric_limits<int>::max() - 2) + 1;
+        z.loopCrossfade = 0; // SFZ does not add Studio's legacy 64-frame smoothing.
+        const auto crossfade = number ("loop_crossfade", 0, 0, 10);
+
+        Group g;
+        g.releaseTrigger = trigger == "release";
+        const int lowChannel = integer ("lochan", 1, 1, 16), highChannel = integer ("hichan", 16, 1, 16);
+        if (lowChannel == highChannel) g.channel = lowChannel;
+        else if (lowChannel != 1 || highChannel != 16)
+        { ++omitted; warn (prefix + "omitted: channel range not representable."); continue; }
+        if (has ("sw_last"))
+        {
+            g.trigger = GroupTrigger::keyswitch;
+            g.key = note ("sw_last", 24);
+            g.switchDefault = note ("sw_default", -1);
+            const auto lo = note ("sw_lokey", g.key), hi = note ("sw_hikey", g.key);
+            if (g.key < lo || g.key > hi) invalid = "sw_last outside switch range";
+        }
+        else if (! controllers.empty())
+        {
+            g.trigger = GroupTrigger::controller;
+            g.controller = *controllers.begin();
+            const auto suffix = std::to_string (g.controller);
+            g.ccLow = integer ("locc" + suffix, 0, 0, 127);
+            g.ccHigh = integer ("hicc" + suffix, 127, 0, 127);
+        }
+        const int sequenceLength = integer ("seq_length", 1, 1, 100);
+        const int sequencePosition = integer ("seq_position", 1, 1, 100);
+        if (sequencePosition > sequenceLength) invalid = "seq_position exceeds seq_length";
+        if (! invalid.empty() || ! validMapping (z) || ! validGroup (g)
+            || (z.end && z.end <= z.start))
+            return Result::fail (String (prefix + "invalid or out-of-range mapping: " + invalid));
+
+        const auto groupKey = std::to_string (static_cast<int> (g.trigger)) + ":" + std::to_string (g.key)
+            + ":" + std::to_string (g.switchDefault) + ":" + std::to_string (g.controller)
+            + ":" + std::to_string (g.ccLow) + ":" + std::to_string (g.ccHigh)
+            + ":" + std::to_string (g.channel) + ":" + std::to_string (g.releaseTrigger)
+            + ":" + get ("group_label") + ":" + get ("sw_label");
+        auto existingGroup = groupIds.find (groupKey);
+        if (existingGroup == groupIds.end())
+        {
+            if (converted.groups.size() >= maxGroups)
+                return Result::fail ("SFZ exceeds Studio's 16 articulation-group limit. No changes made.");
+            g.id = static_cast<int> (converted.groups.size());
+            const auto label = get ("sw_label", get ("group_label"));
+            String name (label);
+            if (name.isEmpty())
+                name = g.trigger == GroupTrigger::keyswitch ? "Keyswitch " + String (g.key)
+                     : g.trigger == GroupTrigger::controller ? "CC " + String (g.controller) + " " + String (g.ccLow) + "-" + String (g.ccHigh)
+                     : g.releaseTrigger ? "Release" : "Main";
+            converted.groups.push_back ({ g.id, name.substring (0, 120), g });
+            groupIds.emplace (groupKey, g.id);
+            entry.folder = g.id;
+        }
+        else entry.folder = existingGroup->second;
+        z.folder = entry.folder;
+
+        try
+        {
+            const auto samplePath = sfz::path (sampleName);
+            const auto base = sfz::path (definition.getParentDirectory().getFullPathName().toStdString());
+            const auto defaultPath = sfz::path (get ("default_path"));
+            // Absolute sample paths override default_path; relative paths
+            // resolve against the main SFZ definition, including includes.
+            entry.file = pathToFile ((base / defaultPath / samplePath).lexically_normal());
+        }
+        catch (const std::exception&) { return Result::fail (String (prefix + "invalid sample path.")); }
+        const auto reuse = [&] (const auto& e) { return currentSample (e, entry.file); };
+        auto found = std::find_if (converted.zones.begin(), converted.zones.end(), reuse);
+        if (found != converted.zones.end()) z.sample = found->mapping.sample;
+        else if (auto old = std::find_if (cache.zones.begin(), cache.zones.end(), reuse);
+                 old != cache.zones.end() && old->mapping.sample->bytes() <= maxBankBytes - sampleBytes (converted))
+            z.sample = old->mapping.sample;
+        else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc"))
+            entry.problem = "Unsupported sample encoding (WAV/AIFF required)";
+        else if (auto result = readSample (entry.file, maxBankBytes - sampleBytes (converted), z.sample, cancelled); result.failed())
+            entry.problem = result.getErrorMessage();
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (z.sample)
+        {
+            const int frames = z.sample->frameCount();
+            if (z.start >= frames || z.end > frames)
+                return Result::fail (String (prefix + "sample start/end exceeds recording length."));
+            if (mode.empty() && ! z.oneShot && z.sample->embeddedLoopStart >= 0) z.loop = true;
+            if (z.loop)
+            {
+                if (! has ("loop_start")) z.loopStart = std::max (z.start, z.sample->embeddedLoopStart);
+                if (! has ("loop_end")) z.loopEnd = z.sample->embeddedLoopEnd > 0 ? z.sample->embeddedLoopEnd : (z.end ? z.end : frames);
+                if (! validLoop (z, frames)) return Result::fail (String (prefix + "invalid loop bounds."));
+                z.loopCrossfade = std::min (1000000, roundToInt (crossfade * z.sample->rate));
+                if (z.loopCrossfade > (z.loopEnd - z.loopStart) / 4)
+                    warn (prefix + "loop crossfade limited by native loop length.");
+            }
+            else if (z.loopEnd == 0) z.loopEnd = frames;
+            if (primeZone (z)) { ++playable; if (z.sample->stream) ++streamed; }
+            else { entry.problem = "Could not preload streamed start or loop"; z.sample.reset(); }
+        }
+        else if (z.loop)
+        {
+            // A missing recording with an unresolved implicit loop cannot
+            // be safely persisted with fabricated loop boundaries.
+            if (z.loopEnd <= z.loopStart + 1)
+            {
+                z.loop = false; x.sustainLoop = false;
+                warn (prefix + "missing sample: implicit loop must be restored after relinking.");
+            }
+        }
+        if (! z.sample)
+        {
+            ++missing;
+            warn (prefix + entry.file.getFullPathName().toStdString() + ": " + entry.problem.toStdString());
+        }
+
+        if (sequenceLength > 1)
+        {
+            const auto sequenceKey = groupKey + ":" + std::to_string (z.low) + ":" + std::to_string (z.high)
+                + ":" + std::to_string (z.soft) + ":" + std::to_string (z.hard) + ":" + std::to_string (sequenceLength);
+            auto& sequence = sequences[sequenceKey];
+            sequence.length = sequenceLength;
+            if (! sequence.positions.emplace (sequencePosition, static_cast<int> (converted.zones.size())).second)
+                return Result::fail (String (prefix + "duplicate round-robin position; overlapping sequence layers are not supported."));
+        }
+        converted.zones.push_back (std::move (entry));
+    }
+    if (aborted()) return Result::fail ("Import cancelled.");
+    if (playable == 0)
+    {
+        report = "No playable SFZ regions. " + String (missing) + " unavailable, " + String (omitted) + " omitted.\n";
+        for (const auto& warning : warnings) report += String (warning) + "\n";
+        return Result::fail (report);
+    }
+    if (sequences.size() > maxGroups)
+        return Result::fail ("SFZ exceeds Studio's 16 independent round-robin sequences.");
+    // Preserve seq_position order regardless of the source text ordering.
+    // The native counter is per sequence group (not a complete SFZ state machine).
+    int rr = 0;
+    std::vector<SampleZone> ordered;
+    std::set<int> sequenced;
+    for (const auto& [key, sequence] : sequences)
+    {
+        if (static_cast<int> (sequence.positions.size()) != sequence.length)
+            return Result::fail ("Incomplete SFZ round-robin sequence. No instrument was replaced.");
+        ++rr;
+        for (const auto& [position, index] : sequence.positions)
+        {
+            auto& entry = converted.zones[static_cast<std::size_t> (index)];
+            if (! entry.mapping.sample)
+                return Result::fail ("Round-robin sequence contains an unavailable sample. Relink the source before importing.");
+            entry.mapping.group = rr;
+            sequenced.insert (index);
+            ordered.push_back (std::move (entry));
+        }
+    }
+    if (! sequences.empty())
+    {
+        for (int i = 0; i < static_cast<int> (converted.zones.size()); ++i)
+            if (! sequenced.count (i)) ordered.push_back (std::move (converted.zones[static_cast<std::size_t> (i)]));
+        converted.zones = std::move (ordered);
+        warnings.insert ("Round robin uses Studio's sequence-group counter; complex SFZ region counters are not emulated.");
+    }
+    warnings.insert ("Studio uses native linear ADSR and stereo balance; exact SFZ-player envelope/pan curves and CC behavior can differ.");
+    warnings.insert ("WAV forward-loop metadata is read; implicit AIFF loop markers are not converted.");
+    report = "SFZ: " + converted.name + "\n" + String (playable) + " playable regions | "
+        + String (streamed) + " streamed | " + String (missing) + " unavailable | " + String (omitted)
+        + " omitted.\n" + String (converted.groups.size()) + " articulation groups. "
+        + String (sequences.size()) + " round-robin sequences.\n"
+        + "Import replaces this sampler instrument only after confirmation. Source files are not modified.\n\n";
+    if (! warnings.empty()) report += "Compatibility notes (review before import):\n";
+    for (const auto& warning : warnings) report += String (warning) + "\n";
+    for (const auto& entry : converted.zones)
+        report += entry.file.getFileName() + ": root " + String (entry.mapping.root)
+            + ", keys " + String (entry.mapping.low) + "-" + String (entry.mapping.high)
+            + (entry.problem.isNotEmpty() ? " | " + entry.problem : String()) + "\n";
+    next = std::move (converted);
+    return Result::ok();
 }
 
 void Plugin::removeZone (int index)

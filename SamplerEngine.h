@@ -20,6 +20,7 @@ struct Sample
     double rate = 0;
     std::int64_t sourceBytes = -1, sourceTime = 0;
     int rootNote = -1; // Verified file metadata, not acoustic pitch analysis.
+    int embeddedLoopStart = -1, embeddedLoopEnd = -1; // exclusive end; forward WAV smpl loop
     std::vector<float> left, right;
     // For streamed recordings the vectors contain the immutable attack
     // preload, not the entire recording. Existing short/fixture samples
@@ -44,6 +45,17 @@ struct Sample
     }
 };
 
+// Optional imported per-region parameters. Legacy Studio instruments keep
+// their original global envelopes, linear velocity and native fade controls.
+struct SfzRegion
+{
+    bool enabled = false, sustainLoop = false, powerFade = true;
+    float attack = 0, decay = 0, sustain = 1, release = 0.001f;
+    float velocityTrack = 100, pan = 0;
+    int transpose = 0, keyTrack = 100;
+    int fadeInLow = 0, fadeInHigh = 0, fadeOutLow = 127, fadeOutHigh = 127;
+};
+
 struct Zone
 {
     int root = 60, low = 0, high = 127, soft = 1, hard = 127;
@@ -54,6 +66,7 @@ struct Zone
     int folder = 0, loopCrossfade = -1; // -1 preserves legacy 64-frame smoothing.
     int fadeIn = 0, fadeOut = 0; // Velocity steps inside the zone range.
     std::shared_ptr<const Sample> sample;
+    SfzRegion sfz;
 };
 
 enum class GroupTrigger { normal, keyswitch, controller };
@@ -64,6 +77,7 @@ struct Group
     int key = 24, controller = 20, ccLow = 0, ccHigh = 127;
     int channel = 0; // Zero accepts any MIDI channel; otherwise 1-16.
     bool mute = false, solo = false, releaseTrigger = false;
+    int switchDefault = -2; // -2 legacy first switch; -1 no initial switch.
 };
 bool validGroup (const Group&) noexcept;
 float velocityWeight (const Zone&, int velocity) noexcept;
@@ -115,6 +129,7 @@ private:
         int channel = 0, note = 0, source = 0;
         float velocityGain = 0, level = 0, releaseStep = 0;
         float streamGain = 1, lastLeft = 0, lastRight = 0;
+        SfzRegion sfz;
         double position = 0, baseStep = 0;
         std::uint64_t age = 0;
         bool down = false, oneShot = false, loop = false, muted = false;

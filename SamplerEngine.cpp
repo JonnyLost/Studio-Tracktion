@@ -21,11 +21,21 @@ bool validGroup (const Group& g) noexcept
 {
     return g.id >= 0 && g.id < maxGroups && g.key >= 0 && g.key <= 127
         && g.controller >= 0 && g.controller < 120 && g.ccLow >= 0 && g.ccHigh <= 127 && g.ccLow <= g.ccHigh
-        && g.channel >= 0 && g.channel <= 16 && static_cast<int> (g.trigger) >= 0 && static_cast<int> (g.trigger) <= 2;
+        && g.channel >= 0 && g.channel <= 16 && static_cast<int> (g.trigger) >= 0 && static_cast<int> (g.trigger) <= 2
+        && g.switchDefault >= -2 && g.switchDefault <= 127;
 }
 float velocityWeight (const Zone& z, int v) noexcept
 {
     if (v < z.soft || v > z.hard) return 0;
+    if (z.sfz.enabled)
+    {
+        const auto ramp = [] (int n, int lo, int hi)
+        { return hi == lo ? (n >= hi ? 1.0f : 0.0f) : std::clamp (float (n - lo) / (hi - lo), 0.0f, 1.0f); };
+        const float in = z.sfz.fadeInHigh > z.sfz.fadeInLow ? ramp (v, z.sfz.fadeInLow, z.sfz.fadeInHigh) : 1.0f;
+        const float out = z.sfz.fadeOutHigh > z.sfz.fadeOutLow ? 1.0f - ramp (v, z.sfz.fadeOutLow, z.sfz.fadeOutHigh) : 1.0f;
+        const float weight = in * out;
+        return z.sfz.powerFade ? std::sqrt (weight) : weight;
+    }
     float weight = 1;
     if (z.fadeIn > 0) weight = std::min (weight, float (v - z.soft + 1) / (z.fadeIn + 1));
     if (z.fadeOut > 0) weight = std::min (weight, float (z.hard - v + 1) / (z.fadeOut + 1));
@@ -50,7 +60,8 @@ bool Engine::groupMatches (const Group& g, int channel) const noexcept
     if (g.trigger == GroupTrigger::keyswitch)
     {
         int key = c.selectedKey;
-        if (key < 0) for (const auto& first : bank->groups)
+        if (key < 0 && g.switchDefault != -2) key = g.switchDefault;
+        if (key < 0 && g.switchDefault == -2) for (const auto& first : bank->groups)
             if (first.trigger == GroupTrigger::keyswitch && (! first.channel || first.channel == channel + 1)) { key = first.key; break; }
         return key == g.key;
     }
@@ -72,7 +83,16 @@ bool validMapping (const Zone& z) noexcept
     return z.root >= 0 && z.root <= 127 && z.low >= 0 && z.low <= z.high && z.high <= 127
         && z.soft >= 1 && z.soft <= z.hard && z.hard <= 127 && z.group >= 0 && z.group <= maxGroups
         && z.folder >= 0 && z.folder < maxGroups && z.loopCrossfade >= -1 && z.loopCrossfade <= 1000000
-        && z.fadeIn >= 0 && z.fadeIn <= 127 && z.fadeOut >= 0 && z.fadeOut <= 127;
+        && z.fadeIn >= 0 && z.fadeIn <= 127 && z.fadeOut >= 0 && z.fadeOut <= 127
+        && (! z.sfz.enabled || (std::isfinite (z.sfz.attack) && z.sfz.attack >= 0 && z.sfz.attack <= 100
+            && std::isfinite (z.sfz.decay) && z.sfz.decay >= 0 && z.sfz.decay <= 100
+            && std::isfinite (z.sfz.sustain) && z.sfz.sustain >= 0 && z.sfz.sustain <= 1
+            && std::isfinite (z.sfz.release) && z.sfz.release >= 0 && z.sfz.release <= 100
+            && std::isfinite (z.sfz.velocityTrack) && z.sfz.velocityTrack >= -100 && z.sfz.velocityTrack <= 100
+            && std::isfinite (z.sfz.pan) && z.sfz.pan >= -100 && z.sfz.pan <= 100
+            && z.sfz.transpose >= -48 && z.sfz.transpose <= 48 && z.sfz.keyTrack >= 0 && z.sfz.keyTrack <= 200
+            && z.sfz.fadeInLow >= 0 && z.sfz.fadeInHigh >= z.sfz.fadeInLow && z.sfz.fadeInHigh <= 127
+            && z.sfz.fadeOutLow >= 0 && z.sfz.fadeOutHigh >= z.sfz.fadeOutLow && z.sfz.fadeOutHigh <= 127));
 }
 
 bool validLoop (const Zone& z, int frames) noexcept
@@ -120,7 +140,8 @@ void Engine::release (Voice& voice) noexcept
 {
     if (voice.stage == Voice::release) return;
     voice.stage = Voice::release;
-    voice.releaseStep = static_cast<float> (voice.level / std::max (1.0, settings.release * outputRate));
+    voice.releaseStep = static_cast<float> (voice.level / std::max (1.0, (voice.sfz.enabled ? voice.sfz.release : settings.release) * outputRate));
+    if (voice.sfz.enabled && voice.sfz.sustainLoop) voice.loop = false;
 }
 
 void Engine::trigger (const Zone& zone, int source, int channel, int note, int velocity, bool releasing, int firstOverride, int endOverride, bool direct) noexcept
@@ -151,9 +172,18 @@ void Engine::trigger (const Zone& zone, int source, int channel, int note, int v
     voice->source = source;
     voice->down = ! releasing;
     voice->age = ++age;
-    voice->velocityGain = amplitude (zone.gainDb) * static_cast<float> (velocity) / 127 * (direct ? 1.0f : velocityWeight (zone, velocity));
+    voice->sfz = zone.sfz;
+    float velocityGain = static_cast<float> (velocity) / 127;
+    if (zone.sfz.enabled)
+    {
+        const float track = zone.sfz.velocityTrack / 100.0f;
+        const float scaled = track < 0 ? 1.0f - velocityGain : velocityGain;
+        velocityGain = 1.0f - std::abs (track) + std::abs (track) * scaled * scaled;
+    }
+    voice->velocityGain = amplitude (zone.gainDb) * velocityGain * (direct ? 1.0f : velocityWeight (zone, velocity));
     voice->folder = zone.folder;
-    voice->baseStep = zone.sample->rate / outputRate * pitchRatio (note - zone.root + zone.cents * 0.01);
+    const auto trackedNote = (note - zone.root) * (zone.sfz.enabled ? zone.sfz.keyTrack * 0.01 : 1.0);
+    voice->baseStep = zone.sample->rate / outputRate * pitchRatio (trackedNote + zone.cents * 0.01 + (zone.sfz.enabled ? zone.sfz.transpose : 0));
     voice->oneShot = zone.oneShot || releasing;
     voice->loop = ! releasing && ! zone.oneShot && zone.loop && validLoop (zone, zone.sample->frameCount());
     voice->loopStart = zone.loopStart;
@@ -319,7 +349,12 @@ void Engine::render (float* left, float* right, int frames, bool offline) noexce
         const Channel previewChannel;
         const auto& channel = v.source == 0 ? channels[static_cast<std::size_t> (v.channel)] : previewChannel;
         const double step = v.baseStep * pitchRatio (settings.semitones + channel.bend * settings.bendRange);
-        const float vibrato = 0.5f * std::max (channel.modulation, channel.pressure);
+        const float vibrato = v.sfz.enabled ? 0.0f : 0.5f * std::max (channel.modulation, channel.pressure);
+        const float sustainLevel = v.sfz.enabled ? v.sfz.sustain : settings.sustain;
+        const auto voiceAttack = v.sfz.enabled ? static_cast<float> (1 / std::max (1.0, v.sfz.attack * outputRate)) : attackStep;
+        const auto voiceDecay = v.sfz.enabled ? static_cast<float> ((1 - sustainLevel) / std::max (1.0, v.sfz.decay * outputRate)) : decayStep;
+        const float panL = v.sfz.enabled ? 1.0f - std::max (0.0f, v.sfz.pan / 100.0f) : 1.0f;
+        const float panR = v.sfz.enabled ? 1.0f + std::min (0.0f, v.sfz.pan / 100.0f) : 1.0f;
         const float gain = v.velocityGain * instrumentGain * channel.volume * channel.expression;
         const int length = v.end;
         const int blend = v.blend;
@@ -351,14 +386,14 @@ void Engine::render (float* left, float* right, int frames, bool offline) noexce
             switch (v.stage)
             {
                 case Voice::attack:
-                    v.level = std::min (1.0f, v.level + attackStep);
+                    v.level = std::min (1.0f, v.level + voiceAttack);
                     if (v.level >= 1) v.stage = Voice::decay;
                     break;
                 case Voice::decay:
-                    v.level = std::max (settings.sustain, v.level - decayStep);
-                    if (v.level <= settings.sustain) v.stage = Voice::sustain;
+                    v.level = std::max (sustainLevel, v.level - voiceDecay);
+                    if (v.level <= sustainLevel) v.stage = Voice::sustain;
                     break;
-                case Voice::sustain: v.level = settings.sustain; break;
+                case Voice::sustain: v.level = sustainLevel; break;
                 case Voice::release: v.level = std::max (0.0f, v.level - v.releaseStep); break;
             }
 
@@ -426,6 +461,7 @@ void Engine::render (float* left, float* right, int frames, bool offline) noexce
                 l = v.lastLeft * level * v.streamGain;
                 r = v.lastRight * level * v.streamGain;
             }
+            l *= panL; r *= panR;
             left[i] += right != nullptr ? l : (l + r) * 0.5f;
             if (right != nullptr) right[i] += r;
 

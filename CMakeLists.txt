@@ -874,6 +874,17 @@ if(BUILD_TESTING)
     add_test(NAME StudioSamplerStreaming COMMAND StudioSamplerStreamingTests)
     set_tests_properties(StudioSamplerStreaming PROPERTIES TIMEOUT 30)
 
+    add_executable(StudioSfzParserTests tests/SfzParserTests.cpp)
+    target_compile_features(StudioSfzParserTests PRIVATE cxx_std_20)
+    target_compile_options(StudioSfzParserTests PRIVATE -UNDEBUG)
+    add_test(NAME StudioSfzParser COMMAND StudioSfzParserTests)
+
+    add_executable(StudioSfzPlaybackTests tests/SfzPlaybackTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSfzPlaybackTests PRIVATE cxx_std_20)
+    target_compile_options(StudioSfzPlaybackTests PRIVATE -UNDEBUG)
+    target_link_libraries(StudioSfzPlaybackTests PRIVATE Threads::Threads)
+    add_test(NAME StudioSfzPlayback COMMAND StudioSfzPlaybackTests)
+
 
     target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp)
     add_test(NAME StudioComposerMidi COMMAND $<TARGET_FILE:Studio> --studio-test-composer-midi)
