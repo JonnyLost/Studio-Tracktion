@@ -874,6 +874,13 @@ if(BUILD_TESTING)
     add_test(NAME StudioSamplerStreaming COMMAND StudioSamplerStreamingTests)
     set_tests_properties(StudioSamplerStreaming PROPERTIES TIMEOUT 30)
 
+    add_executable(StudioSamplerPerformanceTests tests/SamplerPerformanceTests.cpp SamplerEngine.cpp)
+    target_compile_features(StudioSamplerPerformanceTests PRIVATE cxx_std_20)
+    target_compile_options(StudioSamplerPerformanceTests PRIVATE -UNDEBUG)
+    target_link_libraries(StudioSamplerPerformanceTests PRIVATE Threads::Threads)
+    add_test(NAME StudioSamplerPerformance COMMAND StudioSamplerPerformanceTests)
+    set_tests_properties(StudioSamplerPerformance PROPERTIES TIMEOUT 60)
+
     add_executable(StudioSfzParserTests tests/SfzParserTests.cpp)
     target_compile_features(StudioSfzParserTests PRIVATE cxx_std_20)
     target_compile_options(StudioSfzParserTests PRIVATE -UNDEBUG)
