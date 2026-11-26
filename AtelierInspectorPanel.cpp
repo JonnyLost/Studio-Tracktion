@@ -5,6 +5,7 @@
 #include "StudioUI.h"
 #include "StudioGeneralMidi.h"
 #include "StudioSampler.h"
+#include "StudioSynth.h"
 #include "StudioLibraryPresentation.h"
 #include <cmath>
 
@@ -87,6 +88,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     addAndMakeVisible (artworkPicker);
     artworkPicker.setTooltip ("The artwork is cosmetic; it does not change the Audio Unit patch.");
     artworkPicker.addItem ("Composer Study", 1);
+    artworkPicker.setTextWhenNothingSelected ("Artwork unavailable");
     StringArray pictures { "Violin", "Cello", "Flute", "Clarinet", "Horn", "Oboe" };
     Array<File> files;
     for (const auto* ext : { "*.jpg", "*.jpeg", "*.png" })
@@ -98,7 +100,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (const auto& picture : pictures) artworkPicker.addItem (picture, id++);
     artworkPicker.onChange = [this] { if (! updating) changeArtwork(); };
 
-    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &originalInstrument, &stageButton })
+    for (auto* button : { &mappingsButton, &sendValues, &fullInstrument, &originalInstrument, &stageButton, &moreControls })
         addAndMakeVisible (*button);
     mappingsButton.onClick = [this]
     {
@@ -112,7 +114,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     };
     originalInstrument.onClick = [this]
     {
-        if (dynamic_cast<sampler::Plugin*>(hosted()))
+        if (profile() != AtelierProfile::hosted)
         {if (actions.openFullInstrument && trackId.isValid())actions.openFullInstrument(trackId);}
         else if (actions.openOriginalInstrument && trackId.isValid())
             actions.openOriginalInstrument (trackId);
@@ -122,10 +124,20 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     {
         if (actions.showStage && trackId.isValid()) actions.showStage (trackId);
     };
+    moreControls.setTooltip ("Show additional MIDI controls without sending MIDI.");
+    moreControls.onClick = [this]
+    {
+        advancedMidi = ! advancedMidi;
+        if (auto* t = track()) refresh (t, editing);
+        resized();
+    };
+    sendValues.setButtonText ("Send shown");
+    sendValues.setTooltip ("Send only displayed MIDI controller values.");
     sendValues.onClick = [this]
     {
         if (! canSendMidi()) return;
-        for (int i = 0; i < (int) ccKnobs.size(); ++i) sendCC (i);
+        for (int i = 0; i < (int) ccKnobs.size(); ++i)
+            if (atelierControllerVisible (profile(), advancedMidi, i)) sendCC (i);
     };
 
     for (auto& button : articulationPads)
@@ -240,9 +252,17 @@ te::Plugin* AtelierInspectorPanel::hosted() const
 {
     if (auto* t = track())
         if (auto* plugin = findInstrument (*t))
-            if (dynamic_cast<te::ExternalPlugin*> (plugin) != nullptr || dynamic_cast<sampler::Plugin*> (plugin) != nullptr)
+            if (dynamic_cast<te::ExternalPlugin*> (plugin) != nullptr || dynamic_cast<sampler::Plugin*> (plugin) != nullptr
+                || dynamic_cast<synth::Plugin*> (plugin) != nullptr)
                 return plugin;
     return nullptr;
+}
+AtelierProfile AtelierInspectorPanel::profile() const
+{
+    auto* plugin = hosted();
+    if (dynamic_cast<sampler::Plugin*> (plugin)) return AtelierProfile::sampler;
+    if (dynamic_cast<synth::Plugin*> (plugin)) return AtelierProfile::synth;
+    return AtelierProfile::hosted;
 }
 te::VolumeAndPanPlugin* AtelierInspectorPanel::fader() const
 {
@@ -310,6 +330,11 @@ void AtelierInspectorPanel::setEdit (te::Edit* next)
     trackId = {};
     cachedMappingXml.clear();
     cachedCCState.clear();
+    ccStateLoaded = false;
+    mappingCacheValid = false;
+    nativeMappingInstance.clear();
+    mappings.clear();
+    for (auto& pad : articulationPads) pad.setVisible (false);
     portraitName.clear();
     nativePortraitToken.clear();
     portraitImage = {};
@@ -319,23 +344,15 @@ void AtelierInspectorPanel::setEdit (te::Edit* next)
 void AtelierInspectorPanel::loadArtwork()
 {
     portraitImage = {};
-    if (portraitName.isEmpty()) { repaint(); return; }
+    if (portraitName.isEmpty() || portraitName.containsChar ('/') || portraitName.containsChar ('\\')
+        || portraitName.containsChar (':')) { repaint(); return; }
     for (const auto* suffix : { ".jpg", ".jpeg", ".png" })
     {
         const auto candidate = artDirectory().getChildFile (portraitName + suffix);
         // Never follow arbitrary source-project paths outside AtelierArtwork.
-        if (! candidate.isAChildOf (artDirectory()) || ! candidate.existsAsFile()) continue;
-        portraitImage = ImageFileFormat::loadFrom (candidate);
-        if (portraitImage.isValid())
-        {
-            const float factor = jmin (1.0f, jmin (700.0f / portraitImage.getWidth(),
-                                                   500.0f / portraitImage.getHeight()));
-            if (factor < 1.0f)
-                portraitImage = portraitImage.rescaled (
-                    jmax (1, roundToInt (factor * portraitImage.getWidth())),
-                    jmax (1, roundToInt (factor * portraitImage.getHeight())));
-            break;
-        }
+        if (! candidate.isAChildOf (artDirectory()) || candidate.isSymbolicLink()) continue;
+        portraitImage = library::previewImage (candidate);
+        if (portraitImage.isValid()) break;
     }
     repaint (imageBounds);
 }
@@ -353,6 +370,18 @@ void AtelierInspectorPanel::refreshMappings()
     auto* t = track();
     auto* p = hosted();
     if (t == nullptr || p == nullptr) return;
+    if (profile() == AtelierProfile::synth)
+    {
+        if (! mappings.empty() || mappingCacheValid)
+        {
+            mappings.clear();
+            mappingCacheValid = false;
+            nativeMappingInstance.clear();
+            for (auto& pad : articulationPads) pad.setVisible (false);
+            resized();
+        }
+        return;
+    }
     if (auto* native = dynamic_cast<sampler::Plugin*> (p))
     {
         const auto instance=native->itemID.toString();
@@ -386,7 +415,10 @@ void AtelierInspectorPanel::refreshMappings()
         return;
     }
     const auto xmlText = t->state.getProperty ("studioArticulationMappings").toString();
-    if (xmlText == cachedMappingXml) return;
+    const auto instance = p->itemID.toString();
+    if (mappingCacheValid && xmlText == cachedMappingXml && instance == cachedMappingInstance) return;
+    mappingCacheValid = true;
+    cachedMappingInstance = instance;
     cachedMappingXml = xmlText;
     mappings.clear();
     activeMapping.clear();
@@ -482,13 +514,17 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
         trackId = chosen->itemID;
         cachedMappingXml.clear();
         cachedCCState.clear();
+        ccStateLoaded = false;
+        mappingCacheValid = false;
+        nativeMappingInstance.clear();
+        mappings.clear();
+        for (auto& pad : articulationPads) pad.setVisible (false);
         const ScopedValueSetter<bool> hold (updating, true);
         nativePortraitToken.clear();
         portraitName = chosen->state.getProperty (portraitProperty).toString();
-        int selection = 1;
+        int selection = portraitName.isEmpty() ? 1 : 0;
         for (int i = 0; i < artworkPicker.getNumItems(); ++i)
             if (artworkPicker.getItemText (i) == portraitName) selection = artworkPicker.getItemId (i);
-        if (selection == 1) portraitName.clear();
         artworkPicker.setSelectedId (selection, dontSendNotification);
         midiChannel.setSelectedId (jlimit (1, 16,
             (int) chosen->state.getProperty (channelProperty, 1)), dontSendNotification);
@@ -496,6 +532,8 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     }
     auto* native = dynamic_cast<sampler::Plugin*> (hosted());
     const bool nativeMode = native != nullptr;
+    auto* synthesizer = dynamic_cast<synth::Plugin*> (hosted());
+    const auto mode = profile();
     const auto presentation = nativeMode ? library::readPresentation(*native) : library::Presentation{};
     const auto token = nativeMode ? "native:"+presentation.portrait : String();
     if (nativeMode && nativePortraitToken != token)
@@ -509,10 +547,10 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     artworkPicker.setVisible(!nativeMode);
     artCaption.setVisible(nativeMode);
     artCaption.setText(nativeMode?(presentation.family.isNotEmpty()?presentation.family:String("Native instrument")):portraitName,dontSendNotification);
-    originalInstrument.setButtonText(nativeMode?"Open Sampler":"Open Plug-in");
+    originalInstrument.setButtonText(nativeMode?"Open Sampler":synthesizer?"Open Synth":"Open Plug-in");
     mappingsButton.setButtonText(nativeMode?"Sampler articulations":"Edit articulations");
     mappingsButton.setTooltip(nativeMode?"Open the sampler to see its mapped playing techniques and edit them under Build > Groups.":"Edit the verified MIDI articulation mappings for this hosted instrument.");
-    originalInstrument.setTooltip(nativeMode?"Open the native sampler editor.":"Open the hosted instrument's original Audio Unit editor directly.");
+    originalInstrument.setTooltip(nativeMode?"Open the native sampler editor.":synthesizer?"Open the selected Studio Synth editor.":"Open the hosted instrument's original Audio Unit editor directly.");
     String displayedInstrument = chosen->getName() + " | "
         + (hosted() != nullptr ? hosted()->getName() : String ("Instrument"));
     if (auto* au = dynamic_cast<te::ExternalPlugin*> (hosted());
@@ -526,6 +564,7 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
                 + String (gm::displayNumber (gmProgram)) + " " + gm::name (gmProgram);
     }
     if(nativeMode) displayedInstrument=native->instrument().name;
+    if(synthesizer) displayedInstrument=synthesizer->presetName();
     if (instrumentName.getText() != displayedInstrument)
         instrumentName.setText (displayedInstrument, dontSendNotification);
 
@@ -535,12 +574,12 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     const auto sharedPortrait = chosen->state.getProperty (portraitProperty).toString();
     if (!nativeMode && sharedPortrait != portraitName)
     {
-        int selection = 1;
+        int selection = sharedPortrait.isEmpty() ? 1 : 0;
         for (int i = 0; i < artworkPicker.getNumItems(); ++i)
             if (artworkPicker.getItemText (i) == sharedPortrait)
                 selection = artworkPicker.getItemId (i);
         const ScopedValueSetter<bool> hold (updating, true);
-        portraitName = selection == 1 ? String() : sharedPortrait;
+        portraitName = sharedPortrait;
         artworkPicker.setSelectedId (selection, dontSendNotification);
         loadArtwork();
     }
@@ -552,8 +591,9 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
         midiChannel.setSelectedId (updatedChannel, dontSendNotification);
     }
     const auto saved = chosen->state.getProperty (ccProperty).toString();
-    if (saved != cachedCCState)
+    if (! ccStateLoaded || saved != cachedCCState)
     {
+        ccStateLoaded = true;
         cachedCCState = saved;
         StringArray values = StringArray::fromTokens (saved, ",", "");
         const ScopedValueSetter<bool> hold (updating, true);
@@ -567,16 +607,34 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     refreshMix();
     bool live = canSendMidi();
     if (! live && pedalChannel > 0) releaseSustain();
+    const bool showMidi = mode != AtelierProfile::synth;
+    bool layoutChanged = ccHeading.isVisible() != showMidi || moreControls.isVisible() != (mode == AtelierProfile::hosted);
+    for (auto* component : std::initializer_list<Component*> { &mappingsHeading, &mappingsButton, &ccHeading, &midiChannel, &sendValues, &midiStatus })
+        component->setVisible (showMidi);
+    moreControls.setVisible (mode == AtelierProfile::hosted);
+    moreControls.setButtonText (advancedMidi ? "Essential controls" : "More MIDI controls");
+    moreControls.setToggleState (advancedMidi, dontSendNotification);
     for(size_t i=0;i<ccKnobs.size();++i)
     {
-        const bool supported=!nativeMode||i==0||i==2||i==3||i==4;
+        const bool supported=atelierControllerVisible (mode, advancedMidi, (int) i);
+        layoutChanged = layoutChanged || ccKnobs[i].isVisible() != supported;
         ccKnobs[i].setVisible(supported);ccLabels[i].setVisible(supported);ccKnobs[i].setEnabled(live&&supported);
-        ccLabels[i].setText(nativeMode?(i==0?"Vibrato":i==2?"MIDI Vol":i==3?"Expression":"Sustain"):String(controllers[i].name)+" · CC"+String(controllers[i].cc),dontSendNotification);
+        ccLabels[i].setText(nativeMode?(i==0?"Vibrato":i==2?"MIDI Vol":i==3?"Expression":"Sustain"):String(i==0?"Modulation":i==3?"Expression":controllers[i].name),dontSendNotification);
         ccKnobs[i].setTooltip(nativeMode?(i==0?"Vibrato depth (CC1).":i==2?"MIDI note volume (CC7), separate from the track mixer.":i==3?"Musical expression level (CC11).":"Sustain pedal (CC64)."):("Live MIDI CC"+String(controllers[i].cc)+" on the selected channel; patch support varies."));
     }
     ccHeading.setText(nativeMode?"EXPRESSION":"MIDI CONTROLLERS",dontSendNotification);
     sendValues.setEnabled (live);
-    mappingsButton.setEnabled (editing);
+    mappingsButton.setEnabled (editing && showMidi);
+    if (showMidi)
+    {
+        const auto count = (int) mappings.size();
+        mappingsHeading.setText (count > 0 ? "ARTICULATIONS (" + String (count) + ")" : String ("ARTICULATIONS"), dontSendNotification);
+        for (size_t i = 0; i < articulationPads.size(); ++i)
+            if (articulationPads[i].isVisible())
+                articulationPads[i].setEnabled (nativeMode ? live : editing && ! chosen->edit.getTransport().isRecording()
+                                                    && ! chosen->isFrozen (te::Track::anyFreeze));
+    }
+    if (layoutChanged) resized();
     originalInstrument.setEnabled (ready && hosted() != nullptr);
     const String summary = live ? (nativeMode?"Live native expression":"Live CC · instrument response depends on patch")
         : "Live controls unavailable · active playback context required";
@@ -587,87 +645,87 @@ void AtelierInspectorPanel::appearanceChanged() { resized(); repaint(); }
 
 int AtelierInspectorPanel::desiredHeight (int width) const
 {
-    const auto& m = appearance;
-    const bool four = width - 2 * m.px(9) >= m.span (316);
-    const bool native=dynamic_cast<sampler::Plugin*>(hosted())!=nullptr;
-    const int ccRows = (native?4:8)/(four?4:2);
-    return m.px (20) + m.control (52) + m.px (180) + m.control (27)
-        + m.px (20) + m.control (20) + m.control (37) * 2 + m.control (29)
-        + m.px (19) + m.control (20) + m.control (28) + ccRows * m.px (93)
-        + m.control (26) + m.px (17) + m.control (22) + m.px (204)
-        + m.control (40) + m.control (34) + m.px (20);
+    return atelierLayout (width, (int) mappings.size(), profile(), advancedMidi, appearance).total;
 }
 
 void AtelierInspectorPanel::resized()
 {
     const auto& m = appearance;
+    const auto mode = profile();
+    const auto layout = atelierLayout (getWidth(), (int) mappings.size(), mode, advancedMidi, m);
     auto area = getLocalBounds().reduced (m.px (9), m.px (9));
-    const int gap = m.px (6);
     heading.setBounds (area.removeFromTop (m.control (26)));
     instrumentName.setBounds (area.removeFromTop (m.control (25, 11)));
-    area.removeFromTop (gap);
-    imageBounds = area.removeFromTop (m.px (180));
+    area.removeFromTop (m.px (6));
+    imageBounds = area.removeFromTop (layout.portrait);
     auto artworkRow = area.removeFromTop (m.control (28, 11));
-    originalInstrument.setBounds (artworkRow.removeFromRight (m.span (113)).reduced (m.px (2), 0));
+    originalInstrument.setBounds (artworkRow.removeFromRight (jmin (artworkRow.getWidth() / 2, m.span (113))).reduced (m.px (2), 0));
     artworkPicker.setBounds (artworkRow);
-    artCaption.setBounds (dynamic_cast<sampler::Plugin*>(hosted()) ? artworkRow : Rectangle<int>{});
-    area.removeFromTop (m.px (9));
-    auto artSection = area.removeFromTop (m.control (20) + m.control (37) * 2 + m.control (29) + m.px (6));
-    articulationBounds = artSection;
-    mappingsHeading.setBounds (artSection.removeFromTop (m.control (20)));
-    if (mappings.empty())
+    artCaption.setBounds (mode == AtelierProfile::sampler ? artworkRow : Rectangle<int>{});
+    articulationBounds = {};
+    for (auto& pad : articulationPads) pad.setBounds ({});
+    if (layout.articulationRows > 0)
     {
-        for (auto& button : articulationPads) button.setBounds ({});
-        auto message = artSection.removeFromTop (m.control (37) * 2);
-        // The empty articulation state is explained by the Edit button.
-        (void) message;
+        area.removeFromTop (m.px (9));
+        auto section = area.removeFromTop (m.control (20) + layout.articulationRows * m.control (37) + m.control (28));
+        articulationBounds = section;
+        mappingsHeading.setBounds (section.removeFromTop (m.control (20)));
+        for (int row = 0; row < layout.articulationRows; ++row)
+        {
+            auto items = section.removeFromTop (m.control (37));
+            const int w = items.getWidth() / layout.columns;
+            for (int col = 0; col < layout.columns; ++col)
+            {
+                const int index = row * layout.columns + col;
+                auto bounds = items.removeFromLeft (w).reduced (m.px (2), m.px (2));
+                if (index < (int) articulationPads.size() && index < (int) mappings.size())
+                    articulationPads[(size_t) index].setBounds (bounds);
+            }
+        }
+        mappingsButton.setBounds (section.removeFromTop (m.control (28)).reduced (m.px (2), 0));
+    }
+    else { mappingsHeading.setBounds ({}); mappingsButton.setBounds ({}); }
+    ccBounds = {};
+    for (size_t i = 0; i < ccKnobs.size(); ++i) { ccKnobs[i].setBounds ({}); ccLabels[i].setBounds ({}); }
+    if (layout.controllerRows > 0)
+    {
+        area.removeFromTop (m.px (9));
+        const int toggleHeight = mode == AtelierProfile::hosted ? m.control (27) : 0;
+        auto section = area.removeFromTop (m.control (20) + toggleHeight + m.control (28)
+                                          + layout.controllerRows * layout.controllerCell + m.control (30, 10));
+        ccBounds = section;
+        ccHeading.setBounds (section.removeFromTop (m.control (20)));
+        moreControls.setBounds (section.removeFromTop (toggleHeight).reduced (m.px (2), 0));
+        auto midiRow = section.removeFromTop (m.control (28));
+        midiChannel.setBounds (midiRow.removeFromLeft (jmin (m.span (106), midiRow.getWidth() / 2)));
+        sendValues.setBounds (midiRow.reduced (m.px (2), 0));
+        int slot = 0;
+        for (size_t i = 0; i < ccKnobs.size(); ++i)
+        {
+            if (! atelierControllerVisible (mode, advancedMidi, (int) i)) continue;
+            const int w = section.getWidth() / layout.columns;
+            auto cell = Rectangle<int> (section.getX() + (slot % layout.columns) * w,
+                section.getY() + (slot / layout.columns) * layout.controllerCell, w, layout.controllerCell).reduced (m.px (2));
+            ccLabels[i].setBounds (cell.removeFromTop (m.control (18, 10)));
+            ccKnobs[i].setBounds (cell);
+            ++slot;
+        }
+        section.removeFromTop (layout.controllerRows * layout.controllerCell);
+        midiStatus.setBounds (section);
     }
     else
-    {
-        for (int row = 0; row < 2; ++row)
-        {
-            auto items = artSection.removeFromTop (m.control (37));
-            const int w = jmax (1, items.getWidth() / 4);
-            for (int col = 0; col < 4; ++col)
-                articulationPads[(size_t) (row * 4 + col)].setBounds (
-                    items.removeFromLeft (jmin (w, items.getWidth())).reduced (m.px (2), m.px (2)));
-        }
-    }
-    mappingsButton.setBounds (artSection.removeFromBottom (m.control (28)).reduced (m.px (2), 0));
-    area.removeFromTop (m.px (12));
-    const int columns = area.getWidth() >= m.span (316) ? 4 : 2;
-    const bool native=dynamic_cast<sampler::Plugin*>(hosted())!=nullptr;
-    const int rows = (native?4:8) / columns;
-    ccBounds = area.removeFromTop (m.control (20) + m.control (28) + rows * m.px (93) + m.control (26));
-    auto ccArea = ccBounds;
-    ccHeading.setBounds (ccArea.removeFromTop (m.control (20)));
-    auto midiRow = ccArea.removeFromTop (m.control (28));
-    midiChannel.setBounds (midiRow.removeFromLeft (m.span (106)));
-    sendValues.setBounds (midiRow.removeFromRight (m.span (96)));
-    int visibleIndex=0;
-    for (size_t i = 0; i < ccKnobs.size(); ++i)
-    {
-        if(native && i!=0&&i!=2&&i!=3&&i!=4){ccKnobs[i].setBounds({});ccLabels[i].setBounds({});continue;}
-        const int slot=visibleIndex++;
-        const int w = jmax (1, ccArea.getWidth() / columns);
-        const int h = m.px (93);
-        const int x = ccArea.getX() + (slot % columns) * w;
-        const int y = ccArea.getY() + (slot / columns) * h;
-        auto cell = Rectangle<int> (x, y, w, h).reduced (m.px (2));
-        ccLabels[i].setBounds (cell.removeFromTop (m.control (18, 8)));
-        ccKnobs[i].setBounds (cell);
-    }
-    midiStatus.setBounds (ccBounds.removeFromBottom (m.control (24, 9)));
+        for (auto* component : std::initializer_list<Component*> { &ccHeading, &moreControls, &midiChannel, &sendValues, &midiStatus })
+            component->setBounds ({});
     area.removeFromTop (m.px (9));
     mixerBounds = area.removeFromTop (m.control (22) + m.px (204));
     auto mixArea = mixerBounds;
     mixHeading.setBounds (mixArea.removeFromTop (m.control (22)));
-    const int stripW = jmax (1, mixArea.getWidth() / 3);
+    const int stripW = mixArea.getWidth() / 3;
     for (auto [label, control] : std::initializer_list<std::pair<Label*, Slider*>> {
              { &volumeLabel, &volume }, { &panLabel, &pan }, { &roomLabel, &roomSend } })
     {
-        auto strip = mixArea.removeFromLeft (jmin (stripW, mixArea.getWidth())).reduced (m.px (3), 0);
-        label->setBounds (strip.removeFromTop (m.control (20, 9)));
+        auto strip = mixArea.removeFromLeft (stripW).reduced (m.px (3), 0);
+        label->setBounds (strip.removeFromTop (m.control (20, 10)));
         control->setBounds (strip);
     }
     area.removeFromTop (m.px (5));
@@ -706,13 +764,14 @@ void AtelierInspectorPanel::paint (Graphics& g)
     g.drawRoundedRectangle (card, 8.0f, 1.0f);
     for (auto section : { articulationBounds, ccBounds, mixerBounds })
     {
+        if (section.isEmpty()) continue;
         g.setColour (colours::divider.withAlpha (.65f));
         g.drawHorizontalLine (section.getY() - 3, (float) section.getX(), (float) section.getRight());
     }
     if (mappings.empty() && ! articulationBounds.isEmpty())
     {
-        auto text = articulationBounds.reduced (appearance.px (7)).withTrimmedTop (appearance.control (25))
-                                       .withTrimmedBottom (appearance.control (30));
+        auto text = articulationBounds.withTrimmedTop (appearance.control (20))
+                                       .withTrimmedBottom (appearance.control (28)).reduced (appearance.px (2));
         g.setColour (secondary);
         g.setFont (FontOptions (11.0f));
         g.drawFittedText (dynamic_cast<sampler::Plugin*>(hosted())?"No mapped articulations. Use the sampler Build view to define them.":"No verified articulation mappings. Assign keyswitches or CCs using Edit Articulations.",
@@ -727,8 +786,9 @@ bool AtelierInspectorPanel::verifyInspectorBindings()
     if (t == nullptr || hosted() == nullptr || ! getLocalBounds().contains (imageBounds)
         || ! getLocalBounds().contains (mixerBounds)
         || ! getLocalBounds().contains (ccBounds)
-        || ! ccKnobs[0].isVisible() || ! volume.isVisible() || ! pan.isVisible())
+        || (profile() != AtelierProfile::synth && ! ccKnobs[0].isVisible()) || ! volume.isVisible() || ! pan.isVisible())
         return false;
+    if (profile() == AtelierProfile::synth) return ! ccKnobs[0].isVisible() && ! mappingsHeading.isVisible();
     const auto before = t->state.getProperty (ccProperty).toString();
     {
         const ScopedValueSetter<bool> hold (updating, true);
@@ -737,6 +797,7 @@ bool AtelierInspectorPanel::verifyInspectorBindings()
     writeCCState();
     const bool saved = t->state.getProperty (ccProperty).toString().startsWith ("76,");
     t->state.setProperty (ccProperty, before, nullptr);
+    ccStateLoaded = false;
     cachedCCState.clear();
     refresh (t, editing);
     return saved;

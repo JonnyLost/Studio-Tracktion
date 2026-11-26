@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioMixing.h"
 #include "StudioSampler.h"
+#include "StudioSynth.h"
 #include "AtelierInspectorPanel.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
@@ -570,11 +571,18 @@ InspectorDrawer::InspectorDrawer (TrackActions& actions)
     atelierScroll.setVisible (false);
     addAndMakeVisible (details);
     addAndMakeVisible (quickFx);
+    addChildComponent (instrumentSurface);
+    instrumentSurface.setTooltip ("Switch between instrument controls and full channel settings.");
+    instrumentSurface.onClick = [this]
+    {
+        preferTrackSettings = ! preferTrackSettings;
+        if (preferTrackSettings) detailsOpen = true;
+    };
     quickFx.setTooltip ("Open, edit or safely remove the selected track's instrument and effects");
     quickFx.onClick = [this]
     {
-        if (inspector.inspectedTrack().isValid() && this->actions.showMenu)
-            this->actions.showMenu (inspector.inspectedTrack(), TrackMenu::inserts, quickFx);
+        if (selectedTrackId.isValid() && this->actions.showMenu)
+            this->actions.showMenu (selectedTrackId, TrackMenu::inserts, quickFx);
     };
     details.setTooltip ("Expand or collapse the selected track's input, instrument, effects, sends and output");
     details.onClick = [this]
@@ -595,6 +603,7 @@ void InspectorDrawer::setEdit (te::Edit* next)
     channelStrip->setEdit (next);
     atelier->setEdit (next);
     selectedTrackId = {};
+    preferTrackSettings = false;
     scroll.setViewPosition (0, 0);
     atelierScroll.setViewPosition (0, 0);
 }
@@ -602,10 +611,15 @@ void InspectorDrawer::setEdit (te::Edit* next)
 void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
                                const String& recovery, const te::MidiClip* selectedClip)
 {
-    selectedTrackId = track != nullptr ? track->itemID : te::EditItemID {};
+    const auto nextTrack = track != nullptr ? track->itemID : te::EditItemID {};
+    if (nextTrack != selectedTrackId) { preferTrackSettings = false; atelierScroll.setViewPosition (0, 0); }
+    selectedTrackId = nextTrack;
     auto* instrument = track != nullptr ? findInstrument (*track) : nullptr;
-    const bool needsAtelier = dynamic_cast<te::ExternalPlugin*> (instrument) != nullptr
-        || dynamic_cast<sampler::Plugin*> (instrument) != nullptr;
+    const bool eligible = dynamic_cast<te::ExternalPlugin*> (instrument) != nullptr
+        || dynamic_cast<sampler::Plugin*> (instrument) != nullptr || dynamic_cast<synth::Plugin*> (instrument) != nullptr;
+    const bool eligibilityChanged = atelierEligible != eligible;
+    atelierEligible = eligible;
+    const bool needsAtelier = atelierEligible && ! preferTrackSettings;
     if (needsAtelier)
     {
         // Avoid an unused meter client and non-visible channel Inspector
@@ -617,7 +631,7 @@ void InspectorDrawer::refresh (te::AudioTrack* track, bool ready, bool canRoute,
         inspector.refresh (track, ready, canRoute, recovery, selectedClip);
         channelStrip->refresh (track, ready, selectedClip);
     }
-    if (atelierMode != needsAtelier)
+    if (atelierMode != needsAtelier || eligibilityChanged)
     {
         atelierMode = needsAtelier;
         atelierScroll.setViewPosition (0, 0);
@@ -672,12 +686,22 @@ void InspectorDrawer::resized()
     close.setBounds (header.removeFromRight (m.span (60)).reduced (m.px (2), 0));
     title.setBounds (header);
     area.removeFromTop (m.px (5));
+    instrumentSurface.setVisible (atelierEligible);
+    if (atelierEligible)
+    {
+        auto surfaceRow = area.removeFromTop (m.control (28));
+        instrumentSurface.setButtonText (atelierMode ? "Track Settings" : "Instrument");
+        if (atelierMode)
+            quickFx.setBounds (surfaceRow.removeFromRight (m.span (52)).reduced (m.px (2), 0));
+        instrumentSurface.setBounds (surfaceRow.reduced (m.px (2), 0));
+        area.removeFromTop (m.px (4));
+    }
     if (atelierMode)
     {
         channelStrip->setVisible (false);
         scroll.setVisible (false);
         details.setVisible (false);
-        quickFx.setVisible (false);
+        quickFx.setVisible (true);
         atelierScroll.setVisible (true);
         atelierScroll.setBounds (area);
         const int width = jmax (1, area.getWidth() - m.scrollbar() - m.px (1));

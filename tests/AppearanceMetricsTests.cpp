@@ -2,6 +2,7 @@
 #include "../AppearanceMetrics.h"
 #include "../StudioDesignTokens.h"
 #include "../StudioActivities.h"
+#include "../AtelierLayout.h"
 #include "../StagePresentation.h"
 
 #include <cassert>
@@ -60,6 +61,20 @@ int main()
         for (int text : studio::AppearanceMetrics::textOptions)
         {
             activityMetrics.set (ui, text);
+            using studio::AtelierProfile;
+            for (int width : { 205, 270, 365, 510 })
+            {
+                const auto essential = studio::atelierLayout (width, 8, AtelierProfile::hosted, false, activityMetrics);
+                const auto expanded = studio::atelierLayout (width, 8, AtelierProfile::hosted, true, activityMetrics);
+                const auto sampler = studio::atelierLayout (width, 2, AtelierProfile::sampler, false, activityMetrics);
+                const auto synth = studio::atelierLayout (width, 0, AtelierProfile::synth, false, activityMetrics);
+                if (essential.controllerRows * essential.columns != 4 || expanded.controllerRows * expanded.columns != 8
+                    || expanded.total <= essential.total || sampler.articulationRows != 1
+                    || synth.controllerRows != 0 || synth.articulationRows != 0 || synth.total >= essential.total
+                    || ! studio::atelierControllerVisible (AtelierProfile::sampler, true, 3)
+                    || studio::atelierControllerVisible (AtelierProfile::sampler, true, 5)
+                    || studio::atelierControllerVisible (AtelierProfile::synth, true, 0)) return 1;
+            }
             const int minimum = 6 * activityMetrics.span (79) + activityMetrics.span (125);
             if (studio::activitiesFit (minimum - 1, activityMetrics)
                 || ! studio::activitiesFit (minimum, activityMetrics)) return 1;

@@ -120,9 +120,9 @@ private:
     std::unique_ptr<AtelierInspectorPanel> atelier;
     juce::Viewport scroll, atelierScroll;
     juce::Label title;
-    juce::TextButton close { "Close" }, details { "Track Settings" }, quickFx { "FX..." };
+    juce::TextButton close { "Close" }, details { "Track Settings" }, quickFx { "FX..." }, instrumentSurface { "Track Settings" };
     tracktion::EditItemID selectedTrackId;
-    bool detailsOpen = false, atelierMode = false;
+    bool detailsOpen = false, atelierMode = false, atelierEligible = false, preferTrackSettings = false;
 };
 
 class StudioMixer final : public juce::Component

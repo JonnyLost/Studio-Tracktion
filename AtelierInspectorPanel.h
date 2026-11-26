@@ -2,6 +2,7 @@
 #pragma once
 #include "StudioMixing.h"
 #include "ArticulationMappings.h"
+#include "AtelierLayout.h"
 #include <array>
 #include <vector>
 
@@ -29,6 +30,7 @@ private:
     tracktion::Plugin* hosted() const;
     tracktion::VolumeAndPanPlugin* fader() const;
     bool canSendMidi() const;
+    AtelierProfile profile() const;
     void changeArtwork();
     void loadArtwork();
     void refreshMappings();
@@ -53,11 +55,12 @@ private:
     unsigned nativeMappingRevision = 0;
     juce::TextButton mappingsButton { "Edit Articulations" }, sendValues { "Send CC" },
                      fullInstrument { "Full Instrument" }, originalInstrument { "Open Plug-in" },
-                     stageButton { "Stage & Mics" };
+                     stageButton { "Stage & Mics" }, moreControls { "More MIDI controls" };
     juce::Slider volume, pan, roomSend;
     juce::Label volumeLabel, panLabel, roomLabel;
     juce::Rectangle<int> imageBounds, articulationBounds, ccBounds, mixerBounds;
-    bool updating = false, editing = false;
+    bool updating = false, editing = false, advancedMidi = false, ccStateLoaded = false, mappingCacheValid = false;
+    juce::String cachedMappingInstance;
     int pedalChannel = -1;
 };
 }

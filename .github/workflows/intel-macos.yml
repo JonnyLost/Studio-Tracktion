@@ -31,8 +31,10 @@ on:
       - feature/studio-usability-acceptance-m32
       - feature/studio-design-system-m33
       - feature/studio-musical-workspaces-m34
+      - feature/studio-cinematic-atelier-m35
   pull_request:
     branches:
+      - feature/studio-cinematic-atelier-m35
       - feature/studio-musical-workspaces-m34
       - feature/studio-design-system-m33
       - feature/studio-usability-acceptance-m32
