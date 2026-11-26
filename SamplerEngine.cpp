@@ -41,17 +41,27 @@ float velocityWeight (const Zone& z, int v) noexcept
     if (z.fadeOut > 0) weight = std::min (weight, float (z.hard - v + 1) / (z.fadeOut + 1));
     return weight;
 }
+void Bank::buildIndex()
+{
+    indexed=false;
+    for(auto& list:noteZones)list.clear();
+    if(zones.size()>maxZones)return;
+    for(std::size_t i=0;i<zones.size();++i)
+    {
+        const auto& z=zones[i];
+        if(!validMapping(z)||!z.sample)continue;
+        for(int note=z.low;note<=z.high;++note)noteZones[static_cast<std::size_t>(note)].push_back(static_cast<std::uint16_t>(i));
+    }
+    indexed=true;
+}
 const Group* Engine::groupFor (int id) const noexcept
 {
-    for (const auto& g : bank->groups) if (g.id == id) return &g;
-    return nullptr;
+    return id>=0&&id<maxGroups?groupLookup[static_cast<std::size_t>(id)]:nullptr;
 }
 bool Engine::audible (int id) const noexcept
 {
-    bool solo = false;
-    for (const auto& g : bank->groups) solo |= g.solo;
     const auto* g = groupFor (id);
-    return g ? ! g->mute && (! solo || g->solo) : ! solo;
+    return g ? ! g->mute && (! anySolo || g->solo) : ! anySolo;
 }
 bool Engine::groupMatches (const Group& g, int channel) const noexcept
 {
@@ -119,6 +129,10 @@ void Engine::use (const Bank& next) noexcept
     }
     bank = &next;
     settings = next.settings;
+    settings.polyphony=std::clamp(settings.polyphony,1,maxVoices);
+    groupLookup.fill(nullptr);anySolo=false;
+    for(const auto& g:next.groups)if(validGroup(g))
+    {groupLookup[static_cast<std::size_t>(g.id)]=&g;anySolo|=g.solo;}
     instrumentGain = amplitude (settings.gainDb);
     for (auto& voice : voices) if (voice.sample && controlNote (voice.channel, voice.note, false))
     { voice.down = false; release (voice); held[static_cast<std::size_t> (voice.source)][static_cast<std::size_t> (voice.channel)][static_cast<std::size_t> (voice.note)] = {}; }
@@ -224,19 +238,29 @@ void Engine::playZones (int source, int channel, int note, int velocity, bool re
             && note >= z.low && note <= z.high && velocity >= z.soft && velocity <= z.hard;
     };
 
-    for (const auto& z : bank->zones)
-        if (matches (z) && z.group != 0)
-            ++count[static_cast<std::size_t> (z.group)];
-
-    for (const auto& z : bank->zones)
-        if (matches (z))
+    // Indexed banks visit only regions that span this key. One match
+    // evaluation per candidate, preserving original region/sequence order.
+    std::array<const Zone*,maxZones> eligible;
+    std::size_t used=0;
+    const auto consider=[&](const Zone& z)
+    {
+        if(used<eligible.size()&&matches(z))
         {
-            auto group = static_cast<std::size_t> (z.group);
-            if (group == 0 || index[group]++ == roundRobin[group] % count[group])
-            {
-                trigger (z, source, channel, note, velocity, releasing);
-            }
+            eligible[used++]=&z;
+            if(z.group!=0)++count[static_cast<std::size_t>(z.group)];
         }
+    };
+    if(bank->indexed)
+        for(auto i:bank->noteZones[static_cast<std::size_t>(note)])consider(bank->zones[i]);
+    else
+        for(const auto& z:bank->zones)consider(z);
+    for(std::size_t i=0;i<used;++i)
+    {
+        const auto& z=*eligible[i];
+        const auto group=static_cast<std::size_t>(z.group);
+        if(group==0||index[group]++==roundRobin[group]%count[group])
+            trigger(z,source,channel,note,velocity,releasing);
+    }
 
     for (std::size_t group = 1; group < roundRobin.size(); ++group)
         if (count[group] != 0)
@@ -343,8 +367,9 @@ void Engine::render (float* left, float* right, int frames, bool offline) noexce
     const auto decayStep = static_cast<float> ((1 - settings.sustain) / std::max (1.0, settings.decay * outputRate));
     const auto phaseStep = 2 * std::numbers::pi * 5 / outputRate;
     const auto basePhase = vibratoPhase;
-    for (auto& v : voices)
+    for (int voiceIndex=0;voiceIndex<settings.polyphony;++voiceIndex)
     {
+        auto& v=voices[static_cast<std::size_t>(voiceIndex)];
         if (v.sample == nullptr) continue;
         const Channel previewChannel;
         const auto& channel = v.source == 0 ? channels[static_cast<std::size_t> (v.channel)] : previewChannel;
@@ -496,6 +521,7 @@ void Engine::publishMeters() noexcept
 
 bool Engine::noteActive (int note) const noexcept
 {
+    if(note<0||note>127)return false;
     return (notes[static_cast<std::size_t> (note / 64)].load (std::memory_order_relaxed)
         & (std::uint64_t { 1 } << (note % 64))) != 0;
 }
