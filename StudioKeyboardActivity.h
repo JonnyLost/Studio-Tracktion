@@ -5,6 +5,7 @@
 #include <JuceHeader.h>
 #include <algorithm>
 #include <bitset>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <vector>
