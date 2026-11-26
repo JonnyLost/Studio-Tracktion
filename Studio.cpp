@@ -6206,8 +6206,14 @@ int StudioView::runInterfaceReview (const File& output)
         gestures.tone = 75;
         gestures.reverb = 38;
         keyboardReview.reflectPerformance (gestures);
-        if (! capture ("atelier-keyboard-panel-1080x228.png", &keyboardReview))
-            return fail ("capture Cinematic Atelier performance keyboard");
+        keyboardReview.setDocked (true);
+        if (! keyboardReview.isDocked()
+            || ! capture ("atelier-keyboard-docked-1080x228.png", &keyboardReview))
+            return fail ("capture docked Cinematic Atelier performance keyboard");
+        keyboardReview.setDocked (false);
+        if (keyboardReview.isDocked()
+            || ! capture ("atelier-keyboard-floating-1080x228.png", &keyboardReview))
+            return fail ("capture floating Cinematic Atelier performance keyboard");
     }
 
     if (performance.isVisible() || articulationStrip.isVisible())
