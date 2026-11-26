@@ -1773,6 +1773,18 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
             && PNGImageFormat().writeImageToStream (createComponentSnapshot (getLocalBounds()), stream);
     };
     if (page != Page::perform || zone() || audition.isVisible() || mapping.isVisible() || ! capture ("sampler-empty.png")) return reviewFailure (__LINE__);
+    if(!createInstrument.isVisible()||createInstrument.getBounds().isEmpty())return reviewFailure(__LINE__);
+    createInstrument.onClick();
+    if(!guidedWindow||!guidedWindow->getContentComponent())return reviewFailure(__LINE__);
+    if(output!=File())
+    {
+        FileOutputStream file(output.getChildFile("sampler-guided-builder.png"));
+        if(!PNGImageFormat().writeImageToStream(guidedWindow->createComponentSnapshot(guidedWindow->getLocalBounds()),file))
+            return reviewFailure(__LINE__);
+    }
+    guidedWindow->exitModalState(0);
+    MessageManager::getInstance()->runDispatchLoopUntil(20);
+    if(!plugin.instrument().zones.empty())return reviewFailure(__LINE__);
     startImport ({ first, second }, true);
     cancelImport.onClick();
     const auto importDeadline = Time::getMillisecondCounter() + 5000;
