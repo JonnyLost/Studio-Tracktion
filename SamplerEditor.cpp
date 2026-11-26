@@ -545,15 +545,21 @@ void Editor::refresh()
             c.slider.setValue (v, dontSendNotification);
     };
     const bool sfzEnvelope = z.sfz.enabled;
-    attack.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
-    decay.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
-    release.slider.setRange (0, sfzEnvelope ? 100000 : 15000, 1);
+    if (attack.slider.getMaximum() != (sfzEnvelope ? 100000 : 10000))
+    {
+        attack.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
+        decay.slider.setRange (0, sfzEnvelope ? 100000 : 10000, 1);
+        release.slider.setRange (0, sfzEnvelope ? 100000 : 15000, 1);
+        attack.slider.setSkewFactorFromMidPoint (80);
+        decay.slider.setSkewFactorFromMidPoint (200);
+        release.slider.setSkewFactorFromMidPoint (250);
+    }
     for (auto* c : { &attack, &decay, &sustain, &release })
         c->slider.setTooltip (sfzEnvelope ? "Imported envelope for the selected SFZ region." : "Instrument amplitude envelope.");
     value (attack, (sfzEnvelope ? z.sfz.attack : s.attack) * 1000);
     value (decay, (sfzEnvelope ? z.sfz.decay : s.decay) * 1000);
     value (sustain, (sfzEnvelope ? z.sfz.sustain : s.sustain) * 100);
-    value (release, (sfzEnvelope ? z.sfz.release : s.release) * 100);
+    value (release, (sfzEnvelope ? z.sfz.release : s.release) * 1000);
     value (gain, s.gainDb);
     value (tune, s.semitones);
     value (voices, s.polyphony);
