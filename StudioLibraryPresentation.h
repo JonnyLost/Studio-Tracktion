@@ -14,12 +14,12 @@ inline File portraitDirectory()
     return File::getSpecialLocation(File::userMusicDirectory).getChildFile("Studio")
         .getChildFile("Instrument Library").getChildFile("Artwork");
 }
-inline File portraitFile(const String& filename)
+inline File portraitFile(const String& filename,const File& folder=portraitDirectory())
 {
     if(filename.isEmpty() || filename.containsChar('/') || filename.containsChar('\\')
         || filename.containsChar(':') || filename=="." || filename=="..")return {};
-    auto f=portraitDirectory().getChildFile(filename);
-    return f.isAChildOf(portraitDirectory())&&f.hasFileExtension("png;jpg;jpeg")&&!f.isSymbolicLink()?f:File();
+    auto f=folder.getChildFile(filename);
+    return f.isAChildOf(folder)&&f.hasFileExtension("png;jpg;jpeg")&&!f.isSymbolicLink()?f:File();
 }
 inline Image previewImage(const File& source)
 {
@@ -30,10 +30,9 @@ inline Image previewImage(const File& source)
     if(scale<1)image=image.rescaled(jmax(1,roundToInt(scale*image.getWidth())),jmax(1,roundToInt(scale*image.getHeight())));
     return image;
 }
-inline Result retainPortrait(const File& original,String& filename)
+inline Result retainPortrait(const File& original,String& filename,const File& folder=portraitDirectory())
 {
     if(!previewImage(original).isValid())return Result::fail("Choose a readable PNG or JPEG artwork under 8 MiB.");
-    auto folder=portraitDirectory();
     if(auto r=folder.createDirectory();r.failed())return r;
     auto target=folder.getChildFile(Uuid().toString()+original.getFileExtension().toLowerCase());
     if(target.exists()||!original.copyFileTo(target))return Result::fail("Cannot retain artwork copy.");
