@@ -4665,8 +4665,8 @@ private:
         const auto key = plugin.state.getProperty ("id").toString();
         if (key.isNotEmpty())
         {
-            appliedDlsPrograms.remove (key);
-            settlingDlsPrograms.remove (key);
+            appliedDlsPrograms.remove (juce::StringRef (key));
+            settlingDlsPrograms.remove (juce::StringRef (key));
         }
         // Save intent now; the timer queues actual MIDI once the graph is ready.
         return true;
@@ -4698,8 +4698,8 @@ private:
                     if (key.isEmpty() || ! studio::gm::valid (index)) continue;
                     if (instance == nullptr || instance->getSampleRate() <= 0 || instance->getBlockSize() <= 0)
                     {
-                        appliedDlsPrograms.remove (key);
-                        settlingDlsPrograms.remove (key);
+                        appliedDlsPrograms.remove (juce::StringRef (key));
+                        settlingDlsPrograms.remove (juce::StringRef (key));
                         continue;
                     }
 
@@ -4720,7 +4720,7 @@ private:
                     }
                     queueDlsProgram (*track, index);
                     appliedDlsPrograms.set (key, stamp);
-                    settlingDlsPrograms.remove (key);
+                    settlingDlsPrograms.remove (juce::StringRef (key));
                 }
     }
 
