@@ -51,8 +51,9 @@ public:
 
     KeyboardPerformanceValues consume() noexcept
     {
+        const unsigned flags = changed.exchange (0, std::memory_order_acquire);
         auto value = current();
-        value.changed = changed.exchange (0, std::memory_order_acquire);
+        value.changed = flags;
         return value;
     }
 
