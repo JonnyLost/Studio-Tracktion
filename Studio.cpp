@@ -5356,6 +5356,15 @@ private:
         if (appleEffects.getNumItems() > 0)
             effects.addSubMenu ("Apple Audio Unit Effects", appleEffects);
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
+        menu.addItem ("Browse Apple Effects...", canInsertPlugin(), false,
+            trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& chosen)
+            {
+                studio.selection.selectOnly (&chosen);
+                if (studio.dockMode == DockMode::compact)
+                    studio.setDockMode (DockMode::split);
+                studio.showWorkspace (Workspace::instruments);
+                studio.browser.browseAppleEffects();
+            }));
     }
 
     // JUCE can have both physical output channels active while Tracktion's
