@@ -6406,7 +6406,7 @@ int StudioView::runInterfaceReview (const File& output)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {
             applyAppearance (scale, text, false);
-            for (const auto size : { Point<int> (1024, 640), Point<int> (1280, 800), Point<int> (1536, 960) })
+            for (const auto size : { juce::Point<int> (1024, 640), juce::Point<int> (1280, 800), juce::Point<int> (1536, 960) })
             {
                 setSize (size.x, size.y);
                 auto previous = Rectangle<int>();
@@ -6443,7 +6443,7 @@ int StudioView::runInterfaceReview (const File& output)
                     const auto end = start.translated (0.0f, (float) -distance);
                     const auto time = Time::getCurrentTime();
                     const auto source = Desktop::getInstance().getMainMouseSource();
-                    const auto event = [&] (Point<float> point, int flags, bool moved)
+                    const auto event = [&] (juce::Point<float> point, int flags, bool moved)
                     {
                         return MouseEvent (source, point, ModifierKeys (flags), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                            &workspaceDivider, &workspaceDivider, time, start, time, 1, moved);
