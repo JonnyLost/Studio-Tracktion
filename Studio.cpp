@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <JuceHeader.h>
+// Import Apple C APIs before the translation unit's JUCE using-directive.
+// MacTypes declares global Point and AudioBuffer types of its own.
+#if JUCE_MAC
+ #include <AudioToolbox/AudioToolbox.h>
+#endif
 #include <array>
 #include <vector>
 #include <functional>
@@ -38,9 +43,6 @@ using namespace tracktion::literals;
 #include "StudioKeyboardActivity.h"
 #include "Seating/SeatingWorkspace.h"
 #include "FilmScoringWorkspace.h"
-#if JUCE_MAC
- #include <AudioToolbox/AudioToolbox.h>
-#endif
 
 class StudioPluginWindows final : public ExtendedUIBehaviour
 {
@@ -6089,7 +6091,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (! snapshot (*this, "synth-preset-browser")) return fail ("capture preset browser");
     synthEditor->restoreView ("1,0");
 
-    AudioBuffer<float> audio (2, 256);
+    juce::AudioBuffer<float> audio (2, 256);
     MidiBuffer midi;
     edit->dispatchPendingUpdatesSynchronously();
     edit->getTransport().ensureContextAllocated (true);
@@ -6133,7 +6135,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         std::unique_ptr<OutputStream> stream = sample.createOutputStream();
         auto wave = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (48000).withNumChannels (1).withBitsPerSample (16));
         if (! wave) return false;
-        AudioBuffer<float> signal (1, 96000);
+        juce::AudioBuffer<float> signal (1, 96000);
         for (int t = 0; t < signal.getNumSamples(); ++t)
         {
             const float second = t / 48000.0f;
