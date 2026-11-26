@@ -26,8 +26,10 @@ on:
       - feature/studio-sampler-stabilization-m27
       - feature/studio-sampler-interface-m28
       - feature/studio-visual-library-m29
+      - feature/studio-guided-instrument-builder-m30
   pull_request:
     branches:
+      - feature/studio-visual-library-m29
       - feature/studio-sampler-interface-m28
       - feature/studio-sampler-stabilization-m27
       - feature/studio-sampler-performance-m26
