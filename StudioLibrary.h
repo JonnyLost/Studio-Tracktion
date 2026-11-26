@@ -44,7 +44,7 @@ inline Result save(const Catalog& catalog,const File& target)
         x->setAttribute("report",e.report.substring(0,4000));
     }
     TemporaryFile temp(target);
-    if(!xml.writeTo(temp.getFile())||!temp.overwriteTargetFileWithTemporary())return Result::fail("Could not save library catalog.");
+    if(!xml.writeTo(temp.getFile())||temp.getFile().getSize()>64ll*1024*1024||!temp.overwriteTargetFileWithTemporary())return Result::fail("Could not save library catalog (write failure or size limit).");
     return Result::ok();
 }
 inline Result read(const File& file,Catalog& result)
@@ -179,7 +179,14 @@ inline Result repair(Entry& e,const File& root,const File& sampleRoot,std::atomi
     sampler::Instrument model;
     if(auto r=sampler::Plugin::preparePreset(e.converted,{},model,&cancel);r.failed())return r;
     std::set<String> wanted;
-    for(const auto& z:model.zones)if(!z.mapping.sample||z.problem.isNotEmpty())wanted.insert(z.file.getFileName().toLowerCase());
+    std::map<String,File> originals;
+    for(const auto& z:model.zones)if(!z.mapping.sample||z.problem.isNotEmpty())
+    {
+        const auto name=z.file.getFileName().toLowerCase();
+        if(auto old=originals.find(name);old!=originals.end()&&old->second!=z.file)
+            return Result::fail("Multiple missing recordings share a filename. Locate them individually in Studio Sampler.");
+        originals[name]=z.file;wanted.insert(name);
+    }
     if(wanted.empty())return Result::fail("No unavailable samples in this native preset.");
     std::map<String,std::vector<File>> matches;
     int visited=0;
