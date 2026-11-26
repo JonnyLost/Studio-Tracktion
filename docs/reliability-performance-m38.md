@@ -1,0 +1,12 @@
+# M38 — Reliability and performance gate
+
+Cumulative child of M37 5c9398c. No new features.
+
+## Evidence and targeted repairs
+- M35 Linux 38/40 and Intel macOS 40/42 passed; both sampler failures pinpointed SamplerEditor.cpp guided builder review line 2054. TextEditor notifications can be asynchronous, leaving a stale proposal eligible for acceptance. M38 captures the complete form signature when preview starts, rechecks when it completes and synchronously before Create. Regression deliberately invokes Create immediately after changing a name, then pumps the message loop and verifies invalidation and re-preview. Adds stage-specific diagnostic messages to builder review.
+- Unified Stage: Linux double free/corruption; macOS segmentation fault with EditItem lifetime assertions. The review held a reference-counted FolderTrack across loadProject destruction of its owning Edit. Release the owning pointer first, retain only stable ID, reacquire from new Edit. Explicitly release selected items, arrangement rows and transport view before StudioView teardown. Added progress diagnostics; existing collapse identity/count, undo/redo, fader, sends and persistence checks remain intact. This is a source-backed lifetime correction, not a confirmed resolution of the crash. Earlier collapsed-row failures may remain.
+- M35 existing sampler ASan/UBSan streaming, engine, performance and format tests passed; full CTest streaming and performance passed. Resource Inspector uses message-thread monitoring and avoids detailed per-instrument scans when hidden. No evidence warrants speculative DSP changes. No measured Intel MacBook CPU/RAM improvements claimed.
+- M36/M37 builds were pending at audit; full cumulative acceptance required.
+
+## Release gate
+Both platform full CTest suites must pass with no exclusions. Inspect debug assertions and native crash logs, including any remaining row rebuild defects. Run same benchmarks before/after on the actual Intel MacBook: cold launch, 16-track template, real sample sets, 30-minute playback/recording, 128/256/512 sample buffers, memory pressure, disk underruns and device overloads. Verify audio patch switching, two simultaneous independent instruments and detuning report, external storage disconnect/relink, save/reopen and recovery on project copies. Record actual resource values rather than claiming a hardware target. No merge or promotion until regressions, physical playback and recovery are verified.
