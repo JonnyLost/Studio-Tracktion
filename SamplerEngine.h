@@ -40,7 +40,7 @@ struct Sample
             r = stereo() ? right[static_cast<std::size_t> (frame)] : l;
             return true;
         }
-        return stream && cursor.read (*stream, frame, l, r, offline); // replaced below
+        return stream && cursor.read (*stream, frame, l, r, offline);
     }
 };
 
