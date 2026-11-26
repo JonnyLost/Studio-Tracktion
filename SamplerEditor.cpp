@@ -2048,6 +2048,13 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         }
     if(plugin.changeCount()!=revision)return reviewFailure(__LINE__);
     appearance.set(100,100);appearanceChanged();setSize(800,564);setPage(Page::perform);
+    openGuidedBuilder();
+    auto* guided=guidedWindow?dynamic_cast<GuidedBuilder*>(guidedWindow->getContentComponent()):nullptr;
+    if(!guided||!guided->review(first,output))return reviewFailure(__LINE__);
+    MessageManager::getInstance()->runDispatchLoopUntil(20);
+    if(plugin.instrument().name!="M32 revised review"||plugin.instrument().zones.size()!=1||
+       !plugin.instrument().zones[0].mapping.sample||page!=Page::perform)
+        return reviewFailure(__LINE__);
     return true;
 }
 #endif
