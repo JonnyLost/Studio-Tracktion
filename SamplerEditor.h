@@ -112,7 +112,7 @@ private:
         std::atomic<bool> cancelled { false }, done { false };
         std::atomic<int> progress { 0 };
         Instrument proposal; juce::String summary, error; unsigned revision = 0; int first = 0;
-        int replace = -1; bool preset = false;
+        int replace = -1; bool preset = false, sfz = false;
         std::thread worker;
         ~ImportTask() { cancelled.store (true); if (worker.joinable()) worker.join(); }
     };
