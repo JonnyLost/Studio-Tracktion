@@ -66,6 +66,9 @@ private:
             {
                 formats.registerFormat (new juce::WavAudioFormat(), true);
                 formats.registerFormat (new juce::AiffAudioFormat(), false);
+               #if JUCE_USE_FLAC
+                formats.registerFormat (new juce::FlacAudioFormat(), false);
+               #endif
                #if JUCE_MAC
                 formats.registerFormat (new juce::CoreAudioFormat (juce::CoreAudioFormat::StreamKind::kCaf), false);
                #endif
@@ -115,7 +118,7 @@ private:
         std::atomic<bool> cancelled { false }, done { false };
         std::atomic<int> progress { 0 };
         Instrument proposal; juce::String summary, error; unsigned revision = 0; int first = 0;
-        int replace = -1, bankProgram = -1; bool preset = false, sfz = false, soundBank = false, exs = false;
+        int replace = -1, bankProgram = -1; bool preset = false, sfz = false, soundBank = false, exs = false, xmlInstrument = false;
         juce::File bankFile;
         juce::int64 bankSize = -1, bankTime = 0;
         std::vector<BankProgram> catalog;
