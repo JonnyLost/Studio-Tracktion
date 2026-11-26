@@ -11,7 +11,7 @@ class Manager final : public Component, private ListBoxModel, private Timer
 {
 public:
     using Load=std::function<void(sampler::Instrument,Presentation)>;
-    explicit Manager(Load callback):onLoad(std::move(callback))
+    explicit Manager(Load callback,File catalogFile=directory().getChildFile("Catalog.xml")):onLoad(std::move(callback)),indexFile(std::move(catalogFile))
     {
         setLookAndFeel(&look);
         for(Component* c:std::initializer_list<Component*>{&roots,&addRoot,&removeRoot,&rescan,&search,&format,&family,&favorites,&manage,&familyEdit,&favoriteEntry,&rows,&details,&art,&assignArt,&repairSelected,&convertSelected,&loadSelected,&cancel,&status,&helpButton})
@@ -87,6 +87,37 @@ public:
         manage.setToggleState(catalog.roots.isEmpty(),dontSendNotification);
         updateManagement();setSize(840,560);startTimerHz(8);
     }
+#if STUDIO_SPATIAL_TESTS
+    bool review(const File& output)
+    {
+        const ScopedValueSetter<AppearanceMetrics> restore(appearance,appearance);
+        if(!validCatalog||catalog.entries.size()!=2)return false;
+        manage.setToggleState(false,dontSendNotification);updateManagement();filter();
+        if(getNumRowsConst()!=2||addRoot.isVisible()||!loadSelected.isVisible())return false;
+        search.setText("Violin",true);
+        if(getNumRowsConst()!=1)return false;
+        rows.selectRow(0);favoriteEntry.onClick();
+        if(selectedIndices().size()!=1||!catalog.entries[selectedIndices().front()].favorite)return false;
+        search.setText("",true);favorites.setToggleState(true,dontSendNotification);filter();
+        if(getNumRowsConst()!=1)return false;
+        favorites.setToggleState(false,dontSendNotification);filter();
+        for(int text:{100,130})for(bool managing:{false,true})
+        {
+            appearance.set(100,text);manage.setToggleState(managing,dontSendNotification);updateManagement();
+            rows.setRowHeight(appearance.control(40,14));setSize(840,560);resized();
+            if(rows.getBounds().isEmpty()||details.getBounds().isEmpty()||rows.getBounds().intersects(details.getBounds())
+               ||!getLocalBounds().contains(loadSelected.getBounds())||loadSelected.getBounds().intersects(cancel.getBounds())
+               ||!getLocalBounds().contains(helpButton.getBounds())||addRoot.isVisible()!=managing)return false;
+            if(output!=File())
+            {
+                FileOutputStream stream(output.getChildFile("m32-library-"+String(managing?"manage":"browse")+"-text"+String(text)+".png"));
+                if(!stream.openedOk()||!stream.setPosition(0)||stream.truncate().failed()||
+                   !PNGImageFormat().writeImageToStream(createComponentSnapshot(getLocalBounds()),stream))return false;
+            }
+        }
+        return true;
+    }
+#endif
     ~Manager() override
     {
         stopTimer();
@@ -173,7 +204,8 @@ private:
     }
     std::unique_ptr<FileChooser> chooser;
     std::unique_ptr<Task> task;
-    static File index(){return directory().getChildFile("Catalog.xml");}
+    File indexFile;
+    File index() const{return indexFile;}
     void persist()
     {
         if(auto r=save(catalog,index());r.failed())status.setText(r.getErrorMessage(),dontSendNotification);
