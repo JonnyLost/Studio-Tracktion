@@ -42,7 +42,7 @@ private:
     tracktion::Edit* edit = nullptr;
     tracktion::EditItemID trackId;
     juce::Image portraitImage;
-    juce::String portraitName, cachedMappingXml, cachedCCState;
+    juce::String portraitName, cachedMappingXml, cachedCCState, nativePortraitToken;
     juce::ComboBox artworkPicker, midiChannel;
     juce::Label heading, instrumentName, artCaption, mappingsHeading, ccHeading, mixHeading, midiStatus, micStatus;
     std::array<juce::TextButton, 8> articulationPads;
