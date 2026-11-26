@@ -358,6 +358,9 @@ public:
     int runSeatingProjectReview (const File& output);
     int runUnifiedStageReview (const File& output);
     int runFilmScoringReview (const File& output);
+   #if JUCE_MAC
+    int runDlsPlaybackReview();
+   #endif
    #endif
 
     StudioView()
@@ -5640,6 +5643,7 @@ static bool hasArrangementRegion (const Component& component)
 }
 
 #include "tests/AdaptiveWorkspaceReview.inc"
+#include "tests/DlsPlaybackReview.inc"
 
 int StudioView::runUnifiedStageReview (const File& output)
 {
@@ -6756,6 +6760,15 @@ public:
     void initialise (const String& commandLine) override
     {
        #if STUDIO_SPATIAL_TESTS
+        #if JUCE_MAC
+        if (commandLine == "--studio-test-dls-playback")
+        {
+            StudioView view;
+            setApplicationReturnValue (view.runDlsPlaybackReview());
+            quit();
+            return;
+        }
+        #endif
         if (commandLine == "--studio-test-film-scoring-workspace")
         {
             StudioView view;
