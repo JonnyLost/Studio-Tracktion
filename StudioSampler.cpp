@@ -999,7 +999,7 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
     {
         if (indexed) return;
         indexed = true;
-        Array<File> roots;
+        juce::Array<File> roots;
         if (sampleRoot.isDirectory()) roots.add (sampleRoot);
         else
         {
@@ -1043,7 +1043,7 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
             const auto candidate = folder.getChildFile (path);
             return candidate.isAChildOf (folder) ? candidate : File();
         };
-        Array<File> candidates;
+        juce::Array<File> candidates;
         if (sampleRoot.isDirectory())
         {
             candidates.add (relative (sampleRoot, filename));
@@ -1923,6 +1923,24 @@ void Plugin::rename (String name)
     auto next = model;
     next.name = std::move (name);
     change (std::move (next), true);
+}
+
+Result Plugin::writeConvertedPreset (const Instrument& instrument, const File& file)
+{
+    if (! file.hasFileExtension ("studiosampler") || file.exists())
+        return Result::fail ("Choose a new native preset path.");
+    if (instrument.zones.empty()) return Result::fail ("Empty instrument.");
+    for (const auto& zone : instrument.zones)
+        if (! zone.mapping.sample || zone.problem.isNotEmpty() || ! currentSample (zone, zone.file))
+            return Result::fail ("Unavailable or changed sample: " + zone.file.getFileName());
+    auto next = instrument;
+    next.preset = file.getFileNameWithoutExtension().substring (0, 120);
+    next.dirty = false;
+    TemporaryFile temp (file);
+    if (! encode (next, file.getParentDirectory(), false).writeTo (temp.getFile())
+        || file.exists() || ! temp.overwriteTargetFileWithTemporary())
+        return Result::fail ("Could not write converted native preset.");
+    return Result::ok();
 }
 
 Result Plugin::savePreset (const File& file)
