@@ -3,6 +3,7 @@
 #include "StudioSampler.h"
 #include "StudioUI.h"
 #include "StudioInstrumentHelp.h"
+#include "SamplerNoteText.h"
 #include <thread>
 
 namespace studio::sampler
@@ -31,8 +32,7 @@ public:
         rootLabel.setText("Single sample root",dontSendNotification);
         root.setSliderStyle(Slider::LinearHorizontal);root.setTextBoxStyle(Slider::TextBoxRight,false,100,24);
         root.setRange(0,127,1);root.setValue(60,dontSendNotification);
-        root.textFromValueFunction=[](double v){return MidiMessage::getMidiNoteName(roundToInt(v),true,true,4)+" ("+String(roundToInt(v))+")";};
-        root.valueFromTextFunction=[](const String& v){auto number=v.fromLastOccurrenceOf("(",false,false);return static_cast<double>(number.getIntValue());};
+        useMusicalNotes(root);
         root.setTooltip("Used when a single recording has no root metadata, or as the first key of a percussion kit. C4 = MIDI 60.");
         playbackLabel.setText("How notes play",dontSendNotification);
         playback.addItem("Held notes",1);playback.addItem("Play recording to end",2);playback.addItem("Use existing embedded loops",3);
