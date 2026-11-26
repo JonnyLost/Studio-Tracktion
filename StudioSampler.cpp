@@ -16,7 +16,7 @@ namespace
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
 constexpr int version = 4;
-constexpr auto maxPresetBytes = 2 * 1024 * 1024;
+constexpr auto maxPresetBytes = 8 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
 {
@@ -487,6 +487,7 @@ void Plugin::publish (Instrument next)
     for (const auto& group : next.groups) { auto g = group.playback; g.id = group.id; bank->groups.push_back (g); }
     for (const auto& entry : next.zones) { auto z = entry.mapping; z.folder = entry.folder; bank->zones.push_back (std::move (z)); }
 
+    bank->buildIndex();
     published.store (bank.get());
     auto previous = std::move (current);
     current = std::move (bank);
@@ -624,7 +625,7 @@ Result Plugin::prepareImport (Instrument initial, const juce::Array<File>& paths
         if (aborted()) return Result::fail ("Import cancelled.");
         if (progress) progress->store (++completed * 100 / jmax (1, files.size()));
         if (! file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf;flac")) { ++unsupported; continue; }
-        if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (128)"); continue; }
+        if (next.zones.size() >= maxZones) { errors.add (file.getFileName() + ": zone limit (" + String(maxZones) + ")"); continue; }
         SampleZone entry; entry.folder = next.groups.front().id; entry.file = file;
         auto cached = std::find_if (next.zones.begin(), next.zones.end(), [&] (const auto& z) { return currentSample (z, file); });
         if (cached != next.zones.end()) entry.mapping.sample = cached->mapping.sample;
@@ -1474,7 +1475,7 @@ Result Plugin::prepareXmlInstrument (const File& input, const Instrument& cache,
                 if(aborted())fail("Import cancelled.");
                 if(!node->hasTagName(kontakt?"Zone":"sample"))
                 {if(node->hasTagName("oscillator")){++omitted;warnings.insert("Generated oscillator omitted.");}continue;}
-                if(++seen>maxZones)fail("Instrument exceeds Studio's 128-region limit; no partial conversion.");
+                if(++seen>maxZones)fail("Instrument exceeds Studio's region limit; no partial conversion.");
                 const auto za=kontakt?values(*node):attrs(*node);
                 Attr a=top;overlay(a,ga);overlay(a,za);
                 SampleZone e;auto& z=e.mapping;auto& x=z.sfz;x.enabled=true;
