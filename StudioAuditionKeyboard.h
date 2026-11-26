@@ -152,6 +152,18 @@ public:
         addAndMakeVisible (keys);
         addAndMakeVisible (channel);
         addAndMakeVisible (status);
+        for (auto* button : { &dockModeButton, &hideButton })
+        {
+            addAndMakeVisible (*button);
+            button->setColour (juce::TextButton::buttonColourId, atelierKeyboard::panel);
+            button->setColour (juce::TextButton::buttonOnColourId, atelierKeyboard::warmWood);
+            button->setColour (juce::TextButton::textColourOffId, atelierKeyboard::gold);
+            button->setColour (juce::TextButton::textColourOnId, atelierKeyboard::parchment);
+        }
+        dockModeButton.onClick = [this] { if (onToggleDock) onToggleDock(); };
+        hideButton.onClick = [this] { if (onHide) onHide(); };
+        hideButton.setTooltip ("Hide the docked performance keyboard");
+        setDocked (false);
         status.setJustificationType (juce::Justification::centredLeft);
         status.setColour (juce::Label::textColourId, atelierKeyboard::parchment);
         status.setFont (juce::FontOptions (13.5f, juce::Font::bold));
@@ -238,6 +250,26 @@ public:
     // Existing instrument audition path, reused by the new wheel/knob gestures.
     // Hardware MIDI updates call reflectPerformance with dontSendNotification.
     std::function<void (const juce::MidiMessage&)> send;
+    std::function<void()> onToggleDock;
+    std::function<void()> onHide;
+
+    // The same instrument console is used for both modes. Only its parent
+    // and header action change; note monitoring and MIDI routing stay intact.
+    void setDocked (bool docked)
+    {
+        dockedMode = docked;
+        dockModeButton.setButtonText (docked ? "Float" : "Dock");
+        dockModeButton.setTooltip (docked
+            ? "Open the Atelier keyboard in a floating window"
+            : "Attach this keyboard to the bottom of Studio");
+        hideButton.setVisible (docked);
+        // A new panel has not yet received bounds from its parent. Do not
+        // lay out child controls against a zero-sized rectangle.
+        if (getWidth() > 0 && getHeight() > 0)
+            resized();
+    }
+
+    bool isDocked() const noexcept { return dockedMode; }
 
     void setSelectedInstrument (const juce::String& name)
     {
@@ -261,6 +293,21 @@ public:
         if (changed & V::bit (V::brightness)) brightness.setValue (values.tone, juce::dontSendNotification);
         if (changed & V::bit (V::room)) room.setValue (values.reverb, juce::dontSendNotification);
         if (changed != 0) repaint();
+    }
+
+    // Preserve wheel and knob positions when switching between the docked
+    // and floating instances. Reading values does not send any MIDI.
+    KeyboardPerformanceValues performanceSnapshot() const
+    {
+        KeyboardPerformanceValues values;
+        values.bend = juce::roundToInt (bend.getValue());
+        values.mod = juce::roundToInt (mod.getValue());
+        values.expr = juce::roundToInt (expression.getValue());
+        values.vol = juce::roundToInt (volume.getValue());
+        values.tone = juce::roundToInt (brightness.getValue());
+        values.reverb = juce::roundToInt (room.getValue());
+        values.changed = (1u << 6) - 1u;
+        return values;
     }
 
     void resetPerformance()
@@ -330,6 +377,11 @@ public:
         auto content = getLocalBounds().reduced (12, 10);
         auto top = content.removeFromTop (topEdge - 12);
         channel.setBounds (top.removeFromRight (91).reduced (2, 3));
+        if (dockedMode)
+            hideButton.setBounds (top.removeFromRight (53).reduced (2, 3));
+        else
+            hideButton.setBounds ({});
+        dockModeButton.setBounds (top.removeFromRight (72).reduced (2, 3));
         top.removeFromLeft (juce::jmin (203, top.getWidth() / 3));
         status.setBounds (top.reduced (5, 2));
         content.removeFromTop (6);
@@ -372,8 +424,10 @@ private:
     juce::Slider bend, mod, expression, volume, brightness, room;
     juce::ComboBox channel;
     juce::Label status;
+    juce::TextButton dockModeButton { "Dock" }, hideButton { "Hide" };
     juce::Rectangle<int> leftPlate, keyPlate, rightPlate;
     int activeChannel = 1;
+    bool dockedMode = false;
 
     std::array<juce::Slider*, 6> controls()
     {

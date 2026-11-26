@@ -480,7 +480,7 @@ public:
         addAndMakeVisible (transportOptions);
         addAndMakeVisible (flashbackButton);
         addAndMakeVisible (keyboardButton);
-        keyboardButton.setTooltip ("Open the on-screen audition keyboard for the selected instrument (Shift-Command-K)");
+        keyboardButton.setTooltip ("Dock, float or hide the Cinematic Atelier MIDI keyboard (Shift-Command-K)");
         keyboardButton.onClick = [this] { showKeyboardChoices(); };
         flashbackButton.setTooltip ("Capture MIDI — recover recent unrecorded MIDI on the selected track");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
@@ -721,6 +721,23 @@ public:
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
         addChildComponent (dockedKeyboard);
+        dockedKeyboard.setDocked (true);
+        const SafePointer<StudioView> keyboardHost (this);
+        dockedKeyboard.onToggleDock = [keyboardHost]
+        {
+            // Defer changing the component hierarchy until after the click.
+            MessageManager::callAsync ([keyboardHost]
+            {
+                if (keyboardHost != nullptr) keyboardHost->setKeyboardDocked (false);
+            });
+        };
+        dockedKeyboard.onHide = [keyboardHost]
+        {
+            MessageManager::callAsync ([keyboardHost]
+            {
+                if (keyboardHost != nullptr) keyboardHost->hideAuditionKeyboard();
+            });
+        };
         if (keyboardDocked)
         {
             // Restore the persisted dock with the same live-MIDI routing as a manual dock.
@@ -2714,24 +2731,43 @@ private:
         });
         menu.addItem ("Hide keyboard", keyboardDocked || midiKeyboardWindow != nullptr, false, [safe]
         {
-            if (safe == nullptr) return;
-            safe->keyboardDocked = false;
-            safe->dockedKeyboard.releaseNotes();
-            safe->closeAuditionKeyboard();
-            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
-            prefs.setValue ("studio.keyboardDocked", false);
-            prefs.saveIfNeeded();
-            safe->resized();
+            if (safe != nullptr) safe->hideAuditionKeyboard();
         });
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardButton));
     }
 
+    void hideAuditionKeyboard()
+    {
+        dockedKeyboard.releaseNotes();
+        dockedKeyboard.clearActivity();
+        dockedKeyboard.send = {};
+        keyboardDocked = false;
+        closeAuditionKeyboard();
+        keyboardInputActivity.detach();
+        displayedKeyboardTrack = {};
+        dockedKeyboardTarget = {};
+        lastKeyboardPlaybackPosition.reset();
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        prefs.setValue ("studio.keyboardDocked", false);
+        prefs.saveIfNeeded();
+        resized();
+    }
+
     void setKeyboardDocked (bool dock)
     {
+        // Re-selecting the current mode is a no-op; never discard its values.
+        if (dock && keyboardDocked && midiKeyboardWindow == nullptr) return;
+        if (! dock && ! keyboardDocked && midiKeyboardWindow != nullptr) return;
+
+        const auto positions = dock && midiKeyboardWindow != nullptr
+            ? midiKeyboardWindow->panel.performanceSnapshot()
+            : dockedKeyboard.performanceSnapshot();
         if (dock)
         {
             closeAuditionKeyboard();
             keyboardDocked = true;
+            dockedKeyboard.setDocked (true);
+            dockedKeyboard.reflectPerformance (positions);
             if (auto* track = workflowTrack())
             {
                 dockedKeyboardTarget = track->itemID;
@@ -2754,6 +2790,8 @@ private:
             dockedKeyboard.send = {};
             keyboardDocked = false;
             if (midiKeyboardWindow == nullptr) toggleAuditionKeyboard();
+            if (midiKeyboardWindow != nullptr)
+                midiKeyboardWindow->panel.reflectPerformance (positions);
         }
         auto& prefs = engine.getPropertyStorage().getPropertiesFile();
         prefs.setValue ("studio.keyboardDocked", keyboardDocked);
@@ -2766,6 +2804,8 @@ private:
         if (midiKeyboardWindow == nullptr) return;
         midiKeyboardWindow->panel.releaseNotes();
         midiKeyboardWindow->panel.send = {};
+        midiKeyboardWindow->panel.onToggleDock = {};
+        midiKeyboardWindow->panel.onHide = {};
         midiKeyboardWindow->onClose = {};
         midiKeyboardWindow->setLookAndFeel (nullptr);
         midiKeyboardWindow.reset();
@@ -2791,6 +2831,17 @@ private:
             return;
         }
         midiKeyboardWindow = std::make_unique<studio::AuditionKeyboardWindow>();
+        midiKeyboardWindow->panel.setDocked (false);
+        const SafePointer<StudioView> dockHost (this);
+        midiKeyboardWindow->panel.onToggleDock = [dockHost]
+        {
+            // Never destroy the floating window while its Dock button is
+            // still executing an onClick handler.
+            MessageManager::callAsync ([dockHost]
+            {
+                if (dockHost != nullptr) dockHost->setKeyboardDocked (true);
+            });
+        };
         auto* active = workflowTrack();
         keyboardTarget = active != nullptr && studio::findInstrument (*active) != nullptr
             ? active->itemID : te::EditItemID {};
@@ -6165,8 +6216,14 @@ int StudioView::runInterfaceReview (const File& output)
         gestures.tone = 75;
         gestures.reverb = 38;
         keyboardReview.reflectPerformance (gestures);
-        if (! capture ("atelier-keyboard-panel-1080x228.png", &keyboardReview))
-            return fail ("capture Cinematic Atelier performance keyboard");
+        keyboardReview.setDocked (true);
+        if (! keyboardReview.isDocked()
+            || ! capture ("atelier-keyboard-docked-1080x228.png", &keyboardReview))
+            return fail ("capture docked Cinematic Atelier performance keyboard");
+        keyboardReview.setDocked (false);
+        if (keyboardReview.isDocked()
+            || ! capture ("atelier-keyboard-floating-1080x228.png", &keyboardReview))
+            return fail ("capture floating Cinematic Atelier performance keyboard");
     }
 
     if (performance.isVisible() || articulationStrip.isVisible())
