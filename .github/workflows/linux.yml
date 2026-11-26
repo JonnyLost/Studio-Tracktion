@@ -14,6 +14,7 @@ on:
       - feature/studio-keyboard-slate-theme-m15
       - feature/studio-atelier-slate-inspector-m16
       - feature/studio-apple-sounds-effects-browser-m17
+      - feature/studio-dls-general-midi-library-m18
   pull_request:
     branches:
       - feature/studio-mixer-inspector-m13
