@@ -990,7 +990,8 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
     if (aborted()) return Result::fail ("Import cancelled.");
     if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls") || media.directory != File())
         return Result::fail ("Select an existing bank and a fresh conversion.");
-    const auto originalSize = file.getSize(), originalTime = file.getLastModificationTime();
+    const auto originalSize = file.getSize();
+    const auto originalTime = file.getLastModificationTime();
     try
     {
         soundbank::Bank bank (sfz::path (file.getFullPathName().toStdString()));
