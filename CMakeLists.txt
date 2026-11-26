@@ -726,7 +726,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
@@ -746,6 +746,8 @@ target_link_libraries(Studio PRIVATE
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
+    # The Apple DLS bridge calls MusicDeviceMIDIEvent in AudioToolbox.
+    target_link_libraries(Studio PRIVATE "-framework AudioToolbox")
     target_compile_options(Studio PRIVATE "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-aligned-allocation>")
     set_target_properties(Studio PROPERTIES LINKER_LANGUAGE CXX)
     set(CMAKE_Swift_LANGUAGE_VERSION 5)
