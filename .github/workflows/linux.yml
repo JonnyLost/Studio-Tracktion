@@ -16,8 +16,10 @@ on:
       - feature/studio-apple-sounds-effects-browser-m17
       - feature/studio-dls-general-midi-library-m18
       - feature/studio-sampler-disk-streaming-m19
+      - feature/studio-sfz-importer-m20
   pull_request:
     branches:
+      - feature/studio-sampler-disk-streaming-m19
       - feature/studio-dls-general-midi-library-m18
       - feature/studio-mixer-inspector-m13
       - feature/studio-transport-header-m14
@@ -56,6 +58,12 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread tests/SamplerStreamingTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-streaming-tests"
           "$RUNNER_TEMP/studio-streaming-tests"
+      - name: Check SFZ parser and voice playback before full build
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra tests/SfzParserTests.cpp -o "$RUNNER_TEMP/studio-sfz-parser-tests"
+          "$RUNNER_TEMP/studio-sfz-parser-tests"
+          clang++ -std=c++20 -O2 -Wall -Wextra -pthread tests/SfzPlaybackTests.cpp SamplerEngine.cpp -o "$RUNNER_TEMP/studio-sfz-playback-tests"
+          "$RUNNER_TEMP/studio-sfz-playback-tests"
       - name: Fetch pinned Tracktion Engine and JUCE
         run: |
           git init "$RUNNER_TEMP/tracktion-engine"
