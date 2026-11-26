@@ -230,11 +230,12 @@ inline Result convert(Entry& e,const File& root,std::atomic<bool>& cancel)
 }
 inline Result repair(Entry& e,const File& root,const File& sampleRoot,std::atomic<bool>& cancel)
 {
-    if(!e.converted.existsAsFile()||!sampleRoot.isDirectory()||
+    const auto preset=e.converted==File()&&e.source.hasFileExtension("studiosampler")?e.source:e.converted;
+    if(!preset.existsAsFile()||!sampleRoot.isDirectory()||
        sampleRoot==File::getSpecialLocation(File::userHomeDirectory)||sampleRoot.getParentDirectory()==sampleRoot)
         return Result::fail("Choose an existing native preset and a specific recording folder.");
     sampler::Instrument model;
-    if(auto r=sampler::Plugin::preparePreset(e.converted,{},model,&cancel);r.failed())return r;
+    if(auto r=sampler::Plugin::preparePreset(preset,{},model,&cancel);r.failed())return r;
     std::set<String> wanted;
     std::map<String,File> originals;
     for(const auto& z:model.zones)if(!z.mapping.sample||z.problem.isNotEmpty())
