@@ -25,9 +25,10 @@ inline const juce::Colour secondary  { 0xffc5b49d };
 }
 
 
-// The dock surrounds an Atelier keyboard with dark, subtly illuminated
-// orchestral manuscript engraving. It draws into empty dock margins only;
-// instruments and note keys remain separate, unobscured components.
+// A single, restrained piano-case surround behind the docked console.
+// The previous separately framed musical-staff cards were distracting.
+// This draws a continuous walnut fascia with fine brass inlay and subtle
+// book-matched wood grain in the *unused* side margins only.
 class AtelierKeyboardDockSurround final : public juce::Component
 {
 public:
@@ -46,79 +47,90 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto area = getLocalBounds().toFloat();
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff17212b),
-                                                area.getTopLeft(), juce::Colour (0xff211b18),
-                                                area.getBottomRight(), false));
-        g.fillRect (area);
-        if (keyboardArea.isEmpty()) return;
+        const auto bounds = getLocalBounds().toFloat();
+        g.fillAll (juce::Colour (0xff17202a));
+        if (bounds.getWidth() < 10.0f || bounds.getHeight() < 10.0f)
+            return;
 
-        const int gap = 10;
-        auto left = getLocalBounds().withRight (juce::jmax (0, keyboardArea.getX() - gap));
-        auto right = getLocalBounds().withLeft (
-            juce::jmin (getWidth(), keyboardArea.getRight() + gap));
-        drawManuscript (g, left.reduced (7, 8), false);
-        drawManuscript (g, right.reduced (7, 8), true);
+        // One full-width casing rather than three visually detached boxes.
+        const auto caseBounds = bounds.reduced (1.0f, 3.0f);
+        juce::ColourGradient lacquer (juce::Colour (0xff483021),
+                                     caseBounds.getTopLeft(),
+                                     juce::Colour (0xff1d1513),
+                                     caseBounds.getBottomLeft(), false);
+        lacquer.addColour (0.22, juce::Colour (0xff34231d));
+        lacquer.addColour (0.73, juce::Colour (0xff241a18));
+        g.setGradientFill (lacquer);
+        g.fillRoundedRectangle (caseBounds, 5.0f);
+
+        // Thin, continuous piano-fallboard inlay. No isolated cards,
+        // manuscript icons, faux noteheads or high-contrast decoration.
+        const auto brass = atelierKeyboard::gold.withAlpha (0.32f);
+        const auto shadow = juce::Colour (0xff070809).withAlpha (0.65f);
+        const float topRail = caseBounds.getY() + 6.0f;
+        const float bottomRail = caseBounds.getBottom() - 7.0f;
+        g.setColour (shadow);
+        g.drawLine (caseBounds.getX() + 8.0f, topRail + 2.0f,
+                    caseBounds.getRight() - 8.0f, topRail + 2.0f, 2.0f);
+        g.setColour (brass);
+        g.drawLine (caseBounds.getX() + 9.0f, topRail,
+                    caseBounds.getRight() - 9.0f, topRail, 1.0f);
+        g.setColour (atelierKeyboard::faintGold.withAlpha (0.43f));
+        g.drawLine (caseBounds.getX() + 9.0f, bottomRail,
+                    caseBounds.getRight() - 9.0f, bottomRail, 1.0f);
+        g.setColour (atelierKeyboard::gold.withAlpha (0.19f));
+        g.drawRoundedRectangle (caseBounds.reduced (0.5f), 4.5f, 0.8f);
+
+        if (keyboardArea.isEmpty()) return;
+        const auto left = juce::Rectangle<int> (0, 0,
+            juce::jmax (0, keyboardArea.getX() - 5), getHeight());
+        const auto right = juce::Rectangle<int> (
+            juce::jmin (getWidth(), keyboardArea.getRight() + 5), 0,
+            juce::jmax (0, getWidth() - keyboardArea.getRight() - 5), getHeight());
+        drawVeneer (g, left, false);
+        drawVeneer (g, right, true);
     }
 
 private:
     juce::Rectangle<int> keyboardArea;
 
-    static void drawManuscript (juce::Graphics& g, juce::Rectangle<int> area,
-                                bool answerPhrase)
+    static void drawVeneer (juce::Graphics& g, juce::Rectangle<int> area, bool mirrored)
     {
-        // Skip extremely narrow dock margins; never let art crowd the keys.
-        if (area.getWidth() < 66 || area.getHeight() < 90) return;
+        if (area.getWidth() < 32 || area.getHeight() < 60) return;
         g.saveState();
-        g.reduceClipRegion (area);
-        auto paper = area.toFloat().reduced (2.0f);
-        g.setGradientFill (juce::ColourGradient (
-            juce::Colour (0xff6a4a30).withAlpha (0.34f), paper.getTopLeft(),
-            juce::Colour (0xff302a25).withAlpha (0.20f), paper.getBottomRight(),
-            false));
-        g.fillRoundedRectangle (paper, 6.0f);
-        g.setColour (atelierKeyboard::faintGold.withAlpha (0.32f));
-        g.drawRoundedRectangle (paper.reduced (0.5f), 6.0f, 0.85f);
+        g.reduceClipRegion (area.reduced (4, 11));
 
-        const float x1 = paper.getX() + 12.0f;
-        const float x2 = paper.getRight() - 12.0f;
-        if (x2 - x1 < 43.0f) { g.restoreState(); return; }
-        const float midY = paper.getCentreY();
-        const float staffGap = juce::jlimit (7.0f, 11.0f, paper.getHeight() / 18.0f);
-        const auto ink = atelierKeyboard::gold.withAlpha (0.44f);
-
-        // Two etched five-line staves, like an aged conductor's sketchbook.
-        for (int staff = 0; staff < 2; ++staff)
+        // Very fine book-matched grain. The geometry is static and cheap to
+        // render; all mouse and MIDI events belong to the keyboard above it.
+        for (int strand = 0; strand < 16; ++strand)
         {
-            const float centre = midY + (staff == 0 ? -3.4f : 3.4f) * staffGap;
-            for (int rule = -2; rule <= 2; ++rule)
-            {
-                g.setColour (ink.withAlpha (0.36f));
-                const float y = centre + (float) rule * staffGap;
-                g.drawLine (x1, y, x2, y, 0.8f);
-            }
-            if (x2 - x1 < 64.0f) continue;
-
-            // Quiet noteheads and stems, not text glyphs or external artwork.
-            for (int note = 0; note < 3; ++note)
-            {
-                const float progress = (note + 1.0f) / 4.0f;
-                const float x = x1 + (x2 - x1) * progress;
-                const int step = ((note * 2 + staff + (answerPhrase ? 2 : 0)) % 5) - 2;
-                const float y = centre - step * staffGap * 0.5f;
-                g.setColour (ink.withAlpha (note == 1 ? 0.68f : 0.53f));
-                g.fillEllipse (x - 4.1f, y - 2.8f, 8.2f, 5.6f);
-                g.drawLine (x + 3.5f, y, x + 3.5f, y - staffGap * 2.3f, 1.0f);
-                if (note == 1)
-                {
-                    juce::Path flag;
-                    flag.startNewSubPath (x + 3.5f, y - staffGap * 2.3f);
-                    flag.quadraticTo (x + 9.5f, y - staffGap * 2.0f,
-                                      x + 7.5f, y - staffGap * 1.2f);
-                    g.strokePath (flag, juce::PathStrokeType (1.0f));
-                }
-            }
+            const float x = (float) area.getX()
+                + (strand + 0.5f) * (float) area.getWidth() / 16.0f;
+            const float lean = (mirrored ? -1.0f : 1.0f)
+                * (2.0f + (float) (strand % 4) * 1.5f);
+            juce::Path grain;
+            const float y0 = (float) area.getY() + 10.0f;
+            const float y1 = (float) area.getBottom() - 10.0f;
+            grain.startNewSubPath (x, y0);
+            grain.cubicTo (x + lean, y0 + (y1 - y0) * 0.32f,
+                           x - lean * 0.8f, y0 + (y1 - y0) * 0.72f,
+                           x + lean * 0.2f, y1);
+            g.setColour (strand % 3 == 0
+                ? atelierKeyboard::gold.withAlpha (0.075f)
+                : juce::Colour (0xff090808).withAlpha (0.12f));
+            g.strokePath (grain, juce::PathStrokeType (0.8f));
         }
+
+        // Quiet shaped cheek where the casing meets the inset keyboard.
+        const float seam = mirrored ? (float) area.getX() + 3.0f
+                                    : (float) area.getRight() - 3.0f;
+        g.setColour (juce::Colour (0xff060809).withAlpha (0.48f));
+        g.drawLine (seam, (float) area.getY() + 12.0f,
+                    seam, (float) area.getBottom() - 12.0f, 3.0f);
+        g.setColour (atelierKeyboard::gold.withAlpha (0.23f));
+        const float inlayX = seam + (mirrored ? -2.0f : 2.0f);
+        g.drawLine (inlayX, (float) area.getY() + 14.0f,
+                    inlayX, (float) area.getBottom() - 14.0f, 0.9f);
         g.restoreState();
     }
 };
