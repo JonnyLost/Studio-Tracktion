@@ -2165,7 +2165,8 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
-    TextButton transportOptions { "Customize..." }, flashbackButton { "↶●" },
+    TextButton transportOptions { "Customize..." }; 
+    studio::TransportButton flashbackButton { "Capture MIDI", studio::TransportIcon::captureMidi };
                keyboardButton { "Keyboard" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
