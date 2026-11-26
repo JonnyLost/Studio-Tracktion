@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
 #include "../StudioLibrary.h"
+#include "../SamplerNoteText.h"
+#include "../StudioInstrumentHelp.h"
 #include "LegacyBankFixtures.h"
 #include "ExsFixtures.h"
 #include "../SpatialRouting.h"
@@ -501,6 +503,19 @@ Result verifyXmlInstrumentImport (const File& directory, Plugin& sampler, WavAud
 
 Result verifyGuidedBuilder (const File& directory,WavAudioFormat& wav)
 {
+    for(int note=0;note<128;++note)
+        if(parseMusicalNote(musicalNoteText(note))!=note||parseMusicalNote(String(note))!=note)
+            return Result::fail("musical note text round trip");
+    if(parseMusicalNote("C4")!=60||parseMusicalNote("Db4")!=61||parseMusicalNote("F#3")!=54||
+       parseMusicalNote("C4 (61)")||parseMusicalNote("128")||parseMusicalNote("invalid"))
+        return Result::fail("musical note input validation");
+    for(auto topic:{studio::help::Topic::play,studio::help::Topic::sound,studio::help::Topic::mapping,
+                    studio::help::Topic::groups,studio::help::Topic::waveform,studio::help::Topic::advanced,
+                    studio::help::Topic::library,studio::help::Topic::builder})
+    {
+        auto a=studio::help::article(topic);
+        if(String(a.title).isEmpty()||String(a.body).length()<100)return Result::fail("contextual instrument help");
+    }
     const auto folder=directory.getChildFile("Guided recordings");
     if(folder.createDirectory().failed())return Result::fail("create guided fixtures");
     const auto low=folder.getChildFile("Cello_C4_v1-63.wav");
@@ -591,6 +606,10 @@ Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
         return Result::fail("rescan preserves explicit family and portrait");
     if(!wavFile.moveFileTo(relocated.getChildFile(wavFile.getFileName())))return Result::fail("move source recording");
     if(lib::convert(reopened.entries[0],output,cancel).wasOk())return Result::fail("existing conversion with missing source must not report success");
+    lib::Entry direct;direct.source=originalPreset;direct.name="Direct native preset";
+    if(auto r=lib::repair(direct,output,relocated,cancel);r.failed())return r;
+    if(direct.converted==originalPreset||!direct.converted.existsAsFile()||!originalPreset.existsAsFile())
+        return Result::fail("repair directly cataloged native preset without prior conversion");
     if(auto r=lib::repair(reopened.entries[0],output,relocated,cancel);r.failed())return r;
     if(reopened.entries[0].converted==originalPreset||!originalPreset.existsAsFile())return Result::fail("repair creates a separate preset");
     Instrument model;
