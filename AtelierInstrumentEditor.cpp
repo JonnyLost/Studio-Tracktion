@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AtelierInstrumentEditor.h"
+#include "StudioGeneralMidi.h"
 #include "StudioUI.h"
 #include "SpatialState.h"
 #include "SpatialRouting.h"
@@ -484,6 +485,19 @@ te::VolumeAndPanPlugin* AtelierInstrumentEditor::volumePlugin() const
 void AtelierInstrumentEditor::refreshControls()
 {
     restoring = true;
+    if (auto* dls = dynamic_cast<te::ExternalPlugin*> (instrument.get());
+        dls != nullptr && dls->desc.name.containsIgnoreCase ("DLSMusicDevice")
+        && dls->state.hasProperty (Identifier ("studioDlsGmProgram")))
+    {
+        const int gmProgram = (int) dls->state.getProperty (Identifier ("studioDlsGmProgram"));
+        if (gm::valid (gmProgram))
+        {
+            const String selectedSound = "DLSMusicDevice | GM "
+                + String (gm::displayNumber (gmProgram)) + " " + gm::name (gmProgram);
+            if (subtitle.getText() != selectedSound)
+                subtitle.setText (selectedSound, dontSendNotification);
+        }
+    }
     if (auto* channel = volumePlugin())
     {
         volume.setEnabled (true);
