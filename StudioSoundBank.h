@@ -35,6 +35,11 @@ inline std::string str (const Bytes& b, std::size_t p, std::size_t count)
     while (!s.empty() && (s.back()==' ' || s.back()=='\r' || s.back()=='\n')) s.pop_back();
     return s;
 }
+inline std::string fourcc (const Bytes& b,std::size_t p)
+{
+    if(p>b.size()||b.size()-p<4) throw std::runtime_error("Truncated RIFF FourCC");
+    return std::string(b.begin()+p,b.begin()+p+4);
+}
 struct Chunk { std::string id, type; U64 header=0, data=0, size=0; };
 enum class Encoding { pcm8, pcm16, pcm24, sf24, vorbis };
 struct Audio
@@ -67,10 +72,10 @@ public:
         if(end<12) fail("Invalid RIFF bank");
         length=static_cast<U64>(end);
         const auto h=read(0,12);
-        if(str(h,0,4)!="RIFF") fail("Not a little-endian RIFF sound bank");
+        if(fourcc(h,0)!="RIFF") fail("Not a little-endian RIFF sound bank");
         const U64 declared=U64(u32(h,4))+8;
         if(declared>length || declared<12) fail("Truncated RIFF bank");
-        const auto type=str(h,8,4);
+        const auto type=fourcc(h,8);
         const auto chunks=children(12,declared);
         if(type=="sfbk") loadSf(chunks);
         else if(type=="DLS ") loadDls(chunks);
@@ -116,11 +121,11 @@ private:
         {
             if(end-begin<8 || out.size()>=65536) fail("Truncated or excessive RIFF chunks");
             const auto h=read(begin,8);
-            Chunk c{str(h,0,4),{},begin,begin+8,u32(h,4)};
+            Chunk c{fourcc(h,0),{},begin,begin+8,u32(h,4)};
             const auto pad=c.size&1;
             if(c.size+pad>end-c.data) fail("RIFF chunk exceeds parent");
             const auto next=c.data+c.size+pad;
-            if(c.id=="LIST") { if(c.size<4) fail("Invalid RIFF LIST"); c.type=str(read(c.data,4),0,4); c.data+=4;c.size-=4; }
+            if(c.id=="LIST") { if(c.size<4) fail("Invalid RIFF LIST"); c.type=fourcc(read(c.data,4),0); c.data+=4;c.size-=4; }
             out.push_back(c); begin=next;
         }
         return out;
@@ -210,7 +215,7 @@ private:
     static void sfWarnings(const Gens& g,Mapping& m)
     {
         const std::set<int> supported{0,1,2,3,4,12,17,34,36,37,38,41,43,44,45,48,50,51,52,53,54,56,58};
-        for(auto [op,value]:g) if(!supported.count(op) && value!=0)
+        for(auto [op,value]:g) if(!supported.count(op))
             m.warnings.insert("Unsupported SoundFont generator "+std::to_string(op));
     }
     void resolveSf(std::size_t index,Mapping& m,int limit)
@@ -253,8 +258,11 @@ private:
                     if(b>smpl.size) fail("Compressed SoundFont sample exceeds smpl");
                     if(off(0,4)||off(1,12)) fail("SF3 sample address offsets not supported");
                     r.audio={Encoding::vorbis,smpl.data+a,b-a,0,1,int(rate),0};
-                    r.loopStart=boundedInt(std::int64_t(u32(shdr,s+28))+off(2,45));
-                    r.loopEnd=boundedInt(std::int64_t(u32(shdr,s+32))+off(3,50));
+                    if((val(ib.g,54)&3)==1||(val(ib.g,54)&3)==3)
+                    {
+                        r.loopStart=boundedInt(std::int64_t(u32(shdr,s+28))+off(2,45));
+                        r.loopEnd=boundedInt(std::int64_t(u32(shdr,s+32))+off(3,50));
+                    }
                 }
                 else
                 {
@@ -281,7 +289,7 @@ private:
                 const int semitones=sum(51)+cents/100;
                 if(semitones<-48||semitones>48) fail("SoundFont transpose exceeds native range");
                 r.transpose=semitones;r.cents=float(cents%100);
-                r.keyTrack=std::clamp(val(ib.g,56,100),0,200);
+                r.keyTrack=std::clamp(val(ib.g,56,100)+val(pb.g,56),0,200);
                 const auto pan=sum(17);
                 r.pan=float(std::clamp(pan/5.0,-100.0,100.0));
                 if(kind==2||kind==4)
@@ -298,6 +306,7 @@ private:
                 if(r.loop && (r.loopEnd-r.loopStart<2 || (r.audio.frames>0 && r.loopEnd>r.audio.frames)))
                     fail("Invalid SoundFont loop");
                 if(val(ib.g,57)!=0) m.warnings.insert("Exclusive classes (drum choking) not converted");
+                if(pb.g.count(0)||pb.g.count(1)||pb.g.count(2)||pb.g.count(3)||pb.g.count(4)||pb.g.count(12)||pb.g.count(45)||pb.g.count(50)||pb.g.count(54)||pb.g.count(58)) m.warnings.insert("Invalid preset-level instrument-only generators ignored");
                 append(m,r,limit);
             }
         }
@@ -328,7 +337,7 @@ private:
             const auto cs=children(c);const auto h=get(cs,"insh");
             if(h.size<12) fail("Truncated DLS instrument header");
             const auto b=read(h.data,12);const auto bank=u32(b,4);
-            programs.push_back({infoName(cs,"Instrument "+std::to_string(programs.size()+1)),bank&0x3fff,u32(b,8)&127,(bank&0x80000000u)!=0});
+            programs.push_back({infoName(cs,"Instrument "+std::to_string(programs.size()+1)),((bank>>8)&127)*128+(bank&127),u32(b,8)&127,(bank&0x80000000u)!=0});
             instruments.push_back(c);
         }
     }
