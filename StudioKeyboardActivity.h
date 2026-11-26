@@ -2,6 +2,7 @@
 #pragma once
 
 #include "StudioKeyboardNoteState.h"
+#include "StudioKeyboardPerformanceState.h"
 #include <JuceHeader.h>
 #include <algorithm>
 #include <bitset>
@@ -57,9 +58,11 @@ public:
         attached.clear();
         currentTrack = {};
         notes.clear();
+        performance.reset();
     }
 
     std::bitset<128> snapshot() noexcept { return notes.snapshot(); }
+    KeyboardPerformanceValues consumePerformance() noexcept { return performance.consume(); }
 
 private:
     void handleIncomingMidiMessage (const juce::MidiMessage& midi) override
@@ -69,8 +72,11 @@ private:
             notes.noteOn (ch, midi.getNoteNumber());
         else if (midi.isNoteOff())
             notes.noteOff (ch, midi.getNoteNumber());
+        else if (midi.isPitchWheel())
+            performance.receivePitchBend (midi.getPitchWheelValue());
         else if (midi.isController())
         {
+            performance.receiveController (midi.getControllerNumber(), midi.getControllerValue());
             if (midi.getControllerNumber() == 64)
                 notes.sustain (ch, midi.getControllerValue() >= 64);
             else if (midi.getControllerNumber() == 120
@@ -81,6 +87,7 @@ private:
     }
 
     KeyboardNoteState notes;
+    KeyboardPerformanceState performance;
     te::EditItemID currentTrack;
     std::vector<std::shared_ptr<te::PhysicalMidiInputDevice>> attached;
 };
@@ -165,5 +172,75 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
         }
     }
     return lit;
+}
+
+
+// Visually chase the last relevant MIDI controller event for active standard
+// MIDI regions. This is for UI feedback only; plug-ins receive their normal
+// MIDI through Tracktion's established playback engine.
+inline KeyboardPerformanceValues keyboardPlaybackPerformance (te::AudioTrack& track,
+                                                              te::TimePosition current)
+{
+    KeyboardPerformanceValues values;
+    if (track.isMuted (true)) return values;
+
+    for (auto* clipBase : track.getClips())
+    {
+        auto* clip = dynamic_cast<te::MidiClip*> (clipBase);
+        if (clip == nullptr || clip->isMuted() || ! clip->hasValidSequence())
+            continue;
+        const auto bounds = clip->getPosition();
+        if (current < bounds.getStart() || current >= bounds.getEnd())
+            continue;
+
+        double beat = clip->getContentBeatAtTime (current).inBeats();
+        if (clip->isLooping())
+        {
+            const auto loopStart = clip->getLoopStartBeats().inBeats();
+            const auto loopLength = clip->getLoopLengthBeats().inBeats();
+            if (loopLength > 0.0 && beat >= loopStart)
+                beat = loopStart + std::fmod (beat - loopStart, loopLength);
+        }
+
+        for (auto* cc : clip->getSequence().getControllerEvents())
+        {
+            if (cc->getBeatPosition().inBeats() > beat)
+                continue;
+            const int type = cc->getType();
+            auto raw = cc->getControllerValue();
+            if (type == te::MidiControllerEvent::pitchWheelType)
+            {
+                values.bend = juce::jlimit (0, 16383, raw);
+                values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::pitch);
+                continue;
+            }
+            raw = juce::jlimit (0, 127, raw >> 7);
+            switch (type)
+            {
+                case 1:
+                    values.mod = raw;
+                    values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::modulation);
+                    break;
+                case 11:
+                    values.expr = raw;
+                    values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::expression);
+                    break;
+                case 7:
+                    values.vol = raw;
+                    values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::volume);
+                    break;
+                case 74:
+                    values.tone = raw;
+                    values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::brightness);
+                    break;
+                case 91:
+                    values.reverb = raw;
+                    values.changed |= KeyboardPerformanceValues::bit (KeyboardPerformanceValues::room);
+                    break;
+                default: break;
+            }
+        }
+    }
+    return values;
 }
 } // namespace studio

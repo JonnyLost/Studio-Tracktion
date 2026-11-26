@@ -1397,8 +1397,14 @@ public:
         layoutDock (area);
         if (keyboardDocked)
         {
+            // Center the Atelier console rather than stretching the keys
+            // across every available pixel in the arrangement.
+            const int height = jlimit (m.px (178), m.px (228), area.getHeight() / 2);
+            const auto dockArea = area.removeFromBottom (height);
+            const int width = jmin (dockArea.getWidth() - m.px (10), m.span (1180));
+            dockedKeyboard.setBounds (dockArea.withSizeKeepingCentre (
+                jmax (1, width), jmax (1, height - m.px (5))));
             dockedKeyboard.setVisible (true);
-            dockedKeyboard.setBounds (area.removeFromBottom (m.px (182)).reduced (m.px (5)));
         }
         else dockedKeyboard.setVisible (false);
         arrangementTools = area.removeFromTop (m.control (29));
@@ -2639,6 +2645,9 @@ private:
             keyboardInputActivity.detach();
             displayedKeyboardTrack = nextId;
             lastKeyboardPlaybackPosition.reset();
+            dockedKeyboard.resetPerformance();
+            if (midiKeyboardWindow != nullptr)
+                midiKeyboardWindow->panel.resetPerformance();
         }
 
         dockedKeyboardTarget = keyboardDocked ? nextId : te::EditItemID {};
@@ -2649,10 +2658,13 @@ private:
             midiKeyboardWindow->panel.setSelectedInstrument (name);
 
         std::bitset<128> activity;
+        studio::KeyboardPerformanceValues liveControls;
+        studio::KeyboardPerformanceValues playbackControls;
         if (selected != nullptr)
         {
             keyboardInputActivity.watch (*edit, nextId, engine.getDeviceManager());
             activity = keyboardInputActivity.snapshot();
+            liveControls = keyboardInputActivity.consumePerformance();
 
             auto& transport = edit->getTransport();
             if (transport.isPlaying() || transport.isRecording())
@@ -2660,6 +2672,7 @@ private:
                 const auto position = transport.getPosition();
                 activity |= studio::keyboardPlaybackNotes (*selected, position,
                                                             lastKeyboardPlaybackPosition);
+                playbackControls = studio::keyboardPlaybackPerformance (*selected, position);
                 lastKeyboardPlaybackPosition = position;
             }
             else
@@ -2671,10 +2684,20 @@ private:
             lastKeyboardPlaybackPosition.reset();
         }
 
-        if (keyboardDocked) dockedKeyboard.displayActivity (activity);
+        // Displaying input and playback controllers must never echo MIDI.
+        if (keyboardDocked)
+        {
+            dockedKeyboard.displayActivity (activity);
+            dockedKeyboard.reflectPerformance (playbackControls);
+            dockedKeyboard.reflectPerformance (liveControls);
+        }
         else dockedKeyboard.clearActivity();
         if (midiKeyboardWindow != nullptr)
+        {
             midiKeyboardWindow->panel.displayActivity (activity);
+            midiKeyboardWindow->panel.reflectPerformance (playbackControls);
+            midiKeyboardWindow->panel.reflectPerformance (liveControls);
+        }
     }
 
     void showKeyboardChoices()
@@ -6122,6 +6145,30 @@ int StudioView::runInterfaceReview (const File& output)
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (image, stream);
     };
+    // Capture the real JUCE Cinematic Atelier keyboard component at its
+    // docked size. No concept artwork or mocked control image is involved.
+    if (writeImages)
+    {
+        studio::AuditionKeyboardPanel keyboardReview;
+        keyboardReview.setSize (1080, 228);
+        keyboardReview.setSelectedInstrument ("Concert Violin - Chamber Ensemble");
+        std::bitset<128> activeNotes;
+        for (const int pitch : { 60, 64, 67 })
+            activeNotes.set (static_cast<std::size_t> (pitch));
+        keyboardReview.displayActivity (activeNotes);
+        studio::KeyboardPerformanceValues gestures;
+        gestures.changed = (1u << 6) - 1;
+        gestures.bend = 9800;
+        gestures.mod = 78;
+        gestures.expr = 102;
+        gestures.vol = 93;
+        gestures.tone = 75;
+        gestures.reverb = 38;
+        keyboardReview.reflectPerformance (gestures);
+        if (! capture ("atelier-keyboard-panel-1080x228.png", &keyboardReview))
+            return fail ("capture Cinematic Atelier performance keyboard");
+    }
+
     if (performance.isVisible() || articulationStrip.isVisible())
         return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
