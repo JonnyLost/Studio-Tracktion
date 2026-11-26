@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include <functional>
 #include <bitset>
+#include <cstddef>
 
 namespace studio
 {
@@ -27,7 +28,7 @@ public:
                         bool down, bool over, juce::Colour line, juce::Colour text) override
     {
         juce::MidiKeyboardComponent::drawWhiteNote (note, g, area,
-            down || (note >= 0 && note < 128 && activity.test (static_cast<size_t> (note))),
+            down || (note >= 0 && note < 128 && activity.test (static_cast<std::size_t> (note))),
             over, line, text);
     }
 
@@ -82,7 +83,7 @@ public:
     std::function<void (const juce::MidiMessage&)> send;
     void setSelectedInstrument (const juce::String& name)
     {
-        const auto label = name.isNotEmpty() ? "Audition · " + name
+        const auto label = name.isNotEmpty() ? "Audition - " + name
             : juce::String ("Select an instrument track to audition.");
         if (status.getText() != label)
             status.setText (label, juce::dontSendNotification);
@@ -127,7 +128,7 @@ class AuditionKeyboardWindow final : public juce::DocumentWindow
 {
 public:
     AuditionKeyboardWindow()
-        : juce::DocumentWindow ("Studio — On-Screen MIDI Keyboard",
+        : juce::DocumentWindow ("Studio - On-Screen MIDI Keyboard",
               juce::Colour (0xff202b3a), juce::DocumentWindow::closeButton)
     {
         setUsingNativeTitleBar (true);
