@@ -263,7 +263,10 @@ public:
             ? "Open the Atelier keyboard in a floating window"
             : "Attach this keyboard to the bottom of Studio");
         hideButton.setVisible (docked);
-        resized();
+        // A new panel has not yet received bounds from its parent. Do not
+        // lay out child controls against a zero-sized rectangle.
+        if (getWidth() > 0 && getHeight() > 0)
+            resized();
     }
 
     bool isDocked() const noexcept { return dockedMode; }
