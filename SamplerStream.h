@@ -24,6 +24,8 @@ inline constexpr int streamRequestSlots = 32;
 
 class StreamCache
 {
+    static_assert (std::atomic<int>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free
+                   && std::atomic<bool>::is_always_lock_free);
     struct Slot
     {
         std::atomic<int> readers { 0 }; // -1 = exclusive background writer
@@ -69,6 +71,7 @@ public:
         ~Cursor() { release(); }
         bool read (StreamCache& cache, int frame, float& l, float& r, bool offline) noexcept
         {
+            if (frame < streamPreloadFrames || frame >= cache.frames) return false;
             const int page = frame / streamPageFrames;
             if (failedPage == page) return false;
             if (slot == nullptr || owner != &cache || currentPage != page)
@@ -115,7 +118,8 @@ public:
     // Called on import/edit threads, never live render.
     bool prime (int frame)
     {
-        return frame < streamPreloadFrames || frame >= frames || fill (frame / streamPageFrames);
+        return frame >= 0 && frame < frames
+            && (frame < streamPreloadFrames || fill (frame / streamPageFrames));
     }
     bool pending() const noexcept { return pendingWork.load (std::memory_order_acquire); }
     void service()
@@ -165,22 +169,31 @@ private:
         // Multiple offline readers or edit threads may request a page; only
         // the decoder side ever takes this mutex.
         std::lock_guard lock (decodeMutex);
-        if (auto* existing = pin (page))
-        {
-            existing->readers.fetch_sub (1, std::memory_order_release);
-            return true;
-        }
-        Slot* chosen = nullptr;
-        unsigned oldest = 0;
+        // Only the decoder can change a page tag, and decodeMutex is held.
+        // A concurrent reader need not be pinned just to confirm residency.
         for (auto& slot : slots)
+            if (slot.page.load (std::memory_order_acquire) == page)
+            {
+                slot.used.store (clock.fetch_add (1, std::memory_order_relaxed), std::memory_order_relaxed);
+                return true;
+            }
+        Slot* chosen = nullptr;
+        for (int attempt = 0; attempt < streamCachePages; ++attempt)
         {
-            if (slot.readers.load (std::memory_order_acquire) != 0) continue;
-            const unsigned used = slot.used.load (std::memory_order_relaxed);
-            if (chosen == nullptr || used < oldest) { chosen = &slot; oldest = used; }
+            chosen = nullptr;
+            unsigned oldest = 0;
+            for (auto& slot : slots)
+            {
+                if (slot.readers.load (std::memory_order_acquire) != 0) continue;
+                const unsigned used = slot.used.load (std::memory_order_relaxed);
+                if (chosen == nullptr || used < oldest) { chosen = &slot; oldest = used; }
+            }
+            if (chosen == nullptr) return false;
+            int free = 0;
+            if (chosen->readers.compare_exchange_strong (free, -1, std::memory_order_acq_rel)) break;
+            chosen = nullptr;
         }
         if (chosen == nullptr) return false;
-        int free = 0;
-        if (! chosen->readers.compare_exchange_strong (free, -1, std::memory_order_acq_rel)) return false;
         chosen->page.store (-1, std::memory_order_release);
         const int first = page * streamPageFrames;
         const int count = std::min (streamPageFrames, frames - first);
