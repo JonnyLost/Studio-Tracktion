@@ -19,7 +19,7 @@ struct Rig
 {
     Engine e; Bank b; float audio[2048] {};
     Rig() { e.prepare (48000); b.settings.attack = b.settings.decay = b.settings.release = 0; b.settings.gainDb = 0; b.sampleRevision = 1; }
-    void use() { e.use (b); }
+    void use() { if (! guard) b.buildIndex(); e.use (b); }
     float render (int count = 64) { std::fill_n (audio, count, 0); e.render (audio, nullptr, count); e.publishMeters(); use(); return audio[count - 1]; }
     void on (int note = 60, int velocity = 127, int ch = 0) { e.midi (0x90 | ch, note, velocity); }
     void off (int note = 60, int ch = 0) { e.midi (0x80 | ch, note, 0); }
