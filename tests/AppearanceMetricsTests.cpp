@@ -1,13 +1,50 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../AppearanceMetrics.h"
+#include "../StudioDesignTokens.h"
 #include "../StagePresentation.h"
 
 #include <cassert>
 #include <cmath>
 #include <iostream>
 
+namespace
+{
+double luminance (std::uint32_t argb)
+{
+    const auto linear = [] (unsigned channel)
+    {
+        const double value = channel / 255.0;
+        return value <= .04045 ? value / 12.92 : std::pow ((value + .055) / 1.055, 2.4);
+    };
+    return .2126 * linear ((argb >> 16) & 255u) + .7152 * linear ((argb >> 8) & 255u)
+        + .0722 * linear (argb & 255u);
+}
+double contrast (std::uint32_t a, std::uint32_t b)
+{
+    const double first = luminance (a), second = luminance (b);
+    return (std::max (first, second) + .05) / (std::min (first, second) + .05);
+}
+bool designContrast()
+{
+    using namespace studio::design;
+    // Explicit return values keep checks active in Release builds.
+    for (const auto surface : { rail, canvas, timeline, panel, control, raised, selected, well })
+        for (const auto foreground : { text, secondary, action, atelierAccent, focus })
+            if (contrast (foreground, surface) < 4.5)
+            {
+                std::cerr << "Studio design contrast below 4.5:1 for " << std::hex
+                          << foreground << " on " << surface << '\n';
+                return false;
+            }
+    for (const auto state : { signal, record, warning, focus })
+        if (contrast (state, control) < 3.0) return false;
+    return atelierAccent != focus && record != signal && focus != playhead;
+}
+}
+
 int main()
 {
+    if (!designContrast()) return 1;
     using namespace studio::spatial;
     for (const auto& layout : stagePresentations)
         for (float x : { -1.0f, -0.7f, 0.0f, 0.7f, 1.0f })

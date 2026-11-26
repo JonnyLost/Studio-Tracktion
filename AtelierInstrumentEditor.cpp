@@ -15,7 +15,7 @@ namespace
 // Match the host Studio color tokens; ARIA states and original artwork remain unchanged.
 const Colour base      = colours::well;
 const Colour controlFill = colours::control;
-const Colour accent    = colours::focus;
+const Colour accent    = colours::atelierAccent;
 const Colour white     = colours::text;
 const Colour secondary = colours::secondary;
 
@@ -125,31 +125,7 @@ public:
     void drawRotarySlider (Graphics& g, int x, int y, int width, int height, float sliderPos,
                            float startAngle, float endAngle, Slider& slider) override
     {
-        auto circle = Rectangle<float> ((float) x, (float) y, (float) width, (float) height);
-        const float diameter = jmin (circle.getWidth(), circle.getHeight()) * .75f;
-        circle = circle.withSizeKeepingCentre (diameter, diameter);
-        const auto centre = circle.getCentre();
-        const float radius = circle.getWidth() * .5f;
-        const float angle = startAngle + sliderPos * (endAngle - startAngle);
-        Path track;
-        track.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, endAngle, true);
-        g.setColour (colours::divider);
-        g.strokePath (track, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
-        Path value;
-        value.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, angle, true);
-        g.setColour (slider.isEnabled() ? accent : secondary.withAlpha (.5f));
-        g.strokePath (value, PathStrokeType (4.0f, PathStrokeType::curved, PathStrokeType::rounded));
-        circle = circle.reduced (radius * .22f);
-        g.setGradientFill (ColourGradient (colours::raised.brighter (0.13f), circle.getTopLeft(),
-                                           colours::well, circle.getBottomRight(), false));
-        g.fillEllipse (circle);
-        g.setColour (colours::focus.withAlpha (.65f));
-        g.drawEllipse (circle.reduced (.5f), 1.3f);
-        const auto hand = Point<float> (centre.x + std::sin (angle) * radius * .42f,
-                                        centre.y - std::cos (angle) * radius * .42f);
-        g.setColour (colours::text);
-        g.drawLine (centre.x, centre.y, hand.x, hand.y, 2.3f);
-        g.fillEllipse (centre.x - 2.0f, centre.y - 2.0f, 4.0f, 4.0f);
+        drawStudioRotary (g, x, y, width, height, sliderPos, startAngle, endAngle, slider, accent);
     }
 
     void drawComboBox (Graphics& g, int width, int height, bool, int, int, int, int, ComboBox&) override
