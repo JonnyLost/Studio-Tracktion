@@ -5076,16 +5076,22 @@ private:
             const bool hasSynth = target != nullptr && ! busy
                 && dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)) != nullptr;
             String selectedAppleInstrument;
+            int currentGeneralMidi = -1;
             if (target != nullptr)
                 if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
                     if (hosted->isAU() && hosted->desc.manufacturerName.containsIgnoreCase ("Apple")
                         && hosted->getAudioPluginInstance() != nullptr)
+                    {
                         selectedAppleInstrument = hosted->desc.createIdentifierString();
+                        if (isAppleDls (*hosted)
+                            && hosted->state.hasProperty (Identifier ("studioDlsGmProgram")))
+                            currentGeneralMidi = (int) hosted->state.getProperty (Identifier ("studioDlsGmProgram"));
+                    }
             browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(),
                                     restriction, hasSampler, hasSynth,
                                     canInsertPlugin() && target != nullptr
                                         && ! target->isFrozen (te::Track::anyFreeze),
-                                    selectedAppleInstrument);
+                                    selectedAppleInstrument, currentGeneralMidi);
         }
         else if (workspace == Workspace::channel)
         {
