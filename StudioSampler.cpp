@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
+#include "StudioSfz.h"
 #include <algorithm>
 #include <cmath>
 
@@ -12,7 +13,7 @@ namespace
 {
 const Identifier presetState { "studioSamplerState" };
 constexpr auto documentTag = "STUDIO_SAMPLER";
-constexpr int version = 3;
+constexpr int version = 4;
 constexpr auto maxPresetBytes = 2 * 1024 * 1024;
 
 float bounded (const XmlElement& xml, const char* key, float fallback, float min, float max)
@@ -47,6 +48,7 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         child->setAttribute ("cc", g.controller); child->setAttribute ("ccLow", g.ccLow); child->setAttribute ("ccHigh", g.ccHigh);
         child->setAttribute ("channel", g.channel); child->setAttribute ("mute", g.mute); child->setAttribute ("solo", g.solo);
         child->setAttribute ("releaseTrigger", g.releaseTrigger);
+        child->setAttribute ("switchDefault", g.switchDefault);
     }
     for (const auto& entry : model.zones)
     {
@@ -77,6 +79,18 @@ XmlElement encode (const Instrument& model, const File& base, bool project)
         node.setAttribute ("group", z.group);
         node.setAttribute ("loopCrossfade", z.loopCrossfade);
         node.setAttribute ("fadeIn", z.fadeIn); node.setAttribute ("fadeOut", z.fadeOut);
+        if (z.sfz.enabled)
+        {
+            const auto& f = z.sfz;
+            node.setAttribute ("sfz", true);
+            node.setAttribute ("sfzAttack", f.attack); node.setAttribute ("sfzDecay", f.decay);
+            node.setAttribute ("sfzSustain", f.sustain); node.setAttribute ("sfzRelease", f.release);
+            node.setAttribute ("sfzSustainLoop", f.sustainLoop); node.setAttribute ("sfzPowerFade", f.powerFade);
+            node.setAttribute ("sfzVelocityTrack", f.velocityTrack); node.setAttribute ("sfzPan", f.pan);
+            node.setAttribute ("sfzTranspose", f.transpose); node.setAttribute ("sfzKeyTrack", f.keyTrack);
+            node.setAttribute ("sfzFadeInLow", f.fadeInLow); node.setAttribute ("sfzFadeInHigh", f.fadeInHigh);
+            node.setAttribute ("sfzFadeOutLow", f.fadeOutLow); node.setAttribute ("sfzFadeOutHigh", f.fadeOutHigh);
+        }
     }
     return xml;
 }
@@ -118,6 +132,7 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
                 p.ccLow = child->getIntAttribute ("ccLow", 0); p.ccHigh = child->getIntAttribute ("ccHigh", 127);
                 p.channel = child->getIntAttribute ("channel"); p.mute = child->getBoolAttribute ("mute"); p.solo = child->getBoolAttribute ("solo");
                 p.releaseTrigger = child->getBoolAttribute ("releaseTrigger");
+                p.switchDefault = child->getIntAttribute ("switchDefault", -2);
                 if (! validGroup (p)) return Result::fail ("Invalid group trigger configuration.");
                 model.groups.push_back (std::move (g));
             }
@@ -156,6 +171,24 @@ Result decode (const XmlElement* xml, const File& base, Instrument& model)
         z.group = child->getIntAttribute ("group");
         z.loopCrossfade = child->getIntAttribute ("loopCrossfade", -1);
         z.fadeIn = child->getIntAttribute ("fadeIn"); z.fadeOut = child->getIntAttribute ("fadeOut");
+        if (child->getBoolAttribute ("sfz"))
+        {
+            auto& f = z.sfz; f.enabled = true;
+            f.attack = bounded (*child, "sfzAttack", 0, 0, 100);
+            f.decay = bounded (*child, "sfzDecay", 0, 0, 100);
+            f.sustain = bounded (*child, "sfzSustain", 1, 0, 1);
+            f.release = bounded (*child, "sfzRelease", 0.001f, 0, 100);
+            f.sustainLoop = child->getBoolAttribute ("sfzSustainLoop");
+            f.powerFade = child->getBoolAttribute ("sfzPowerFade", true);
+            f.velocityTrack = bounded (*child, "sfzVelocityTrack", 100, -100, 100);
+            f.pan = bounded (*child, "sfzPan", 0, -100, 100);
+            f.transpose = child->getIntAttribute ("sfzTranspose");
+            f.keyTrack = child->getIntAttribute ("sfzKeyTrack", 100);
+            f.fadeInLow = child->getIntAttribute ("sfzFadeInLow");
+            f.fadeInHigh = child->getIntAttribute ("sfzFadeInHigh");
+            f.fadeOutLow = child->getIntAttribute ("sfzFadeOutLow", 127);
+            f.fadeOutHigh = child->getIntAttribute ("sfzFadeOutHigh", 127);
+        }
         if (! validMapping (z) || z.loopStart < 0 || z.loopEnd < z.loopStart
             || (z.loop && ! validLoop (z, std::numeric_limits<int>::max())))
             return Result::fail ("A sample zone has an invalid key, velocity or loop range.");
@@ -428,7 +461,8 @@ void Plugin::publish (Instrument next)
     {
         const auto& x = a.playback; const auto& y = b.playback;
         return a.id == b.id && x.trigger == y.trigger && x.key == y.key && x.controller == y.controller
-            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger;
+            && x.ccLow == y.ccLow && x.ccHigh == y.ccHigh && x.channel == y.channel && x.releaseTrigger == y.releaseTrigger
+             && x.switchDefault == y.switchDefault;
     });
     if (! sameSwitches) ++switchRevision;
     auto bank = std::make_unique<Bank>();
