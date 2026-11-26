@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "StudioSampler.h"
+#include "StudioLibraryPresentation.h"
 #include <map>
 #include <set>
 #include <algorithm>
@@ -11,12 +12,52 @@ using namespace juce;
 struct Entry
 {
     File source, converted, artwork;
-    String name, format, report;
+    String name, format, report, family {"Unclassified"}, portrait;
+    bool favorite=false;
     int program=-1;
     int64 size=0,time=0;
     bool available=false;
     String key() const { return source.getFullPathName()+"|"+String(program); }
 };
+inline StringArray families()
+{
+    return {"Strings","Woodwinds","Brass","Percussion","Keyboards","Guitars & plucked","Voices","Electronic","Other","Unclassified"};
+}
+inline String normalizedFamily(const String& name)
+{
+    return families().contains(name) ? name : String("Unclassified");
+}
+inline String suggestedFamily(const String& name)
+{
+    // Only whole, recognizable instrument words; ambiguous combinations stay unclassified.
+    auto words=StringArray::fromTokens(name.toLowerCase()," _-.,()[]/0123456789","");
+    const std::array<std::pair<const char*,const char*>,8> rules{{
+        {"Strings","violin viola cello contrabass strings violins cellos"},
+        {"Woodwinds","flute piccolo oboe bassoon clarinet saxophone recorder"},
+        {"Brass","trumpet trombone tuba horn euphonium cornet flugelhorn"},
+        {"Percussion","drum drums timpani snare cymbal cymbals gong marimba xylophone glockenspiel"},
+        {"Keyboards","piano harpsichord organ celesta clavinet"},
+        {"Guitars & plucked","guitar guitars harp lute mandolin ukulele banjo"},
+        {"Voices","choir choirboy vocals soprano tenor"},
+        {"Electronic","synth synthesizer"}
+    }};
+    String result;
+    for(const auto& [family,terms]:rules)
+        for(const auto& term:StringArray::fromTokens(terms," ",""))
+            if(words.contains(term))
+            {
+                if(result.isNotEmpty()&&result!=family)return "Unclassified";
+                result=family;break;
+            }
+    return result.isEmpty()?String("Unclassified"):result;
+}
+inline bool matches(const Entry& e,const String& query,const String& family,bool favorites,const String& format)
+{
+    if(favorites&&!e.favorite)return false;
+    if(family.isNotEmpty()&&e.family!=family)return false;
+    if(format.isNotEmpty()&&e.format!=format)return false;
+    return query.isEmpty()||(e.name+" "+e.family+" "+e.format+" "+e.source.getFullPathName()).containsIgnoreCase(query);
+}
 struct Catalog
 {
     StringArray roots;
@@ -42,6 +83,7 @@ inline Result save(const Catalog& catalog,const File& target)
         x->setAttribute("converted",e.converted==File()?String():e.converted.getFullPathName());
         x->setAttribute("artwork",e.artwork==File()?String():e.artwork.getFullPathName());
         x->setAttribute("report",e.report.substring(0,4000));
+        x->setAttribute("family",e.family);x->setAttribute("favorite",e.favorite);x->setAttribute("portrait",e.portrait);
     }
     TemporaryFile temp(target);
     if(!xml.writeTo(temp.getFile())||temp.getFile().getSize()>64ll*1024*1024||!temp.overwriteTargetFileWithTemporary())return Result::fail("Could not save library catalog (write failure or size limit).");
@@ -71,6 +113,9 @@ inline Result read(const File& file,Catalog& result)
             for(auto [key,dest]:std::array<std::pair<const char*,File*>,2>{{{"converted",&e.converted},{"artwork",&e.artwork}}})
             {auto p=x->getStringAttribute(key);if(File::isAbsolutePath(p))*dest=File(p);}
             e.report=x->getStringAttribute("report");
+            e.family=normalizedFamily(x->getStringAttribute("family",suggestedFamily(e.name)));
+            e.favorite=x->getBoolAttribute("favorite");
+            const auto portrait=x->getStringAttribute("portrait");if(portraitFile(portrait)!=File())e.portrait=portrait;
             if(keys.insert(e.key()).second)next.entries.push_back(std::move(e));
         }
     }
@@ -98,11 +143,11 @@ inline Result scan(Catalog& catalog,std::atomic<bool>& cancelled,std::atomic<int
             auto add=[&](int program,String name,String report)
             {
                 Entry e;e.source=f;e.name=name;e.format=f.getFileExtension().toLowerCase().substring(1);
-                e.program=program;e.size=size;e.time=time;e.available=true;e.report=report;
+                e.program=program;e.size=size;e.time=time;e.available=true;e.report=report;e.family=suggestedFamily(name);
                 const auto key=e.key();
                 if(auto old=found.find(key);old!=found.end())
                 {
-                    e.artwork=old->second.artwork;
+                    e.artwork=old->second.artwork;e.portrait=old->second.portrait;e.favorite=old->second.favorite;e.family=old->second.family;
                     if(old->second.size==size&&old->second.time==time)
                     {e.converted=old->second.converted;if(report.isEmpty())e.report=old->second.report;}
                     else e.report="Source changed; reconvert before loading. "+report;
