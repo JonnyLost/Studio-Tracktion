@@ -967,9 +967,9 @@ void AtelierInstrumentEditor::drawAtelierSurface (Graphics& g, Rectangle<int> bo
     g.setGradientFill (ColourGradient (colours::panel, card.getTopLeft(),
                                       colours::well, card.getBottomRight(), false));
     g.fillRoundedRectangle (card, 8.0f);
-    g.setColour (accent.withAlpha (.47f));
+    g.setColour (colours::divider.withAlpha (.85f));
     g.drawRoundedRectangle (card.reduced (.5f), 8.0f, .8f);
-    g.setColour (accent.withAlpha (.17f));
+    g.setColour (colours::divider.withAlpha (.60f));
     g.drawLine (card.getX() + 13, card.getY() + 28,
                 card.getRight() - 13, card.getY() + 28, .8f);
     if (caption.isNotEmpty())
@@ -1138,7 +1138,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
         g.setGradientFill (ColourGradient (colours::control, bar.getTopLeft(),
                                             colours::well, bar.getBottomRight(), false));
         g.fillRect (bar);
-        g.setColour (accent.withAlpha (.46f));
+        g.setColour (colours::divider.withAlpha (.8f));
         g.drawHorizontalLine (instrumentHeaderBounds.getBottom() - 1, bar.getX(), bar.getRight());
     }
 
@@ -1196,7 +1196,7 @@ void AtelierInstrumentEditor::paint (Graphics& g)
         }
 
     auto bottomLine = getLocalBounds().toFloat().reduced (appearance.px (8));
-    g.setColour (accent.withAlpha (.38f));
+    g.setColour (colours::divider.withAlpha (.65f));
     g.drawHorizontalLine ((int) bottomLine.getBottom() - 1,
                           bottomLine.getX(), bottomLine.getRight());
 }
