@@ -51,7 +51,19 @@ public:
     }
     ~Manager() override
     {
-        stopTimer();task.reset();rows.setModel(nullptr);setLookAndFeel(nullptr);
+        stopTimer();
+        if(task)
+        {
+            task->cancel.store(true);
+            if(task->worker.joinable())task->worker.join();
+            // Closing a dialog must not lose completed conversions/repairs.
+            // The worker has stopped; persist its successful partial batch.
+            if(task->kind==Task::batchTask&&task->error.isEmpty())
+                if(auto r=save(task->proposal,index());r.failed())
+                    Logger::writeToLog("Studio Library: "+r.getErrorMessage());
+            task.reset();
+        }
+        rows.setModel(nullptr);setLookAndFeel(nullptr);
     }
     void resized() override
     {
@@ -294,7 +306,8 @@ private:
             {
                 auto callback=onLoad;auto instrument=std::move(t->instrument);
                 if(auto* dialog=findParentComponentOfClass<DialogWindow>())dialog->exitModalState(0);
-                callback(std::move(instrument));return;
+                MessageManager::callAsync([callback=std::move(callback),instrument=std::move(instrument)]() mutable
+                {callback(std::move(instrument));});return;
             }
         }
         else
