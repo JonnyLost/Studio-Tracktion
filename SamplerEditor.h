@@ -112,12 +112,18 @@ private:
         std::atomic<bool> cancelled { false }, done { false };
         std::atomic<int> progress { 0 };
         Instrument proposal; juce::String summary, error; unsigned revision = 0; int first = 0;
-        int replace = -1; bool preset = false, sfz = false;
+        int replace = -1, bankProgram = -1; bool preset = false, sfz = false, soundBank = false;
+        juce::File bankFile;
+        juce::int64 bankSize = -1, bankTime = 0;
+        std::vector<BankProgram> catalog;
+        std::shared_ptr<BankImportMedia> bankMedia;
         std::thread worker;
         ~ImportTask() { cancelled.store (true); if (worker.joinable()) worker.join(); }
     };
     std::unique_ptr<ImportTask> importTask;
-    void startImport (juce::Array<juce::File>, bool, int replace = -1, bool preset = false);
+    void startImport (juce::Array<juce::File>, bool, int replace = -1, bool preset = false,
+                      int bankProgram = -1, juce::int64 expectedSize = -1, juce::int64 expectedTime = 0);
+    void showBankCatalog (const ImportTask&);
     juce::Component::SafePointer<juce::DialogWindow> importReview;
     void finishImport();
     void editGroup (const std::function<void(Group&)>&);

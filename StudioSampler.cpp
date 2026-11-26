@@ -2,6 +2,7 @@
 #include "StudioSampler.h"
 #include "SamplerMapping.h"
 #include "StudioSfz.h"
+#include "StudioSoundBank.h"
 #include <algorithm>
 #include <cmath>
 
@@ -958,6 +959,197 @@ Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Inst
             + (entry.problem.isNotEmpty() ? " | " + entry.problem : String()) + "\n";
     next = std::move (converted);
     return Result::ok();
+}
+
+Result Plugin::catalogSoundBank (const File& file, std::vector<BankProgram>& output, std::atomic<bool>* cancelled)
+{
+    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls"))
+        return Result::fail ("Select an existing SF2, SF3 or DLS bank.");
+    try
+    {
+        soundbank::Bank bank (sfz::path (file.getFullPathName().toStdString()));
+        if (bank.programs.size() > 8192) return Result::fail ("Bank exceeds Studio's catalog limit (8192 programs).");
+        std::vector<BankProgram> proposal;
+        for (const auto& program : bank.programs)
+        {
+            if (cancelled && cancelled->load()) return Result::fail ("Import cancelled.");
+            proposal.push_back ({ String (program.name), static_cast<int> (program.bank),
+                                  static_cast<int> (program.number), program.drums });
+        }
+        output = std::move (proposal);
+        return Result::ok();
+    }
+    catch (const std::exception& e) { return Result::fail ("Sound bank: " + String (e.what())); }
+}
+
+Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, String& report,
+                                 BankImportMedia& media, std::atomic<bool>* cancelled, std::atomic<int>* progress)
+{
+    using namespace soundbank;
+    const auto aborted = [&] { return cancelled && cancelled->load(); };
+    if (aborted()) return Result::fail ("Import cancelled.");
+    if (! file.existsAsFile() || ! file.hasFileExtension ("sf2;sf3;dls") || media.directory != File())
+        return Result::fail ("Select an existing bank and a fresh conversion.");
+    const auto originalSize = file.getSize();
+    const auto originalTime = file.getLastModificationTime();
+    try
+    {
+        soundbank::Bank bank (sfz::path (file.getFullPathName().toStdString()));
+        if (index < 0 || static_cast<std::size_t> (index) >= bank.programs.size())
+            return Result::fail ("Invalid program selection.");
+        auto mapping = bank.resolve (static_cast<std::size_t> (index), maxZones);
+        if (aborted()) return Result::fail ("Import cancelled.");
+        const auto& program = bank.programs[static_cast<std::size_t> (index)];
+        Instrument converted;
+        converted.name = String (program.name).substring (0, 120).trim();
+        if (converted.name.isEmpty()) converted.name = "Sound bank program " + String (program.number);
+        converted.settings.gainDb = -6; // headroom for layers
+        converted.groups.front().name = "Bank regions";
+        const auto root = media.parent != File() ? media.parent
+            : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Studio").getChildFile ("Imported Sound Banks");
+        if (auto result = root.createDirectory(); result.failed()) return result;
+        // UUID rather than a user-provided bank/patch string: no collisions or
+        // path traversal, and cancellation can only remove this one directory.
+        const auto dir = root.getChildFile (Uuid().toString());
+        if (dir.exists()) return Result::fail ("Cannot create unique import folder.");
+        if (auto result = dir.createDirectory(); result.failed()) return result;
+        media.directory = dir;
+
+        struct ConvertedAudio { Audio source; File file; std::shared_ptr<const Sample> sample; };
+        std::vector<ConvertedAudio> extracted;
+        const auto same = [] (const Audio& a,const Audio& b)
+        {
+            return a.encoding==b.encoding && a.offset==b.offset && a.bytes==b.bytes
+                && a.lowBytes==b.lowBytes && a.channels==b.channels && a.rate==b.rate && a.frames==b.frames;
+        };
+        constexpr U64 maximumOutput = 2ull * 1024 * 1024 * 1024;
+        U64 outputBytes = 0;
+        int streamed = 0, position = 0;
+        for (const auto& region : mapping.regions)
+        {
+            if (aborted()) return Result::fail ("Import cancelled.");
+            const auto& src = region.audio;
+            SampleZone entry;
+            auto& z = entry.mapping;
+            auto old = std::find_if (extracted.begin(), extracted.end(), [&] (const auto& e) { return same (src,e.source); });
+            if (old != extracted.end())
+            {
+                entry.file = old->file; z.sample = old->sample;
+            }
+            else
+            {
+                int frames = src.frames, channels = src.channels, rate = src.rate;
+                std::unique_ptr<AudioFormatReader> decoder;
+                if (src.encoding == Encoding::vorbis)
+                {
+                   #if JUCE_USE_OGGVORBIS
+                    OggVorbisAudioFormat ogg;
+                    auto input = file.createInputStream();
+                    if (! input) return Result::fail ("Cannot open SF3 compressed sample.");
+                    decoder.reset (ogg.createReaderFor (new SubregionStream (input.release(), static_cast<int64> (src.offset),
+                                                                           static_cast<int64> (src.bytes), true), true));
+                    if (! decoder || decoder->lengthInSamples < 2 || decoder->lengthInSamples >= std::numeric_limits<int>::max()
+                        || decoder->numChannels != 1 || std::abs (decoder->sampleRate - rate) > 0.5)
+                        return Result::fail ("Unsupported or corrupt SF3 Vorbis sample (mono, matching sample rate required).");
+                    frames = static_cast<int> (decoder->lengthInSamples);
+                   #else
+                    return Result::fail ("This Studio build has no Ogg Vorbis decoder; SF3 compressed samples cannot be imported.");
+                   #endif
+                }
+                if (frames < 2 || channels < 1 || channels > 2)
+                    return Result::fail ("Invalid decoded bank sample length or channels.");
+                const int bits = src.encoding==Encoding::pcm8 || src.encoding==Encoding::pcm16 ? 16 : 24;
+                const U64 bytes = U64(frames)*U64(channels)*U64(bits/8);
+                if (bytes > maximumOutput - outputBytes || bytes > 512ull*1024*1024)
+                    return Result::fail ("Sound bank conversion exceeds the 512 MiB/sample or 2 GiB/instrument disk limit.");
+                if (dir.getBytesFreeOnVolume() < static_cast<int64> (bytes + 16*1024*1024))
+                    return Result::fail ("Not enough disk space for bank conversion.");
+                entry.file = dir.getChildFile ("Sample-" + String (static_cast<int> (extracted.size()+1)).paddedLeft ('0', 4) + ".wav");
+                {
+                    WavAudioFormat wav;
+                    std::unique_ptr<OutputStream> stream = entry.file.createOutputStream();
+                    if (! stream) return Result::fail ("Cannot create extracted WAV.");
+                    auto writer = wav.createWriterFor (stream, AudioFormatWriterOptions().withSampleRate (rate)
+                        .withNumChannels (channels).withBitsPerSample (bits));
+                    if (! writer) return Result::fail ("Cannot initialize extracted WAV writer.");
+                    constexpr int chunk = 8192;
+                    AudioBuffer<float> samples (channels,chunk);
+                    for (int first=0;first<frames;)
+                    {
+                        if (aborted()) return Result::fail ("Import cancelled.");
+                        const int count = std::min (chunk,frames-first);
+                        if (decoder)
+                        {
+                            if (! decoder->read (&samples,0,count,first,true,channels>1))
+                                return Result::fail ("SF3 Vorbis decoding failed.");
+                        }
+                        else
+                        {
+                            const int width = src.encoding==Encoding::pcm8 ? 1 : src.encoding==Encoding::pcm24 ? 3 : 2;
+                            const auto raw = bank.read (src.offset+U64(first)*channels*width,U64(count)*channels*width);
+                            const auto low = src.encoding==Encoding::sf24 ? bank.read (src.lowBytes+U64(first),U64(count)) : Bytes{};
+                            for (int n=0;n<count;++n)
+                                for(int ch=0;ch<channels;++ch)
+                                {
+                                    const auto p=static_cast<std::size_t>((n*channels+ch)*width);
+                                    float value=0;
+                                    if(width==1) value=(int(raw[p])-128)/128.f;
+                                    else if(width==2)
+                                    {
+                                        const int high=soundbank::s16(raw,p);
+                                        value=low.empty()? high/32768.f : (high*256+int(low[static_cast<std::size_t>(n)]))/8388608.f;
+                                    }
+                                    else
+                                    {
+                                        const int v=int(raw[p])|(int(raw[p+1])<<8)|(int(raw[p+2])<<16);
+                                        value=(v<0x800000?v:v-0x1000000)/8388608.f;
+                                    }
+                                    samples.setSample (ch,n,value);
+                                }
+                        }
+                        if (! writer->writeFromAudioSampleBuffer (samples,0,count))
+                            return Result::fail ("Could not write extracted WAV.");
+                        first+=count;
+                    }
+                }
+                outputBytes += bytes;
+                if (auto result = readSample (entry.file,maxBankBytes-sampleBytes(converted),z.sample,cancelled); result.failed())
+                    return result;
+                if (z.sample->frameCount()!=frames || z.sample->stereo()!=(channels==2))
+                    return Result::fail ("Extracted WAV length or channel count mismatch.");
+                extracted.push_back ({src,entry.file,z.sample});
+            }
+            z.root=region.root;z.low=region.low;z.high=region.high;z.soft=region.soft;z.hard=region.hard;
+            z.gainDb=region.gainDb;z.cents=region.cents;
+            z.start=region.start;z.end=region.end;z.loop=region.loop;
+            z.loopStart=region.loopStart;z.loopEnd=region.loop ? region.loopEnd : z.sample->frameCount();
+            z.loopCrossfade=0;
+            z.sfz.enabled=true;z.sfz.sustainLoop=region.sustainLoop;
+            z.sfz.transpose=region.transpose;z.sfz.keyTrack=region.keyTrack;z.sfz.pan=region.pan;
+            z.sfz.attack=region.attack;z.sfz.decay=region.decay;z.sfz.sustain=region.sustain;z.sfz.release=region.release;
+            if (! validMapping(z) || (z.loop && ! validLoop(z,z.sample->frameCount())))
+                return Result::fail ("Converted bank region has invalid native mapping or loop.");
+            if (! primeZone(z)) return Result::fail ("Could not preload converted streaming loop.");
+            if (z.sample->stream) ++streamed;
+            converted.zones.push_back (std::move(entry));
+            if(progress) progress->store(++position*100/static_cast<int>(mapping.regions.size()));
+        }
+        if (aborted()) return Result::fail ("Import cancelled.");
+        if (! file.existsAsFile() || file.getSize()!=originalSize || file.getLastModificationTime()!=originalTime)
+            return Result::fail ("The source bank changed while importing.");
+        report="Sound bank: "+file.getFileName()+"\n"+converted.name+" | Bank "+String(static_cast<int>(program.bank))
+            +" | Program "+String(static_cast<int>(program.number))+(program.drums?" | Percussion":"")
+            +"\n"+String(static_cast<int>(converted.zones.size()))+" regions, "+String(static_cast<int>(extracted.size()))
+            +" unique WAV recordings, "+String(streamed)+" streamed regions.\n"
+            +"Extracted audio: "+String(static_cast<double>(outputBytes)/(1024*1024),2)+" MiB.\n"
+            +"Confirm to replace this instrument only. Original bank unchanged.\n"
+            +"Keep the extracted media for saved projects and presets:\n"+dir.getFullPathName()+"\n\nCompatibility notes:\n";
+        for(const auto& w:mapping.warnings) report+=String(w)+"\n";
+        report+="Native instrument gain starts at -6 dB for layered playback headroom.\n";
+        next=std::move(converted);
+        return Result::ok();
+    }
+    catch (const std::exception& e) { return Result::fail ("Sound bank conversion: "+String(e.what())); }
 }
 
 void Plugin::removeZone (int index)
