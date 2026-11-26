@@ -11,8 +11,12 @@ using namespace juce;
 namespace te = tracktion;
 namespace
 {
-const Colour background (0xff211916), panel (0xff32231b), gold (0xffd9a458),
-             light (0xfff3e3c7), secondary (0xffc5b299);
+// Inspector and floating editor share Studio's neutral slate-blue palette.
+const Colour background = colours::canvas;
+const Colour panel = colours::panel;
+const Colour accent = colours::focus;
+const Colour primary = colours::text;
+const Colour secondary = colours::secondary;
 struct Controller { const char* name; int cc, value; };
 constexpr std::array<Controller, 8> controllers {{
     { "Mod", 1, 0 }, { "Breath", 2, 0 }, { "MIDI Vol", 7, 100 },
@@ -48,12 +52,12 @@ void makeFader (Slider& slider, double low, double high, double step, const Stri
     slider.setTextBoxStyle (Slider::TextBoxBelow, false, 76, 20);
     slider.setRange (low, high, step);
     slider.setTextValueSuffix (suffix);
-    slider.setColour (Slider::trackColourId, gold);
-    slider.setColour (Slider::thumbColourId, light);
-    slider.setColour (Slider::backgroundColourId, Colour (0xff554235));
-    slider.setColour (Slider::textBoxTextColourId, light);
+    slider.setColour (Slider::trackColourId, accent);
+    slider.setColour (Slider::thumbColourId, primary);
+    slider.setColour (Slider::backgroundColourId, colours::control);
+    slider.setColour (Slider::textBoxTextColourId, primary);
     slider.setColour (Slider::textBoxBackgroundColourId, background);
-    slider.setColour (Slider::textBoxOutlineColourId, gold.withAlpha (.3f));
+    slider.setColour (Slider::textBoxOutlineColourId, accent.withAlpha (.3f));
 }
 }
 
@@ -63,17 +67,17 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (auto* label : { &heading, &instrumentName, &artCaption, &mappingsHeading, &ccHeading,
                          &mixHeading, &midiStatus, &micStatus, &volumeLabel, &panLabel, &roomLabel })
         addAndMakeVisible (*label);
-    setLabel (heading, "CINEMATIC ATELIER", 15.0f, gold);
-    setLabel (instrumentName, "Selected instrument", 13.0f, light);
+    setLabel (heading, "CINEMATIC ATELIER", 15.0f, accent);
+    setLabel (instrumentName, "Selected instrument", 13.0f, primary);
     setLabel (artCaption, "Choose your instrument artwork", 11.0f, secondary);
-    setLabel (mappingsHeading, "ARTICULATIONS", 12.0f, gold);
-    setLabel (ccHeading, "MIDI CONTROLLERS", 12.0f, gold);
-    setLabel (mixHeading, "CHANNEL MIXER", 12.0f, gold);
+    setLabel (mappingsHeading, "ARTICULATIONS", 12.0f, accent);
+    setLabel (ccHeading, "MIDI CONTROLLERS", 12.0f, accent);
+    setLabel (mixHeading, "CHANNEL MIXER", 12.0f, accent);
     setLabel (midiStatus, "Controller response depends on the instrument", 10.0f, secondary);
     setLabel (micStatus, "Mic positions are configured in Orchestral Stage", 10.0f, secondary);
-    setLabel (volumeLabel, "Volume", 11.0f, light);
-    setLabel (panLabel, "Pan", 11.0f, light);
-    setLabel (roomLabel, "Room", 11.0f, light);
+    setLabel (volumeLabel, "Volume", 11.0f, primary);
+    setLabel (panLabel, "Pan", 11.0f, primary);
+    setLabel (roomLabel, "Room", 11.0f, primary);
     for (auto* label : { &artCaption, &volumeLabel, &panLabel, &roomLabel })
         label->setJustificationType (Justification::centred);
 
@@ -122,9 +126,9 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         addAndMakeVisible (button);
         button.setVisible (false);
         button.setColour (TextButton::buttonColourId, panel);
-        button.setColour (TextButton::buttonOnColourId, Colour (0xff75502a));
-        button.setColour (TextButton::textColourOffId, light);
-        button.setColour (TextButton::textColourOnId, light);
+        button.setColour (TextButton::buttonOnColourId, colours::selected);
+        button.setColour (TextButton::textColourOffId, primary);
+        button.setColour (TextButton::textColourOnId, primary);
     }
     for (size_t i = 0; i < articulationPads.size(); ++i)
         articulationPads[i].onClick = [this, i] { selectMapping ((int) i); };
@@ -147,15 +151,15 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         auto& label = ccLabels[i];
         addAndMakeVisible (knob);
         addAndMakeVisible (label);
-        setLabel (label, String (controllers[i].name) + " · CC" + String (controllers[i].cc), 10.0f, light);
+        setLabel (label, String (controllers[i].name) + " · CC" + String (controllers[i].cc), 10.0f, primary);
         label.setJustificationType (Justification::centred);
         knob.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         knob.setTextBoxStyle (Slider::TextBoxBelow, false, 52, 17);
-        knob.setColour (Slider::rotarySliderFillColourId, gold);
-        knob.setColour (Slider::thumbColourId, light);
-        knob.setColour (Slider::textBoxTextColourId, light);
+        knob.setColour (Slider::rotarySliderFillColourId, accent);
+        knob.setColour (Slider::thumbColourId, primary);
+        knob.setColour (Slider::textBoxTextColourId, primary);
         knob.setColour (Slider::textBoxBackgroundColourId, background);
-        knob.setColour (Slider::textBoxOutlineColourId, gold.withAlpha (.25f));
+        knob.setColour (Slider::textBoxOutlineColourId, accent.withAlpha (.25f));
         knob.setRange (0, 127, i == 4 ? 127 : 1);
         knob.setValue (controllers[i].value, dontSendNotification);
         knob.setTooltip ("Live MIDI CC" + String (controllers[i].cc) + " on the selected channel; patch support varies.");
@@ -582,8 +586,8 @@ void AtelierInspectorPanel::paint (Graphics& g)
 {
     g.fillAll (background);
     auto card = imageBounds.toFloat().reduced (1);
-    g.setGradientFill (ColourGradient (Colour (0xff4d301c), card.getTopLeft(),
-                                      Colour (0xff160f11), card.getBottomRight(), false));
+    g.setGradientFill (ColourGradient (colours::panel, card.getTopLeft(),
+                                      colours::well, card.getBottomRight(), false));
     g.fillRoundedRectangle (card, 8.0f);
     if (portraitImage.isValid())
     {
@@ -602,11 +606,12 @@ void AtelierInspectorPanel::paint (Graphics& g)
         g.setFont (FontOptions (14.0f));
         g.drawFittedText ("Select instrument artwork", imageBounds.reduced (12), Justification::centred, 2);
     }
-    g.setColour (gold.withAlpha (.65f));
+    // Artwork stays untouched; its frame follows Studio's subdued dividers.
+    g.setColour (colours::divider);
     g.drawRoundedRectangle (card, 8.0f, 1.0f);
     for (auto section : { articulationBounds, ccBounds, mixerBounds })
     {
-        g.setColour (gold.withAlpha (.35f));
+        g.setColour (colours::divider.withAlpha (.65f));
         g.drawHorizontalLine (section.getY() - 3, (float) section.getX(), (float) section.getRight());
     }
     if (mappings.empty() && ! articulationBounds.isEmpty())
