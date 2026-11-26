@@ -2,6 +2,7 @@
 #pragma once
 #include "StudioSampler.h"
 #include "StudioUI.h"
+#include "StudioInstrumentHelp.h"
 #include <thread>
 
 namespace studio::sampler
@@ -14,8 +15,15 @@ public:
     {
         using namespace juce;
         setLookAndFeel(&look);
-        for(Component* c:std::initializer_list<Component*>{&title,&intro,&nameLabel,&name,&layoutLabel,&layout,&rootLabel,&root,&playbackLabel,&playback,&spread,&alternates,&files,&folder,&selection,&report,&status,&prepare,&accept,&cancel})addAndMakeVisible(*c);
-        title.setText("Create an instrument",dontSendNotification);title.setFont(uiFont(20));
+        for(Component* c:std::initializer_list<Component*>{&title,&intro,&nameLabel,&name,&layoutLabel,&layout,&rootLabel,&root,&playbackLabel,&playback,&spread,&alternates,&files,&folder,&selection,&report,&status,&prepare,&accept,&cancel,&helpButton})addAndMakeVisible(*c);
+        title.setText("Create an instrument",dontSendNotification);title.setFont(FontOptions(20));
+        helpButton.setTooltip("Explain naming, sample mapping, velocity layers and playback choices.");
+        helpButton.onClick=[this]{if(helpWindow)helpWindow->toFront(true);else helpWindow=studio::help::show(*this,studio::help::Topic::builder);};
+        files.setTooltip("Select one or more audio recordings. Original files are never modified.");
+        folder.setTooltip("Search this recordings folder and its subfolders.");
+        prepare.setTooltip("Prepare and review the exact mapping without changing your instrument.");
+        accept.setTooltip("Replace only this sampler instrument with the reviewed mapping.");
+        name.setTitle("Instrument name");layout.setTitle("Instrument type");root.setTitle("Original pitch or first drum key");playback.setTitle("Playback behavior");report.setTitle("Mapping review");
         intro.setText("Choose recordings, preview their mapping, then create your instrument.",dontSendNotification);
         nameLabel.setText("Instrument name",dontSendNotification);name.setText("New instrument",false);name.setInputRestrictions(120);
         layoutLabel.setText("Instrument type",dontSendNotification);
@@ -62,13 +70,14 @@ public:
         };
         updateControls();setSize(660,510);startTimerHz(10);
     }
-    ~GuidedBuilder() override {stopTimer();task.reset();setLookAndFeel(nullptr);}
+    ~GuidedBuilder() override {stopTimer();if(helpWindow)helpWindow->exitModalState(0);task.reset();setLookAndFeel(nullptr);}
     void resized() override
     {
         using namespace juce;
         const auto& m=appearance;auto area=getLocalBounds().reduced(m.px(12));
         const int h=m.control(30,12),gap=m.px(4);
-        title.setBounds(area.removeFromTop(h));intro.setBounds(area.removeFromTop(h));
+        auto heading=area.removeFromTop(h);helpButton.setBounds(heading.removeFromRight(jmin(m.span(75),heading.getWidth()/4)));title.setBounds(heading);
+        intro.setBounds(area.removeFromTop(h*2));
         auto line=[&](Label& label,Component& control){auto row=area.removeFromTop(h);label.setBounds(row.removeFromLeft(jmin(m.span(160),row.getWidth()/3)));control.setBounds(row.reduced(2));};
         line(nameLabel,name);line(layoutLabel,layout);line(rootLabel,root);line(playbackLabel,playback);
         auto row=area.removeFromTop(h);
@@ -97,7 +106,8 @@ private:
     juce::ComboBox layout,playback;
     juce::Slider root;
     juce::ToggleButton spread{"Fill keyboard ranges"},alternates{"Cycle alternate takes"};
-    juce::TextButton files{"Choose files"},folder{"Choose folder"},prepare{"Preview mapping"},accept{"Create instrument"},cancel{"Cancel"};
+    juce::TextButton files{"Choose files"},folder{"Choose folder"},prepare{"Preview mapping"},accept{"Create instrument"},cancel{"Cancel"},helpButton{"Help"};
+    juce::Component::SafePointer<juce::DialogWindow> helpWindow;
     juce::Array<juce::File> paths;
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<Task> task;
