@@ -6145,6 +6145,30 @@ int StudioView::runInterfaceReview (const File& output)
         return stream.openedOk() && stream.setPosition (0) && stream.truncate().wasOk()
             && PNGImageFormat().writeImageToStream (image, stream);
     };
+    // Capture the real JUCE Cinematic Atelier keyboard component at its
+    // docked size. No concept artwork or mocked control image is involved.
+    if (writeImages)
+    {
+        studio::AuditionKeyboardPanel keyboardReview;
+        keyboardReview.setSize (1080, 228);
+        keyboardReview.setSelectedInstrument ("Concert Violin - Chamber Ensemble");
+        std::bitset<128> activeNotes;
+        for (const int pitch : { 60, 64, 67 })
+            activeNotes.set (static_cast<std::size_t> (pitch));
+        keyboardReview.displayActivity (activeNotes);
+        studio::KeyboardPerformanceValues gestures;
+        gestures.changed = (1u << 6) - 1;
+        gestures.bend = 9800;
+        gestures.mod = 78;
+        gestures.expr = 102;
+        gestures.vol = 93;
+        gestures.tone = 75;
+        gestures.reverb = 38;
+        keyboardReview.reflectPerformance (gestures);
+        if (! capture ("atelier-keyboard-panel-1080x228.png", &keyboardReview))
+            return fail ("capture Cinematic Atelier performance keyboard");
+    }
+
     if (performance.isVisible() || articulationStrip.isVisible())
         return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
