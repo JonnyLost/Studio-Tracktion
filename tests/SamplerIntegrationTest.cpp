@@ -525,12 +525,15 @@ Result verifyUniversalLibrary (const File& directory,WavAudioFormat& wav)
         reopened.entries[0].converted!=originalPreset||reopened.entries[0].artwork!=e.artwork)
         return Result::fail("restore catalog, converted preset and artwork");
     if(!wavFile.moveFileTo(relocated.getChildFile(wavFile.getFileName())))return Result::fail("move source recording");
+    if(lib::convert(reopened.entries[0],output,cancel).wasOk())return Result::fail("existing conversion with missing source must not report success");
     if(auto r=lib::repair(reopened.entries[0],output,relocated,cancel);r.failed())return r;
     if(reopened.entries[0].converted==originalPreset||!originalPreset.existsAsFile())return Result::fail("repair creates a separate preset");
     Instrument model;
     if(Plugin::preparePreset(reopened.entries[0].converted,{},model).failed()||model.zones.size()!=1||
        !model.zones[0].mapping.sample||!model.zones[0].mapping.sample->stream||model.zones[0].file.getParentDirectory()!=relocated)
        return Result::fail("repaired preset reopens with correct streamed sample");
+    if(!sfz.appendText("\n// changed source definition\n"))return Result::fail("change source definition");
+    if(lib::convert(reopened.entries[0],output,cancel).wasOk())return Result::fail("changed source requires rescan");
     if(!source.moveFileTo(directory.getChildFile("Offline library source")))return Result::fail("simulate offline library");
     if(lib::scan(reopened,cancel,progress,report).failed()||reopened.entries.size()!=1||reopened.entries[0].available)
         return Result::fail("retain offline catalog metadata");
