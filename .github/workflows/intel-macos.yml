@@ -28,8 +28,10 @@ on:
       - feature/studio-visual-library-m29
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-contextual-help-m31
+      - feature/studio-usability-acceptance-m32
   pull_request:
     branches:
+      - feature/studio-contextual-help-m31
       - feature/studio-guided-instrument-builder-m30
       - feature/studio-visual-library-m29
       - feature/studio-sampler-interface-m28
@@ -175,31 +177,37 @@ jobs:
             ${{ runner.temp }}/studio-interface-review/right-inspector-*.png
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-M6-unified-interface-review
           path: ${{ runner.temp }}/studio-interface-review/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-M11-sampler-review
           path: ${{ runner.temp }}/studio-sampler-review/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-M6-synth-review
           path: ${{ runner.temp }}/studio-synth-review/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-M11-workspace
           path: ${{ runner.temp }}/studio-instrument-workspace/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-Orchestral-Seating-macOS
           path: ${{ runner.temp }}/studio-seating-review/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Studio-M7-unified-stage-macOS
           path: ${{ runner.temp }}/studio-unified-stage/
