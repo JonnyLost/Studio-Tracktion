@@ -26,7 +26,8 @@ public:
     std::function<void(const juce::PluginDescription&)> openLoadedAppleEditor;
     void setLoadContext (bool canCreate, juce::String targetName, juce::String targetRestriction,
                          bool samplerOnTrack = false, bool synthOnTrack = false,
-                         bool canInsertEffect = false, juce::String hostedAppleIdentifier = {});
+                         bool canInsertEffect = false, juce::String hostedAppleIdentifier = {},
+                         int selectedGmProgram = -1);
     void setStatus (const juce::String&);
     void browseAppleEffects();
     void browseGeneralMidi();
@@ -76,6 +77,7 @@ private:
     Collection collection = Collection::instruments;
     bool canCreate = false, samplerOnTarget = false, synthOnTarget = false;
     bool canInsertEffect = false, refreshing = false, compact = false;
+    int currentGmProgram = -1;
     Rows familyRows { *this, Rows::families }, typeRows { *this, Rows::types }, resultRows { *this, Rows::results };
     juce::ListBox familyList, typeList, resultList;
     juce::ComboBox compactFamily, compactType, libraryView;
