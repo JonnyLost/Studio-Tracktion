@@ -509,6 +509,20 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
+void InstrumentBrowser::Rows::listBoxItemDoubleClicked (int row, const MouseEvent&)
+{
+    if (kind != results || ! isPositiveAndBelow (row, (int) browser.filtered.size()))
+        return;
+    const auto& entry = browser.entries[browser.filtered[(size_t) row]];
+    // Loading is explicit on double-click, not automatic as the user
+    // navigates categories or presses cursor keys in a large GM catalog.
+    if (entry.gmProgram >= 0)
+    {
+        browser.selectedKey = entry.key;
+        browser.loadSelected (false);
+    }
+}
+
 void InstrumentBrowser::Rows::selectedRowsChanged (int row)
 {
     if (browser.refreshing || ! isPositiveAndBelow (row, getNumRows())) return;
