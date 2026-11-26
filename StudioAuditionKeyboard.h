@@ -13,22 +13,24 @@
 
 namespace studio
 {
-namespace atelierKeyboard
+// Share the established Studio blue/slate visual language, not the dark
+// walnut/amber Instrument Inspector treatment. This palette is intentionally
+// local so users can evaluate the two directions independently.
+namespace studioKeyboardColours
 {
-inline const juce::Colour wood       { 0xff231913 };
-inline const juce::Colour warmWood   { 0xff39271c };
-inline const juce::Colour panel      { 0xff181615 };
-inline const juce::Colour gold       { 0xffdca95e };
-inline const juce::Colour faintGold  { 0xff765a3d };
-inline const juce::Colour parchment  { 0xfff1e2c7 };
-inline const juce::Colour secondary  { 0xffc5b49d };
+inline const juce::Colour base       { 0xff19212d }; // Studio timeline
+inline const juce::Colour raised     { 0xff293443 }; // Studio control
+inline const juce::Colour panel      { 0xff131923 }; // Studio well
+inline const juce::Colour accent     { 0xff91c8ff }; // Studio focus
+inline const juce::Colour outline    { 0xff414d5e }; // Studio divider
+inline const juce::Colour white      { 0xfff3f5f7 }; // Studio text/white keys
+inline const juce::Colour secondary  { 0xffb9c0ca };
 }
 
 
-// A single, restrained piano-case surround behind the docked console.
-// The previous separately framed musical-staff cards were distracting.
-// This draws a continuous walnut fascia with fine brass inlay and subtle
-// book-matched wood grain in the *unused* side margins only.
+// One unobtrusive slate-blue backing for the bottom keyboard dock. No
+// decorative artwork, wood grain or separate side panels. This makes the
+// keyboard part of Studio's arrangement workspace.
 class AtelierKeyboardDockSurround final : public juce::Component
 {
 public:
@@ -48,91 +50,31 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto bounds = getLocalBounds().toFloat();
-        g.fillAll (juce::Colour (0xff17202a));
-        if (bounds.getWidth() < 10.0f || bounds.getHeight() < 10.0f)
-            return;
+        if (bounds.isEmpty()) return;
+        juce::ColourGradient gradient (juce::Colour (0xff202834),
+                                       bounds.getTopLeft(), juce::Colour (0xff19212d),
+                                       bounds.getBottomLeft(), false);
+        gradient.addColour (0.68, juce::Colour (0xff1e2733));
+        g.setGradientFill (gradient);
+        g.fillRect (bounds);
 
-        // One full-width casing rather than three visually detached boxes.
-        const auto caseBounds = bounds.reduced (1.0f, 3.0f);
-        juce::ColourGradient lacquer (juce::Colour (0xff483021),
-                                     caseBounds.getTopLeft(),
-                                     juce::Colour (0xff1d1513),
-                                     caseBounds.getBottomLeft(), false);
-        lacquer.addColour (0.22, juce::Colour (0xff34231d));
-        lacquer.addColour (0.73, juce::Colour (0xff241a18));
-        g.setGradientFill (lacquer);
-        g.fillRoundedRectangle (caseBounds, 5.0f);
+        // A single hairline links the keyboard to the rest of the editor.
+        g.setColour (studioKeyboardColours::outline.withAlpha (0.7f));
+        g.drawLine (bounds.getX(), bounds.getY() + 0.5f,
+                    bounds.getRight(), bounds.getY() + 0.5f, 1.0f);
 
-        // Thin, continuous piano-fallboard inlay. No isolated cards,
-        // manuscript icons, faux noteheads or high-contrast decoration.
-        const auto brass = atelierKeyboard::gold.withAlpha (0.32f);
-        const auto shadow = juce::Colour (0xff070809).withAlpha (0.65f);
-        const float topRail = caseBounds.getY() + 6.0f;
-        const float bottomRail = caseBounds.getBottom() - 7.0f;
-        g.setColour (shadow);
-        g.drawLine (caseBounds.getX() + 8.0f, topRail + 2.0f,
-                    caseBounds.getRight() - 8.0f, topRail + 2.0f, 2.0f);
-        g.setColour (brass);
-        g.drawLine (caseBounds.getX() + 9.0f, topRail,
-                    caseBounds.getRight() - 9.0f, topRail, 1.0f);
-        g.setColour (atelierKeyboard::faintGold.withAlpha (0.43f));
-        g.drawLine (caseBounds.getX() + 9.0f, bottomRail,
-                    caseBounds.getRight() - 9.0f, bottomRail, 1.0f);
-        g.setColour (atelierKeyboard::gold.withAlpha (0.19f));
-        g.drawRoundedRectangle (caseBounds.reduced (0.5f), 4.5f, 0.8f);
-
-        if (keyboardArea.isEmpty()) return;
-        const auto left = juce::Rectangle<int> (0, 0,
-            juce::jmax (0, keyboardArea.getX() - 5), getHeight());
-        const auto right = juce::Rectangle<int> (
-            juce::jmin (getWidth(), keyboardArea.getRight() + 5), 0,
-            juce::jmax (0, getWidth() - keyboardArea.getRight() - 5), getHeight());
-        drawVeneer (g, left, false);
-        drawVeneer (g, right, true);
+        // Subtle shared inset, barely visible at either side. Never draw
+        // decorative cards or extra controls outside the actual keyboard.
+        if (! keyboardArea.isEmpty())
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.10f));
+            const auto inset = keyboardArea.toFloat().expanded (3.0f, 1.0f);
+            g.fillRoundedRectangle (inset, 7.0f);
+        }
     }
 
 private:
     juce::Rectangle<int> keyboardArea;
-
-    static void drawVeneer (juce::Graphics& g, juce::Rectangle<int> area, bool mirrored)
-    {
-        if (area.getWidth() < 32 || area.getHeight() < 60) return;
-        g.saveState();
-        g.reduceClipRegion (area.reduced (4, 11));
-
-        // Very fine book-matched grain. The geometry is static and cheap to
-        // render; all mouse and MIDI events belong to the keyboard above it.
-        for (int strand = 0; strand < 16; ++strand)
-        {
-            const float x = (float) area.getX()
-                + (strand + 0.5f) * (float) area.getWidth() / 16.0f;
-            const float lean = (mirrored ? -1.0f : 1.0f)
-                * (2.0f + (float) (strand % 4) * 1.5f);
-            juce::Path grain;
-            const float y0 = (float) area.getY() + 10.0f;
-            const float y1 = (float) area.getBottom() - 10.0f;
-            grain.startNewSubPath (x, y0);
-            grain.cubicTo (x + lean, y0 + (y1 - y0) * 0.32f,
-                           x - lean * 0.8f, y0 + (y1 - y0) * 0.72f,
-                           x + lean * 0.2f, y1);
-            g.setColour (strand % 3 == 0
-                ? atelierKeyboard::gold.withAlpha (0.075f)
-                : juce::Colour (0xff090808).withAlpha (0.12f));
-            g.strokePath (grain, juce::PathStrokeType (0.8f));
-        }
-
-        // Quiet shaped cheek where the casing meets the inset keyboard.
-        const float seam = mirrored ? (float) area.getX() + 3.0f
-                                    : (float) area.getRight() - 3.0f;
-        g.setColour (juce::Colour (0xff060809).withAlpha (0.48f));
-        g.drawLine (seam, (float) area.getY() + 12.0f,
-                    seam, (float) area.getBottom() - 12.0f, 3.0f);
-        g.setColour (atelierKeyboard::gold.withAlpha (0.23f));
-        const float inlayX = seam + (mirrored ? -2.0f : 2.0f);
-        g.drawLine (inlayX, (float) area.getY() + 14.0f,
-                    inlayX, (float) area.getBottom() - 14.0f, 0.9f);
-        g.restoreState();
-    }
 };
 
 // Performance sliders use compact brushed-bronze wheels and rotary controls.
@@ -153,21 +95,21 @@ public:
         const float cx = x + w * 0.5f;
         const auto slot = juce::Rectangle<float> (cx - 5.0f, (float) y + 4.0f,
                                                    10.0f, (float) h - 8.0f);
-        g.setColour (juce::Colour (0xff0b0c10));
+        g.setColour (juce::Colour (0xff0d1420));
         g.fillRoundedRectangle (slot, 4.0f);
-        g.setColour (atelierKeyboard::faintGold.withAlpha (0.65f));
+        g.setColour (studioKeyboardColours::outline.withAlpha (0.65f));
         g.drawRoundedRectangle (slot, 4.0f, 1.0f);
         if (slider.getName() == "Pitch Bend")
         {
-            g.setColour (atelierKeyboard::secondary.withAlpha (0.55f));
+            g.setColour (studioKeyboardColours::secondary.withAlpha (0.55f));
             g.drawLine (cx - 14.0f, y + h * 0.5f, cx + 14.0f, y + h * 0.5f, 1.0f);
         }
         const auto thumb = juce::Rectangle<float> (cx - 14.0f, position - 9.0f, 28.0f, 18.0f);
-        g.setGradientFill (juce::ColourGradient (atelierKeyboard::gold.brighter (0.12f),
-                                                thumb.getTopLeft(), atelierKeyboard::faintGold,
+        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::accent.brighter (0.12f),
+                                                thumb.getTopLeft(), studioKeyboardColours::outline,
                                                 thumb.getBottomLeft(), false));
         g.fillRoundedRectangle (thumb, 3.0f);
-        g.setColour (atelierKeyboard::parchment.withAlpha (0.65f));
+        g.setColour (studioKeyboardColours::white.withAlpha (0.65f));
         g.drawLine (thumb.getX() + 5.0f, thumb.getCentreY(),
                     thumb.getRight() - 5.0f, thumb.getCentreY(), 1.0f);
     }
@@ -179,31 +121,31 @@ public:
         const float radius = std::min (w, h) * 0.37f;
         const float cx = x + w * 0.5f;
         const float cy = y + h * 0.49f;
-        g.setColour (juce::Colour (0xff0d0f11));
+        g.setColour (juce::Colour (0xff101721));
         g.fillEllipse (cx - radius - 4.0f, cy - radius - 4.0f,
                        (radius + 4.0f) * 2.0f, (radius + 4.0f) * 2.0f);
         juce::Path rail;
         rail.addCentredArc (cx, cy, radius + 4.0f, radius + 4.0f, 0.0f,
                             startAngle, endAngle, true);
-        g.setColour (atelierKeyboard::faintGold);
+        g.setColour (studioKeyboardColours::outline);
         g.strokePath (rail, juce::PathStrokeType (2.3f, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
         juce::Path active;
         const float angle = startAngle + proportion * (endAngle - startAngle);
         active.addCentredArc (cx, cy, radius + 4.0f, radius + 4.0f,
                               0.0f, startAngle, angle, true);
-        g.setColour (atelierKeyboard::gold);
+        g.setColour (studioKeyboardColours::accent);
         g.strokePath (active, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff66503a),
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff53667a),
                                                 cx - radius, cy - radius,
-                                                atelierKeyboard::wood,
+                                                studioKeyboardColours::base,
                                                 cx + radius, cy + radius, false));
         g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
-        g.setColour (atelierKeyboard::gold.withAlpha (0.6f));
+        g.setColour (studioKeyboardColours::accent.withAlpha (0.6f));
         g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 0.8f);
         const float dx = std::sin (angle), dy = -std::cos (angle);
-        g.setColour (atelierKeyboard::parchment);
+        g.setColour (studioKeyboardColours::white);
         g.drawLine (cx + dx * radius * 0.27f, cy + dy * radius * 0.27f,
                     cx + dx * radius * 0.78f, cy + dy * radius * 0.78f, 2.2f);
     }
@@ -217,12 +159,12 @@ public:
     explicit ActivityMidiKeyboard (juce::MidiKeyboardState& state)
         : juce::MidiKeyboardComponent (state, juce::MidiKeyboardComponent::horizontalKeyboard)
     {
-        setColour (keyDownOverlayColourId, atelierKeyboard::gold.withAlpha (0.85f));
-        setColour (mouseOverKeyOverlayColourId, atelierKeyboard::gold.withAlpha (0.24f));
-        setColour (whiteNoteColourId, atelierKeyboard::parchment);
-        setColour (blackNoteColourId, juce::Colour (0xff161819));
-        setColour (keySeparatorLineColourId, juce::Colour (0xff7a6555));
-        setColour (textLabelColourId, juce::Colour (0xff615047));
+        setColour (keyDownOverlayColourId, juce::Colour (0xff76c8e6).withAlpha (0.88f));
+        setColour (mouseOverKeyOverlayColourId, studioKeyboardColours::accent.withAlpha (0.23f));
+        setColour (whiteNoteColourId, studioKeyboardColours::white);
+        setColour (blackNoteColourId, juce::Colour (0xff151d29));
+        setColour (keySeparatorLineColourId, juce::Colour (0xff7b8898));
+        setColour (textLabelColourId, juce::Colour (0xff506175));
     }
 
     void showActivity (const std::bitset<128>& notes)
@@ -266,17 +208,17 @@ public:
         for (auto* button : { &dockModeButton, &hideButton })
         {
             addAndMakeVisible (*button);
-            button->setColour (juce::TextButton::buttonColourId, atelierKeyboard::panel);
-            button->setColour (juce::TextButton::buttonOnColourId, atelierKeyboard::warmWood);
-            button->setColour (juce::TextButton::textColourOffId, atelierKeyboard::gold);
-            button->setColour (juce::TextButton::textColourOnId, atelierKeyboard::parchment);
+            button->setColour (juce::TextButton::buttonColourId, studioKeyboardColours::panel);
+            button->setColour (juce::TextButton::buttonOnColourId, studioKeyboardColours::raised);
+            button->setColour (juce::TextButton::textColourOffId, studioKeyboardColours::accent);
+            button->setColour (juce::TextButton::textColourOnId, studioKeyboardColours::white);
         }
         dockModeButton.onClick = [this] { if (onToggleDock) onToggleDock(); };
         hideButton.onClick = [this] { if (onHide) onHide(); };
         hideButton.setTooltip ("Hide the docked performance keyboard");
         setDocked (false);
         status.setJustificationType (juce::Justification::centredLeft);
-        status.setColour (juce::Label::textColourId, atelierKeyboard::parchment);
+        status.setColour (juce::Label::textColourId, studioKeyboardColours::white);
         status.setFont (juce::FontOptions (13.5f, juce::Font::bold));
         status.setText ("Select an instrument track to audition", juce::dontSendNotification);
         for (int n = 1; n <= 16; ++n)
@@ -289,9 +231,9 @@ public:
             activeChannel = channel.getSelectedId();
             keys.setMidiChannel (activeChannel);
         };
-        channel.setColour (juce::ComboBox::backgroundColourId, atelierKeyboard::panel);
-        channel.setColour (juce::ComboBox::textColourId, atelierKeyboard::parchment);
-        channel.setColour (juce::ComboBox::outlineColourId, atelierKeyboard::faintGold);
+        channel.setColour (juce::ComboBox::backgroundColourId, studioKeyboardColours::panel);
+        channel.setColour (juce::ComboBox::textColourId, studioKeyboardColours::white);
+        channel.setColour (juce::ComboBox::outlineColourId, studioKeyboardColours::outline);
         keys.setMidiChannel (1);
         keys.setAvailableRange (21, 108);
         keys.setLowestVisibleKey (48);
@@ -439,41 +381,37 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto outer = getLocalBounds().toFloat().reduced (1.0f);
-        g.setGradientFill (juce::ColourGradient (atelierKeyboard::warmWood,
-                                                outer.getTopLeft(), atelierKeyboard::wood,
+        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::raised,
+                                                outer.getTopLeft(), studioKeyboardColours::base,
                                                 outer.getBottomRight(), false));
         g.fillRoundedRectangle (outer, 9.0f);
 
-        // Restrained walnut-grain lines and brass binding match Atelier's
-        // palette without loading an image asset into every project.
-        g.setColour (atelierKeyboard::gold.withAlpha (0.045f));
-        for (int row = 0; row < getHeight(); row += 13)
-            g.drawLine (10.0f, (float) row, (float) getWidth() - 10.0f,
-                        (float) row + 3.0f, 0.7f);
-        g.setColour (atelierKeyboard::gold.withAlpha (0.85f));
-        g.drawRoundedRectangle (outer.reduced (1.0f), 8.0f, 1.1f);
+        // Clean steel/slate casing with a single low-contrast border.
+        // Avoid drawing wood grain or gold pinstripes across the keybed.
+        g.setColour (studioKeyboardColours::outline.withAlpha (0.9f));
+        g.drawRoundedRectangle (outer.reduced (0.5f), 8.0f, 1.0f);
         if (! dockedMode)
         {
-            g.setColour (atelierKeyboard::faintGold);
+            g.setColour (studioKeyboardColours::outline);
             g.drawLine (13.0f, (float) topEdge, (float) getWidth() - 13.0f,
                         (float) topEdge, 1.0f);
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.setColour (atelierKeyboard::gold);
+            g.setColour (studioKeyboardColours::accent);
             g.drawFittedText ("CINEMATIC ATELIER", juce::Rectangle<int> (19, 11, 196, 23),
                               juce::Justification::centredLeft, 1);
         }
 
         for (const auto plate : { leftPlate, keyPlate, rightPlate })
         {
-            g.setColour (atelierKeyboard::panel.withAlpha (0.92f));
+            g.setColour (studioKeyboardColours::panel.withAlpha (0.92f));
             g.fillRoundedRectangle (plate.toFloat(), 6.0f);
-            g.setColour (atelierKeyboard::faintGold.withAlpha (0.67f));
+            g.setColour (studioKeyboardColours::outline.withAlpha (0.67f));
             g.drawRoundedRectangle (plate.toFloat().reduced (0.5f), 6.0f, 0.85f);
         }
 
         const auto drawCaption = [&g] (juce::String label, juce::Rectangle<int> r)
         {
-            g.setColour (atelierKeyboard::secondary);
+            g.setColour (studioKeyboardColours::secondary);
             g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
             g.drawFittedText (label, r, juce::Justification::centred, 1);
         };
