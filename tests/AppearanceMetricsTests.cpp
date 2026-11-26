@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../AppearanceMetrics.h"
 #include "../StudioDesignTokens.h"
+#include "../StudioActivities.h"
 #include "../StagePresentation.h"
 
 #include <cassert>
@@ -36,15 +37,33 @@ bool designContrast()
                           << foreground << " on " << surface << '\n';
                 return false;
             }
-    for (const auto state : { signal, record, warning, focus })
+    for (const auto state : { studio::design::signal, record, warning, focus })
         if (contrast (state, control) < 3.0) return false;
-    return atelierAccent != focus && record != signal && focus != playhead;
+    return atelierAccent != focus && record != studio::design::signal && focus != playhead;
 }
 }
 
 int main()
 {
     if (!designContrast()) return 1;
+    using studio::Activity;
+    using studio::Workspace;
+    if (studio::activities.size() != 6
+        || studio::activityForWorkspace (Workspace::piano) != Activity::compose
+        || studio::activityForWorkspace (Workspace::articulations) != Activity::perform
+        || studio::activityForWorkspace (Workspace::instrumentEditor) != Activity::design
+        || studio::activityForWorkspace (Workspace::rooms) != Activity::mix
+        || studio::activityForWorkspace (Workspace::filmScoring) != Activity::score
+        || studio::activityForWorkspace (Workspace::resources).has_value()) return 1;
+    studio::AppearanceMetrics activityMetrics;
+    for (int ui : studio::AppearanceMetrics::interfaceOptions)
+        for (int text : studio::AppearanceMetrics::textOptions)
+        {
+            activityMetrics.set (ui, text);
+            const int minimum = 6 * activityMetrics.span (79) + activityMetrics.span (125);
+            if (studio::activitiesFit (minimum - 1, activityMetrics)
+                || ! studio::activitiesFit (minimum, activityMetrics)) return 1;
+        }
     using namespace studio::spatial;
     for (const auto& layout : stagePresentations)
         for (float x : { -1.0f, -0.7f, 0.0f, 0.7f, 1.0f })

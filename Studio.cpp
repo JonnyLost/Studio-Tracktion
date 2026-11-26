@@ -19,6 +19,7 @@ using namespace tracktion::literals;
 #include "ComposerTracks.h"
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
+#include "StudioActivities.h"
 #include "MidiPerformanceFocus.h"
 #include "InstrumentBrowser.h"
 #include "StudioMixing.h"
@@ -396,6 +397,26 @@ public:
         addChildComponent (workspaceViewport);
         addAndMakeVisible (viewButton);
         addAndMakeVisible (inspectorButton);
+        for (size_t i = 0; i < studio::activities.size(); ++i)
+        {
+            auto& button = activityButtons[i];
+            const auto entry = studio::activities[i];
+            addChildComponent (button);
+            button.setButtonText (entry.label);
+            button.setTitle (String ("Workspace: ") + entry.label);
+            button.setTooltip (entry.help);
+            button.onClick = [this, entry] { selectActivity (entry.activity); };
+        }
+        addChildComponent (activityMenuButton);
+        activityMenuButton.setTitle ("Musical workspaces");
+        activityMenuButton.setTooltip ("Choose Compose, Perform, Record, Design, Mix or Score.");
+        activityMenuButton.onClick = [this]
+        {
+            PopupMenu menu;
+            populateActivityMenu (menu);
+            menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&activityMenuButton));
+        };
+        updateActivityControls();
         inspectorButton.setTooltip ("Toggle the selected-track Inspector on the right");
         inspectorButton.setTitle ("Selected-track Inspector");
         inspectorButton.onClick = [this] { setInspectorOpen (! inspectorOpen); };
@@ -1298,6 +1319,7 @@ public:
         }
         for (auto* button : { &plugins, &audioSettings, &saveAsProject, &saveProject, &monitorButton })
             button->setVisible (false);
+        layoutActivityControls (commands);
         title.setBounds (commands.reduced (m.px (8), 0));
 
         auto strip = topBar.withTrimmedTop (projectHeight + m.px (3)).reduced (m.px (10), m.px (2));
@@ -1791,6 +1813,9 @@ public:
             if (safe != nullptr) safe->resources.onOpen();
         });
         menu.addSubMenu ("Diagnostics", diagnostics);
+        PopupMenu activities;
+        populateActivityMenu (activities);
+        menu.addSubMenu ("Musical Workspaces", activities);
         menu.addItem ("MIDI Keyboard Follows Selected Track", true, followSelectedMidi, [safe]
         {
             if (safe == nullptr) return;
@@ -1880,6 +1905,11 @@ public:
                 add (mStage, "Stage");
                 add (mPicture, "Picture");
                 add (mMixer, "Mixer");
+                {
+                    PopupMenu activities;
+                    populateActivityMenu (activities);
+                    menu.addSubMenu ("Musical Workspaces", activities);
+                }
                 break;
             case 4: // Record
                 add (mRecord, "Record", record.isEnabled());
@@ -2088,6 +2118,9 @@ private:
 
     studio::StudioLookAndFeel style;
     Workspace workspace = Workspace::closed;
+    std::optional<studio::Activity> activeActivity { studio::Activity::compose };
+    std::array<TextButton, studio::activities.size()> activityButtons;
+    TextButton activityMenuButton { "Compose" };
     studio::WorkspaceScroll workspaceScroll;
     DockMode dockMode = DockMode::split;
     WorkspaceDivider workspaceDivider;
@@ -2448,6 +2481,91 @@ private:
     }
    #endif
 
+    void updateActivityControls()
+    {
+        String name ("Workspaces");
+        for (size_t i = 0; i < studio::activities.size(); ++i)
+        {
+            const auto entry = studio::activities[i];
+            const bool selected = activeActivity && *activeActivity == entry.activity;
+            activityButtons[i].setToggleState (selected, dontSendNotification);
+            if (selected) name = entry.label;
+        }
+        activityMenuButton.setButtonText (name + " ...");
+        activityMenuButton.setTitle ("Musical workspaces: " + name);
+    }
+
+    void layoutActivityControls (Rectangle<int>& commands)
+    {
+        const auto& m = studio::appearance;
+        const bool full = studio::activitiesFit (commands.getWidth(), m);
+        activityMenuButton.setVisible (! full && commands.getWidth() > 0);
+        activityMenuButton.setBounds (activityMenuButton.isVisible()
+            ? commands.removeFromLeft (jmin (m.span (118), commands.getWidth())).reduced (m.px (1), 0)
+            : Rectangle<int>());
+        for (auto& button : activityButtons)
+        {
+            button.setVisible (full);
+            button.setBounds (full ? commands.removeFromLeft (m.span (79)).reduced (m.px (1), 0)
+                                   : Rectangle<int>());
+        }
+    }
+
+    void populateActivityMenu (PopupMenu& menu)
+    {
+        auto safe = SafePointer<StudioView> (this);
+        for (const auto entry : studio::activities)
+            menu.addItem (entry.label, edit != nullptr, activeActivity == entry.activity,
+                [safe, activity = entry.activity] { if (safe != nullptr) safe->selectActivity (activity); });
+    }
+
+    void selectActivity (studio::Activity activity)
+    {
+        // Workspace commands change presentation only. In particular, Record
+        // never arms a track, changes routing or starts transport.
+        if (edit == nullptr || environmentWelcome.isVisible()) return;
+        using A = studio::Activity;
+        if (dockMode != DockMode::split) setDockMode (DockMode::split);
+        switch (activity)
+        {
+            case A::compose:
+                setInspectorOpen (false, false);
+                showWorkspace (Workspace::piano);
+                break;
+            case A::perform:
+            {
+                auto* track = workflowTrack();
+                const bool hasInstrument = track != nullptr && studio::findInstrument (*track) != nullptr;
+                setInspectorOpen (hasInstrument, false);
+                showWorkspace (hasInstrument ? Workspace::closed : Workspace::instruments);
+                break;
+            }
+            case A::record:
+                showWorkspace (Workspace::closed);
+                setInspectorOpen (workflowTrack() != nullptr, false);
+                break;
+            case A::design:
+            {
+                setInspectorOpen (false, false);
+                auto* track = workflowTrack();
+                auto* instrument = track != nullptr ? studio::findInstrument (*track) : nullptr;
+                if (instrument == nullptr || ! showNativeInstrument (*instrument))
+                    showWorkspace (Workspace::instruments);
+                break;
+            }
+            case A::mix:
+                setInspectorOpen (false, false);
+                showWorkspace (Workspace::mix);
+                break;
+            case A::score:
+                setInspectorOpen (false, false);
+                showWorkspace (Workspace::filmScoring);
+                break;
+        }
+        activeActivity = activity;
+        updateActivityControls();
+    }
+
     void toggleWorkspace (Workspace destination)
     {
         showWorkspace (workspace == destination ? Workspace::closed : destination);
@@ -2500,6 +2618,11 @@ private:
                            getHeight() * 57 / 100));
         }
         workspace = next;
+        if (changing)
+        {
+            activeActivity = studio::activityForWorkspace (workspace);
+            updateActivityControls();
+        }
         if (workspace == Workspace::filmScoring)
             dockMode = DockMode::split;
         syncWorkspace();
@@ -6483,6 +6606,29 @@ int StudioView::runInterfaceReview (const File& output)
     if (! monitor.isVisible() || workspaceTitle.getText() != "MIDI Monitor")
         return fail ("MIDI Monitor remains available from View");
     showWorkspace (Workspace::closed);
+    // Exercise the real activity buttons; none may start recording or add tracks.
+    const auto originalTracks = te::getAudioTracks (*edit).size();
+    auto* originalSelection = workflowTrack();
+    for (size_t i = 0; i < studio::activities.size(); ++i)
+    {
+        activityButtons[i].onClick();
+        if (activeActivity != studio::activities[i].activity || ! activityButtons[i].getToggleState()
+            || te::getAudioTracks (*edit).size() != originalTracks || workflowTrack() != originalSelection
+            || edit->getTransport().isRecording() || edit->getTransport().isPlaying())
+            return fail ("musical activity selection changed project or transport");
+        using A = studio::Activity;
+        switch (studio::activities[i].activity)
+        {
+            case A::compose: if (workspace != Workspace::piano || ! piano.isVisible()) return fail ("Compose workspace"); break;
+            case A::perform: if (workspace != Workspace::closed && workspace != Workspace::instruments) return fail ("Perform workspace"); break;
+            case A::record: if (workspace != Workspace::closed) return fail ("Record workspace"); break;
+            case A::design: if (workspace != Workspace::instrumentEditor && workspace != Workspace::instruments) return fail ("Design workspace"); break;
+            case A::mix: if (workspace != Workspace::mix || ! mixer.isVisible()) return fail ("Mix workspace"); break;
+            case A::score: if (workspace != Workspace::filmScoring || dockMode != DockMode::split) return fail ("Score workspace"); break;
+        }
+    }
+    showWorkspace (Workspace::closed);
+    setInspectorOpen (false, false);
     for (auto scale : studio::AppearanceMetrics::interfaceOptions)
         for (auto text : studio::AppearanceMetrics::textOptions)
         {
@@ -6490,6 +6636,22 @@ int StudioView::runInterfaceReview (const File& output)
             for (const auto size : { juce::Point<int> (1024, 640), juce::Point<int> (1280, 800), juce::Point<int> (1536, 960) })
             {
                 setSize (size.x, size.y);
+                Rectangle<int> lastActivity;
+                int visibleActivities = 0;
+                for (auto& button : activityButtons)
+                    if (button.isVisible())
+                    {
+                        if (button.getBounds().isEmpty() || ! topBar.contains (button.getBounds())
+                            || lastActivity.intersects (button.getBounds()))
+                            return fail ("activity buttons overlap or clip");
+                        lastActivity = button.getBounds();
+                        ++visibleActivities;
+                    }
+                if (visibleActivities != 0 && visibleActivities != (int) studio::activities.size())
+                    return fail ("partial activity navigation");
+                if (visibleActivities == 0 && (! activityMenuButton.isVisible()
+                    || activityMenuButton.getBounds().isEmpty() || ! topBar.contains (activityMenuButton.getBounds())))
+                    return fail ("compact activity selector unavailable");
                 auto previous = Rectangle<int>();
                 for (auto* key : { &rewind, &stop, &play, &record })
                 {
