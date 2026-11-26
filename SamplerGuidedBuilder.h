@@ -16,7 +16,10 @@ public:
     {
         using namespace juce;
         setLookAndFeel(&look);
-        for(Component* c:std::initializer_list<Component*>{&title,&intro,&nameLabel,&name,&layoutLabel,&layout,&rootLabel,&root,&playbackLabel,&playback,&spread,&alternates,&files,&folder,&selection,&report,&status,&prepare,&accept,&cancel,&helpButton})addAndMakeVisible(*c);
+        for(Component* c:std::initializer_list<Component*>{&title,&status,&prepare,&accept,&cancel,&helpButton,&scroll})addAndMakeVisible(*c);
+        scroll.setViewedComponent(&form,false);scroll.setScrollBarsShown(true,false);
+        scroll.setTitle("Instrument builder form");
+        for(Component* c:std::initializer_list<Component*>{&intro,&nameLabel,&name,&layoutLabel,&layout,&rootLabel,&root,&playbackLabel,&playback,&spread,&alternates,&files,&folder,&selection,&report})form.addAndMakeVisible(*c);
         title.setText("Create an instrument",dontSendNotification);title.setFont(FontOptions(20));
         helpButton.setTooltip("Explain naming, sample mapping, velocity layers and playback choices.");
         helpButton.onClick=[this]{if(helpWindow)helpWindow->toFront(true);else helpWindow=studio::help::show(*this,studio::help::Topic::builder);};
@@ -70,27 +73,41 @@ public:
         };
         updateControls();setSize(660,510);startTimerHz(10);
     }
-    ~GuidedBuilder() override {stopTimer();if(helpWindow)helpWindow->exitModalState(0);task.reset();setLookAndFeel(nullptr);}
+    ~GuidedBuilder() override {stopTimer();if(helpWindow)helpWindow->exitModalState(0);task.reset();scroll.setViewedComponent(nullptr,false);setLookAndFeel(nullptr);}
     void resized() override
     {
         using namespace juce;
         const auto& m=appearance;auto area=getLocalBounds().reduced(m.px(12));
         const int h=m.control(30,12),gap=m.px(4);
         auto heading=area.removeFromTop(h);helpButton.setBounds(heading.removeFromRight(jmin(m.span(75),heading.getWidth()/4)));title.setBounds(heading);
-        intro.setBounds(area.removeFromTop(h*2));
-        auto line=[&](Label& label,Component& control){auto row=area.removeFromTop(h);label.setBounds(row.removeFromLeft(jmin(m.span(160),row.getWidth()/3)));control.setBounds(row.reduced(2));};
-        line(nameLabel,name);line(layoutLabel,layout);line(rootLabel,root);line(playbackLabel,playback);
-        auto row=area.removeFromTop(h);
-        spread.setBounds(row.removeFromLeft(row.getWidth()/2));alternates.setBounds(row);
-        row=area.removeFromTop(h);
-        files.setBounds(row.removeFromLeft(jmin(m.span(145),row.getWidth()/3)).reduced(2));
-        folder.setBounds(row.removeFromLeft(jmin(m.span(145),row.getWidth()/2)).reduced(2));selection.setBounds(row.reduced(2));
-        area.removeFromTop(gap);
-        row=area.removeFromBottom(h);
+        auto row=area.removeFromBottom(h);
         cancel.setBounds(row.removeFromRight(jmin(m.span(100),row.getWidth()/3)).reduced(2));
         accept.setBounds(row.removeFromRight(jmin(m.span(175),row.getWidth()/2)).reduced(2));
         prepare.setBounds(row.removeFromRight(jmin(m.span(175),row.getWidth())).reduced(2));
-        status.setBounds(area.removeFromBottom(h*2));report.setBounds(area.reduced(2));
+        status.setBounds(area.removeFromBottom(h*2));
+        area.removeFromBottom(gap);scroll.setBounds(area);
+        const int width=jmax(1,scroll.getMaximumVisibleWidth()-scroll.getScrollBarThickness());
+        const bool narrow=width<m.span(520);
+        const int formHeight=(narrow?14:9)*h+gap+m.px(120);
+        form.setSize(width,jmax(formHeight,scroll.getHeight()));
+        auto content=form.getLocalBounds();
+        intro.setBounds(content.removeFromTop(h*2));
+        auto line=[&](Label& label,Component& control)
+        {
+            auto line=content.removeFromTop(narrow?2*h:h);
+            if(narrow)label.setBounds(line.removeFromTop(h));
+            else label.setBounds(line.removeFromLeft(jmin(m.span(160),line.getWidth()/3)));
+            control.setBounds(line.reduced(2));
+        };
+        line(nameLabel,name);line(layoutLabel,layout);line(rootLabel,root);line(playbackLabel,playback);
+        row=content.removeFromTop(narrow?h*2:h);
+        if(narrow){spread.setBounds(row.removeFromTop(h));alternates.setBounds(row);}
+        else{spread.setBounds(row.removeFromLeft(row.getWidth()/2));alternates.setBounds(row);}
+        row=content.removeFromTop(h);
+        files.setBounds(row.removeFromLeft(row.getWidth()/2).reduced(2));
+        folder.setBounds(row.reduced(2));
+        selection.setBounds(content.removeFromTop(h));
+        content.removeFromTop(gap);report.setBounds(content.reduced(2));
     }
 private:
     struct Task
@@ -101,6 +118,8 @@ private:
         ~Task(){cancel.store(true);if(worker.joinable())worker.join();}
     };
     StudioLookAndFeel look;Apply apply;
+    juce::Component form;
+    juce::Viewport scroll;
     juce::Label title,intro,nameLabel,layoutLabel,rootLabel,playbackLabel,selection,status;
     juce::TextEditor name,report;
     juce::ComboBox layout,playback;
