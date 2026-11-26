@@ -4638,16 +4638,12 @@ private:
         // Initialize every melodic channel so clips or controllers on channels
         // other than 1 cannot silently play the default piano. Channel 10 is
         // reserved for drums. Do not continually reset expression or bend.
-        for (int channel = 1; channel <= 16; ++channel)
+        studio::gm::emitSelection (index, [&track] (studio::gm::SelectionMessage packet)
         {
-            if (channel == 10) continue;
-            track.injectLiveMidiMessage (MidiMessage::controllerEvent (channel, 64, 0), {});
-            track.injectLiveMidiMessage (MidiMessage::allNotesOff (channel), {});
-            track.injectLiveMidiMessage (MidiMessage::pitchWheel (channel, 8192), {});
-            track.injectLiveMidiMessage (MidiMessage::controllerEvent (channel, 0, 0), {});
-            track.injectLiveMidiMessage (MidiMessage::controllerEvent (channel, 32, 0), {});
-            track.injectLiveMidiMessage (MidiMessage::programChange (channel, index), {});
-        }
+            const juce::uint8 bytes[] { static_cast<juce::uint8> (packet.status),
+                static_cast<juce::uint8> (packet.data1), static_cast<juce::uint8> (packet.data2) };
+            track.injectLiveMidiMessage (MidiMessage (bytes, packet.size, 0.0), {});
+        });
     }
 
     bool selectDlsProgram (te::ExternalPlugin& plugin, int index, bool updateStoredState)
