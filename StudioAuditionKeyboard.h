@@ -15,13 +15,13 @@ namespace studio
 {
 namespace atelierKeyboard
 {
-inline const juce::Colour wood       { 0xff211713 };
-inline const juce::Colour warmWood   { 0xff38251d };
+inline const juce::Colour wood       { 0xff231913 };
+inline const juce::Colour warmWood   { 0xff39271c };
 inline const juce::Colour panel      { 0xff181615 };
-inline const juce::Colour gold       { 0xffd8ad6a };
+inline const juce::Colour gold       { 0xffdca95e };
 inline const juce::Colour faintGold  { 0xff765a3d };
-inline const juce::Colour parchment  { 0xffede5da };
-inline const juce::Colour secondary  { 0xffb9a793 };
+inline const juce::Colour parchment  { 0xfff1e2c7 };
+inline const juce::Colour secondary  { 0xffc5b49d };
 }
 
 // Performance sliders use compact brushed-bronze wheels and rotary controls.
