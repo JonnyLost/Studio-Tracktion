@@ -358,6 +358,8 @@ Result readSample (const File& file, std::size_t budget, std::shared_ptr<const S
     if(outcome==SharedSamplePool::Outcome::budgetExceeded)
         return Result::fail("Sampler memory budget reached (256 MiB per instrument, 768 MiB shared PCM/cache pool). Unload instruments or use smaller mappings.");
     if(outcome!=SharedSamplePool::Outcome::ready)return Result::fail(failure.isEmpty()?"Cannot load sample.":failure);
+    if(file.getSize()!=sizeBefore||file.getLastModificationTime().toMilliseconds()!=timeBefore)
+    {output.reset();return Result::fail("Sample changed during loading.");}
     return Result::ok();
 }
 
