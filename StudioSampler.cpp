@@ -862,7 +862,7 @@ Result Plugin::prepareSfz (const File& definition, const Instrument& cache, Inst
                  old != cache.zones.end() && old->mapping.sample->bytes() <= maxBankBytes - sampleBytes (converted))
             z.sample = old->mapping.sample;
         else if (! entry.file.hasFileExtension ("wav;wave;aif;aiff;aifc;caf"))
-            entry.problem = "Unsupported sample encoding (WAV/AIFF required)";
+            entry.problem = "Unsupported sample encoding (WAV/AIFF or supported macOS CAF required)";
         else if (auto result = readSample (entry.file, maxBankBytes - sampleBytes (converted), z.sample, cancelled); result.failed())
             entry.problem = result.getErrorMessage();
         if (aborted()) return Result::fail ("Import cancelled.");
@@ -1064,7 +1064,6 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
     };
     std::map<int,Resolved> resolved;
     std::map<int,int> groupIds;
-    std::map<int,std::set<int>> rrPositions;
     Instrument converted;
     converted.name = definition.getFileNameWithoutExtension().substring (0,120);
     converted.settings.gainDb = -6;
@@ -1176,7 +1175,7 @@ Result Plugin::prepareExs (const File& definition, const File& sampleRoot, const
         else
         {
             ++missing;
-            if(z.loop && sample.rate>0)z.loopCrossfade=static_cast<int>(std::min<double>(1000000,r.crossfadeMs*sample.rate/1000.0));
+            if(z.loop && sample.rate>0)z.loopCrossfade=static_cast<int>(std::min<double>(1000000,static_cast<double>(r.crossfadeMs)*sample.rate/1000.0));
             warnings.insert(prefix+entry.file.getFileName().toStdString()+": "+entry.problem.toStdString());
         }
         if(g.condition==2 && !g.mute)
