@@ -38,19 +38,24 @@ public:
     StreamCache (int length, bool stereo, Decoder decoder)
         : frames (length), twoChannels (stereo), decode (std::move (decoder))
     {
-        for (auto& slot : slots)
+        for (int i=0;i<pageCount(frames);++i)
         {
+            auto& slot=slots[static_cast<std::size_t>(i)];
             slot.left.resize (streamPageFrames);
             if (stereo) slot.right.resize (streamPageFrames);
         }
         for (auto& request : requests) request.store (-1);
     }
 
-    static constexpr std::size_t capacityBytes (bool stereo) noexcept
+    static constexpr int pageCount (int length) noexcept
     {
-        return std::size_t (streamCachePages) * streamPageFrames * (stereo ? 2 : 1) * sizeof (float);
+        return std::clamp ((length - 1) / streamPageFrames + 1 - streamPreloadFrames / streamPageFrames, 1, streamCachePages);
     }
-    std::size_t bytes() const noexcept { return capacityBytes (twoChannels); }
+    static constexpr std::size_t capacityBytes (bool stereo, int length = 2147483647) noexcept
+    {
+        return std::size_t (pageCount(length)) * streamPageFrames * (stereo ? 2 : 1) * sizeof (float);
+    }
+    std::size_t bytes() const noexcept { return capacityBytes (twoChannels, frames); }
     unsigned misses() const noexcept { return missedBlocks.load (std::memory_order_relaxed); }
     unsigned errors() const noexcept { return readErrors.load (std::memory_order_relaxed); }
     unsigned offlineErrors() const noexcept { return failedOffline.load (std::memory_order_relaxed); }
@@ -178,12 +183,13 @@ private:
                 return true;
             }
         Slot* chosen = nullptr;
-        for (int attempt = 0; attempt < streamCachePages; ++attempt)
+        for (int attempt = 0; attempt < pageCount(frames); ++attempt)
         {
             chosen = nullptr;
             unsigned oldest = 0;
-            for (auto& slot : slots)
+            for (int i=0;i<pageCount(frames);++i)
             {
+                auto& slot=slots[static_cast<std::size_t>(i)];
                 if (slot.readers.load (std::memory_order_acquire) != 0) continue;
                 const unsigned used = slot.used.load (std::memory_order_relaxed);
                 if (chosen == nullptr || used < oldest) { chosen = &slot; oldest = used; }
