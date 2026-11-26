@@ -87,6 +87,7 @@ public:
         if(declared>length || declared<12) fail("Truncated RIFF bank");
         const auto type=fourcc(h,8);
         const auto chunks=children(12,declared);
+        if(isGig&&type!="DLS ")fail("GIG requires a DLS-derived RIFF container");
         if(type=="sfbk") loadSf(chunks);
         else if(type=="DLS ") loadDls(chunks);
         else fail("Unsupported RIFF bank type");
@@ -239,7 +240,7 @@ private:
         if(h[0]!=3||h[2]>127)fail("Invalid Akai sample header");
         Region r;
         const auto frames=boundedInt(u32(h,26)),rate=int(u16(h,138));
-        if(frames<2||rate<1000||rate>65535||size!=U64(stride)+U64(frames)*2)
+        if(frames<2||rate<1000||size!=U64(stride)+U64(frames)*2)
             fail("Invalid Akai sample length, rate or generation");
         r.audio={Encoding::pcm16,U64(stride),U64(frames)*2,0,1,rate,frames};
         r.audio.external=p;r.audio.externalSize=size;r.audio.externalTime=time;
@@ -310,8 +311,8 @@ private:
                 if(soft>hard)continue;
                 bounds(soft,hard,1,127);
                 const auto name=lower(akaiName(kg,pos));
-                if(name.empty()||!samples.count(name))fail("Akai program references a missing sample in its folder");
-                if(samples.at(name).size()!=1)fail("Ambiguous Akai sample name in program folder");
+                if(name.empty()||!samples.count(name))throw std::runtime_error("Missing Akai sample in program folder: "+name);
+                if(samples.at(name).size()!=1)throw std::runtime_error("Ambiguous Akai sample name in program folder: "+name);
                 if(!loaded.count(name))loaded.emplace(name,akaiSample(samples.at(name).front(),m));
                 auto r=loaded.at(name);
                 r.low=lo;r.high=hi;r.soft=soft;r.hard=hard;
