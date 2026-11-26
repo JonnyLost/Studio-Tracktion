@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SamplerEditor.h"
 #include "SoundBankFixtures.h"
+#include "ExsFixtures.h"
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
 #include "../StudioMixing.h"
@@ -311,6 +312,56 @@ Result verifySoundBankImport (const File& directory, Plugin& sampler)
     return Result::ok();
 }
 
+Result verifyExsImport (const File& directory, Plugin& sampler, WavAudioFormat& wav)
+{
+    const auto definitions=directory.getChildFile("EXS definitions");
+    const auto media=directory.getChildFile("Relocated EXS recordings");
+    if(definitions.createDirectory().failed()||media.createDirectory().failed())return Result::fail("create EXS fixture folders");
+    const auto exsFile=definitions.getChildFile("EXS fixture.exs");
+    const auto sample=media.getChildFile("Long C4.wav");
+    if(!longSample(sample,wav,196608,2))return Result::fail("create streamed EXS source WAV");
+    try { studio::exs::fixtures::write(std::filesystem::u8path(exsFile.getFullPathName().toStdString()),studio::exs::fixtures::make()); }
+    catch(...) { return Result::fail("write EXS fixture"); }
+    const auto revision=sampler.changeCount();
+    Instrument proposal; String report;
+    if(auto result=Plugin::prepareExs(exsFile,media,sampler.instrument(),proposal,report);result.failed())return result;
+    if(sampler.changeCount()!=revision||proposal.zones.size()!=1||proposal.groups.size()!=1
+       ||!report.contains("1 playable zones")||!report.contains("1 omitted"))
+        return Result::fail("transactional EXS review and unsupported region report");
+    const auto& z=proposal.zones[0].mapping;
+    const auto& g=proposal.groups[0].playback;
+    if(proposal.zones[0].file!=sample||!z.sample||!z.sample->stream||z.root!=60||z.low!=50||z.high!=70
+        ||z.soft!=32||z.hard!=100||z.start!=65536||z.end!=196608||z.loopStart!=70000||z.loopEnd!=100000
+        ||!z.sfz.sustainLoop||z.loopCrossfade!=240||z.cents!=75||z.sfz.transpose!=0||z.gainDb!=-5||z.sfz.pan!=10
+        ||g.trigger!=GroupTrigger::controller||g.controller!=1||g.ccLow!=64||g.ccHigh!=127)
+        return Result::fail("preserve EXS bounds, group constraints, tuning, loop, gain and pan");
+    sampler.commitImport(proposal);
+    const auto preset=definitions.getChildFile("Converted.studiosampler");
+    if(sampler.savePreset(preset).failed()||sampler.loadPreset(preset).failed()
+        ||sampler.instrument().zones.size()!=1||sampler.instrument().zones[0].file!=sample
+        ||!sampler.instrument().zones[0].mapping.sample||!sampler.instrument().zones[0].mapping.sample->stream
+        ||sampler.instrument().zones[0].mapping.loopEnd!=100000)
+        return Result::fail("save and reopen converted EXS instrument");
+    sampler.commitImport({},false);
+    // Move the WAV below a chosen root, then add another copy. The importer
+    // must resolve unique names but never arbitrarily choose a duplicate.
+    const auto a=media.getChildFile("A"), b=media.getChildFile("B");
+    if(a.createDirectory().failed()||b.createDirectory().failed()||!sample.moveFileTo(a.getChildFile(sample.getFileName())))
+        return Result::fail("relocate EXS fixture");
+    Instrument relocated;
+    if(Plugin::prepareExs(exsFile,media,{},relocated,report).failed()||relocated.zones[0].file.getParentDirectory()!=a)
+        return Result::fail("bounded relocated source search");
+    relocated={};
+    if(!a.getChildFile(sample.getFileName()).copyFileTo(b.getChildFile(sample.getFileName())))
+        return Result::fail("make ambiguous source names");
+    if(Plugin::prepareExs(exsFile,media,{},relocated,report).wasOk()||!report.contains("Ambiguous"))
+        return Result::fail("reject ambiguous EXS sample matches");
+    std::atomic<bool> cancelled{true};
+    if(Plugin::prepareExs(exsFile,media,{},relocated,report,&cancelled).wasOk())
+        return Result::fail("cancel EXS import");
+    return Result::ok();
+}
+
 Plugin* addSampler (te::Edit& edit, te::AudioTrack& track)
 {
     auto instrument = edit.getPluginCache().createNewPlugin (Plugin::xmlTypeName, {});
@@ -461,6 +512,7 @@ Result run (const File& screenshots)
         return streamed;
     if (auto imported = verifySfzImport (directory, *other, wav); imported.failed()) return imported;
     if (auto bank = verifySoundBankImport (directory, *other); bank.failed()) return bank;
+    if (auto exs = verifyExsImport (directory, *other, wav); exs.failed()) return exs;
     other->commitImport (proposal);
     other->editGroups ({ { 0, "Piano Soft" }, { 1, "Piano Loud" } });
     auto groups = other->instrument().groups;
