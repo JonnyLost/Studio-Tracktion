@@ -181,7 +181,7 @@ Editor::Editor (Plugin& p) : plugin (p)
         if (auditionNote >= 0) { playAudition(); return; }
         if (const auto* z = zone(); z && z->mapping.sample)
         {
-            const int frames = static_cast<int> (z->mapping.sample->left.size());
+            const int frames = z->mapping.sample->frameCount();
             const int visible = jmax (2, roundToInt (frames / waveZoom));
             const int first = roundToInt ((frames - visible) * waveOffset);
             plugin.previewRange (selection, first, first + visible);
@@ -336,7 +336,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     setup (zoom, "Waveform zoom", 1, 16, 1, " x", [this] (double n) { waveZoom = n; display.repaint(); });
     setup (position, "Waveform position", 0, 100, 1, " %", [this] (double n) { waveOffset = n / 100; display.repaint(); });
     setup (sampleStart, "Sample start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n)
-    { z.start = jlimit (0, (z.end ? z.end : static_cast<int> (z.sample->left.size())) - 2, roundToInt (n)); }));
+    { z.start = jlimit (0, (z.end ? z.end : z.sample->frameCount()) - 2, roundToInt (n)); }));
     setup (sampleEnd, "Sample end (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n)
     { z.end = jmax (z.start + 2, roundToInt (n)); }));
     setup (loopStart, "Loop start (frame)", 0, 1, 1, {}, editZone ([] (Zone& z, double n) { z.loopStart = jlimit (0, jmax (0, z.loopEnd - 2), roundToInt (n)); }));
@@ -358,7 +358,7 @@ Editor::Editor (Plugin& p) : plugin (p)
     };
     loopEnabled.onClick = [this, set = editZone ([] (Zone& z, double v)
     {
-        z.loop = v != 0 && z.sample && validLoop (z, static_cast<int> (z.sample->left.size()));
+        z.loop = v != 0 && z.sample && validLoop (z, z.sample->frameCount());
     })] { set (loopEnabled.getToggleState()); };
 
     keyboard.setTitle ("Sampler audition keyboard");
@@ -531,7 +531,7 @@ void Editor::refresh()
     value (zoneGain, z.gainDb);
     value (cents, z.cents);
     value (group, z.group);
-    const auto length = playable ? static_cast<int> (z.sample->left.size()) : jmax (2, z.loopEnd);
+    const auto length = playable ? z.sample->frameCount() : jmax (2, z.loopEnd);
     if (loopStart.slider.getMaximum() != length)
     {
         loopStart.slider.setRange (0, length, 1);
@@ -1032,7 +1032,7 @@ void Editor::timerCallback()
     const auto stats = plugin.resourceSnapshot();
     if (page == Page::advanced)
         meter.setText (String (stats.activeVoices.value_or (0)) + " active voices  |  "
-            + String (static_cast<double> (stats.sampleBytes.value_or (0)) / (1024 * 1024), 2) + " MiB in memory"
+            + String (static_cast<double> (stats.memoryBytes.value_or (0)) / (1024 * 1024), 2) + " MiB samples + cache"
             + "\nCC1 and channel pressure control vibrato. MIDI channels respond independently.", dontSendNotification);
     if (auditionNote >= 0 && clearAudition && stats.activeVoices.value_or (0) == 0)
     {
@@ -1081,6 +1081,18 @@ void Editor::Keyboard::drawBlackNote (int note, Graphics& g, Rectangle<float> ar
 }
 
 Editor::Display::Display (Editor& editor) : owner (editor) { setTitle ("Sample waveform or keyboard mapping"); }
+Editor::Display::~Display() { clearThumbnail(); }
+void Editor::Display::clearThumbnail()
+{
+    if (streamThumbnail)
+    {
+        streamThumbnail->thumbnail.removeChangeListener (this);
+        streamThumbnail.reset();
+    }
+    thumbnailFile = File();
+    thumbnailTime = 0;
+    thumbnailSize = -1;
+}
 Rectangle<int> Editor::Display::plot() const
 {
     auto area = getLocalBounds().reduced (appearance.px (12), appearance.px (8));
@@ -1102,6 +1114,7 @@ void Editor::Display::paint (Graphics& g)
     const auto* entry = owner.zone();
     if ((owner.page == Page::mapping || owner.page == Page::groups) && entry)
     {
+        if (streamThumbnail) clearThumbnail();
         const auto keys = area.removeFromBottom (appearance.line (10, 4));
         g.setFont (uiFont (10));
         g.setColour (colours::secondary);
@@ -1147,6 +1160,7 @@ void Editor::Display::paint (Graphics& g)
 
     if (! entry || ! entry->mapping.sample)
     {
+        if (streamThumbnail) clearThumbnail();
         g.setColour (colours::text);
         g.setFont (uiFont (16));
         const auto empty = (owner.page == Page::mapping || owner.page == Page::groups) ? "Drop a sample here or choose Add Sample."
@@ -1159,7 +1173,7 @@ void Editor::Display::paint (Graphics& g)
 
     const auto& z = marker != 0 ? dragZone : entry->mapping;
     const auto& sample = *z.sample;
-    const auto length = static_cast<int> (sample.left.size());
+    const auto length = sample.frameCount();
     if (area.getWidth() <= 0) return;
     const int visible = jmax (2, roundToInt (length / owner.waveZoom));
     const int origin = roundToInt ((length - visible) * owner.waveOffset);
@@ -1200,12 +1214,41 @@ void Editor::Display::paint (Graphics& g)
                                jmax (center - hi * scale + 1, center - lo * scale));
         }
     };
-    if (sample.right.empty()) wave (sample.left, area);
+    if (sample.stream)
+    {
+        // A thumbnail is an overview of the source file, not the attack
+        // buffer. JUCE scans it asynchronously at a bounded resolution.
+        if (! streamThumbnail || thumbnailFile != entry->file
+            || thumbnailTime != sample.sourceTime || thumbnailSize != sample.sourceBytes)
+        {
+            clearThumbnail();
+            streamThumbnail = std::make_unique<StreamThumbnail> (jmax (512, length / 32768 + 1));
+            thumbnailFile = entry->file;
+            thumbnailTime = sample.sourceTime;
+            thumbnailSize = sample.sourceBytes;
+            streamThumbnail->thumbnail.addChangeListener (this);
+            streamThumbnail->thumbnail.setSource (new FileInputSource (entry->file));
+        }
+        auto& thumbnail = streamThumbnail->thumbnail;
+        g.setColour (colours::action);
+        thumbnail.drawChannels (g, area, origin / sample.rate, (origin + static_cast<double> (visible)) / sample.rate, 0.9f);
+        if (! thumbnail.isFullyLoaded())
+        {
+            g.setColour (colours::secondary);
+            g.setFont (uiFont (11));
+            g.drawText ("Building streamed waveform…", area.withTrimmedTop (18).withHeight (18), Justification::centred);
+        }
+    }
     else
     {
-        auto stereo = area;
-        wave (sample.left, stereo.removeFromTop (stereo.getHeight() / 2));
-        wave (sample.right, stereo);
+        if (streamThumbnail) clearThumbnail();
+        if (sample.right.empty()) wave (sample.left, area);
+        else
+        {
+            auto stereo = area;
+            wave (sample.left, stereo.removeFromTop (stereo.getHeight() / 2));
+            wave (sample.right, stereo);
+        }
     }
     if (owner.page == Page::loops)
     {
@@ -1261,11 +1304,11 @@ void Editor::Display::mouseDown (const MouseEvent& event)
             dragSelection = owner.selection;
             dragZone = entry->mapping;
             const auto area = plot();
-            const int length = static_cast<int> (dragZone.sample->left.size());
+            const int length = dragZone.sample->frameCount();
             const double visible = length / owner.waveZoom;
             const auto frame = (length - visible) * owner.waveOffset + (event.position.x - area.getX()) * visible / jmax (1, area.getWidth());
             if (! dragZone.oneShot && event.position.y < area.getCentreY()) marker = std::abs (frame - dragZone.loopStart) < std::abs (frame - dragZone.loopEnd) ? 1 : 2;
-            else marker = std::abs (frame - dragZone.start) < std::abs (frame - (dragZone.end ? dragZone.end : static_cast<int> (dragZone.sample->left.size()))) ? 3 : 4;
+            else marker = std::abs (frame - dragZone.start) < std::abs (frame - (dragZone.end ? dragZone.end : dragZone.sample->frameCount())) ? 3 : 4;
         }
 }
 
@@ -1294,7 +1337,7 @@ void Editor::Display::mouseDrag (const MouseEvent& event)
     }
     else
     {
-        const int length = static_cast<int> (dragZone.sample->left.size());
+        const int length = dragZone.sample->frameCount();
         const double visible = length / owner.waveZoom;
         const int frame = roundToInt ((length - visible) * owner.waveOffset + ratio * visible);
         if (marker == 1) dragZone.loopStart = jlimit (0, jmax (0, dragZone.loopEnd - 2), frame);
