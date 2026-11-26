@@ -2,6 +2,7 @@
 #include "SamplerEditor.h"
 #include "SamplerGuidedBuilder.h"
 #include "StudioInstrumentHelp.h"
+#include "StudioLibraryManager.h"
 #include "SamplerNoteText.h"
 #include "StudioLibraryPresentation.h"
 #include "SamplerReviewCapture.h"
@@ -2055,6 +2056,15 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if(plugin.instrument().name!="M32 revised review"||plugin.instrument().zones.size()!=1||
        !plugin.instrument().zones[0].mapping.sample||page!=Page::perform)
         return reviewFailure(__LINE__);
+    // The review catalog is isolated from the user's real catalog.
+    TemporaryFile libraryFixture(".xml");
+    library::Catalog catalog;library::Entry violin,cello;
+    violin.name="Review Violin";violin.family="Strings";violin.source=first;violin.format="sfz";
+    cello.name="Review Cello";cello.family="Strings";cello.source=second;cello.format="sfz";
+    catalog.entries={violin,cello};
+    if(library::save(catalog,libraryFixture.getFile()).failed())return reviewFailure(__LINE__);
+    library::Manager manager([](Instrument,library::Presentation){},libraryFixture.getFile());
+    if(!manager.review(output))return reviewFailure(__LINE__);
     return true;
 }
 #endif
