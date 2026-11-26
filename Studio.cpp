@@ -6234,6 +6234,22 @@ int StudioView::runInterfaceReview (const File& output)
             return fail ("capture floating Cinematic Atelier performance keyboard");
     }
 
+    // Capture the actual dock within the arrangement, including the
+    // manuscript engraving in the two side margins and no redundant header.
+    if (writeImages)
+    {
+        setSize (1536, 900);
+        setKeyboardDocked (true);
+        if (! dockedKeyboard.isDocked()
+            || ! keyboardDockSurround.isVisible()
+            || dockedKeyboard.getWidth() >= keyboardDockSurround.getWidth())
+            return fail ("Atelier dock is centered over visible staff margins");
+        if (! capture ("atelier-keyboard-docked-staff-surround-1536x900.png"))
+            return fail ("capture Atelier keyboard embedded in arrangement");
+        hideAuditionKeyboard();
+        setSize (1280, 800);
+    }
+
     if (performance.isVisible() || articulationStrip.isVisible())
         return fail ("expanded Mixer must be the only visible lower workspace");
     if (! capture ("mixer-1280x800.png")) return fail ("write Mixer screenshot");
