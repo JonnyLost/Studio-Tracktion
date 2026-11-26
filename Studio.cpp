@@ -902,7 +902,7 @@ public:
 
         message.setText ("Create or open a project to begin.", dontSendNotification);
         addChildComponent (environmentWelcome);
-        environmentWelcome.onNewProject = [this] { chooseProject (true); };
+        environmentWelcome.onNewProject = [this] (studio::environments::TemplateId id) { chooseProject (true, id); };
         environmentWelcome.onOpenProject = [this] { chooseProject (false); };
         environmentWelcome.onContinue = [this] { grabKeyboardFocus(); };
         setSize (1024, 640);
@@ -4216,9 +4216,9 @@ private:
             });
     }
 
-    void chooseProject (bool create)
+    void chooseProject (bool create, std::optional<studio::environments::TemplateId> templateId = std::nullopt)
     {
-        save ([this, create] (bool ok)
+        save ([this, create, templateId] (bool ok)
         {
             if (! ok)
                 return;
@@ -4227,7 +4227,7 @@ private:
             busy = true;
             const auto flags = FileBrowserComponent::canSelectFiles
                              | (create ? FileBrowserComponent::saveMode : FileBrowserComponent::openMode);
-            chooser->launchAsync (flags, [this, create] (const FileChooser& dialog)
+            chooser->launchAsync (flags, [this, create, templateId] (const FileChooser& dialog)
             {
                 busy = false;
                 auto file = dialog.getResult();
@@ -4240,12 +4240,64 @@ private:
                     message.setText ("Choose a new project filename.", dontSendNotification);
                     return;
                 }
-                loadProject (file, create);
+                loadProject (file, create, templateId);
             });
         });
     }
 
-    void loadProject (const File& file, bool create)
+    // Apply only to a newly created, not-yet-installed Edit. No plug-in
+    // scanning, sample loading, audio routing or recording takes place here.
+    bool prepareEnvironment (te::Edit& candidate, studio::environments::TemplateId id)
+    {
+        using namespace studio::environments;
+        using namespace studio::spatial;
+        const auto& p = plan (id);
+        auto initial = te::getAudioTracks (candidate);
+        if (initial.size() > p.count) return false; // Never delete pre-existing tracks.
+        for (auto* track : initial)
+            if (! track->getClips().isEmpty() || studio::findInstrument (*track) != nullptr)
+                return false;
+        std::array<int, sectionNames.size()> totals {}, indexes {};
+        for (int i = 0; i < p.count; ++i)
+            if (p.tracks[i].stage) ++totals[(size_t) p.tracks[i].section];
+        for (int i = 0; i < p.count; ++i)
+        {
+            auto* track = EngineHelpers::getOrInsertAudioTrackAt (candidate, i);
+            if (track == nullptr) return false;
+            const auto& spec = p.tracks[i];
+            track->setName (spec.name);
+            track->state.setProperty (Identifier ("studioTrackIcon"), spec.icon, nullptr);
+            switch (spec.section)
+            {
+                case Section::strings: track->setColour (studio::colours::strings); break;
+                case Section::woodwinds: track->setColour (studio::colours::winds); break;
+                case Section::brass: track->setColour (studio::colours::brass); break;
+                case Section::percussion: track->setColour (studio::colours::percussion); break;
+                case Section::keys: track->setColour (studio::colours::keys); break;
+                default: track->setColour (studio::colours::other); break;
+            }
+            if (spec.stage)
+            {
+                const auto group = (size_t) spec.section;
+                const auto position = seat (p.seating, spec.section, indexes[group]++, totals[group]);
+                track->state.addChild (writeSeat (track->itemID.toString(), { position, spec.section, -14.0f }), -1, nullptr);
+            }
+        }
+        if (p.room >= 0)
+        {
+            auto root = candidate.state.getOrCreateChildWithName (sceneType, nullptr);
+            root.setProperty ("version", studio::spatial::version, nullptr);
+            root.setProperty ("seating", (int) p.seating, nullptr);
+            const auto& room = factoryRooms[(size_t) p.room];
+            root.addChild (writeRoom (room.room, room.name), -1, nullptr);
+        }
+        auto& tempo = candidate.tempoSequence.getTempoAt (te::BeatPosition::fromBeats (0));
+        tempo.setBpm (p.bpm);
+        candidate.state.setProperty (Identifier ("studioEnvironmentTemplate"), p.key, nullptr);
+        return true;
+    }
+
+    void loadProject (const File& file, bool create, std::optional<studio::environments::TemplateId> templateId = std::nullopt)
     {
         std::vector<OriginalAriaState> pendingOriginalStates;
         bool backupAvailable = true;
@@ -4275,6 +4327,11 @@ private:
         }();
         if (next == nullptr)
             return;
+        if (create && templateId && ! prepareEnvironment (*next, *templateId))
+        {
+            message.setText ("Could not prepare the template. The current project remains open.", dontSendNotification);
+            return;
+        }
 
         if (edit != nullptr)
         {
@@ -4433,7 +4490,17 @@ private:
                 }
             }
         if (create)
+        {
+            if (templateId)
+            {
+                const auto& p = studio::environments::plan (*templateId);
+                auto tracks = te::getAudioTracks (*edit);
+                if (! tracks.isEmpty()) selection.selectOnly (tracks.getFirst());
+                selectActivity (p.activity);
+                message.setText (String (p.name) + " ready. Choose instruments for your tracks; Stage audio is opt-in.", dontSendNotification);
+            }
             save();
+        }
         else if (ariaReviewPending)
         {
             autoAriaRetryScheduledAt = Time::getMillisecondCounter();
@@ -6918,6 +6985,39 @@ int StudioView::runInterfaceReview (const File& output)
     if (projectGeneration != beforeReopen + 1 || tracks.size() < 2 || tracks[0]->getClips().isEmpty()
         || studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType)) != original)
         return fail ("restore project with MIDI and Stage positions");
+    // Exercise the real new-project template path and reload saved metadata.
+    applyAppearance (100, 100, false);
+    for (const auto& p : studio::environments::templates)
+    {
+        TemporaryFile templateFixture (".tracktionedit");
+        loadProject (templateFixture.getFile(), true, p.id);
+        if (projectFile != templateFixture.getFile() || edit == nullptr
+            || edit->state.getProperty (Identifier ("studioEnvironmentTemplate")).toString() != p.key)
+            return fail ("create environment template");
+        auto verifyTemplate = [&]
+        {
+            const auto created = te::getAudioTracks (*edit);
+            if (created.size() != p.count) return false;
+            for (int i = 0; i < created.size(); ++i)
+                if (created[i]->getName() != p.tracks[i].name
+                    || studio::findInstrument (*created[i]) != nullptr
+                    || studio::spatial::hasRoomSend (*created[i])
+                    || created[i]->state.getChildWithName (studio::spatial::seatType).isValid() != p.tracks[i].stage)
+                    return false;
+            if (p.room >= 0)
+            {
+                const auto root = edit->state.getChildWithName (studio::spatial::sceneType);
+                if (root.getChildWithName (studio::spatial::roomType).getProperty ("name").toString()
+                    != studio::spatial::factoryRooms[(size_t) p.room].name) return false;
+            }
+            return true;
+        };
+        if (! verifyTemplate() || activeActivity != p.activity || edit->getTransport().isRecording())
+            return fail ("environment template contents or startup workspace");
+        save();
+        loadProject (templateFixture.getFile(), false);
+        if (! verifyTemplate()) return fail ("environment template save and reopen");
+    }
     std::puts ("Studio interface review passed at 45 size and appearance combinations.");
     return 0;
 }

@@ -137,12 +137,31 @@ StudioEnvironmentWelcome::StudioEnvironmentWelcome (PropertiesFile& prefs) : pre
 
     newProject.setColour (TextButton::buttonColourId, colours::action);
     newProject.setColour (TextButton::textColourOffId, colours::canvas);
-    newProject.setTooltip ("Create a new Studio project");
+    newProject.setTooltip ("Choose a musical project template. Artwork rotation does not select a template.");
     openProject.setTooltip ("Open an existing Studio project");
     continueButton.setTooltip ("Close the welcome screen and show the arrangement");
     previousButton.setTooltip ("Previous Studio environment");
     nextButton.setTooltip ("Next Studio environment");
-    newProject.onClick = [this] { dismiss(); if (onNewProject) onNewProject(); };
+    newProject.onClick = [this]
+    {
+        PopupMenu menu;
+        menu.addSectionHeader ("Choose a musical starting point");
+        auto safe = Component::SafePointer<StudioEnvironmentWelcome> (this);
+        for (const auto& p : environments::templates)
+        {
+            String label = String (p.name) + " - " + String (p.count) + (p.count == 1 ? " track" : " tracks");
+            if (p.room >= 0) label += " / " + String (spatial::factoryRooms[(size_t) p.room].name);
+            menu.addItem (label, [safe, id = p.id]
+            {
+                if (safe == nullptr) return;
+                safe->dismiss();
+                if (safe->onNewProject) safe->onNewProject (id);
+            });
+        }
+        menu.addSeparator();
+        menu.addSectionHeader ("Tracks start without loaded instruments");
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&newProject));
+    };
     openProject.onClick = [this] { dismiss(); if (onOpenProject) onOpenProject(); };
     continueButton.onClick = [this] { dismiss(); if (onContinue) onContinue(); };
     previousButton.onClick = [this]

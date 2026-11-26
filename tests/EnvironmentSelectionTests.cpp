@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../EnvironmentSelection.h"
+#include "../EnvironmentTemplates.h"
 
 #include <cassert>
 #include <iostream>
@@ -32,5 +33,19 @@ int main()
         const auto scene = nextScene (2, 0b10100, Rotation::random, draw);
         assert (scene == 4);
     }
-    std::cout << "Studio Environments rotation passed.\n";
+    for (const auto& p : templates)
+    {
+        if (p.count <= 0 || p.count > 16 || p.bpm < 40 || p.bpm > 200
+            || p.room < -1 || p.room >= (int) studio::spatial::factoryRooms.size()
+            || &plan (p.id) != &p) return 1;
+        for (int i = 0; i < p.count; ++i)
+        {
+            if (std::string_view (p.tracks[i].name).empty() || (p.tracks[i].stage && p.room < 0)) return 1;
+            for (int j = 0; j < i; ++j)
+                if (std::string_view (p.tracks[i].name) == p.tracks[j].name) return 1;
+        }
+    }
+    if (templates.size() != 6 || plan (TemplateId::film).activity != studio::Activity::score
+        || plan (TemplateId::empty).count != 1 || plan (TemplateId::chamber).count != 4) return 1;
+    std::cout << "Studio Environments rotation and templates passed.\n";
 }
