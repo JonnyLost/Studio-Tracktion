@@ -16,7 +16,7 @@ bool isAria (const PluginDescription& plugin)
         || (plugin.manufacturerName.containsIgnoreCase ("Garritan") && plugin.name.containsIgnoreCase ("ARIA"));
 }
 
-void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, Colour colour)
+void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, bool effect, Colour colour)
 {
     const auto box = bounds.withSizeKeepingCentre (jmin (bounds.getWidth(), bounds.getHeight() * 1.6f),
                                                     bounds.getHeight());
@@ -25,7 +25,20 @@ void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, Colou
     Graphics::ScopedSaveState save (g);
     g.addTransform (transform);
     g.setColour (colour);
-    if (orchestra)
+    if (effect)
+    {
+        // Compact native equaliser/processor icon: effects should not appear
+        // as additional MIDI keyboards in the Apple collection.
+        g.drawRoundedRectangle (8.0f, 9.0f, 84.0f, 42.0f, 5.0f, 1.5f);
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const float x = 29.0f + channel * 21.0f;
+            const float handle = 24.0f + ((channel + 1) % 3) * 6.5f;
+            g.drawLine (x, 15.0f, x, 45.0f, 2.0f);
+            g.fillRoundedRectangle (x - 6.0f, handle - 2.5f, 12.0f, 5.0f, 1.5f);
+        }
+    }
+    else if (orchestra)
     {
         // Simple in-house flute silhouette identifies the orchestral player.
         g.addTransform (AffineTransform::rotation (-0.46f, 50.0f, 30.0f));
@@ -425,7 +438,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
         return;
     }
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", colours::action);
+    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", entry.effect, colours::action);
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
@@ -600,7 +613,7 @@ void InstrumentBrowser::paint (Graphics& g)
     {
         g.setColour (colours::well);
         g.fillRoundedRectangle (art.toFloat(), (float) appearance.px (4));
-        drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", colours::action);
+        drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", e->effect, colours::action);
     }
 }
 }
