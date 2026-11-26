@@ -1005,7 +1005,8 @@ Result Plugin::prepareSoundBank (const File& file, int index, Instrument& next, 
         if (converted.name.isEmpty()) converted.name = "Sound bank program " + String (program.number);
         converted.settings.gainDb = -6; // headroom for layers
         converted.groups.front().name = "Bank regions";
-        const auto root = File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Studio").getChildFile ("Imported Sound Banks");
+        const auto root = media.parent != File() ? media.parent
+            : File::getSpecialLocation (File::userMusicDirectory).getChildFile ("Studio").getChildFile ("Imported Sound Banks");
         if (auto result = root.createDirectory(); result.failed()) return result;
         // UUID rather than a user-provided bank/patch string: no collisions or
         // path traversal, and cancellation can only remove this one directory.
