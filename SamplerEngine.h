@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include "SamplerStream.h"
+#include <limits>
 
 namespace studio::sampler
 {
@@ -19,7 +21,27 @@ struct Sample
     std::int64_t sourceBytes = -1, sourceTime = 0;
     int rootNote = -1; // Verified file metadata, not acoustic pitch analysis.
     std::vector<float> left, right;
-    std::size_t bytes() const { return (left.size() + right.size()) * sizeof (float); }
+    // For streamed recordings the vectors contain the immutable attack
+    // preload, not the entire recording. Existing short/fixture samples
+    // keep their original fully resident representation.
+    int totalFrames = 0;
+    std::shared_ptr<StreamCache> stream;
+    int frameCount() const noexcept { return totalFrames > 0 ? totalFrames : static_cast<int> (left.size()); }
+    bool stereo() const noexcept { return ! right.empty(); }
+    std::size_t residentBytes() const noexcept { return (left.size() + right.size()) * sizeof (float); }
+    std::size_t cacheBytes() const noexcept { return stream ? stream->bytes() : 0; }
+    std::size_t bytes() const noexcept { return residentBytes() + cacheBytes(); }
+    bool readFrame (int frame, StreamCache::Cursor& cursor, float& l, float& r, bool offline) const noexcept
+    {
+        if (frame < 0 || frame >= frameCount()) return false;
+        if (static_cast<std::size_t> (frame) < left.size())
+        {
+            l = left[static_cast<std::size_t> (frame)];
+            r = stereo() ? right[static_cast<std::size_t> (frame)] : l;
+            return true;
+        }
+        return stream && cursor.read (*stream, frame, l, r, offline); // replaced below
+    }
 };
 
 struct Zone
@@ -72,7 +94,7 @@ public:
     void panic() noexcept;
     void midi (int status, int data1, int data2) noexcept;
     void preview (int source, int channel, int note, int velocity, int zone = -1, int first = -1, int end = -1) noexcept;
-    void render (float* left, float* right, int frames) noexcept;
+    void render (float* left, float* right, int frames, bool offline = false) noexcept;
     void publishMeters() noexcept;
     unsigned activeVoices() const noexcept { return active.load (std::memory_order_relaxed); }
     bool noteActive (int note) const noexcept;
@@ -92,6 +114,7 @@ private:
         const Sample* sample = nullptr;
         int channel = 0, note = 0, source = 0;
         float velocityGain = 0, level = 0, releaseStep = 0;
+        float streamGain = 1, lastLeft = 0, lastRight = 0;
         double position = 0, baseStep = 0;
         std::uint64_t age = 0;
         bool down = false, oneShot = false, loop = false, muted = false;
