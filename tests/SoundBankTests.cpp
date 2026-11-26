@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "SoundBankFixtures.h"
+#include "LegacyBankFixtures.h"
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -38,5 +38,38 @@ int main()
     fixtures::write(bad,Bytes{'R','I','F','F',255,255,255,255,'s','f','b','k'});
     failed=false;try { Bank invalid(bad); }catch(const std::exception&){failed=true;}assert(failed);
     failed=false;try { a.resolve(999); }catch(const std::exception&){failed=true;}assert(failed);
+    for(bool modern:{false,true})
+    {
+        const auto folder=dir/(modern?"s3000":"s1000");
+        std::filesystem::create_directory(folder);
+        const auto sample=folder/(modern?"STRINGS.S3":"STRINGS.S1");
+        const auto program=folder/(modern?"ORCH.P3":"ORCH.P1");
+        fixtures::write(sample,legacyfixtures::sample(modern));
+        fixtures::write(program,legacyfixtures::program(modern));
+        Bank ak(program);assert(ak.isAkai&&ak.programs.size()==1&&ak.programs[0].name=="ORCHESTRA");
+        const auto r=ak.resolve(0).regions.at(0);
+        assert(r.root==60&&r.low==48&&r.high==72&&r.soft==20&&r.hard==110);
+        assert(r.transpose==1&&std::abs(r.cents)<1e-5f&&r.pan==20);
+        assert(r.audio.offset==(modern?192u:150u)&&r.audio.frames==196608&&r.audio.rate==48000);
+        assert(r.loop&&r.sustainLoop&&r.loopStart==70000&&r.loopEnd==100001);
+        assert(s16(ak.readAudio(r.audio,r.audio.offset,2),0)==-16384);
+        Bank single(sample);assert(single.resolve(0).regions[0].root==60);
+        fixtures::write(folder/(modern?"Duplicate.S3":"Duplicate.S1"),legacyfixtures::sample(modern));
+        failed=false;try{ak.resolve(0);}catch(const std::exception&){failed=true;}assert(failed);
+        std::filesystem::remove(folder/(modern?"Duplicate.S3":"Duplicate.S1"));
+        auto invalid=legacyfixtures::sample(modern);invalid.pop_back();fixtures::write(sample,invalid);
+        failed=false;try{ak.resolve(0);}catch(const std::exception&){failed=true;}assert(failed);
+    }
+    for(bool extended:{false,true})
+    {
+        const auto gig=dir/"fixture.gig";
+        fixtures::write(gig,legacyfixtures::gig(extended));
+        { Bank g(gig);assert(g.isGig&&g.programs[0].name=="GIG fixture");
+          const auto r=g.resolve(0).regions.at(0);
+          assert(r.root==62&&r.cents==25&&r.loopEnd==9216&&r.audio.frames==196608); }
+        fixtures::write(gig,legacyfixtures::gig(extended,true));
+        failed=false;try{Bank g(gig);g.resolve(0);}catch(const std::exception&){failed=true;}assert(failed);
+    }
+    std::puts("Legacy banks: S1000/S3000 PCM, keygroups, loops, ambiguous samples, GIG dimension cues and unsupported dimensions tested.");
     std::puts("Sound banks: catalogs, SF2 inheritance/ranges, SF24, SF3 metadata, DLS wave links, loops and invalid offsets passed.");
 }
