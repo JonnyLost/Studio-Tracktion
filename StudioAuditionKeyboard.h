@@ -292,6 +292,21 @@ public:
         if (changed != 0) repaint();
     }
 
+    // Preserve wheel and knob positions when switching between the docked
+    // and floating instances. Reading values does not send any MIDI.
+    KeyboardPerformanceValues performanceSnapshot() const
+    {
+        KeyboardPerformanceValues values;
+        values.bend = juce::roundToInt (bend.getValue());
+        values.mod = juce::roundToInt (mod.getValue());
+        values.expr = juce::roundToInt (expression.getValue());
+        values.vol = juce::roundToInt (volume.getValue());
+        values.tone = juce::roundToInt (brightness.getValue());
+        values.reverb = juce::roundToInt (room.getValue());
+        values.changed = (1u << 6) - 1u;
+        return values;
+    }
+
     void resetPerformance()
     {
         bend.setValue (8192, juce::dontSendNotification);
