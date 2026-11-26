@@ -373,6 +373,8 @@ public:
         showTransportElapsed = prefs.getBoolValue ("studio.transportElapsed", true);
         showTransportTempo = prefs.getBoolValue ("studio.transportTempo", true);
         showTransportMeter = prefs.getBoolValue ("studio.transportMeter", true);
+        showTransportCapture = prefs.getBoolValue ("studio.transportCapture", true);
+        keyboardDocked = prefs.getBoolValue ("studio.keyboardDocked", false);
         transportSize = jlimit (0, 2, prefs.getIntValue ("studio.transportSize", 1));
         workspaceHeight = studio::appearance.px (workspaceHeight);
         railViewport.setViewedComponent (&railContent, false);
@@ -478,8 +480,8 @@ public:
         addAndMakeVisible (flashbackButton);
         addAndMakeVisible (keyboardButton);
         keyboardButton.setTooltip ("Open the on-screen audition keyboard for the selected instrument (Shift-Command-K)");
-        keyboardButton.onClick = [this] { toggleAuditionKeyboard(); };
-        flashbackButton.setTooltip ("Capture recently played MIDI from the selected track's assigned input, even if Record wasn't pressed");
+        keyboardButton.onClick = [this] { showKeyboardChoices(); };
+        flashbackButton.setTooltip ("Capture MIDI — recover recent unrecorded MIDI on the selected track");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
         transportOptions.onClick = [this] { showTransportOptions(); };
@@ -687,6 +689,21 @@ public:
                 resized();
             }
         };
+        addAndMakeVisible (addTrackButton);
+        addAndMakeVisible (removeTrackButton);
+        addTrackButton.setTooltip ("Add instrument track");
+        removeTrackButton.setTooltip ("Delete selected track (disabled when track has protected state)");
+        addTrackButton.onClick = [this] { if (canEditRegions()) addTrack ("Instrument"); };
+        removeTrackButton.onClick = [this]
+        {
+            if (! canEditRegions()) return;
+            if (auto* track = workflowTrack())
+            {
+                PopupMenu menu;
+                populateTrackEditMenu (menu, *track, false);
+                menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&removeTrackButton));
+            }
+        };
         addAndMakeVisible (trackOptions);
         trackOptions.setTooltip ("Rename, duplicate, move or delete the selected track");
         trackOptions.onClick = [this]
@@ -702,6 +719,7 @@ public:
         };
         monitor.onToggleDock = [this] { toggleMonitorDock(); };
 
+        addChildComponent (dockedKeyboard);
         addAndMakeVisible (timeline);
         timeline.setScrollBarsShown (true, false);
         workspaceBody.addChildComponent (piano);
@@ -1150,6 +1168,14 @@ public:
             createGroupDialog (true);
             return true;
         }
+        if (! mods.isCommandDown() && ! mods.isAltDown() && ! mods.isCtrlDown()
+            && (key.getKeyCode() == KeyPress::deleteKey || key.getKeyCode() == KeyPress::backspaceKey)
+            && canEditRegions() && ! selection.getItemsOfType<te::Clip>().isEmpty())
+        {
+            performRegionAction (6);
+            repaint (rulerRow);
+            return true;
+        }
         if (mods.isCommandDown() && ! mods.isShiftDown() && ! mods.isAltDown())
         {
             switch (key.getKeyCode())
@@ -1241,7 +1267,7 @@ public:
         const int barW = m.span (transportSize == 2 ? 126 : (roomyTransport ? 112 : 91));
         const int bpmW = m.span (transportSize == 2 ? 80 : (roomyTransport ? 69 : 58));
         const int meterW = m.span (transportSize == 2 ? 72 : (roomyTransport ? 62 : 53));
-        const int menuW = m.span (76), flashbackW = m.span (98),
+        const int menuW = m.span (76), flashbackW = m.px (transportSize == 2 ? 58 : (transportSize == 0 ? 38 : 48)),
                   keyboardW = m.span (86);
         const int elapsedW = m.span (transportSize == 2 ? 132 : (roomyTransport ? 112 : 97));
        #if JUCE_MAC
@@ -1258,13 +1284,13 @@ public:
         const bool showTempo = showTransportTempo && availableWidth >= m.span (580);
         const bool showMeter = showTransportMeter && availableWidth >= m.span (670);
         const bool showMusicMenu = availableWidth >= m.span (610);
-        const bool showFlashback = availableWidth >= m.span (transportSize == 2 ? 1120 : 830);
+        const bool showFlashback = showTransportCapture && availableWidth >= m.span (transportSize == 2 ? 760 : 650);
         const bool showKeyboard = availableWidth >= m.span (transportSize == 2 ? 1330 : 1100);
         const bool showCustomize = customizeW > 0 && availableWidth >= m.span (925);
         const int optionalButtons = (showCycle ? 1 : 0) + (showClick ? 1 : 0);
         const int readoutBase = barW + (showTempo ? bpmW : 0) + (showMeter ? meterW : 0);
         const int secondaryWidth = (showMusicMenu ? menuW + gap : 0)
-                                 + (showFlashback ? flashbackW + gap : 0)
+                                 + (showFlashback ? flashbackW : 0)
                                  + (showKeyboard ? keyboardW + gap : 0)
                                  + (showCustomize ? customizeW : 0);
         const int fixed = readoutBase + secondaryWidth + 2 * gap;
@@ -1287,6 +1313,9 @@ public:
         auto row = strip.withSizeKeepingCentre (jmin (availableWidth, totalWidth), transportHeight);
         for (auto* button : { &rewind, &stop, &play, &record })
             button->setBounds (row.removeFromLeft (key).reduced (m.px (1), m.px (5)));
+        if (showFlashback)
+            flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
+        else flashbackButton.setBounds ({});
         row.removeFromLeft (gap);
         for (auto* button : { &cycleButton, &clickButton })
             button->setBounds (button->isVisible()
@@ -1305,12 +1334,6 @@ public:
             music.setBounds (row.removeFromLeft (menuW).reduced (m.px (1), m.px (5)));
         }
         else music.setBounds ({});
-        if (showFlashback)
-        {
-            row.removeFromLeft (gap);
-            flashbackButton.setBounds (row.removeFromLeft (flashbackW).reduced (m.px (1), m.px (5)));
-        }
-        else flashbackButton.setBounds ({});
         if (showKeyboard)
         {
             row.removeFromLeft (gap);
@@ -1361,6 +1384,12 @@ public:
                                                    : Rectangle<int>();
         layoutPerformance (area);
         layoutDock (area);
+        if (keyboardDocked)
+        {
+            dockedKeyboard.setVisible (true);
+            dockedKeyboard.setBounds (area.removeFromBottom (m.px (182)).reduced (m.px (5)));
+        }
+        else dockedKeyboard.setVisible (false);
         arrangementTools = area.removeFromTop (m.control (29));
         auto tools = arrangementTools.reduced (m.px (5), m.px (2));
        #if JUCE_MAC
@@ -1396,6 +1425,7 @@ public:
         regionActions.setBounds ({});
         trackDetails.setBounds (tools);
 
+
         rulerRow = area.removeFromTop (m.control (26) + m.control (18));
         timeline.setBounds (area);
         sizeEditor();
@@ -1405,6 +1435,9 @@ public:
             ? m.trackFooter() : 0;
         ruler = rulerRow.withTrimmedLeft (m.trackHeader()).withTrimmedRight (footerWidth + timeline.getScrollBarThickness());
         rulerTrackLabel = rulerRow.withWidth (m.trackHeader()).reduced (m.px (3));
+        auto trackButtons = rulerTrackLabel.removeFromTop (m.control (24));
+        addTrackButton.setBounds (trackButtons.removeFromLeft (m.px (29)).reduced (m.px (2)));
+        removeTrackButton.setBounds (trackButtons.removeFromLeft (m.px (29)).reduced (m.px (2)));
         // The Inspector starts below the transport and runs beside the full
         // arrangement and lower workspace. Nothing is painted underneath it.
         inspectorDrawer.setBounds (inspectorRegion);
@@ -1608,6 +1641,15 @@ public:
         addToggle ("Tempo", showTransportTempo, &StudioView::showTransportTempo, "studio.transportTempo");
         addToggle ("Time signature", showTransportMeter, &StudioView::showTransportMeter, "studio.transportMeter");
         const auto safe = Component::SafePointer<StudioView> (this);
+        menu.addItem ("Capture MIDI", true, showTransportCapture, [safe]
+        {
+            if (safe == nullptr) return;
+            safe->showTransportCapture = ! safe->showTransportCapture;
+            auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue ("studio.transportCapture", safe->showTransportCapture);
+            prefs.saveIfNeeded();
+            safe->resized();
+        });
         menu.addSeparator();
         menu.addSectionHeader ("Transport size");
         for (const auto& option : { std::pair { "Compact", 0 },
@@ -1630,9 +1672,11 @@ public:
             if (safe == nullptr) return;
             safe->showTransportCycle = safe->showTransportClick = true;
             safe->showTransportElapsed = safe->showTransportTempo = safe->showTransportMeter = true;
+            safe->showTransportCapture = true;
             safe->transportSize = 1;
             auto& prefs = safe->engine.getPropertyStorage().getPropertiesFile();
             prefs.setValue ("studio.transportSize", 1);
+            prefs.setValue ("studio.transportCapture", true);
             for (const auto* key : { "studio.transportCycle", "studio.transportClick",
                                      "studio.transportElapsed", "studio.transportTempo", "studio.transportMeter" })
                 prefs.setValue (key, true);
@@ -1724,7 +1768,7 @@ public:
         mBrowser, mPiano, mStage, mMixer, mInspector, mEnvironments,
         mMidiMonitor, mResources, mAuditionKeyboard, mRoomReturnArrangement, mScaleUp, mScaleDown, mScaleReset,
         mTransportCycle, mTransportClick, mTransportElapsed, mTransportTempo,
-        mTransportMeter, mTransportReset, mTransportCompact, mTransportComfortable,
+        mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
         mAboutStudio, mKeyboardHelp, mSettings, mAtelier
@@ -1807,6 +1851,7 @@ public:
                 add (mTransportElapsed, "Transport: Elapsed Time", true, showTransportElapsed);
                 add (mTransportTempo, "Transport: Tempo", true, showTransportTempo);
                 add (mTransportMeter, "Transport: Time Signature", true, showTransportMeter);
+                add (mTransportCapture, "Transport: Capture MIDI", true, showTransportCapture);
                 add (mTransportReset, "Reset Transport Layout");
                 menu.addSeparator();
                 add (mTransportCompact, "Transport Size: Compact", true, transportSize == 0);
@@ -1926,7 +1971,9 @@ public:
                 showTransportCycle = showTransportClick = showTransportElapsed = true;
                 showTransportTempo = showTransportMeter = true;
                 transportSize = 1;
+                showTransportCapture = true;
                 break;
+            case mTransportCapture: showTransportCapture = ! showTransportCapture; break;
             case mTransportCompact: transportSize = 0; break;
             case mTransportComfortable: transportSize = 1; break;
             case mTransportLarge: transportSize = 2; break;
@@ -1940,11 +1987,12 @@ public:
             prefs.setValue ("studio.transportElapsed", showTransportElapsed);
             prefs.setValue ("studio.transportTempo", showTransportTempo);
             prefs.setValue ("studio.transportMeter", showTransportMeter);
+            prefs.setValue ("studio.transportCapture", showTransportCapture);
             prefs.setValue ("studio.transportSize", transportSize);
             prefs.saveIfNeeded();
             resized();
         }
-        if (action >= mTransportCompact && action <= mTransportLarge)
+        if (action == mTransportCapture || (action >= mTransportCompact && action <= mTransportLarge))
         {
             auto& prefs = engine.getPropertyStorage().getPropertiesFile();
             prefs.setValue ("studio.transportSize", transportSize);
@@ -1984,7 +2032,7 @@ private:
     int inspectorWidth = 270;
     int stereoScanTicks = 0;
     bool showTransportCycle = true, showTransportClick = true, showTransportElapsed = true;
-    bool showTransportTempo = true, showTransportMeter = true;
+    bool showTransportTempo = true, showTransportMeter = true, showTransportCapture = true;
     int transportSize = 1; // 0 compact, 1 comfortable, 2 large.
     Rectangle<int> topBar, musicalDisplay, railBounds, ariaBanner, arrangementTools, workspacePanel, rulerRow, rulerTrackLabel;
     Component railContent, workspaceBody;
@@ -2013,6 +2061,9 @@ private:
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    studio::AuditionKeyboardPanel dockedKeyboard;
+    bool keyboardDocked = false;
+    te::EditItemID dockedKeyboardTarget;
     te::EditItemID keyboardTarget;
     Viewport timeline;
     std::unique_ptr<FileChooser> chooser;
@@ -2108,7 +2159,7 @@ private:
     StudioPianoRoll piano;
     std::unique_ptr<MidiMonitorWindow> monitorWindow;
     TextButton monitorButton { "MIDI Monitor" };
-    TextButton transportOptions { "Customize..." }, flashbackButton { "Capture MIDI" },
+    TextButton transportOptions { "Customize..." }, flashbackButton { "↶●" },
                keyboardButton { "Keyboard" };
     TextButton retryAriaButton { "Retry ARIA" };
     TextButton confirmAriaButton { "Confirm ARIA" };
@@ -2116,6 +2167,7 @@ private:
                saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                regionActions { "Edit Regions" }, trackOptions { "Track..." },
+               addTrackButton { "+" }, removeTrackButton { "−" },
                addSynthTrack { "Add Synth" }, addSamplerTrack { "Add Sampler" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
                addMidiClip { "+ MIDI Clip" };
@@ -2544,6 +2596,64 @@ private:
         prefs.saveIfNeeded();
     }
 
+    void showKeyboardChoices()
+    {
+        PopupMenu menu;
+        const SafePointer<StudioView> safe (this);
+        menu.addItem ("Dock at bottom", true, keyboardDocked, [safe]
+        {
+            if (safe != nullptr) safe->setKeyboardDocked (true);
+        });
+        menu.addItem ("Float keyboard", true, midiKeyboardWindow != nullptr, [safe]
+        {
+            if (safe != nullptr) safe->setKeyboardDocked (false);
+        });
+        menu.addItem ("Hide keyboard", keyboardDocked || midiKeyboardWindow != nullptr, false, [safe]
+        {
+            if (safe == nullptr) return;
+            safe->keyboardDocked = false;
+            safe->dockedKeyboard.releaseNotes();
+            safe->closeAuditionKeyboard();
+            safe->resized();
+        });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&keyboardButton));
+    }
+
+    void setKeyboardDocked (bool dock)
+    {
+        if (dock)
+        {
+            closeAuditionKeyboard();
+            keyboardDocked = true;
+            if (auto* track = workflowTrack())
+            {
+                dockedKeyboardTarget = track->itemID;
+                dockedKeyboard.setSelectedInstrument (track->getName());
+            }
+            else dockedKeyboardTarget = {};
+            const SafePointer<StudioView> safe (this);
+            dockedKeyboard.send = [safe] (const MidiMessage& note)
+            {
+                if (safe == nullptr || safe->edit == nullptr || safe->busy || ! safe->dockedKeyboardTarget.isValid()) return;
+                if (auto* track = te::findAudioTrackForID (*safe->edit, safe->dockedKeyboardTarget))
+                    if (studio::findInstrument (*track) != nullptr
+                        && safe->edit->getTransport().getCurrentPlaybackContext() != nullptr)
+                        track->injectLiveMidiMessage (note, {});
+            };
+        }
+        else
+        {
+            dockedKeyboard.releaseNotes();
+            dockedKeyboard.send = {};
+            keyboardDocked = false;
+            if (midiKeyboardWindow == nullptr) toggleAuditionKeyboard();
+        }
+        auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+        prefs.setValue ("studio.keyboardDocked", keyboardDocked);
+        prefs.saveIfNeeded();
+        resized();
+    }
+
     void closeAuditionKeyboard()
     {
         if (midiKeyboardWindow == nullptr) return;
@@ -2557,6 +2667,13 @@ private:
 
     void toggleAuditionKeyboard()
     {
+        if (keyboardDocked)
+        {
+            dockedKeyboard.releaseNotes();
+            keyboardDocked = false;
+            resized();
+            return;
+        }
         if (midiKeyboardWindow != nullptr)
         {
             closeAuditionKeyboard();
@@ -3376,6 +3493,8 @@ private:
         if (names != trackNames)
             trackNames = std::move (names);
         trackOptions.setEnabled (ready && workflowTrack() != nullptr);
+        addTrackButton.setEnabled (ready && canEditRegions());
+        removeTrackButton.setEnabled (ready && canEditRegions() && workflowTrack() != nullptr);
         trackDetails.setColour (Label::textColourId, recording ? studio::colours::record : studio::colours::secondary);
         const bool focusNeedsAttention = midiFocusStatus.contains ("record-armed")
             || midiFocusStatus.contains ("multi-track") || midiFocusStatus.contains ("Release ");
