@@ -447,7 +447,8 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     }
     String displayedInstrument = chosen->getName() + " | "
         + (hosted() != nullptr ? hosted()->getName() : String ("Instrument"));
-    if (auto* au = hosted(); au != nullptr
+    if (auto* au = dynamic_cast<te::ExternalPlugin*> (hosted());
+        au != nullptr && au->isAU()
         && au->desc.name.containsIgnoreCase ("DLSMusicDevice")
         && au->state.hasProperty (Identifier ("studioDlsGmProgram")))
     {
