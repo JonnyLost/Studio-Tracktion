@@ -3,6 +3,7 @@
 #include "SpatialState.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
+#include "StudioGeneralMidi.h"
 #include <cmath>
 
 namespace studio
@@ -442,10 +443,22 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
         artworkPicker.setSelectedId (selection, dontSendNotification);
         midiChannel.setSelectedId (jlimit (1, 16,
             (int) chosen->state.getProperty (channelProperty, 1)), dontSendNotification);
-        instrumentName.setText (chosen->getName() + "  ·  " + (hosted() != nullptr ? hosted()->getName() : String ("Instrument")),
-                                dontSendNotification);
         loadArtwork();
     }
+    String displayedInstrument = chosen->getName() + " | "
+        + (hosted() != nullptr ? hosted()->getName() : String ("Instrument"));
+    if (auto* au = hosted(); au != nullptr
+        && au->desc.name.containsIgnoreCase ("DLSMusicDevice")
+        && au->state.hasProperty (Identifier ("studioDlsGmProgram")))
+    {
+        const int gmProgram = (int) au->state.getProperty (Identifier ("studioDlsGmProgram"));
+        if (gm::valid (gmProgram))
+            displayedInstrument = chosen->getName() + " | GM "
+                + String (gm::displayNumber (gmProgram)) + " " + gm::name (gmProgram);
+    }
+    if (instrumentName.getText() != displayedInstrument)
+        instrumentName.setText (displayedInstrument, dontSendNotification);
+
     // A floating full editor can change the same art, CC values, and
     // audition channel. Poll only the tiny saved-state strings: images are
     // decoded only when the selected portrait actually changes.
