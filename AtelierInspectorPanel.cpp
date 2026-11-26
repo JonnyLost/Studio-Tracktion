@@ -251,7 +251,7 @@ bool AtelierInspectorPanel::canSendMidi() const
 {
     auto* t = track();
     auto* plugin = hosted();
-    const auto* external = dynamic_cast<te::ExternalPlugin*> (plugin);
+    auto* external = dynamic_cast<te::ExternalPlugin*> (plugin);
     const bool native = dynamic_cast<sampler::Plugin*> (plugin) != nullptr;
     return editing && t != nullptr && plugin != nullptr
         && plugin->isEnabled() && (native || (external != nullptr && external->getAudioPluginInstance() != nullptr))
@@ -397,6 +397,7 @@ void AtelierInspectorPanel::refreshMappings()
         auto& button = articulationPads[i];
         const bool show = i < mappings.size();
         button.setVisible (show);
+        button.setEnabled (true);
         if (! show) continue;
         button.setButtonText (mappings[i].name);
         button.setTooltip ("Select a verified user mapping; edit in the Articulation Palette.");
