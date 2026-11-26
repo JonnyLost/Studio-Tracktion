@@ -49,7 +49,8 @@ private:
     std::array<juce::Slider, 8> ccKnobs;
     std::array<juce::Label, 8> ccLabels;
     std::vector<ArticulationMapping> mappings;
-    juce::String activeMapping;
+    juce::String activeMapping, nativeMappingInstance;
+    unsigned nativeMappingRevision = 0;
     juce::TextButton mappingsButton { "Edit Articulations" }, sendValues { "Send CC" },
                      fullInstrument { "Full Instrument" }, originalInstrument { "Open Plug-in" },
                      stageButton { "Stage & Mics" };
