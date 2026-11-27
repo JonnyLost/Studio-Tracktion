@@ -14,17 +14,18 @@
 
 namespace studio
 {
-// Keep the legacy slate keyboard outside the two hardware console themes.
+// Keep legacy slate outside the neutral themes; only Deep Black uses hardware controls.
 namespace studioKeyboardColours
 {
 inline bool hardware() { return themes::hardwareConsole (activeTheme); }
-inline juce::Colour base()      { return hardware() ? colours::canvas : juce::Colour (0xff19212d); }
-inline juce::Colour raised()    { return hardware() ? colours::control : juce::Colour (0xff293443); }
-inline juce::Colour panel()     { return hardware() ? colours::well : juce::Colour (0xff131923); }
-inline juce::Colour accent()    { return hardware() ? colours::action : juce::Colour (0xff91c8ff); }
-inline juce::Colour outline()   { return hardware() ? colours::divider : juce::Colour (0xff414d5e); }
-inline juce::Colour white()     { return hardware() ? juce::Colour (themes::hardwareIvory) : juce::Colour (0xfff3f5f7); }
-inline juce::Colour secondary() { return hardware() ? colours::secondary : juce::Colour (0xffb9c0ca); }
+inline bool neutral() { return themes::neutralKeyboard (activeTheme); }
+inline juce::Colour base()      { return neutral() ? colours::canvas : juce::Colour (0xff19212d); }
+inline juce::Colour raised()    { return neutral() ? colours::control : juce::Colour (0xff293443); }
+inline juce::Colour panel()     { return neutral() ? colours::well : juce::Colour (0xff131923); }
+inline juce::Colour accent()    { return neutral() ? colours::action : juce::Colour (0xff91c8ff); }
+inline juce::Colour outline()   { return neutral() ? colours::divider : juce::Colour (0xff414d5e); }
+inline juce::Colour white()     { return hardware() ? juce::Colour (themes::hardwareIvory) : neutral() ? colours::text : juce::Colour (0xfff3f5f7); }
+inline juce::Colour secondary() { return neutral() ? colours::secondary : juce::Colour (0xffb9c0ca); }
 }
 
 
@@ -58,10 +59,10 @@ public:
         }
         else
         {
-            juce::ColourGradient gradient (juce::Colour (0xff202834),
-                                           bounds.getTopLeft(), juce::Colour (0xff19212d),
+            juce::ColourGradient gradient (studioKeyboardColours::neutral() ? colours::panel : juce::Colour (0xff202834),
+                                           bounds.getTopLeft(), studioKeyboardColours::base(),
                                            bounds.getBottomLeft(), false);
-            gradient.addColour (0.68, juce::Colour (0xff1e2733));
+            gradient.addColour (0.68, studioKeyboardColours::neutral() ? colours::timeline : juce::Colour (0xff1e2733));
             g.setGradientFill (gradient);
             g.fillRect (bounds);
         }
@@ -109,7 +110,7 @@ public:
         const float cx = x + w * 0.5f;
         const auto slot = juce::Rectangle<float> (cx - 5.0f, (float) y + 4.0f,
                                                    10.0f, (float) h - 8.0f);
-        g.setColour (juce::Colour (0xff0d1420));
+        g.setColour (studioKeyboardColours::neutral() ? colours::well : juce::Colour (0xff0d1420));
         g.fillRoundedRectangle (slot, 4.0f);
         g.setColour (studioKeyboardColours::outline().withAlpha (0.65f));
         g.drawRoundedRectangle (slot, 4.0f, 1.0f);
@@ -141,7 +142,7 @@ public:
         const float radius = std::min (w, h) * 0.37f;
         const float cx = x + w * 0.5f;
         const float cy = y + h * 0.49f;
-        g.setColour (juce::Colour (0xff101721));
+        g.setColour (studioKeyboardColours::neutral() ? colours::well : juce::Colour (0xff101721));
         g.fillEllipse (cx - radius - 4.0f, cy - radius - 4.0f,
                        (radius + 4.0f) * 2.0f, (radius + 4.0f) * 2.0f);
         juce::Path rail;
@@ -157,7 +158,7 @@ public:
         g.setColour (studioKeyboardColours::accent());
         g.strokePath (active, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff53667a),
+        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::neutral() ? colours::raised.brighter (.25f) : juce::Colour (0xff53667a),
                                                 cx - radius, cy - radius,
                                                 studioKeyboardColours::base(),
                                                 cx + radius, cy + radius, false));
@@ -187,12 +188,13 @@ public:
     void refreshTheme()
     {
         const bool hardware = studioKeyboardColours::hardware();
-        setColour (keyDownOverlayColourId, (hardware ? colours::signal : juce::Colour (0xff76c8e6)).withAlpha (0.88f));
+        const bool neutral = studioKeyboardColours::neutral();
+        setColour (keyDownOverlayColourId, (neutral ? colours::signal : juce::Colour (0xff76c8e6)).withAlpha (0.88f));
         setColour (mouseOverKeyOverlayColourId, (hardware ? juce::Colour (themes::hardwareScale) : studioKeyboardColours::accent()).withAlpha (0.23f));
         setColour (whiteNoteColourId, studioKeyboardColours::white());
-        setColour (blackNoteColourId, juce::Colour (hardware ? 0xff111111u : 0xff151d29u));
-        setColour (keySeparatorLineColourId, juce::Colour (hardware ? 0xff696969u : 0xff7b8898u));
-        setColour (textLabelColourId, juce::Colour (hardware ? 0xff494949u : 0xff506175u));
+        setColour (blackNoteColourId, juce::Colour (neutral ? 0xff111111u : 0xff151d29u));
+        setColour (keySeparatorLineColourId, juce::Colour (neutral ? 0xff696969u : 0xff7b8898u));
+        setColour (textLabelColourId, juce::Colour (neutral ? 0xff494949u : 0xff506175u));
         repaint();
     }
 
