@@ -28,7 +28,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 4 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 5 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -214,5 +214,43 @@ int main()
     require(stopped.advance(0,output),"start finite audition");stopped.stop(output);stopped.stop(output);
     require(sent.size()==2&&!sent.back().on,"stop releases once");
     require(!prepareAudition(melodic,[](Tick){return 0.0;},timed),"reject invalid tempo map");
-    std::cout<<"O1–O4 ostinato core: "<<checks<<" checks passed\n";
+    // O5: older patterns have no optional steps, so full intensity/density
+    // reproduces the exact previously compiled MIDI.
+    const std::string v3="STUDIO_OSTINATO 3 \"Old\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0\n";
+    require(decode(v3,restored)&&restored.rows[0].steps[0].densityThreshold==0,"v3 density migration");
+    Pattern conducted;conducted.rows[0].trackId="t";
+    conducted.rows[0].steps[0]={true,false,100,1000,0,0};
+    conducted.rows[0].steps[1]={true,false,100,1000,0,64};
+    conducted.rows[0].steps[2]={true,true,100,1000,0,127};
+    Render planned;
+    require(compile(conducted,{"t"},1,planned,error)&&planned.notes.size()==3,"compile full density superset");
+    require(decode(encode(conducted),restored)&&restored==conducted,"density tier persistence");
+    require(conductedVelocity(100,0)==25&&conductedVelocity(100,127)==100&&conductedVelocity(1,0)==1,"velocity range and floor");
+    ConductingMailbox mailbox;
+    mailbox.receive(1,10);mailbox.receive(1,20);mailbox.receive(11,0);mailbox.receive(7,127);mailbox.receive(11,128);
+    require(mailbox.consume({127,127})==ConductingValues{20,0},"latest CC mailbox and zero value");
+    require(mailbox.consume({30,40})==ConductingValues{30,40},"consume only new values");
+    mailbox.receive(1,99);mailbox.reset();require(mailbox.consume({7,8})==ConductingValues{7,8},"detach clears stale values");
+    TimedRender conductedTimed;
+    require(prepareAudition(planned,[](Tick t){return double(t)/ticksPerQuarter;},conductedTimed),"prepare conducted render");
+    sent.clear();AuditionCursor live(conductedTimed);
+    for(int ms=0;ms<=4000;++ms)
+    {
+        // Skip tier 64 at its onset. Raise density later; the skipped
+        // note-off must not leak. The essential note remains until its end.
+        const int den=ms<400?0:127;
+        const int intensity=ms<500?0:127;
+        live.advance(ms/1000.0,ConductingValues{intensity,den},output);
+    }
+    require(live.completed()&&sent.size()==4&&sent[0].on&&sent[0].velocity==25
+        &&!sent[1].on&&sent[2].on&&sent[2].velocity==120&&!sent[3].on,"live thresholds and note-off ownership");
+    sent.clear();AuditionCursor quiet(conductedTimed);
+    for(int ms=0;ms<=4000;++ms)quiet.advance(ms/1000.0,ConductingValues{127,0},output);
+    require(quiet.completed()&&sent.size()==2&&sent.front().on&&!sent.back().on,"zero density preserves essential beat");
+    auto conflicting=conducted;require(conflicting.addRow(),"add conflicting row");
+    conflicting.rows[1].trackId="t";conflicting.rows[1].steps[0]={true,false,90,1000,0,64};
+    require(!compile(conflicting,{"t"},1,planned,error),"reject cross-tier overlap");
+    conflicting.rows[1].pitch=61;
+    require(compile(conflicting,{"t"},1,planned,error),"different pitch optional row valid");
+    std::cout<<"O1–O5 ostinato core: "<<checks<<" checks passed\n";
 }
