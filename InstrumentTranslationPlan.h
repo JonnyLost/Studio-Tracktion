@@ -34,7 +34,7 @@ struct TranslationPlan
 };
 inline String describeBinding(const Element& e)
 {
-    return e.label+" ["+e.binding.type+(e.binding.type=="note"||e.binding.type=="cc"?" "+String(e.binding.number):String())+
+    return e.label+" ("+e.semantic+") ["+e.binding.type+(e.binding.type=="note"||e.binding.type=="cc"?" "+String(e.binding.number):String())+
         (e.kind=="articulation"?" = "+String(e.binding.value):String())+"]";
 }
 inline TranslationPlan planTranslation(const juce::Array<tracktion::MidiClip*>& clips,const Profile& source,const Profile& destination)
@@ -89,7 +89,9 @@ inline TranslationPlan planTranslation(const juce::Array<tracktion::MidiClip*>& 
     // Check destination events against untagged controllers and each other.
     // Keys are clip ID + physical message address; note intervals are half-open.
     struct Interval{double start,end;};
-    std::map<std::pair<String,int>,std::vector<Interval>> destinations;
+    std::map<std::pair<String,String>,std::vector<Interval>> destinations;
+    std::map<String,std::set<String>> channelControlMeanings;
+    std::set<String> articulationAddresses;
     for(const auto& e:plan.events)
     {
         auto& c=*e.clip;const auto& b=e.target.binding;
@@ -101,8 +103,17 @@ inline TranslationPlan planTranslation(const juce::Array<tracktion::MidiClip*>& 
         else
             if(auto* existing=c.getSequence().getControllerEventAt(at,address);existing&&existing->getBeatPosition()==at&&!isNamedEvent(existing->state))
                 plan.reject(c.getName()+": destination controller collides with ordinary MIDI.");
-        destinations[{c.itemID.toString(),address}].push_back({e.original.beat,end});
+        const auto addressKey=b.type+":"+String(b.number);
+        destinations[{c.itemID.toString(),addressKey}].push_back({e.original.beat,end});
+        if(b.type!="note")
+        {
+            const auto key=String(c.getMidiChannel().getChannelNumber())+":"+addressKey;
+            if(e.target.kind=="control")channelControlMeanings[key].insert(e.target.semantic);
+            else articulationAddresses.insert(key);
+        }
     }
+    for(const auto& [key,meanings]:channelControlMeanings)
+        if(meanings.size()>1||articulationAddresses.count(key))plan.reject("Independent performance controls share destination address "+key+".");
     for(auto& [key,intervals]:destinations)
     {
         std::sort(intervals.begin(),intervals.end(),[](auto a,auto b){return a.start<b.start;});
