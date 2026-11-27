@@ -28,7 +28,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 7 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 8 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -323,5 +323,31 @@ int main()
     AuditionCursor collided(harmonicTimed);heard.clear();
     require(collided.advance(0,ConductingValues{},dMinor,hear)&&collided.skippedNotes()==1&&heard.size()==1,"live pitch collision skipped");
     collided.stop(hear);require(heard.size()==2&&heard[0].pitch==heard[1].pitch,"collision retains ownership");
+    Harmony recognize=cMajor;recognize.recognizeInversions=true;
+    std::array<bool,128> inversion{};
+    inversion[52]=inversion[55]=inversion[60]=true;
+    require(harmonyFromKeys(inversion,cMajor).root==4,"legacy bass-relative interpretation");
+    require(harmonyFromKeys(inversion,recognize)==recognize,"recognize C major first inversion");
+    for(int root=0;root<12;++root)
+    {
+        for(unsigned quality:{0x091u,0x089u,0x491u,0x891u,0x489u})
+        {
+            std::array<bool,128> voiced{};
+            // Put the third in the bass, retain all chord tones in the upper octave.
+            const int third=(quality&8)?3:4;
+            voiced[size_t(36+root+third)]=true;
+            for(int i=0;i<12;++i)if(quality&(1u<<i))voiced[size_t(60+root+i)]=true;
+            auto inferred=harmonyFromKeys(voiced,recognize);
+            require(inferred.root==root&&inferred.chord==quality,"all roots and common inverted triads/sevenths");
+        }
+    }
+    inversion={};inversion[52]=inversion[56]=inversion[60]=true;
+    require(harmonyFromKeys(inversion,recognize).root==4,"ambiguous augmented chord retains bass");
+    inversion={};
+    require(harmonyFromKeys(inversion,recognize)==recognize,"empty chord retains last harmony");
+    auto savedHarmony=harmonyPattern;savedHarmony.harmony.recognizeInversions=true;
+    require(decode(encode(savedHarmony),restored)&&restored==savedHarmony,"schema 7 root rule round trip");
+    const std::string v6="STUDIO_OSTINATO 6 \"Old\" 1 4 1 0 0 145\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 0 1 1 0 100 \"\"\n";
+    require(decode(v6,restored)&&restored.harmony==cMajor,"schema 6 keeps bass-relative rule");
     std::cout<<"O1–O7 ostinato core: "<<checks<<" checks passed\n";
 }
