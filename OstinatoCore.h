@@ -361,6 +361,9 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
     auto fail=[&](const char* why){error=why;return false;};
     if(!p.valid()||repeats<1||repeats>maxRepeats)return fail("Invalid pattern or repeat count.");
     Render next;next.duration=p.duration()*repeats;next.harmony=p.harmony;
+    size_t visited=0;
+    unsigned usedMask=0;for(int i=0;i<repeats;++i)usedMask|=p.variations.mask(i);
+    const int maxDensity=std::max(p.variations.densityStart,p.variations.densityEnd);
     const bool solo=std::any_of(p.rows.begin(),p.rows.end(),[](const auto& r){return r.solo;});
     for(const auto& row:p.rows)
     {
@@ -375,11 +378,12 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         // never add a rounded subdivision repeatedly. Every cycle ends exactly.
         // Precollect active indices so long silent/mostly silent cycles are cheap.
         std::vector<size_t> activeSteps;
-        for(size_t i=0;i<row.steps.size();++i)if(row.steps[i].enabled)activeSteps.push_back(i);
+        for(size_t i=0;i<row.steps.size();++i){const auto& step=row.steps[i];if(step.enabled&&step.chance>0&&(step.variationMask&usedMask)&&step.densityThreshold<=maxDensity)activeSteps.push_back(i);}
         if(activeSteps.empty())continue;
         for(Tick origin=0;origin<next.duration;origin+=span)
             for(size_t index:activeSteps)
             {
+                if(++visited>4000000)return fail("Pattern exceeds bounded compile work; reduce repeats or independent subdivisions.");
                 const auto& s=row.steps[index];
                 const Tick offset=p.rowBoundary(row,index);
                 const Tick nextOffset=p.rowBoundary(row,index+1);
