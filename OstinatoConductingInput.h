@@ -14,7 +14,7 @@ public:
     ~ConductingInput() override{detach();}
     void attach(std::shared_ptr<tracktion::PhysicalMidiInputDevice> d,int ch)
     {
-        detach();channel=ch;device=std::move(d);
+        detach();channel.store(ch,std::memory_order_relaxed);device=std::move(d);
         if(device)device->addListener(this);
     }
     void detach()
@@ -28,11 +28,11 @@ public:
 private:
     void handleIncomingMidiMessage(const juce::MidiMessage& m)override
     {
-        if(m.isController()&&m.getChannel()==channel)
+        if(m.isController()&&m.getChannel()==channel.load(std::memory_order_relaxed))
             mailbox.receive(m.getControllerNumber(),m.getControllerValue());
     }
     std::shared_ptr<tracktion::PhysicalMidiInputDevice> device;
     ConductingMailbox mailbox;
-    int channel=1;
+    std::atomic<int> channel{1};
 };
 }
