@@ -1,0 +1,28 @@
+# M51 — Cross-library articulation translation
+
+Base: M50 6d16a84fa932ddd3a9ec8b83d0454e165ad1f9f4. No merge.
+
+## Workflow
+
+1. Save a separate project copy before replacing the instrument. Complete and audition a destination profile in Instrument Designer, using the same physical instrument ID and canonical semantic articulation/control IDs as the source. The profiles may belong to different hosted Audio Units or libraries.
+2. Keep the original track's project-local profile snapshot. Stop playback and recording, finish or discard Performance Write, and load the destination sound on that same track using the existing instrument workflow. Do not delete the source track or detach the source profile. Do not play the old keyswitches into the new sound before translation.
+3. Choose **Instruments > Translate Instrument Performance...**. Select a compatible saved destination profile (matching hosted plug-in identifier/version, same physical instrument, nonempty patch).
+4. Read the scrollable review. It lists each used semantic mapping and its old/new MIDI addresses and fixed articulation values, event counts, and blockers. Confirm that the actual patch and slot are loaded and that the proposed techniques are acoustically appropriate. Exact IDs are not proof of equivalent patch variants.
+5. Click Translate MIDI only if the review is acceptable. Studio revalidates project generation, original track, current plug-in instance, source snapshot, and clip fingerprint and plan before applying. The track's named MIDI events and destination profile snapshot are changed together in one undo transaction. Ordinary MIDI notes and untagged controllers remain untouched. No MIDI is sent by the translation command.
+6. Audition the composition. Undo restores the old tagged MIDI events and source profile snapshot; it does NOT reload the previous plug-in, patch or sample library. Restore that separately or reopen the saved original project. Redo restores the translated events. Saving the translated project preserves native MIDI and semantic tags.
+
+## Translation rules
+
+- Exact semantic ID and element kind, unique in both source and destination profiles. Unknown local SFZ label IDs, ambiguous duplicate variants, missing or unassigned targets, source metadata mismatches and wrong channels block the complete operation. No inferred equivalence, automatic fallback, fuzzy matching or partial conversion.
+- Fixed note/CC articulations may translate between note and controller messages. Use the destination's explicitly assigned note/CC and fixed value. Continuous CC/pressure controls preserve actual 7-bit values; bend-to-bend preserves 14-bit values. Sustain CC64 cannot be silently translated to or from a continuous controller. No inferred scale inversion, pitch-range conversion, dynamics calibration, or velocity/sustain equivalence.
+- All MIDI clips on the selected track are checked. Linear unmuted clips only; alternate takes, MPE, groove, clip quantisation, loops and overlapping same-channel regions block translation. A different MIDI channel is not silently imposed on ordinary notes. A raw note at a source or destination keyswitch pitch blocks translation even if it is musically intentional, because Studio cannot distinguish its meaning. Untagged controller events are preserved and counted; exact-time address collisions and independent translated controls sharing one destination address block the operation. Other untagged MIDI data may still have library-specific meaning and requires review.
+- Tagged events remain at their original source beat. Destination keyswitches use the existing M50 bounded pulse (1/16 beat, shortened at clip end), so the exact pulse length is not guaranteed to be retained. Native playback/export remains authoritative; standard MIDI files do not retain Studio-specific names. No changes to the sample files, permanent profile library or other tracks.
+- Review is read-only. A changed plan must be reviewed again. All planned original events are removed and new native events written in an undo transaction, with rollback attempted on failure. Attachment occurs only after successful rewrite. The previous source snapshot cannot be silently detached or replaced by the ordinary profile command when named events exist. If the source snapshot was already lost, this milestone does not provide automatic recovery.
+
+## Verification
+
+Added pure semantic tests to StudioInstrumentProfiles for note-to-CC articulation translation, CC value preservation, missing and ambiguous targets, source ambiguity, channel and instrument mismatch, unassigned targets, local-label rejection, incompatible control types and sustain handling. Extended the native Studio interface fixture for dry-run nonmutation, destination note collision, actual note/CC rewrite, metadata match, and undo/redo. CI filters include M51. These are committed test cases, not a claim they have run successfully. M50's CI was still running at last inspection; M49 Linux passed, Intel pending. No physical Garritan/VSL testing or local sample library access in this session.
+
+## Deliberately deferred
+
+Automatic instrument replacement, library patch interrogation, track duplication, native sampler/synth attachment, manual per-event translation overrides, approximate articulation substitutions, cross-channel and compound keyswitches, velocity-layer and controller response curve calibration, unsupported clip forms, untagged legacy MIDI translation, and sample-accurate seek/cycle chase. This is a conservative foundation for a library-independent composition workflow, not universal compatibility with every sample library.
