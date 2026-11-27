@@ -854,7 +854,7 @@ public:
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
         piano.performanceProfile=[this](te::MidiClip& clip){return performanceProfileFor(clip);};
-        piano.canWritePerformance=[this]{return canEditRegions()&&edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!chaseStarting;};
+        piano.canWritePerformance=[this]{return canEditRegions()&&edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!chaseStarting&&!performanceWrite;};
         piano.onNoteDrawn = [this] (te::MidiClip& clip, te::BeatPosition beat, int pitch)
         {
             if (! articulation.isShowing() && ! articulationStrip.isShowing()) return;
@@ -1300,9 +1300,9 @@ public:
         if (environmentWelcome.isVisible()) return environmentWelcome.keyPressed (key);
         if (handleAppearanceKey (key)
             || ((articulation.isShowing() || articulationStrip.isShowing()) && articulation.keyPressed (key))) return true;
-        if (key == KeyPress::spaceKey && play.isEnabled())
+        if (key == KeyPress::spaceKey && (play.isEnabled()||chaseStarting))
         {
-            if (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording()))
+            if (chaseStarting || (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording())))
                 stop.onClick();
             else play.onClick();
             return true;
@@ -4100,7 +4100,6 @@ private:
         piano.setEditingEnabled (ready && ! recording);
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
         updatePerformanceWrite(playing,recording);
-        piano.refreshPerformanceLane();
         const bool transportReady = ready && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
         music.refresh (transportReady);
         cycleButton.setEnabled (transportReady);
@@ -4478,6 +4477,11 @@ private:
 
     bool canWriteProject()
     {
+        if(performanceWrite&&!performanceWrite->points.empty())
+        {
+            if(edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&canEditRegions())finishPerformanceWrite();
+            if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop playback to save pending Performance Write.",dontSendNotification);return false;}
+        }
         if (! ariaReviewPending)
             return true;
 
@@ -4710,6 +4714,7 @@ private:
 
     void loadProject (const File& file, bool create, std::optional<studio::environments::TemplateId> templateId = std::nullopt)
     {
+        if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop and commit or discard Performance Write before changing projects.",dontSendNotification);return;}
         std::vector<OriginalAriaState> pendingOriginalStates;
         bool backupAvailable = true;
         if (! create)
@@ -6711,7 +6716,7 @@ private:
         const auto trim=seat.isValid()?studio::spatial::readSeat(seat).sendTrim:-60.0f;
         universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
         if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
-        if(changed)resized();
+        if(changed){piano.refreshPerformanceLane();resized();}
     }
     void configureUniversalSurface(studio::designer::UniversalSurface& surface)
     {
@@ -8191,6 +8196,23 @@ int StudioView::runInterfaceReview (const File& output)
     if (! spatialWorkspace.verifyMoveForInterfaceReview (*tracks[1])) return fail ("Stage seat move, undo and redo");
     auto* clip = dynamic_cast<te::MidiClip*> (tracks[0]->getClips()[0]);
     if (clip == nullptr) return fail ("fixture MIDI clip");
+    {
+        using namespace studio::designer;
+        clip->setMidiChannel(te::MidiChannel(1));
+        Profile p;p.instrument="bowed-strings.violin";
+        Element art{Uuid().toString(),"bowed.pizzicato","Pizzicato","articulation","button",true,true,Binding{"note",0,24,100}};
+        Element cc{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        p.elements={art,cc};
+        auto* undo=clip->getUndoManager();if(undo)undo->beginNewTransaction("M50 fixture");
+        const auto beat=clip->getContentBeatAtTime(clip->getPosition().getStart()).inBeats()+0.25;
+        if(writePerformance(*clip,p,art,beat,100,undo).failed()||writePerformance(*clip,p,cc,beat+0.5,95,undo).failed())return fail("write native named MIDI");
+        const auto points=namedPoints(*clip);
+        if(points.size()!=2||points[0].number!=24||points[1].value!=95||!matchingElement(p,points[0],1))return fail("named MIDI metadata and chase match");
+        auto other=art;other.id=Uuid().toString();
+        if(writePerformance(*clip,p,other,beat,100,undo).wasOk())return fail("reject overlapping keyswitch");
+        if(!removeNamed(*clip,points[0].state,undo)||!removeNamed(*clip,points[1].state,undo)||!namedPoints(*clip).empty())return fail("remove named events");
+        if(undo)undo->beginNewTransaction();
+    }
     selection.selectOnly (clip);
     piano.setClip (clip);
     setDockMode (DockMode::split);
