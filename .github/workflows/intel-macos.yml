@@ -39,8 +39,10 @@ on:
       - feature/studio-instrument-library-m39b
       - feature/studio-inspector-controls-m39c
       - feature/studio-themes-icons-m39d
+      - feature/studio-composer-acceptance-m39e
   pull_request:
     branches:
+      - feature/studio-composer-acceptance-m39e
       - feature/studio-themes-icons-m39d
       - feature/studio-inspector-controls-m39c
       - feature/studio-instrument-library-m39b

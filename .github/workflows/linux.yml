@@ -39,8 +39,10 @@ on:
       - feature/studio-instrument-library-m39b
       - feature/studio-inspector-controls-m39c
       - feature/studio-themes-icons-m39d
+      - feature/studio-composer-acceptance-m39e
   pull_request:
     branches:
+      - feature/studio-composer-acceptance-m39e
       - feature/studio-themes-icons-m39d
       - feature/studio-inspector-controls-m39c
       - feature/studio-instrument-library-m39b
@@ -99,8 +101,16 @@ jobs:
           fetch-depth: 0
       - name: Install JUCE build and display dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ladspa-sdk libasound2-dev libfreetype-dev libfontconfig1-dev \
+          # Studio requires Ubuntu packages only. The hosted runner Microsoft
+          # feed returned HTTP 403 and prevented unrelated dependency installs.
+          # Remove just that runner-added feed; keep apt signature verification.
+          for source in /etc/apt/sources.list.d/*; do
+            if [ -f "$source" ] && grep -q "packages.microsoft.com/ubuntu/" "$source"; then
+              case "$(basename "$source")" in *microsoft*|*azure*|*prod*) sudo rm "$source";; esac
+            fi
+          done
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ninja-build ladspa-sdk libasound2-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libxi-dev libxcomposite-dev \
             libxrender-dev libxkbcommon-dev libgl1-mesa-dev xvfb xauth
       - name: Check streaming engine with sanitizers

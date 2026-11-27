@@ -819,11 +819,29 @@ Result run (const File& screenshots)
     if (! legacy->writeTo (legacyFile) || other->loadPreset (legacyFile).failed()
         || other->instrument().groups.size() != 1 || other->instrument().zones[0].mapping.start != 0)
         return Result::fail ("version one preset migration");
-    if (sampler->instrument().zones.size() != 2 || sampler->savePreset (preset).failed()
-        || other->loadPreset (preset).failed() || other->instrument().zones.size() != 2
-        || other->instrument().settings.attack != sampler->instrument().settings.attack
-        || other->instrument().zones[0].mapping.loop != sampler->instrument().zones[0].mapping.loop)
+    if (sampler->instrument().zones.size() != 2)
+        return Result::fail ("preset fixture must contain two original zones after editor review");
+    if (auto result = sampler->savePreset (preset); result.failed())
+        return Result::fail ("save instrument preset: " + result.getErrorMessage());
+    if (auto result = other->loadPreset (preset); result.failed())
+        return Result::fail ("load instrument preset: " + result.getErrorMessage());
+    if (other->instrument().zones.size() != 2)
+        return Result::fail ("preset lost sample zones");
+    const auto& beforeSettings = sampler->instrument().settings;
+    const auto& afterSettings = other->instrument().settings;
+    if (afterSettings.attack != beforeSettings.attack || afterSettings.decay != beforeSettings.decay
+        || afterSettings.sustain != beforeSettings.sustain || afterSettings.release != beforeSettings.release
+        || afterSettings.gainDb != beforeSettings.gainDb || afterSettings.semitones != beforeSettings.semitones
+        || afterSettings.bendRange != beforeSettings.bendRange || afterSettings.polyphony != beforeSettings.polyphony)
         return Result::fail ("preserve instrument parameters through preset");
+    for (size_t i=0; i<sampler->instrument().zones.size(); ++i)
+    {
+        const auto& x=sampler->instrument().zones[i].mapping;
+        const auto& y=other->instrument().zones[i].mapping;
+        if(x.loop!=y.loop || x.loopStart!=y.loopStart || x.loopEnd!=y.loopEnd
+            || x.root!=y.root || x.low!=y.low || x.high!=y.high || x.start!=y.start || x.end!=y.end)
+            return Result::fail ("preserve preset zone mapping and loop boundaries");
+    }
     other->removeZone (1);
     if (sampler->instrument().zones.size() != 2 || other->instrument().zones.size() != 1)
         return Result::fail ("instances must be editable independently");

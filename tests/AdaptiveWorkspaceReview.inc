@@ -234,8 +234,9 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     edit->redo();
     edit->redo();
     if (violinClip->getSequence().getNumControllerEvents() != 1) return fail ("drawing and articulation redo together");
-    if (! articulation.selectReviewMapping ("Staccato") || ! piano.drawForReview (2.0))
-        return fail ("draw a staccato phrase");
+    refresh();
+    if (! articulation.selectReviewMapping ("Staccato")) return fail ("select staccato articulation after redo");
+    if (! piano.drawForReview (2.0)) return fail ("draw a staccato phrase in a free visible lane");
     const auto keyswitches = violinClip->getSequence().getNotes();
     if (std::none_of (keyswitches.begin(), keyswitches.end(), [] (const auto* note)
         { return note->getNoteNumber() == 24 && std::abs (note->getStartBeat().inBeats() - 1.9375) < .001; }))

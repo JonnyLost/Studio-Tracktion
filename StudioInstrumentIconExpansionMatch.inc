@@ -2,8 +2,8 @@
     const auto whole=[&](const juce::String& phrase) { return (" "+n+" ").contains(" "+phrase+" "); };
     if(has("contrabass tuba"))return I::contrabassTuba;
     if(has("contrabass trombone"))return I::contrabassTrombone;
-    if(has("bass clarinet"))return I::bassClarinet;
     if(has("contrabass clarinet"))return I::contrabassClarinet;
+    if(has("bass clarinet"))return I::bassClarinet;
     if(has("contra-alto clarinet"))return I::contraAltoClarinet;
     if(has("piccolo trumpet"))return I::piccoloTrumpet;
     if(has("natural trumpet"))return I::naturalTrumpet;
