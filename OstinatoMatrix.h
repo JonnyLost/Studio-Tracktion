@@ -76,6 +76,13 @@ public:
     std::function<void(juce::Component*)> chooseHardware;
     ConductingValues conducting()const{return {int(intensity.getValue()),int(density.getValue())};}
     void setConducting(ConductingValues v){if(int(intensity.getValue())!=v.intensity)intensity.setValue(v.intensity,juce::dontSendNotification);if(int(density.getValue())!=v.density)density.setValue(v.density,juce::dontSendNotification);}
+    void setConductingMapping(ConductingMapping m)
+    {
+        intensityLabel.setText("CC"+juce::String(m.intensityCC)+" · Intensity",juce::dontSendNotification);
+        densityLabel.setText("CC"+juce::String(m.densityCC)+" · Density",juce::dontSendNotification);
+        intensity.setTooltip("Scales newly generated note velocity from 25% to 100%");
+        density.setTooltip("Admits optional steps up to the selected threshold");
+    }
     void hardwareLabel(const juce::String& text){hardware.setButtonText(text);hardware.setTooltip(text);}
 
     void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");updateEnabled();say(statusText);}
