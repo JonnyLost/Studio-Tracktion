@@ -27,7 +27,7 @@ struct Step
     int interval=0; // semitones from the row's configured root
     int densityThreshold=0; // 0 always plays, 1–127 optional at corresponding density
     int sustainCells=1,strikes=1,offset=0,chance=100; // offset in thousandths of the first cell
-    std::string articulation; // exact saved mapping ID; no inferred vendor mapping
+    std::string articulation{}; // exact saved mapping ID; no inferred vendor mapping
     bool operator==(const Step&) const=default;
 };
 enum class PitchMode { fixed=0, intervals=1 };
@@ -165,7 +165,7 @@ inline std::string encode(const Pattern& p)
 }
 inline bool decode(const std::string& text,Pattern& output)
 {
-    if(text.empty()||text.size()>1024*1024)return false;
+    if(text.empty()||text.size()>4*1024*1024)return false;
     std::istringstream in(text);in.imbue(std::locale::classic());
     std::string magic;int version=0,count=0;
     Pattern p;
@@ -295,10 +295,13 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
     // filtering an optional hit could shorten or steal a required note.
     // Track the maximum end per threshold for each physical MIDI address.
     std::array<Tick,128> tierEnds{};
+    Tick addressEnd=-1;int addressArt=0;
     const Note* last=nullptr;
     for(const auto& n:next.notes)
     {
-        if(!last||address(*last)!=address(n))tierEnds.fill(-1);
+        if(!last||address(*last)!=address(n)){tierEnds.fill(-1);addressEnd=-1;}
+        if(addressEnd>n.start&&addressArt!=n.articulation)return fail("Overlapping same-pitch notes request different articulations.");
+        if(addressEnd<=n.start){addressArt=n.articulation;addressEnd=n.end;}else addressEnd=std::max(addressEnd,n.end);
         for(int tier=0;tier<128;++tier)
             if(tier!=n.densityThreshold&&tierEnds[size_t(tier)]>n.start)
                 return fail("Overlapping same-pitch notes use different density thresholds. Separate pitch, channel, timing or threshold.");
