@@ -2049,6 +2049,9 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
         }
     if(plugin.changeCount()!=revision)return reviewFailure(__LINE__);
     appearance.set(100,100);appearanceChanged();setSize(800,564);setPage(Page::perform);
+    // The guided builder intentionally replaces the instrument. Preserve the
+    // two-zone round-trip fixture for the caller, not its transient builder result.
+    const auto beforeGuidedReview = plugin.instrument();
     openGuidedBuilder();
     auto* guided=guidedWindow?dynamic_cast<GuidedBuilder*>(guidedWindow->getContentComponent()):nullptr;
     if(!guided||!guided->review(first,output))return reviewFailure(__LINE__);
@@ -2065,6 +2068,11 @@ bool Editor::runReview (const File& first, const File& second, const File& outpu
     if(library::save(catalog,libraryFixture.getFile()).failed())return reviewFailure(__LINE__);
     library::Manager manager([](Instrument,library::Presentation){},libraryFixture.getFile());
     if(!manager.review(output))return reviewFailure(__LINE__);
+    plugin.commitImport(beforeGuidedReview, beforeGuidedReview.dirty);
+    selectZone(0);
+    if(plugin.instrument().zones.size()!=2 || !plugin.instrument().zones[0].mapping.loop
+       || std::abs(plugin.instrument().settings.attack-.023f)>=.0001f)
+        return reviewFailure(__LINE__);
     return true;
 }
 #endif

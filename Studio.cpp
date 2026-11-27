@@ -6952,6 +6952,7 @@ int StudioView::runInterfaceReview (const File& output)
         || studio::instrumentIcon("Bell Tree")!=Icon::bellTree
         || studio::instrumentIcon("Thunder Sheet")!=Icon::thunderSheet
         || studio::instrumentIcon("Contrabass Tuba")!=Icon::contrabassTuba
+        || studio::instrumentIcon("Contrabass Clarinet")!=Icon::contrabassClarinet
         || studio::instrumentIcon("Cornett")!=Icon::cornett
         || studio::instrumentIcon("Soprano Recorder")!=Icon::sopranoRecorder
         || studio::instrumentIcon("Woodwind Quintet")!=Icon::woodwindQuintet
@@ -6961,6 +6962,15 @@ int StudioView::runInterfaceReview (const File& output)
     stopTimer();
     environmentWelcome.dismiss();
     const ScopedValueSetter<studio::AppearanceMetrics> appearanceScope (studio::appearance, studio::appearance);
+    const int previousTheme=studio::activeTheme;
+    const ScopeGuard restoreTheme { [this,previousTheme] { applyTheme(previousTheme,false); } };
+    for (int i=0; i<(int)studio::themes::palettes.size(); ++i)
+    {
+        applyTheme(i,false);
+        if (studio::activeTheme!=i || studio::colours::panel.getARGB()!=studio::themes::palettes[(size_t)i].argb[studio::themes::panel])
+            { std::fprintf(stderr,"Theme application failed: %d\n",i); return 1; }
+    }
+    applyTheme(previousTheme,false);
     const auto fail = [] (const char* reason)
     {
         std::fprintf (stderr, "Studio interface review failed: %s\n", reason);

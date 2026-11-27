@@ -921,8 +921,23 @@ bool StudioPianoRoll::drawForReview (double sourceBeat)
 {
     if (clip == nullptr || notesArea.isEmpty()) return false;
     tool.setSelectedId (2, dontSendNotification);
-    const auto point = juce::Point<int> (xAt (sourceBeat), notesArea.getCentreY()).toFloat();
-    if (! notesArea.contains (point.toInt())) return false;
+    // A reduced dock may place the centre row over a fixture note. Locate
+    // a free visible lane at the same source beat, still exercising real mouse
+    // drawing and the production articulation callback.
+    auto candidate = juce::Point<int> (xAt (sourceBeat), notesArea.getCentreY());
+    if (! notesArea.contains (candidate)) return false;
+    if (noteAt(candidate) != nullptr)
+    {
+        bool found=false;
+        for (int y=notesArea.getY()+1; y<notesArea.getBottom()-1; ++y)
+        {
+            const juce::Point<int> test(candidate.x,y);
+            if (noteAt(test)==nullptr && pitchAt(y)!=pitchAt(candidate.y))
+            { candidate=test; found=true; break; }
+        }
+        if (!found) return false;
+    }
+    const auto point=candidate.toFloat();
     const auto source = Desktop::getInstance().getMainMouseSource();
     const auto time = Time::getCurrentTime();
     const auto event = [&] (int modifiers)
