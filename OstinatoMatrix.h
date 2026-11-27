@@ -22,7 +22,7 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
@@ -57,6 +57,7 @@ public:
         applyRow.onClick=[this]{applyRowEdit();};
         mode.onChange=[this]{updateTimingFields();};
         applyCell.onClick=[this]{applyCellEdit();};
+        advanced.onClick=[this]{editAdvanced();};
         cell.onReturnKey=[this]{
             if(auto* r=row()){int value=cell.getText().getIntValue();if(value>=1&&value<=(int)r->steps.size())select(selected,(size_t)value-1);else say("Cell number out of range.");}
         };
@@ -74,6 +75,7 @@ public:
     std::function<void()> openMixer,openStage,openEffects,stopAudition;
     std::function<void(const Pattern&,int)> startAudition;
     std::function<void(juce::Component*)> chooseHardware;
+    std::function<std::vector<std::pair<std::string,std::string>>(const std::string&,int)> articulationChoices;
     ConductingValues conducting()const{return {int(intensity.getValue()),int(density.getValue())};}
     void setConducting(ConductingValues v){if(int(intensity.getValue())!=v.intensity)intensity.setValue(v.intensity,juce::dontSendNotification);if(int(density.getValue())!=v.density)density.setValue(v.density,juce::dontSendNotification);}
     void setConductingMapping(ConductingMapping m)
@@ -128,7 +130,7 @@ public:
         applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
         line=a.removeFromTop(h);
         add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        status.setBounds(line.reduced(gap));
+        advanced.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));status.setBounds(line.reduced(gap));
         auto controls=a.removeFromBottom(h+caption);
         hardware.setBounds(controls.removeFromRight(controls.getWidth()/3).reduced(gap));
         field(intensity,intensityLabel,controls.removeFromLeft(controls.getWidth()/2));field(density,densityLabel,controls);
@@ -193,6 +195,7 @@ private:
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
     juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
     juce::TextEditor interval,repeatCount,densityThreshold;
+    juce::TextButton advanced{"Step details…"};
     juce::Slider intensity,density;
     juce::TextButton hardware{"MIDI input: Off"};
     juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","CC1 · Intensity"},densityLabel{"","CC11 · Density"};
@@ -286,7 +289,7 @@ private:
             const auto index=size_t(y/rowHeight());if(index>=owner.pattern.rows.size())return;
             const auto id=owner.pattern.rows[index].id;const int hit=cellAt(e.x,index);
             grabKeyboardFocus();owner.select(id,hit>=0?size_t(hit):0);
-            if(hit>=0&&!e.mods.isPopupMenu())owner.toggle(id,size_t(hit));
+            if(hit>=0&&e.mods.isPopupMenu())owner.editAdvanced();else if(hit>=0)owner.toggle(id,size_t(hit));
         }
         bool keyPressed(const juce::KeyPress& k)override
         {
@@ -354,6 +357,7 @@ private:
     {
         for(auto* c:std::initializer_list<juce::Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&track,&pitch,&channel,&mode,&applyRow,&mute,&solo,&cell,&velocity,&gate,&accent,&enabled,&applyCell})c->setEnabled(writable);
         remove.setEnabled(writable&&pattern.rows.size()>1);add.setEnabled(writable&&pattern.rows.size()<maxRows);
+        advanced.setEnabled(writable&&!auditioning);
         hardware.setEnabled(writable&&!auditioning&&bool(chooseHardware));densityThreshold.setEnabled(writable&&!auditioning);
         pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
         power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
@@ -411,9 +415,49 @@ private:
             auto text=interval.getText();auto digits=text.startsWithChar('-')?text.substring(1):text;
             if(digits.isEmpty()||!digits.containsOnly("0123456789")||text.getIntValue()<-127||text.getIntValue()>127){say("Invalid semitone interval.");return;}
             int tier=0;if(!read(densityThreshold,0,127,tier)){say("Density tier must be 0–127.");return;}
-            r.steps[size_t(c-1)]={enabled.getToggleState(),accent.getToggleState(),v,g,text.getIntValue(),tier};
+            auto& s=r.steps[size_t(c-1)];s.enabled=enabled.getToggleState();s.accent=accent.getToggleState();s.velocity=v;s.gate=g;s.interval=text.getIntValue();s.densityThreshold=tier;
             if(commit(std::move(p)))select(selected,size_t(c-1));return;
         }
+    }
+    void editAdvanced()
+    {
+        using namespace juce;
+        if(!writable||auditioning||!row())return;
+        const auto snapshot=pattern;const auto id=selected;const auto index=selectedCell;
+        const auto& step=row()->steps[index];
+        auto choices=articulationChoices?articulationChoices(row()->trackId,row()->channel):std::vector<std::pair<std::string,std::string>>{};
+        StringArray names;names.add("Leave articulation unchanged");
+        int current=0;
+        for(size_t i=0;i<choices.size();++i){names.add(String::fromUTF8(choices[i].second.c_str()));if(choices[i].first==step.articulation)current=int(i)+1;}
+        if(!step.articulation.empty()&&current==0){choices.push_back({step.articulation,"Missing mapping (retained)"});names.add("Missing mapping (retained)");current=names.size()-1;}
+        auto* w=new AlertWindow("Step details","Sustain spans inactive following cells; repeated strikes require a one-cell span. Articulations use saved track mappings.",MessageBoxIconType::NoIcon,this);
+        w->addTextEditor("span",String(step.sustainCells),"Sustain cells (1–16)");
+        w->addTextEditor("strikes",String(step.strikes),"Strikes (1–8)");
+        w->addTextEditor("offset",String(step.offset),"Timing offset (−450 to +450 / 1000)");
+        w->addTextEditor("chance",String(step.chance),"Probability (0–100%)");
+        w->addComboBox("art",names,"Articulation");
+        w->getComboBoxComponent("art")->setSelectedItemIndex(current,dontSendNotification);
+        w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        const Component::SafePointer<MatrixEditor> safe(this);
+        w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot,id,index,choices](int result){
+            if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            auto p=snapshot;
+            auto readSigned=[&](const char* key,int min,int max,int& value){
+                auto t=w->getTextEditorContents(key).trim();auto digits=t.startsWithChar('-')?t.substring(1):t;
+                if(digits.isEmpty()||digits.length()>4||!digits.containsOnly("0123456789"))return false;
+                value=t.getIntValue();return value>=min&&value<=max;
+            };
+            for(auto& r:p.rows)if(r.id==id)
+            {
+                auto& s=r.steps[index];
+                if(!readSigned("span",1,16,s.sustainCells)||!readSigned("strikes",1,8,s.strikes)||!readSigned("offset",-450,450,s.offset)||!readSigned("chance",0,100,s.chance))
+                {safe->say("Invalid step details.");return;}
+                const int choice=w->getComboBoxComponent("art")->getSelectedItemIndex();
+                if(choice==0)s.articulation.clear();else if(choice>0&&choice<=(int)choices.size())s.articulation=choices[size_t(choice-1)].first;
+                if(safe->commit(std::move(p)))safe->select(id,index);
+                return;
+            }
+        }),true);
     }
     void previewRender()
     {
