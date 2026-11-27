@@ -75,7 +75,7 @@ public:
     std::function<void(const Pattern&,int)> startAudition;
     std::function<void(juce::Component*)> chooseHardware;
     ConductingValues conducting()const{return {int(intensity.getValue()),int(density.getValue())};}
-    void setConducting(ConductingValues v){intensity.setValue(v.intensity,juce::dontSendNotification);density.setValue(v.density,juce::dontSendNotification);}
+    void setConducting(ConductingValues v){if(int(intensity.getValue())!=v.intensity)intensity.setValue(v.intensity,juce::dontSendNotification);if(int(density.getValue())!=v.density)density.setValue(v.density,juce::dontSendNotification);}
     void hardwareLabel(const juce::String& text){hardware.setButtonText(text);hardware.setTooltip(text);}
 
     void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");updateEnabled();say(statusText);}
@@ -165,8 +165,9 @@ public:
         enabled.setToggleState(true,juce::dontSendNotification);applyCell.onClick();
         if(!stored.rows[1].steps[4].enabled||!stored.rows[1].steps[4].accent||stored.rows[1].steps[4].velocity!=111)return false;
         pitchMode.setSelectedId(2,juce::dontSendNotification);applyRow.onClick();
-        interval.setText("-5",false);applyCell.onClick();
-        if(stored.rows[1].pitchMode!=PitchMode::intervals||stored.rows[1].steps[4].interval!=-5)return false;
+        interval.setText("-5",false);densityThreshold.setText("80",false);applyCell.onClick();
+        if(stored.rows[1].pitchMode!=PitchMode::intervals||stored.rows[1].steps[4].interval!=-5||stored.rows[1].steps[4].densityThreshold!=80)return false;
+        setConducting({20,80});if(conducting()!=ConductingValues{20,80})return false;
         const auto before=stored;division.setText("4",false);applyRow.onClick();if(stored!=before)return false;
         setContext(encode(stored),tracks,true);
         if(matrix.cellAt(matrix.xFor(stored.rowBoundary(stored.rows[1],4))+1,1)!=4)return false;
