@@ -4722,7 +4722,7 @@ private:
        #if JUCE_MAC
         seatingWorkspace.setEdit (nullptr);
        #endif
-        if(ostinatoWindow)ostinatoWindow->setVisible(false);
+        if(ostinatoWindow){ostinatoWindow->setVisible(false);ostinatoWindow->setLookAndFeel(nullptr);ostinatoWindow.reset();}
         ++projectGeneration;
         appliedDlsPrograms.clear();
         settlingDlsPrograms.clear();
@@ -6477,9 +6477,9 @@ private:
             undo.beginNewTransaction();
             return true;
         };
-        panel.openMixer=[safe]{if(safe!=nullptr)safe->showWorkspace(Workspace::mix);};
-        panel.openStage=[safe]{if(safe!=nullptr)safe->showWorkspace(Workspace::stage);};
-        panel.openEffects=[safe]{if(safe!=nullptr)safe->setInspectorOpen(true);};
+        panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
+        panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
+        panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
         refreshOstinato();ostinatoWindow->setVisible(true);ostinatoWindow->toFront(true);
     }
 
@@ -7792,6 +7792,9 @@ int StudioView::runInterfaceReview (const File& output)
     if (projectGeneration != beforeReopen + 1 || tracks.size() < 2 || tracks[0]->getClips().isEmpty()
         || studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType)) != original)
         return fail ("restore project with MIDI and Stage positions");
+    studio::ostinato::Pattern reopenedOstinato;
+    if(!studio::ostinato::decode(edit->state.getProperty("studioOstinatoPattern").toString().toStdString(),reopenedOstinato)
+        ||!reopenedOstinato.rows[0].steps[0].enabled||ostinatoWindow)return fail("restore saved ostinato without stale editor");
     // Exercise the real new-project template path and reload saved metadata.
     applyAppearance (100, 100, false);
     for (const auto& p : studio::environments::templates)
