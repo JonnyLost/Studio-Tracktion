@@ -48,7 +48,11 @@ public:
         };
         artwork.onChange=[this]{ if(!refreshing) { profile.artwork=choice(artwork,artworkIds); dirty=true; preview.repaint(); }};
         kind.onChange=[this]{refillCandidates();}; candidateSearch.onTextChange=[this]{refillCandidates();};
-        allTechniques.onClick=[this]{refillCandidates();}; elements.onChange=[this]{refreshElement();};
+        allTechniques.onClick=[this]{refillCandidates();}; elements.onChange=[this]{
+            int next=elements.getSelectedItemIndex();
+            if(!commitElementDraft()){elements.setSelectedId(editingIndex+1,dontSendNotification);return;}
+            refreshElements(next);
+        };
         channelInfo.onClick=[this]{profile.channelInfo=channelInfo.getToggleState();dirty=true;preview.repaint();};
         add.onClick=[this]{addElement();}; apply.onClick=[this]{applyElement();};
         up.onClick=[this]{move(-1);}; down.onClick=[this]{move(1);};
@@ -123,6 +127,7 @@ private:
     std::optional<Profile> saved;
     std::vector<Profile> profiles;
     bool dirty=false, refreshing=false, ready=false;
+    int editingIndex=-1;
     juce::Viewport viewport;
     Component body;
     Label heading,contextLabel,status;
@@ -160,7 +165,38 @@ private:
                 g.setColour(colours::secondary);
                 g.drawFittedText("Channel info\n"+owner.channel.getText()+" / Slot "+owner.slot.getText(),info,Justification::centred,3);
             }
-            drawElements(g,area,false);
+            auto utility=area.removeFromRight(jmin(46,area.getWidth()/6));
+            g.setColour(colours::secondary);g.drawFittedText("Mix\nRooms\nOstinato\nInstrument",utility,Justification::centred,4);
+            auto arts=area.removeFromLeft(area.getWidth()/2);
+            drawMatrix(g,arts,true);
+            drawMatrix(g,area,false);
+        }
+        void drawMatrix(Graphics& g,juce::Rectangle<int> a,bool articulations)
+        {
+            using namespace juce;
+            g.setColour(colours::secondary);g.setFont(uiFont(10));
+            g.drawFittedText(articulations?"Articulations":"Controls",a.removeFromTop(16),Justification::centred,1);
+            const int cols=articulations?3:2, cellWidth=a.getWidth()/cols;
+            if(cellWidth<20||a.getHeight()<18)return;
+            int count=0;for(const auto& e:owner.profile.elements)if(e.full&&(e.kind=="articulation")==articulations)++count;
+            const int rowHeight=articulations?27:58, rows=jmax(1,a.getHeight()/rowHeight), capacity=cols*rows;
+            int index=0;
+            for(const auto& e:owner.profile.elements)
+            {
+                if(!e.full||(e.kind=="articulation")!=articulations)continue;
+                if(index>=capacity)break;
+                auto cell=Rectangle<int>(a.getX()+(index%cols)*cellWidth,a.getY()+(index/cols)*rowHeight,cellWidth,rowHeight).reduced(2);
+                g.setColour(colours::control);g.fillRoundedRectangle(cell.toFloat(),3);
+                g.setColour(colours::secondary);
+                if(!articulations&&e.presentation!="button")
+                {
+                    auto shape=cell.removeFromTop(jmax(0,cell.getHeight()-18)).toFloat().reduced(5);
+                    if(e.presentation=="knob"){auto d=jmin(shape.getWidth(),shape.getHeight());g.drawEllipse(shape.withSizeKeepingCentre(d,d),1.4f);}
+                    else g.drawRoundedRectangle(shape.withSizeKeepingCentre(7,shape.getHeight()),2,1.4f);
+                }
+                g.drawFittedText(index==capacity-1&&count>capacity?"+"+String(count-capacity+1):e.label,cell,Justification::centred,2);
+                ++index;
+            }
         }
         void drawElements(Graphics& g,juce::Rectangle<int> a,bool compact)
         {
@@ -186,11 +222,11 @@ private:
             if(shown==0 && hidden==0){g.setColour(colours::secondary);g.drawFittedText("No controls selected",a,Justification::centred,1);}
         }
     } preview{*this};
-    static void setupField(TextEditor& e,const String& hint){e.setTextToShowWhenEmpty(hint,colours::secondary);e.setTitle(hint);}
+    static void setupField(TextEditor& e,const String& hint){e.setTextToShowWhenEmpty(hint,colours::secondary);e.setTitle(hint);e.setTooltip(hint);}
     void say(const String& s){status.setText(s,juce::dontSendNotification);}
     static String choice(const ComboBox& c,const StringArray& ids){int i=c.getSelectedItemIndex();return juce::isPositiveAndBelow(i,ids.size())?ids[i]:String();}
     bool validIndex(int i)const{return juce::isPositiveAndBelow(i,(int)profile.elements.size());}
-    bool canSwitch(){if(!dirty)return true;say("Save or discard changes before opening another profile.");return false;}
+    bool canSwitch(){if(!commitElementDraft())return false;if(!dirty)return true;say("Save or discard changes before opening another profile.");return false;}
     void refillInstruments(bool art)
     {
         using namespace juce;
@@ -232,7 +268,7 @@ private:
     void refreshElement()
     {
         using namespace juce;
-        const int i=elements.getSelectedItemIndex();const bool valid=validIndex(i);
+        const int i=elements.getSelectedItemIndex();editingIndex=i;const bool valid=validIndex(i);
         for(auto* c:std::initializer_list<Component*>{&label,&style,&transport,&full,&apply,&up,&down,&remove})c->setEnabled(valid);
         if(!valid){label.clear();return;}
         const auto& e=profile.elements[(size_t)i];
@@ -242,6 +278,7 @@ private:
     }
     void addElement()
     {
+        if(!commitElementDraft())return;
         if(profile.instrument.isEmpty()){say("Choose an instrument first.");return;}
         auto id=choice(candidates,candidateIds);if(id.isEmpty()||profile.elements.size()>=128)return;
         bool art=kind.getSelectedId()==1;
@@ -249,16 +286,21 @@ private:
         profile.elements.push_back({juce::Uuid().toString(),id,item["name"].toString(),art?"articulation":"control",art?"button":"knob",true,true});
         dirty=true;refreshElements((int)profile.elements.size()-1);say("Added unassigned control.");
     }
-    bool applyElement(bool report=true)
+    bool commitElementDraft()
     {
-        const int i=elements.getSelectedItemIndex();if(!validIndex(i))return true;
+        const int i=editingIndex;if(!validIndex(i))return true;
         auto e=profile.elements[(size_t)i];
         e.label=label.getText().trim();
         e.presentation=style.getSelectedId()==1?"button":style.getSelectedId()==2?"knob":"fader";
         e.transport=transport.getToggleState();e.full=full.getToggleState();
         if(e.label.isEmpty()||e.label.length()>80||(!e.transport&&!e.full)){say("Enter a label and choose at least one view.");return false;}
         if(!(e==profile.elements[(size_t)i])){profile.elements[(size_t)i]=e;dirty=true;}
-        refreshElements(i);if(report)say("Layout updated.");return true;
+        return true;
+    }
+    bool applyElement(bool report=true)
+    {
+        if(!commitElementDraft())return false;
+        refreshElements(editingIndex);if(report)say("Layout updated.");return true;
     }
     void move(int offset)
     {
@@ -278,6 +320,7 @@ private:
     {
         using namespace juce;
         const ScopedValueSetter<bool> guard(refreshing,true);
+        editingIndex=-1;
         name.setText(profile.name,false);library.setText(profile.library,false);patch.setText(profile.patch,false);variant.setText(profile.variant,false);
         channel.setText(String(profile.channel),false);slot.setText(String(profile.slot),false);
         instrumentSearch.setText({},false);artworkSearch.setText({},false);
@@ -286,7 +329,7 @@ private:
     }
     void startNew()
     {
-        profile=Profile{};saved.reset();
+        profile=Profile{};saved.reset();editingIndex=-1;
         if(context.track.isNotEmpty()){profile.name=context.track;profile.pluginId=context.pluginId;profile.pluginVersion=context.pluginVersion;}
         dirty=false;refresh();say("Choose an instrument, then add articulations and controls.");
     }
