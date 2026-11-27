@@ -63,14 +63,16 @@ int main()
         require (resumed.status (patch).contains ("choose patch"), "SFZ recognition does not prove playback");
         require(patch.mappingInspected && patch.switchHints.size()==5,"explicit numeric pairs only; no comment/range/note-name hints");
         studio::designer::Catalog vocabulary;
+        require(vocabulary.load(R"json({"schemaVersion":1,"instruments":[{"id":"violin","family":"strings","candidateTechniqueGroups":["strings"]}],"families":[{"id":"strings"}],"techniques":[{"id":"legato","name":"Legato","aliases":["Connected"]}],"controls":[{"id":"dynamics"}],"techniqueGroups":{"strings":["legato"]},"documentedPatchHints":[{"libraryId":"garritan.gpo5","patchName":"Violin","instrumentId":"violin","enabled":false,"bindings":[{"techniqueId":"legato","printedNote":"C2"}]}]})json").wasOk(),"load vocabulary fixture");
+        require(vocabulary.exactTechnique("Connected")=="legato","unique exact alias");
         const auto suggestions=studio::designer::reconcilePatch(patch,vocabulary);
         const auto find=[&](const String& label)->const studio::designer::PatchSuggestion*{
             for(const auto& h:suggestions)if(h.label==label)return &h;return nullptr;
         };
-        require(find("Legato")&&find("Legato")->note==24,"include literal switch");
+        require(find("Legato")&&find("Legato")->note==24&&find("Legato")->semantic=="legato"&&find("Legato")->printedNote=="C2","include literal switch and independent printed note");
         require(find("Pizzicato")&&find("Pizzicato")->note==-1,"shared numeric key conflict");
         require(find("Conflict")&&find("Conflict")->note==-1,"same label multiple keys");
-        require(find("NameOnly")&&find("NameOnly")->note==-1&&find("Range")->note==-1&&!find("Ghost"),"labels only and comment ignored");
+        require(find("NameOnly")&&find("NameOnly")->note==-1&&find("Range")&&find("Range")->note==-1&&!find("Ghost"),"labels only and comment ignored");
         studio::designer::Profile profile;profile.instrument="bowed-strings.violin";
         require(studio::designer::linkPatch(profile,patch).wasOk(),"link exact patch");
         require(studio::designer::addSuggestion(profile,*find("Legato"))==0&&profile.elements[0].binding.type=="unassigned","never enable discovered note");
