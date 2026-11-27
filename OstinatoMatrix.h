@@ -75,7 +75,12 @@ public:
         effects.onClick=[this]{if(openEffects)openEffects();};
         power.onClick=[this]{if(auditioning){if(stopAudition)stopAudition();}else{int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}if(startAudition)startAudition(pattern,repeats);}};
         power.setTooltip("Audition with main transport stopped. Do not play other MIDI notes on destination instruments during audition.");
-        print.setEnabled(false);print.setTooltip("Print to individual MIDI regions arrives in O10.");
+        print.onClick=[this]{
+            int repeats=0;if(!writable||auditioning||!printMidi)return;
+            if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}
+            say(printMidi(pattern,repeats,conducting()));
+        };
+        print.setTooltip("Create editable MIDI regions at the playhead using starting harmony, current intensity/density and the repeat count. No live performance recording.");
         appearanceChanged();
         refreshFields();
     }
@@ -83,6 +88,7 @@ public:
     std::function<bool(const Pattern&,const Pattern&)> write;
     std::function<void()> openMixer,openStage,openEffects,stopAudition;
     std::function<void(const Pattern&,int)> startAudition;
+    std::function<juce::String(const Pattern&,int,ConductingValues)> printMidi;
     std::function<void(juce::Component*)> chooseHardware;
     std::function<std::vector<std::pair<std::string,std::string>>(const std::string&,int)> articulationChoices;
     ConductingValues conducting()const{return {int(intensity.getValue()),int(density.getValue())};}
@@ -404,7 +410,7 @@ private:
         hardware.setEnabled(writable&&!auditioning&&bool(chooseHardware));densityThreshold.setEnabled(writable&&!auditioning);
         pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
         power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
-        preview.setEnabled(healthy&&!auditioning);updateTimingFields();
+        preview.setEnabled(healthy&&!auditioning);print.setEnabled(writable&&!auditioning&&bool(printMidi));updateTimingFields();
     }
     void select(std::uint32_t id,size_t index)
     {

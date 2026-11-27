@@ -22,6 +22,7 @@ using namespace tracktion::literals;
 #include "StudioUI.h"
 #include "OstinatoMatrix.h"
 #include "OstinatoAudition.h"
+#include "OstinatoPrint.h"
 #include "OstinatoConductingInput.h"
 #include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
@@ -6710,6 +6711,100 @@ private:
         refreshOstinato();
         ostinatoTimer.tick=[this]{tickOstinato();};ostinatoTimer.startTimer(5);tickOstinato();
     }
+    Result printOstinato(const studio::ostinato::Pattern& p,int repeats,studio::ostinato::ConductingValues controls,
+                         te::MidiClip::Ptr& first,int& regionCount)
+    {
+        using namespace studio::ostinato;
+        first=nullptr;regionCount=0;
+        if(!canEditOstinato()||pendingPlugin.has_value())return Result::fail("Stop playback and wait for the project to be ready.");
+        Pattern stored;const auto payload=edit->state.getProperty("studioOstinatoPattern").toString().toStdString();
+        if((!payload.empty()&&!decode(payload,stored))||stored!=p)return Result::fail("Pattern changed — refresh before printing.");
+        std::vector<std::string> ids;
+        std::map<std::string,te::AudioTrack*> byId;
+        for(auto* t:te::getAudioTracks(*edit))
+            if(studio::findInstrument(*t)!=nullptr&&!studio::spatial::isRoomReturn(*t))
+            {auto id=t->itemID.toString().toStdString();ids.push_back(id);byId.emplace(id,t);}
+        Render generated;std::string error;
+        if(!compile(p,ids,repeats,generated,error))return Result::fail(String::fromUTF8(error.c_str()));
+        std::vector<te::AudioTrack*> targets;
+        std::vector<std::vector<studio::ArticulationMapping>> available;
+        for(const auto& id:generated.routes)
+        {
+            auto* t=byId.at(id);targets.push_back(t);available.push_back(ostinatoMappings(*t));
+        }
+        std::vector<PrintMapping> mappings;
+        std::set<std::tuple<int,int,int>> seen;
+        for(const auto& n:generated.notes)
+        {
+            if(n.densityThreshold>controls.density||!n.articulation)continue;
+            if(!seen.emplace(n.route,n.channel,n.articulation).second)continue;
+            const auto& list=available[size_t(n.route)];
+            const auto id=String::fromUTF8(generated.articulations[size_t(n.articulation-1)].c_str());
+            auto found=std::find_if(list.begin(),list.end(),[&](const auto& m){return m.id==id;});
+            if(found==list.end()||std::count_if(list.begin(),list.end(),[&](const auto& m){return m.id==id;})!=1||
+                found->channel!=n.channel||!usableOstinatoMapping(*found))
+                return Result::fail("Missing, unsafe or channel-mismatched articulation. Correct the track mapping.");
+            mappings.push_back({n.route,n.articulation,n.channel,found->number,found->value,found->message==studio::ArticulationMessage::keyswitch});
+        }
+        PrintPlan plan;
+        if(!planPrint(generated,mappings,controls,plan,error))return Result::fail(String::fromUTF8(error.c_str()));
+        const auto playhead=edit->getTransport().getPosition();
+        const auto origin=edit->tempoSequence.toBeats(playhead);
+        const auto lead=te::BeatDuration::fromBeats(double(plan.lead)/ticksPerQuarter);
+        if(origin<te::BeatPosition()+lead)return Result::fail("Move the playhead at least 1/16 beat after project start for the articulation lead-in.");
+        const auto startBeat=origin-lead;
+        const auto start=edit->tempoSequence.toTime(startBeat);
+        const auto end=edit->tempoSequence.toTime(origin+te::BeatDuration::fromBeats(double(plan.duration)/ticksPerQuarter));
+        if(start<te::TimePosition()||end<=start||end>te::Edit::getMaximumEditEnd())return Result::fail("Print range exceeds the project limits.");
+        // Complete preflight before touching the edit. In particular never
+        // insert over existing MIDI or audio on a destination, even if muted.
+        std::set<int> checked;
+        std::map<int,int> initialClipCounts,addedClipCounts;
+        for(const auto& part:plan.parts)
+        {
+            if(!checked.insert(part.route).second)continue;
+            auto* track=targets[size_t(part.route)];
+            initialClipCounts[part.route]=track->getClips().size();
+            auto* plugin=studio::findInstrument(*track);
+            if(!plugin||track->isFrozen(te::Track::anyFreeze)||!plugin->isEnabled())
+                return Result::fail("A destination instrument is disabled or frozen.");
+            if(auto* au=dynamic_cast<te::ExternalPlugin*>(plugin);au&&(au->isInitialisingAsync()||!au->getAudioPluginInstance()))
+                return Result::fail("A destination Audio Unit is still loading.");
+            for(auto* clip:track->getClips())
+                if(clip->getPosition().getStart()<end&&clip->getPosition().getEnd()>start)
+                    return Result::fail("Existing region on "+track->getName()+" overlaps the print range. Choose an empty range.");
+        }
+        auto& undo=edit->getUndoManager();
+        undo.beginNewTransaction("Print ostinato MIDI");
+        auto rollback=[&]{
+            undo.undoCurrentTransactionOnly();undo.beginNewTransaction();
+            first=nullptr;regionCount=0;
+            return Result::fail("MIDI print could not be completed. All inserted regions were rolled back.");
+        };
+        const auto label=String::fromUTF8(p.name.c_str());
+        for(const auto& part:plan.parts)
+        {
+            auto* track=targets[size_t(part.route)];
+            auto clip=track->insertMIDIClip(label+" · Ch "+String(part.channel),{start,end},nullptr);
+            if(!clip)return rollback();
+            clip->setMidiChannel(te::MidiChannel(static_cast<uint8>(part.channel)));
+            auto& sequence=clip->getSequence();
+            const auto beatAt=[&](Tick t){return te::BeatPosition::fromBeats(double(t+plan.lead)/ticksPerQuarter);};
+            for(const auto& n:part.notes)
+                sequence.addNote(n.pitch,beatAt(n.start),te::BeatDuration::fromBeats(double(n.end-n.start)/ticksPerQuarter),
+                                 n.velocity,0,&undo);
+            for(const auto& cc:part.controllers)
+                sequence.addControllerEvent(beatAt(cc.tick),cc.number,cc.value<<7,&undo);
+            if(size_t(sequence.getNotes().size())!=part.notes.size()||
+               size_t(sequence.getControllerEvents().size())!=part.controllers.size())return rollback();
+            if(!first)first=clip;
+            ++regionCount;++addedClipCounts[part.route];
+        }
+        for(const auto& [route,count]:addedClipCounts)
+            if(targets[size_t(route)]->getClips().size()!=initialClipCounts.at(route)+count)return rollback();
+        undo.beginNewTransaction();
+        return Result::ok();
+    }
     void refreshOstinato()
     {
         if(!ostinatoWindow||!edit)return;
@@ -6766,6 +6861,17 @@ private:
         panel.chooseHardware=[safe,generation](Component* c){if(safe&&safe->projectGeneration==generation)safe->chooseOstinatoHardware(c);};
         panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
         panel.stopAudition=[safe]{if(safe!=nullptr)safe->stopOstinato("Audition stopped.");};
+        panel.printMidi=[safe,generation](const Pattern& p,int repeats,ConductingValues controls)->String{
+            if(!safe||safe->projectGeneration!=generation)return "Project changed — reopen the engine.";
+            te::MidiClip::Ptr first;int count=0;
+            const auto result=safe->printOstinato(p,repeats,controls,first,count);
+            if(result.failed())return result.getErrorMessage();
+            if(first)safe->selection.selectOnly(first.get());
+            safe->repaint();
+            const auto status="Printed "+String(count)+" MIDI region(s). Close the engine to edit; Undo removes the whole print.";
+            safe->message.setText(status,dontSendNotification);
+            return status;
+        };
         ostinatoWindow->onClose=panel.stopAudition;
         refreshOstinato();ostinatoWindow->setVisible(true);ostinatoWindow->toFront(true);
     }
@@ -7396,6 +7502,54 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (sampler == nullptr || instrumentWorkspace.isFloating()) return fail ("Sampler must open docked");
     const auto samplerTrack = sampler->getOwnerTrack()->itemID;
     const auto samplerID = sampler->itemID;
+    {
+        // Exercise the production MIDI print path using two real native
+        // instruments in the isolated integration review project.
+        using namespace studio::ostinato;
+        Pattern source;source.name="Print review";
+        source.rows[0].trackId=synthTrack.toString().toStdString();
+        source.rows[0].steps[0].enabled=true;source.rows[0].steps[0].gate=500;
+        if(!source.addRow())return fail("print review second row");
+        source.rows[1].trackId=samplerTrack.toString().toStdString();
+        source.rows[1].channel=2;source.rows[1].pitch=72;source.rows[1].steps[1].enabled=true;
+        auto* a=trackById(synthTrack);auto* b=trackById(samplerTrack);
+        if(!a||!b)return fail("print review tracks");
+        const auto countA=a->getClips().size(),countB=b->getClips().size();
+        const auto saved=edit->state.getProperty("studioOstinatoPattern");
+        const bool hadPattern=edit->state.hasProperty("studioOstinatoPattern");
+        edit->state.setProperty("studioOstinatoPattern",String::fromUTF8(encode(source).c_str()),nullptr);
+        auto& transport=edit->getTransport();const auto oldPosition=transport.getPosition();
+        const auto at=edit->tempoSequence.toTime(te::BeatPosition::fromBeats(8));
+        transport.setPosition(at);
+        edit->dispatchPendingUpdatesSynchronously();
+        te::MidiClip::Ptr printed;int regions=0;
+        auto result=printOstinato(source,2,ConductingValues{},printed,regions);
+        if(result.failed()){std::fprintf(stderr,"Print review: %s\\n",result.getErrorMessage().toRawUTF8());return fail("production MIDI print");}
+        edit->dispatchPendingUpdatesSynchronously();
+        if(regions!=2||!printed||a->getClips().size()!=countA+1||b->getClips().size()!=countB+1)
+            return fail("print creates two destination regions");
+        const auto notes=printed->getSequence().getNotes();
+        if(printed->getPosition().getStart()!=at||notes.size()!=2||
+           notes[0]->getStartBeat()!=te::BeatPosition()||
+           notes[0]->getEndBeat()-notes[0]->getStartBeat()!=te::BeatDuration::fromBeats(.125))
+            return fail("print exact beat timing");
+        te::MidiClip::Ptr rejected;int rejectedCount=0;
+        if(printOstinato(source,2,ConductingValues{},rejected,rejectedCount).wasOk()||rejectedCount!=0)
+            return fail("print must reject overlapping destination regions");
+        printed=nullptr;
+        auto& undo=edit->getUndoManager();
+        if(!undo.undo())return fail("print undo");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(a->getClips().size()!=countA||b->getClips().size()!=countB)return fail("print undo removes both regions");
+        if(!undo.redo())return fail("print redo");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(a->getClips().size()!=countA+1||b->getClips().size()!=countB+1)return fail("print redo restores both regions");
+        if(!undo.undo())return fail("clean print fixture");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(hadPattern)edit->state.setProperty("studioOstinatoPattern",saved,nullptr);
+        else edit->state.removeProperty("studioOstinatoPattern",nullptr);
+        transport.setPosition(oldPosition);
+    }
     const auto makeSample = [&] (const char* name, float frequency)
     {
         const auto sample = folder.getChildFile (name);

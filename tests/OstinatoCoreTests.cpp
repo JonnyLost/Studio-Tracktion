@@ -2,6 +2,7 @@
 #include "../OstinatoCore.h"
 #include "../OstinatoAudition.h"
 #include "../OstinatoLibrary.h"
+#include "../OstinatoPrint.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -424,5 +425,38 @@ int main()
         require(compile(routed,destinations,8,repeatRender,error)&&repeatRender.events==factoryRender.events,"factory rendering deterministic");
         require(compile(entry.pattern,{},8,repeatRender,error)&&repeatRender.events.empty(),"unassigned factory never emits MIDI");
     }
-    std::cout<<"O1–O9 ostinato core: "<<checks<<" checks passed\n";
+    Pattern printSource;
+    printSource.rows[0].trackId="strings";printSource.rows[0].steps[0].enabled=true;
+    printSource.rows[0].steps[0].articulation="pizz";printSource.rows[0].steps[2].enabled=true;
+    printSource.rows[0].steps[2].articulation="pizz";
+    printSource.rows[0].steps[4].enabled=true;printSource.rows[0].steps[4].articulation="cc";
+    printSource.rows[0].steps[6].enabled=true;printSource.rows[0].steps[6].densityThreshold=100;
+    require(printSource.addRow(),"second print channel");
+    printSource.rows[1].trackId="strings";printSource.rows[1].channel=2;printSource.rows[1].pitch=72;
+    printSource.rows[1].steps[1].enabled=true;
+    require(printSource.addRow(),"second print destination");
+    printSource.rows[2].trackId="drums";printSource.rows[2].pitch=36;printSource.rows[2].steps[0].enabled=true;
+    Render printRender;
+    require(compile(printSource,{"strings","drums"},2,printRender,error),"compile multi-destination print");
+    std::vector<PrintMapping> printMappings{{0,1,1,26,100,true},{0,2,1,20,70,false}};
+    PrintPlan printed;
+    require(planPrint(printRender,printMappings,{64,80},printed,error),"plan with keyswitch pre-roll and CC");
+    require(printed.parts.size()==3&&printed.duration==2*printSource.duration()&&printed.lead==printLead,"split parts by destination and MIDI channel");
+    require(printed.musicalNotes==10&&printed.switchNotes==4&&printed.controllerEvents==2,"filtered attacks and explicit articulation events");
+    const auto& firstPart=printed.parts.front();
+    require(firstPart.route==0&&firstPart.channel==1&&firstPart.notes.front()==PrintNote{-printLead,1800,26,100},"switch lead and hold exact");
+    require(firstPart.notes[1]==PrintNote{0,1800,60,conductedVelocity(90,64)},"musical start unaffected by lead");
+    require(firstPart.controllers.front()==PrintCC{9600-printLead,20,70},"controller lead exact");
+    const auto priorCount=printed.musicalNotes;
+    require(!planPrint(printRender,{},ConductingValues{},printed,error)&&printed.musicalNotes==priorCount,"missing mapping rejects transactionally");
+    auto conflictingPrint=printMappings;conflictingPrint[0].number=60;
+    require(!planPrint(printRender,conflictingPrint,ConductingValues{},printed,error),"keyswitch collision refused");
+    auto noRoom=printSource;noRoom.rows[0].steps[0].gate=1000;
+    noRoom.rows[0].steps[1].enabled=true;noRoom.rows[0].steps[1].articulation="cc";
+    require(compile(noRoom,{"strings","drums"},1,printRender,error)&&!planPrint(printRender,printMappings,ConductingValues{},printed,error),"adjacent technique without lead refused");
+    auto unboundPrint=printSource;unboundPrint.rows[2].trackId.clear();
+    require(compile(unboundPrint,{"strings"},1,printRender,error)&&!planPrint(printRender,printMappings,ConductingValues{},printed,error),"unassigned row refused");
+    Pattern silentPrint;silentPrint.rows[0].trackId="t";silentPrint.rows[0].steps[0].enabled=true;silentPrint.rows[0].steps[0].densityThreshold=100;
+    require(compile(silentPrint,{"t"},1,printRender,error)&&!planPrint(printRender,{},ConductingValues{127,0},printed,error),"no notes at selected density");
+    std::cout<<"O1–O10 ostinato core: "<<checks<<" checks passed\n";
 }
