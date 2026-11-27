@@ -94,6 +94,22 @@ public:
     juce::StringArray allTechniques() const { return keys(techniques); }
     juce::StringArray allControls() const { return keys(controls); }
 
+    juce::var documentedHints() const { return root["documentedPatchHints"].clone(); }
+    juce::String exactTechnique(const juce::String& label) const
+    {
+        juce::String result;
+        const auto query=label.trim();
+        if(query.isEmpty())return {};
+        for(const auto& [id,item]:techniques)
+        {
+            bool match=item["name"].toString().trim().equalsIgnoreCase(query);
+            const auto aliases=item["aliases"];
+            if(auto* a=aliases.getArray())for(const auto& alias:*a)match|=alias.toString().trim().equalsIgnoreCase(query);
+            if(match){if(result.isNotEmpty())return {};result=id;}
+        }
+        return result;
+    }
+
     // Explicit instrument suggestions first. Family-level terms are only a
     // broad discovery list, never evidence of a playable articulation.
     juce::StringArray candidateTechniques(const juce::String& id) const

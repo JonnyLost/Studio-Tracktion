@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../AriaCatalog.h"
+#include "../InstrumentLibraryReconciliation.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -31,8 +32,14 @@ int main()
         require (violin.replaceWithText (definition), "write definition");
         const auto originalBytes = violin.loadFileAsString();
         require (violin.setLastModificationTime (Time (1'700'000'000'321LL)), "set fixture timestamp");
-        require (include.replaceWithText ("<region> sample=violin A3.wav lokey=55 hikey=88 sw_label=Legato\n"
-                                          "// sample=ignored.wav\n"), "write include");
+        require (include.replaceWithText ("<region> sample=violin A3.wav lokey=55 hikey=88 sw_label=Legato sw_last=24\n"
+                                          "// sample=ignored.wav sw_label=Ghost sw_last=99\n"
+                                          "<group> sw_label=Pizzicato sw_last=25\n"
+                                          "<group> sw_label=Conflict sw_last=26\n"
+                                          "<group> sw_label=Conflict sw_last=27\n"
+                                          "<group> sw_label=NameOnly sw_last=C3\n"
+                                          "<group> sw_label=Range sw_lolast=28 sw_hilast=29\n"
+                                          "<group> sw_label=DuplicateNote sw_last=25\n"), "write include");
         require (duplicateName.replaceWithText ("<region> sample=absent.wav key=60"), "write missing sample");
         require (extras.getChildFile ("Strings.ariax").replaceWithText ("snapshot"), "write snapshot");
         require (extras.getChildFile ("Protected.nki").replaceWithText ("container"), "write other format");
@@ -54,6 +61,27 @@ int main()
         require (patch.health == "Literal sample references present", "include and path with spaces");
         require (patch.midiRange == "55-88" && patch.articulations.contains ("Legato"), "explicit SFZ metadata");
         require (resumed.status (patch).contains ("choose patch"), "SFZ recognition does not prove playback");
+        require(patch.mappingInspected && patch.switchHints.size()==5,"explicit numeric pairs only; no comment/range/note-name hints");
+        studio::designer::Catalog vocabulary;
+        require(vocabulary.load(R"json({"schemaVersion":1,"instruments":[{"id":"violin","family":"strings","candidateTechniqueGroups":["strings"]}],"families":[{"id":"strings"}],"techniques":[{"id":"legato","name":"Legato","aliases":["Connected"]}],"controls":[{"id":"dynamics"}],"techniqueGroups":{"strings":["legato"]},"documentedPatchHints":[{"libraryId":"garritan.gpo5","patchName":"Violin","instrumentId":"violin","enabled":false,"bindings":[{"techniqueId":"legato","printedNote":"C2"}]}]})json").wasOk(),"load vocabulary fixture");
+        require(vocabulary.exactTechnique("Connected")=="legato","unique exact alias");
+        const auto suggestions=studio::designer::reconcilePatch(patch,vocabulary);
+        const auto find=[&](const String& label)->const studio::designer::PatchSuggestion*{
+            for(const auto& h:suggestions)if(h.label==label)return &h;return nullptr;
+        };
+        require(find("Legato")&&find("Legato")->note==24&&find("Legato")->semantic=="legato"&&find("Legato")->printedNote=="C2","include literal switch and independent printed note");
+        require(find("Pizzicato")&&find("Pizzicato")->note==-1,"shared numeric key conflict");
+        require(find("Conflict")&&find("Conflict")->note==-1,"same label multiple keys");
+        require(find("NameOnly")&&find("NameOnly")->note==-1&&find("Range")&&find("Range")->note==-1&&!find("Ghost"),"labels only and comment ignored");
+        studio::designer::Profile profile;profile.instrument="bowed-strings.violin";
+        require(studio::designer::linkPatch(profile,patch).wasOk(),"link exact patch");
+        require(studio::designer::addSuggestion(profile,*find("Legato"))==0&&profile.elements[0].binding.type=="unassigned","never enable discovered note");
+        profile.elements[0].binding={"note",0,40,100};
+        require(studio::designer::addSuggestion(profile,*find("Legato"))==0&&profile.elements.size()==1&&profile.elements[0].binding.number==40,"manual override preserved");
+        studio::designer::Profile loaded;
+        require(studio::designer::Profile::read(*profile.xml(),loaded).wasOk()&&loaded==profile,"profile identity round trip");
+        require(studio::designer::linkPatch(profile,resumed.patches().at(duplicateName.getFullPathName())).failed(),"reject different exact patch");
+        
         const auto& missing = resumed.patches().at (duplicateName.getFullPathName());
         require (resumed.status (missing).contains ("check samples"), "missing literal dependency");
         const auto& snapshot = resumed.patches().at (extras.getChildFile ("Strings.ariax").getFullPathName());
@@ -80,6 +108,10 @@ int main()
         Catalog reopened (local);
         reopened.read();
         const auto& restored = reopened.patches().at (patch.id);
+        require(restored.switchHints.size()==5&&restored.mappingInspected,"persist literal hints");
+        require(include.appendText("\\n// changed include"),"change include");
+        const auto staleHints=studio::designer::reconcilePatch(restored,vocabulary);
+        for(const auto& h:staleHints)if(h.label=="Legato")require(h.note==-1,"stale include not proposed");
         const auto preset = reopened.preset (restored);
         require (preset.pluginId == capture.pluginId && preset.pluginVersion == capture.pluginVersion
                  && preset.state == capture.state && preset.program == capture.program, "reopen fixture state");

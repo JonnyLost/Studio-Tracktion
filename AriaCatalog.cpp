@@ -58,7 +58,8 @@ String libraryName (const File& source, const File& root)
              { "instant orchestra", "Instant Orchestra" }, { "/gio", "Instant Orchestra" },
              { "jazz", "Jazz & Big Band" }, { "/jabb", "Jazz & Big Band" },
              { "marching", "Concert & Marching Band" }, { "/camb", "Concert & Marching Band" },
-             { "harp", "Harps" }, { "orchestral strings", "Orchestral Strings" } })
+             { "world instruments", "World Instruments" }, { "/gwi", "World Instruments" },
+             { "orchestral strings", "Orchestral Strings" }, { "harp", "Harps" } })
         if (path.contains (token))
             return name;
     const auto parts = StringArray::fromTokens (source.getRelativePathFrom (root), "/", {});
@@ -96,6 +97,7 @@ struct SfzInspection
     bool unresolved = false;
     int samples = 0, missing = 0, low = 128, high = -1, filesInspected = 0;
     StringArray articulations;
+    std::vector<SwitchHint> hints;
     std::set<String> includes;
 
     void inspect (const File& file, const File& root, File& sampleBase,
@@ -133,11 +135,20 @@ struct SfzInspection
         // Limit both include expansion and regex input for malformed definitions.
         BufferedInputStream input (*stream, 8192);
         bool inComment = false;
+        // Pair only explicit literal sw_label/sw_last in the same block.
+        // Never resolve inheritance, macros, ranges, defaults or note names.
+        const auto definitionModified=file.getLastModificationTime().toMilliseconds(), definitionSize=file.getSize();
+        String label; int note=-1; bool block=false, ambiguous=false; int labelCount=0,noteCount=0;
+        const auto flush=[&]{
+            if(block&&!ambiguous&&labelCount==1&&noteCount==1&&label.isNotEmpty()&&label.length()<=80&&note>=0&&note<=127&&hints.size()<1024)
+                hints.push_back({label,note,file,definitionModified,definitionSize});
+            label.clear();note=-1;ambiguous=false;labelCount=noteCount=0;
+        };
         while (! input.isExhausted() && input.getPosition() < maxDefinitionSize)
         {
             if (cancelled()) return;
             const auto line = input.readNextLine();
-            if (line.getNumBytesAsUTF8() > 4096) { unresolved = true; continue; }
+            if (line.getNumBytesAsUTF8() > 4096) { unresolved = true; ambiguous=true; continue; }
             std::string data = line.toStdString();
             for (size_t offset = 0; offset < data.size();)
             {
@@ -155,18 +166,24 @@ struct SfzInspection
                 offset = start;
                 inComment = true;
             }
-            if (line.trimStart().startsWith ("#define")) unresolved = true;
+            if (line.trimStart().startsWith ("#define")) { unresolved = true; ambiguous=true; }
             for (std::sregex_iterator it (data.begin(), data.end(), token), end; it != end; ++it)
             {
                 const auto& match = *it;
                 if (match[1].matched)
                 {
+                    flush();block=false; // no pairing across textual include boundaries
                     const auto path = String (match[1].str()).replaceCharacter ('\\', '/');
                     inspect (file.getSiblingFile (path), root, sampleBase, cancelled, depth + 1);
                     continue;
                 }
+                const auto raw=String(match[0].str());
+                if(raw.startsWithChar('<')) {flush();block=raw=="<group>"||raw=="<region>"||raw=="<global>"||raw=="<master>";continue;}
                 const auto opcode = String (match[2].str());
                 const auto value = String (match[3].str()).trim().unquoted().replaceCharacter ('\\', '/');
+                if(opcode=="sw_label"){++labelCount;label=value;if(value.containsAnyOf("$%"))ambiguous=true;}
+                else if(opcode=="sw_last"){++noteCount;note=value.isNotEmpty()&&value.length()<=3&&value.containsOnly("0123456789")?value.getIntValue():-1;}
+                else if(opcode.startsWith("sw_last_")||opcode=="sw_down"||opcode=="sw_up"||opcode=="sw_previous"||opcode=="sw_lolast"||opcode=="sw_hilast")ambiguous=true;
                 if (opcode == "sample" || opcode == "default_path")
                 {
                     if (value.isEmpty() || value.containsAnyOf ("$%") || value.startsWithChar ('*'))
@@ -196,6 +213,8 @@ struct SfzInspection
                     articulations.addIfNotAlreadyThere (value);
             }
         }
+        if(inComment)ambiguous=true;
+        flush();
         unresolved |= inComment;
         includes.erase (file.getFullPathName());
     }
@@ -270,6 +289,21 @@ void Catalog::read()
             const auto labels = row["articulations"];
             if (auto* values = labels.getArray())
                 for (const auto& label : *values) patch.articulations.add (label.toString());
+            patch.mappingInspected=bool(row["mappingInspected"]);
+            const auto hints=row["switchHints"];
+            if(auto* values=hints.getArray())
+                for(const auto& hint:*values)
+                {
+                    const auto definition=hint["definition"].toString(),label=hint["label"].toString();
+                    const auto number=hint["note"].toString();
+                    if(patch.switchHints.size()>=1024)break;
+                    if(!File::isAbsolutePath(definition)||label.isEmpty()||label.length()>80||number.isEmpty()||number.length()>3||!number.containsOnly("0123456789")||number.getIntValue()>127)continue;
+                    const File candidate(definition);
+                    bool within=false;
+                    for(const auto& root:roots)within|=candidate.isAChildOf(root)&&file.isAChildOf(root);
+                    for(const auto& root:pending)within|=candidate.isAChildOf(root)&&file.isAChildOf(root);
+                    if(within)patch.switchHints.push_back({label,number.getIntValue(),candidate,int64(hint["modified"]),int64(hint["size"])});
+                }
             if (patch.kind.isNotEmpty()) entries.emplace (id, std::move (patch));
         }
 }
@@ -282,7 +316,8 @@ Result Catalog::save() const
     for (const auto& root : pending) unfinished.add (root.getFullPathName());
     for (const auto& [id, patch] : entries)
     {
-        Array<var> labels;
+        Array<var> labels, hints;
+        for(const auto& h:patch.switchHints)hints.add(object({{"label",h.label},{"note",h.note},{"definition",h.definition.getFullPathName()},{"modified",h.modified},{"size",h.size}}));
         for (const auto& label : patch.articulations) labels.add (label);
         const auto availability = status (patch);
         const auto manifest = availability.startsWith ("Audition-confirmed")
@@ -290,7 +325,7 @@ Result Catalog::save() const
         patches.add (object ({ { "id", id }, { "source", patch.source.getFullPathName() },
             { "name", patch.name }, { "library", patch.library }, { "family", patch.family },
             { "kind", patch.kind }, { "health", patch.health }, { "midiRange", patch.midiRange },
-            { "articulations", var (labels) }, { "modified", patch.modified }, { "size", patch.size },
+            { "articulations", var (labels) }, {"switchHints",var(hints)}, {"mappingInspected",patch.mappingInspected}, { "modified", patch.modified }, { "size", patch.size },
             { "present", patch.present }, { "status", availability }, { "presetManifest", manifest },
             { "libraryVersion", patch.libraryVersion },
             { "literalSamples", patch.literalSamples }, { "missingSamples", patch.missingSamples } }));
@@ -317,7 +352,7 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
         progress.root = root;
         const auto cancelled = [&] { return shouldCancel (progress); };
         if (cancelled()) break;
-        if (! root.isDirectory() || ! root.hasReadAccess())
+        if (! root.isDirectory() || ! root.hasReadAccess() || root.isSymbolicLink())
         {
             ++progress.errors;
             continue;
@@ -337,7 +372,8 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
             // here and when validating a capture against its source.
             const auto modified = file.getLastModificationTime().toMilliseconds();
             if (const auto it = entries.find (id); resuming.contains (root) && it != entries.end()
-                && it->second.present && it->second.modified == modified && it->second.size == size)
+                && it->second.present && it->second.modified == modified && it->second.size == size
+                && (kind!="sfz"||it->second.mappingInspected))
             {
                 ++progress.discovered;
                 if (it->second.missingSamples > 0) ++progress.missing;
@@ -360,6 +396,7 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
                 patch.literalSamples = inspection.samples;
                 patch.missingSamples = inspection.missing;
                 patch.articulations = std::move (inspection.articulations);
+                patch.switchHints=std::move(inspection.hints);patch.mappingInspected=true;
                 if (inspection.low <= inspection.high)
                     patch.midiRange = String (inspection.low) + "-" + String (inspection.high);
             }
@@ -425,11 +462,16 @@ String Catalog::status (const Patch& patch) const
 
 String Catalog::report() const
 {
-    std::map<String, int> libraries;
+    std::map<String, int> libraries, labelled, literal, unavailable, uninspected;
     int captured = 0, original = 0, unresolved = 0, missing = 0, snapshots = 0, selectable = 0;
     for (const auto& [id, patch] : entries)
     {
-        if (patch.present) ++libraries[patch.library];
+        if (patch.present) {
+            ++libraries[patch.library];
+            if(!patch.articulations.isEmpty())++labelled[patch.library];
+            if(!patch.switchHints.empty())++literal[patch.library];
+            if(patch.kind=="sfz"&&!patch.mappingInspected)++uninspected[patch.library];
+        } else ++unavailable[patch.library];
         const auto state = status (patch);
         if (state.startsWith ("Audition-confirmed")) ++captured;
         else if (patch.present && patch.kind == "original") ++original;
@@ -451,7 +493,11 @@ String Catalog::report() const
         + "\nUnavailable roots: " + String (errors)
         + "\nPending roots: " + String (pending.size()) + "\n";
     for (const auto& [library, count] : libraries)
-        summary << "\n" << library << ": " << count;
+        summary << "\n" << library << ": " << count << " present; " << labelled[library] << " labelled; "
+                << literal[library] << " with cached literal switch evidence; " << uninspected[library] << " need mapping rescan; "
+                << unavailable[library] << " unavailable";
+    for(const auto& [library,count]:unavailable)if(libraries.count(library)==0)summary<<"\n"<<library<<": "<<count<<" unavailable";
+    summary<<"\nLiteral evidence is provisional, not verified assignments.";
     return summary;
 }
 }
