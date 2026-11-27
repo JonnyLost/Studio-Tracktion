@@ -226,6 +226,9 @@ int main()
     require(compile(conducted,{"t"},1,planned,error)&&planned.notes.size()==3,"compile full density superset");
     require(decode(encode(conducted),restored)&&restored==conducted,"density tier persistence");
     require(conductedVelocity(100,0)==25&&conductedVelocity(100,127)==100&&conductedVelocity(1,0)==1,"velocity range and floor");
+    ConductingMapping mapping{21,22};
+    require(mapping.valid()&&mapping.role(21)==1&&mapping.role(22)==11&&mapping.role(1)==-1,"custom controller role mapping");
+    require(!ConductingMapping{21,21}.valid()&&!ConductingMapping{64,11}.valid()&&!ConductingMapping{1,123}.valid(),"reject duplicate or reserved controllers");
     ConductingMailbox mailbox;
     mailbox.receive(1,10);mailbox.receive(1,20);mailbox.receive(11,0);mailbox.receive(7,127);mailbox.receive(11,128);
     require(mailbox.consume({127,127})==ConductingValues{20,0},"latest CC mailbox and zero value");
