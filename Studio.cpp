@@ -6942,7 +6942,14 @@ int StudioView::runInterfaceReview (const File& output)
         || studio::instrumentIcon("Piccolo Trumpet","Brass")!=Icon::piccoloTrumpet
         || studio::instrumentIcon("Bass Drum","Percussion")!=Icon::bassDrum
         || studio::instrumentIcon("Harpsichord","Keyboards")!=Icon::harpsichord
-        || studio::instrumentIcon("Cello","Orchestral Strings")!=Icon::cello)
+        || studio::instrumentIcon("Cello","Orchestral Strings")!=Icon::cello
+        || studio::instrumentIcon("Alto Clarinet")!=Icon::altoClarinet
+        || studio::instrumentIcon("Contrabass Saxophone")!=Icon::contrabassSax
+        || studio::instrumentIcon("Flute")!=Icon::flute
+        || studio::instrumentIcon("Hammered Dulcimer")!=Icon::hammeredDulcimer
+        || studio::instrumentIcon("Viola da Gamba")!=Icon::violaDaGamba
+        || studio::instrumentIcon("Female Choir")!=Icon::femaleChoir
+        || studio::instrumentIcon("Bell Tree")!=Icon::bellTree)
         { std::fprintf(stderr,"Instrument icon identity failed\n"); return 1; }
     stopTimer();
     environmentWelcome.dismiss();

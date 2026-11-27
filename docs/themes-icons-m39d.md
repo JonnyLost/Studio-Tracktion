@@ -8,3 +8,6 @@ CI tests check palette contrast; visual review at standard and enlarged text on 
 
 ## Vector expansion 1
 Added 47 distinct reusable designs (71 total) with transparent SVG assets and native path geometry. Specific-name matching now precedes family fallback; lower flute, clarinet and saxophone variants, historical brass, pitched and unpitched percussion, strings and keyboards have new silhouettes. Some closely related models still intentionally share a glyph, and the unrecovered full catalog is not claimed complete. See assets/instrument-icons/approval-expansion-1.html. Interface review now checks all cached paths fit the normalized canvas and specific instrument mappings. Actual anatomical and small-size approval remains pending.
+
+## Vector expansion 2
+Added 54 SVGs (125 total) with matching cached native paths, including 13 woodwinds and brass, 24 percussion, 17 strings and keyboards. Name matching distinguishes more variants and avoids the flute/lute substring collision. New integration assertions cover representative matching. See assets/instrument-icons/approval-expansion-2.html. This is an expanded practical catalog, not a reconciliation of the original 242 entries. Anatomy and compiled appearance still need review.
