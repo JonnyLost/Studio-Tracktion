@@ -1,0 +1,2276 @@
+{
+  "schemaVersion": 1,
+  "originalCatalogReconciled": false,
+  "totalAssets": 242,
+  "notes": "Stable renderer IDs, not original score-order numbers. New assets include physical variants and combined ensemble designs, not 242 individually verified instrument species.",
+  "assets": [
+    {
+      "id": "violin",
+      "name": "Violin",
+      "group": "Previous collection",
+      "svg": "violin.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cello",
+      "name": "Cello",
+      "group": "Previous collection",
+      "svg": "cello.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "flute",
+      "name": "Flute",
+      "group": "Previous collection",
+      "svg": "flute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "oboe",
+      "name": "Oboe",
+      "group": "Previous collection",
+      "svg": "oboe.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "clarinet",
+      "name": "Clarinet",
+      "group": "Previous collection",
+      "svg": "clarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassoon",
+      "name": "Bassoon",
+      "group": "Previous collection",
+      "svg": "bassoon.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "saxophone",
+      "name": "Saxophone",
+      "group": "Previous collection",
+      "svg": "saxophone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "horn",
+      "name": "Horn",
+      "group": "Previous collection",
+      "svg": "horn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "trumpet",
+      "name": "Trumpet",
+      "group": "Previous collection",
+      "svg": "trumpet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "trombone",
+      "name": "Trombone",
+      "group": "Previous collection",
+      "svg": "trombone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "tuba",
+      "name": "Tuba",
+      "group": "Previous collection",
+      "svg": "tuba.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "harp",
+      "name": "Harp",
+      "group": "Previous collection",
+      "svg": "harp.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "piano",
+      "name": "Piano",
+      "group": "Previous collection",
+      "svg": "piano.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "guitar",
+      "name": "Guitar",
+      "group": "Previous collection",
+      "svg": "guitar.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "drum",
+      "name": "Drum",
+      "group": "Previous collection",
+      "svg": "drum.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "timpani",
+      "name": "Timpani",
+      "group": "Previous collection",
+      "svg": "timpani.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cymbal",
+      "name": "Cymbal",
+      "group": "Previous collection",
+      "svg": "cymbal.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "mallets",
+      "name": "Mallets",
+      "group": "Previous collection",
+      "svg": "mallets.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "voice",
+      "name": "Voice",
+      "group": "Previous collection",
+      "svg": "voice.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "synth",
+      "name": "Synth",
+      "group": "Previous collection",
+      "svg": "synth.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "audio",
+      "name": "Audio",
+      "group": "Previous collection",
+      "svg": "audio.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "ensemble",
+      "name": "Ensemble",
+      "group": "Previous collection",
+      "svg": "ensemble.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "effect",
+      "name": "Effect",
+      "group": "Previous collection",
+      "svg": "effect.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "group": "Previous collection",
+      "svg": "other.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "piccolo",
+      "name": "Piccolo",
+      "group": "Previous collection",
+      "svg": "piccolo.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "altoFlute",
+      "name": "Alto Flute",
+      "group": "Previous collection",
+      "svg": "altoFlute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassFlute",
+      "name": "Bass Flute",
+      "group": "Previous collection",
+      "svg": "bassFlute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassFlute",
+      "name": "Contrabass Flute",
+      "group": "Previous collection",
+      "svg": "contrabassFlute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "oboeDAmore",
+      "name": "Oboe DAmore",
+      "group": "Previous collection",
+      "svg": "oboeDAmore.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "englishHorn",
+      "name": "English Horn",
+      "group": "Previous collection",
+      "svg": "englishHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassOboe",
+      "name": "Bass Oboe",
+      "group": "Previous collection",
+      "svg": "bassOboe.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "heckelphone",
+      "name": "Heckelphone",
+      "group": "Previous collection",
+      "svg": "heckelphone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassetHorn",
+      "name": "Basset Horn",
+      "group": "Previous collection",
+      "svg": "bassetHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassClarinet",
+      "name": "Bass Clarinet",
+      "group": "Previous collection",
+      "svg": "bassClarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassClarinet",
+      "name": "Contrabass Clarinet",
+      "group": "Previous collection",
+      "svg": "contrabassClarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassoon",
+      "name": "Contrabassoon",
+      "group": "Previous collection",
+      "svg": "contrabassoon.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "sopranoSax",
+      "name": "Soprano Sax",
+      "group": "Previous collection",
+      "svg": "sopranoSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "baritoneSax",
+      "name": "Baritone Sax",
+      "group": "Previous collection",
+      "svg": "baritoneSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassSax",
+      "name": "Bass Sax",
+      "group": "Previous collection",
+      "svg": "bassSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "recorder",
+      "name": "Recorder",
+      "group": "Previous collection",
+      "svg": "recorder.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "panFlute",
+      "name": "Pan Flute",
+      "group": "Previous collection",
+      "svg": "panFlute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "naturalHorn",
+      "name": "Natural Horn",
+      "group": "Previous collection",
+      "svg": "naturalHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "wagnerTuba",
+      "name": "Wagner Tuba",
+      "group": "Previous collection",
+      "svg": "wagnerTuba.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "piccoloTrumpet",
+      "name": "Piccolo Trumpet",
+      "group": "Previous collection",
+      "svg": "piccoloTrumpet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "naturalTrumpet",
+      "name": "Natural Trumpet",
+      "group": "Previous collection",
+      "svg": "naturalTrumpet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cornet",
+      "name": "Cornet",
+      "group": "Previous collection",
+      "svg": "cornet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "flugelhorn",
+      "name": "Flugelhorn",
+      "group": "Previous collection",
+      "svg": "flugelhorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassTrumpet",
+      "name": "Bass Trumpet",
+      "group": "Previous collection",
+      "svg": "bassTrumpet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassTrombone",
+      "name": "Bass Trombone",
+      "group": "Previous collection",
+      "svg": "bassTrombone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "euphonium",
+      "name": "Euphonium",
+      "group": "Previous collection",
+      "svg": "euphonium.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cimbasso",
+      "name": "Cimbasso",
+      "group": "Previous collection",
+      "svg": "cimbasso.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "ophicleide",
+      "name": "Ophicleide",
+      "group": "Previous collection",
+      "svg": "ophicleide.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "serpent",
+      "name": "Serpent",
+      "group": "Previous collection",
+      "svg": "serpent.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "viola",
+      "name": "Viola",
+      "group": "Previous collection",
+      "svg": "viola.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "doubleBass",
+      "name": "Double Bass",
+      "group": "Previous collection",
+      "svg": "doubleBass.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "snare",
+      "name": "Snare",
+      "group": "Previous collection",
+      "svg": "snare.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassDrum",
+      "name": "Bass Drum",
+      "group": "Previous collection",
+      "svg": "bassDrum.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "triangle",
+      "name": "Triangle",
+      "group": "Previous collection",
+      "svg": "triangle.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "gong",
+      "name": "Gong",
+      "group": "Previous collection",
+      "svg": "gong.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "tubularBells",
+      "name": "Tubular Bells",
+      "group": "Previous collection",
+      "svg": "tubularBells.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "glockenspiel",
+      "name": "Glockenspiel",
+      "group": "Previous collection",
+      "svg": "glockenspiel.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "xylophone",
+      "name": "Xylophone",
+      "group": "Previous collection",
+      "svg": "xylophone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "marimba",
+      "name": "Marimba",
+      "group": "Previous collection",
+      "svg": "marimba.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "vibraphone",
+      "name": "Vibraphone",
+      "group": "Previous collection",
+      "svg": "vibraphone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "organ",
+      "name": "Organ",
+      "group": "Previous collection",
+      "svg": "organ.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "harpsichord",
+      "name": "Harpsichord",
+      "group": "Previous collection",
+      "svg": "harpsichord.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "accordion",
+      "name": "Accordion",
+      "group": "Previous collection",
+      "svg": "accordion.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "harmonica",
+      "name": "Harmonica",
+      "group": "Previous collection",
+      "svg": "harmonica.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "banjo",
+      "name": "Banjo",
+      "group": "Previous collection",
+      "svg": "banjo.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "mandolin",
+      "name": "Mandolin",
+      "group": "Previous collection",
+      "svg": "mandolin.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "celesta",
+      "name": "Celesta",
+      "group": "Previous collection",
+      "svg": "celesta.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "altoClarinet",
+      "name": "Alto Clarinet",
+      "group": "Previous collection",
+      "svg": "altoClarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contraAltoClarinet",
+      "name": "Contra Alto Clarinet",
+      "group": "Previous collection",
+      "svg": "contraAltoClarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bassetClarinet",
+      "name": "Basset Clarinet",
+      "group": "Previous collection",
+      "svg": "bassetClarinet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "altoSax",
+      "name": "Alto Sax",
+      "group": "Previous collection",
+      "svg": "altoSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorSax",
+      "name": "Tenor Sax",
+      "group": "Previous collection",
+      "svg": "tenorSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassSax",
+      "name": "Contrabass Sax",
+      "group": "Previous collection",
+      "svg": "contrabassSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "sopraninoSax",
+      "name": "Sopranino Sax",
+      "group": "Previous collection",
+      "svg": "sopraninoSax.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "viennaHorn",
+      "name": "Vienna Horn",
+      "group": "Previous collection",
+      "svg": "viennaHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "altoTrombone",
+      "name": "Alto Trombone",
+      "group": "Previous collection",
+      "svg": "altoTrombone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassTrombone",
+      "name": "Contrabass Trombone",
+      "group": "Previous collection",
+      "svg": "contrabassTrombone.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorHorn",
+      "name": "Tenor Horn",
+      "group": "Previous collection",
+      "svg": "tenorHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "baritoneHorn",
+      "name": "Baritone Horn",
+      "group": "Previous collection",
+      "svg": "baritoneHorn.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "contrabassTuba",
+      "name": "Contrabass Tuba",
+      "group": "Previous collection",
+      "svg": "contrabassTuba.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "tambourine",
+      "name": "Tambourine",
+      "group": "Previous collection",
+      "svg": "tambourine.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "castanets",
+      "name": "Castanets",
+      "group": "Previous collection",
+      "svg": "castanets.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "woodblock",
+      "name": "Woodblock",
+      "group": "Previous collection",
+      "svg": "woodblock.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "templeBlocks",
+      "name": "Temple Blocks",
+      "group": "Previous collection",
+      "svg": "templeBlocks.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "claves",
+      "name": "Claves",
+      "group": "Previous collection",
+      "svg": "claves.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "maracas",
+      "name": "Maracas",
+      "group": "Previous collection",
+      "svg": "maracas.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "guiro",
+      "name": "Guiro",
+      "group": "Previous collection",
+      "svg": "guiro.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cabasa",
+      "name": "Cabasa",
+      "group": "Previous collection",
+      "svg": "cabasa.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "cowbell",
+      "name": "Cowbell",
+      "group": "Previous collection",
+      "svg": "cowbell.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "agogo",
+      "name": "Agogo",
+      "group": "Previous collection",
+      "svg": "agogo.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "slapstick",
+      "name": "Slapstick",
+      "group": "Previous collection",
+      "svg": "slapstick.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "ratchet",
+      "name": "Ratchet",
+      "group": "Previous collection",
+      "svg": "ratchet.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "vibraslap",
+      "name": "Vibraslap",
+      "group": "Previous collection",
+      "svg": "vibraslap.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "sleighBells",
+      "name": "Sleigh Bells",
+      "group": "Previous collection",
+      "svg": "sleighBells.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "clashCymbals",
+      "name": "Clash Cymbals",
+      "group": "Previous collection",
+      "svg": "clashCymbals.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "fingerCymbals",
+      "name": "Finger Cymbals",
+      "group": "Previous collection",
+      "svg": "fingerCymbals.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "windChimes",
+      "name": "Wind Chimes",
+      "group": "Previous collection",
+      "svg": "windChimes.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bellTree",
+      "name": "Bell Tree",
+      "group": "Previous collection",
+      "svg": "bellTree.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "group": "Previous collection",
+      "svg": "anvil.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "toms",
+      "name": "Toms",
+      "group": "Previous collection",
+      "svg": "toms.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "bongos",
+      "name": "Bongos",
+      "group": "Previous collection",
+      "svg": "bongos.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "conga",
+      "name": "Conga",
+      "group": "Previous collection",
+      "svg": "conga.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "taiko",
+      "name": "Taiko",
+      "group": "Previous collection",
+      "svg": "taiko.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "brushes",
+      "name": "Brushes",
+      "group": "Previous collection",
+      "svg": "brushes.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "grandPiano",
+      "name": "Grand Piano",
+      "group": "Previous collection",
+      "svg": "grandPiano.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "uprightPiano",
+      "name": "Upright Piano",
+      "group": "Previous collection",
+      "svg": "uprightPiano.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "electricPiano",
+      "name": "Electric Piano",
+      "group": "Previous collection",
+      "svg": "electricPiano.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "clavichord",
+      "name": "Clavichord",
+      "group": "Previous collection",
+      "svg": "clavichord.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "reedOrgan",
+      "name": "Reed Organ",
+      "group": "Previous collection",
+      "svg": "reedOrgan.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "electricGuitar",
+      "name": "Electric Guitar",
+      "group": "Previous collection",
+      "svg": "electricGuitar.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "electricBass",
+      "name": "Electric Bass",
+      "group": "Previous collection",
+      "svg": "electricBass.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "ukulele",
+      "name": "Ukulele",
+      "group": "Previous collection",
+      "svg": "ukulele.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "lute",
+      "name": "Lute",
+      "group": "Previous collection",
+      "svg": "lute.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "theorbo",
+      "name": "Theorbo",
+      "group": "Previous collection",
+      "svg": "theorbo.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "zither",
+      "name": "Zither",
+      "group": "Previous collection",
+      "svg": "zither.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "hammeredDulcimer",
+      "name": "Hammered Dulcimer",
+      "group": "Previous collection",
+      "svg": "hammeredDulcimer.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "violaDaGamba",
+      "name": "Viola Da Gamba",
+      "group": "Previous collection",
+      "svg": "violaDaGamba.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "violinSection",
+      "name": "Violin Section",
+      "group": "Previous collection",
+      "svg": "violinSection.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "celloSection",
+      "name": "Cello Section",
+      "group": "Previous collection",
+      "svg": "celloSection.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "maleChoir",
+      "name": "Male Choir",
+      "group": "Previous collection",
+      "svg": "maleChoir.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "femaleChoir",
+      "name": "Female Choir",
+      "group": "Previous collection",
+      "svg": "femaleChoir.svg",
+      "aliases": [],
+      "approval": "pending"
+    },
+    {
+      "id": "ebClarinet",
+      "name": "Clarinet in E-flat",
+      "group": "Woodwinds and brass",
+      "svg": "ebClarinet.svg",
+      "aliases": [
+        "clarinet in e-flat",
+        "clarinet in eb",
+        "clarinet in e♭",
+        "e-flat clarinet",
+        "eb clarinet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "cClarinet",
+      "name": "Clarinet in C",
+      "group": "Woodwinds and brass",
+      "svg": "cClarinet.svg",
+      "aliases": [
+        "clarinet in c",
+        "c clarinet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "aClarinet",
+      "name": "Clarinet in A",
+      "group": "Woodwinds and brass",
+      "svg": "aClarinet.svg",
+      "aliases": [
+        "clarinet in a",
+        "a clarinet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "dTrumpet",
+      "name": "Trumpet in D",
+      "group": "Woodwinds and brass",
+      "svg": "dTrumpet.svg",
+      "aliases": [
+        "trumpet in d",
+        "d trumpet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "ebTrumpet",
+      "name": "Trumpet in E-flat",
+      "group": "Woodwinds and brass",
+      "svg": "ebTrumpet.svg",
+      "aliases": [
+        "trumpet in e-flat",
+        "trumpet in eb",
+        "trumpet in e♭",
+        "e-flat trumpet",
+        "eb trumpet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "cTrumpet",
+      "name": "Trumpet in C",
+      "group": "Woodwinds and brass",
+      "svg": "cTrumpet.svg",
+      "aliases": [
+        "trumpet in c",
+        "c trumpet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sopranoTrombone",
+      "name": "Soprano trombone",
+      "group": "Woodwinds and brass",
+      "svg": "sopranoTrombone.svg",
+      "aliases": [
+        "soprano trombone"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassTuba",
+      "name": "Bass tuba",
+      "group": "Woodwinds and brass",
+      "svg": "bassTuba.svg",
+      "aliases": [
+        "bass tuba"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorWagnerTuba",
+      "name": "Tenor Wagner tuba",
+      "group": "Woodwinds and brass",
+      "svg": "tenorWagnerTuba.svg",
+      "aliases": [
+        "tenor wagner tuba",
+        "wagner tenor tuba"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassWagnerTuba",
+      "name": "Bass Wagner tuba",
+      "group": "Woodwinds and brass",
+      "svg": "bassWagnerTuba.svg",
+      "aliases": [
+        "bass wagner tuba",
+        "wagner bass tuba"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sopranoRecorder",
+      "name": "Soprano recorder",
+      "group": "Woodwinds and brass",
+      "svg": "sopranoRecorder.svg",
+      "aliases": [
+        "soprano recorder"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "altoRecorder",
+      "name": "Alto recorder",
+      "group": "Woodwinds and brass",
+      "svg": "altoRecorder.svg",
+      "aliases": [
+        "alto recorder"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorRecorder",
+      "name": "Tenor recorder",
+      "group": "Woodwinds and brass",
+      "svg": "tenorRecorder.svg",
+      "aliases": [
+        "tenor recorder"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassRecorder",
+      "name": "Bass recorder",
+      "group": "Woodwinds and brass",
+      "svg": "bassRecorder.svg",
+      "aliases": [
+        "bass recorder"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "traverso",
+      "name": "Transverse flute",
+      "group": "Woodwinds and brass",
+      "svg": "traverso.svg",
+      "aliases": [
+        "transverse flute",
+        "traverso",
+        "baroque flute"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "baroqueOboe",
+      "name": "Baroque oboe",
+      "group": "Woodwinds and brass",
+      "svg": "baroqueOboe.svg",
+      "aliases": [
+        "baroque oboe"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "oboeDaCaccia",
+      "name": "Oboe da caccia",
+      "group": "Woodwinds and brass",
+      "svg": "oboeDaCaccia.svg",
+      "aliases": [
+        "oboe da caccia"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "cornett",
+      "name": "Cornett / zink",
+      "group": "Woodwinds and brass",
+      "svg": "cornett.svg",
+      "aliases": [
+        "cornett",
+        "zink"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "crumhorn",
+      "name": "Crumhorn",
+      "group": "Woodwinds and brass",
+      "svg": "crumhorn.svg",
+      "aliases": [
+        "crumhorn",
+        "krumhorn"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tripleHorn",
+      "name": "Triple horn",
+      "group": "Woodwinds and brass",
+      "svg": "tripleHorn.svg",
+      "aliases": [
+        "triple horn"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "mutedTrumpet",
+      "name": "Muted trumpet",
+      "group": "Woodwinds and brass",
+      "svg": "mutedTrumpet.svg",
+      "aliases": [
+        "muted trumpet",
+        "trumpet muted",
+        "trumpet in c (muted)",
+        "trumpet in b♭ ii (muted)"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "mutedTrombone",
+      "name": "Muted trombone",
+      "group": "Woodwinds and brass",
+      "svg": "mutedTrombone.svg",
+      "aliases": [
+        "muted trombone",
+        "tenor trombone (muted)"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bugle",
+      "name": "Bugle",
+      "group": "Woodwinds and brass",
+      "svg": "bugle.svg",
+      "aliases": [
+        "bugle"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "thunderSheet",
+      "name": "Thunder sheet",
+      "group": "Percussion",
+      "svg": "thunderSheet.svg",
+      "aliases": [
+        "thunder sheet",
+        "thundersheet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "rails",
+      "name": "Percussion rails",
+      "group": "Percussion",
+      "svg": "rails.svg",
+      "aliases": [
+        "percussion rails",
+        "rails"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "crotales",
+      "name": "Crotales",
+      "group": "Percussion",
+      "svg": "crotales.svg",
+      "aliases": [
+        "crotales"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "plateBells",
+      "name": "Plate bells",
+      "group": "Percussion",
+      "svg": "plateBells.svg",
+      "aliases": [
+        "plate bells"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "handbell",
+      "name": "Handbell",
+      "group": "Percussion",
+      "svg": "handbell.svg",
+      "aliases": [
+        "handbell",
+        "hand bell"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "churchBell",
+      "name": "Church bell",
+      "group": "Percussion",
+      "svg": "churchBell.svg",
+      "aliases": [
+        "church bell"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "glassHarmonica",
+      "name": "Glass harmonica",
+      "group": "Percussion",
+      "svg": "glassHarmonica.svg",
+      "aliases": [
+        "glass harmonica",
+        "glass armonica"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "chineseCymbal",
+      "name": "China cymbal",
+      "group": "Percussion",
+      "svg": "chineseCymbal.svg",
+      "aliases": [
+        "china cymbal",
+        "chinese cymbal"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "hiHat",
+      "name": "Hi-hat",
+      "group": "Percussion",
+      "svg": "hiHat.svg",
+      "aliases": [
+        "hi-hat",
+        "hi hat",
+        "hihat"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "rideCymbal",
+      "name": "Ride cymbal",
+      "group": "Percussion",
+      "svg": "rideCymbal.svg",
+      "aliases": [
+        "ride cymbal"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "splashCymbal",
+      "name": "Splash cymbal",
+      "group": "Percussion",
+      "svg": "splashCymbal.svg",
+      "aliases": [
+        "splash cymbal"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tamTam",
+      "name": "Tam-tam",
+      "group": "Percussion",
+      "svg": "tamTam.svg",
+      "aliases": [
+        "tam-tam",
+        "tam tam"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "fieldDrum",
+      "name": "Field drum",
+      "group": "Percussion",
+      "svg": "fieldDrum.svg",
+      "aliases": [
+        "field drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "militaryDrum",
+      "name": "Military drum",
+      "group": "Percussion",
+      "svg": "militaryDrum.svg",
+      "aliases": [
+        "military drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sideDrum",
+      "name": "Side drum",
+      "group": "Percussion",
+      "svg": "sideDrum.svg",
+      "aliases": [
+        "side drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorDrum",
+      "name": "Tenor drum",
+      "group": "Percussion",
+      "svg": "tenorDrum.svg",
+      "aliases": [
+        "tenor drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "frameDrum",
+      "name": "Frame drum",
+      "group": "Percussion",
+      "svg": "frameDrum.svg",
+      "aliases": [
+        "frame drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bodhran",
+      "name": "Bodhrán",
+      "group": "Percussion",
+      "svg": "bodhran.svg",
+      "aliases": [
+        "bodhran",
+        "bodhrán"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "timbales",
+      "name": "Timbales",
+      "group": "Percussion",
+      "svg": "timbales.svg",
+      "aliases": [
+        "timbales"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "djembe",
+      "name": "Djembe",
+      "group": "Percussion",
+      "svg": "djembe.svg",
+      "aliases": [
+        "djembe"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "cajon",
+      "name": "Cajón",
+      "group": "Percussion",
+      "svg": "cajon.svg",
+      "aliases": [
+        "cajon",
+        "cajón"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "flexatone",
+      "name": "Flexatone",
+      "group": "Percussion",
+      "svg": "flexatone.svg",
+      "aliases": [
+        "flexatone"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "musicalSaw",
+      "name": "Musical saw",
+      "group": "Percussion",
+      "svg": "musicalSaw.svg",
+      "aliases": [
+        "musical saw"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "shaker",
+      "name": "Shaker",
+      "group": "Percussion",
+      "svg": "shaker.svg",
+      "aliases": [
+        "shaker"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "whistle",
+      "name": "Whistle",
+      "group": "Percussion",
+      "svg": "whistle.svg",
+      "aliases": [
+        "whistle"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "pedalHarp",
+      "name": "Pedal harp",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "pedalHarp.svg",
+      "aliases": [
+        "pedal harp",
+        "concert harp"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "leverHarp",
+      "name": "Lever harp",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "leverHarp.svg",
+      "aliases": [
+        "lever harp",
+        "celtic harp"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "baroqueHarp",
+      "name": "Baroque harp",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "baroqueHarp.svg",
+      "aliases": [
+        "baroque harp",
+        "triple harp"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "lyre",
+      "name": "Lyre",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "lyre.svg",
+      "aliases": [
+        "lyre"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "psaltery",
+      "name": "Psaltery",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "psaltery.svg",
+      "aliases": [
+        "psaltery"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "autoharp",
+      "name": "Autoharp",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "autoharp.svg",
+      "aliases": [
+        "autoharp"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "mandola",
+      "name": "Mandola",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "mandola.svg",
+      "aliases": [
+        "mandola"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "classicalGuitar",
+      "name": "Classical guitar",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "classicalGuitar.svg",
+      "aliases": [
+        "classical guitar",
+        "concert guitar",
+        "nylon guitar",
+        "nylon string guitar"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "steelGuitar",
+      "name": "Steel-string guitar",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "steelGuitar.svg",
+      "aliases": [
+        "steel-string guitar",
+        "steel string guitar",
+        "acoustic guitar"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "preparedPiano",
+      "name": "Prepared piano",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "preparedPiano.svg",
+      "aliases": [
+        "prepared piano"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "spinet",
+      "name": "Spinet",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "spinet.svg",
+      "aliases": [
+        "spinet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "virginal",
+      "name": "Virginal",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "virginal.svg",
+      "aliases": [
+        "virginal"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "clavinet",
+      "name": "Clavinet",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "clavinet.svg",
+      "aliases": [
+        "clavinet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tonewheelOrgan",
+      "name": "Tonewheel organ",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "tonewheelOrgan.svg",
+      "aliases": [
+        "tonewheel organ",
+        "hammond organ",
+        "drawbar organ"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "concertina",
+      "name": "Concertina",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "concertina.svg",
+      "aliases": [
+        "concertina"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bandoneon",
+      "name": "Bandoneon",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "bandoneon.svg",
+      "aliases": [
+        "bandoneon"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "musicBox",
+      "name": "Music box",
+      "group": "Harps, plucked strings and keyboards",
+      "svg": "musicBox.svg",
+      "aliases": [
+        "music box"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "violaSection",
+      "name": "Viola section",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "violaSection.svg",
+      "aliases": [
+        "viola section",
+        "violas",
+        "viola ensemble"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassSection",
+      "name": "Double bass section",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "bassSection.svg",
+      "aliases": [
+        "double bass section",
+        "double basses",
+        "bass ensemble"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "fluteEnsemble",
+      "name": "Flute ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "fluteEnsemble.svg",
+      "aliases": [
+        "flute ensemble",
+        "flutes"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "oboeEnsemble",
+      "name": "Oboe ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "oboeEnsemble.svg",
+      "aliases": [
+        "oboe ensemble",
+        "oboes"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "clarinetEnsemble",
+      "name": "Clarinet ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "clarinetEnsemble.svg",
+      "aliases": [
+        "clarinet ensemble",
+        "clarinets"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassoonEnsemble",
+      "name": "Bassoon ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "bassoonEnsemble.svg",
+      "aliases": [
+        "bassoon ensemble",
+        "bassoons"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "hornEnsemble",
+      "name": "Horn ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "hornEnsemble.svg",
+      "aliases": [
+        "horn ensemble",
+        "french horns",
+        "dimension horns",
+        "horns"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "trumpetEnsemble",
+      "name": "Trumpet ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "trumpetEnsemble.svg",
+      "aliases": [
+        "trumpet ensemble",
+        "fanfare trumpets",
+        "trumpets"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tromboneEnsemble",
+      "name": "Trombone ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "tromboneEnsemble.svg",
+      "aliases": [
+        "trombone ensemble",
+        "trombones"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "wagnerEnsemble",
+      "name": "Wagner tuba ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "wagnerEnsemble.svg",
+      "aliases": [
+        "wagner tuba ensemble",
+        "wagner tubas"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "snareEnsemble",
+      "name": "Snare drum ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "snareEnsemble.svg",
+      "aliases": [
+        "snare drum ensemble",
+        "snare drums a4"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "harpDuo",
+      "name": "Harp duo",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "harpDuo.svg",
+      "aliases": [
+        "harp duo",
+        "harp ensemble"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "saxEnsemble",
+      "name": "Saxophone ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "saxEnsemble.svg",
+      "aliases": [
+        "saxophone ensemble",
+        "sax quartet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "stringEnsemble",
+      "name": "String ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "stringEnsemble.svg",
+      "aliases": [
+        "string ensemble",
+        "string section",
+        "orchestral strings",
+        "appassionata strings"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sopranoSolo",
+      "name": "Solo soprano",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "sopranoSolo.svg",
+      "aliases": [
+        "solo soprano",
+        "soprano solo",
+        "voices – soprano",
+        "voices - soprano"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "altoSolo",
+      "name": "Solo alto",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "altoSolo.svg",
+      "aliases": [
+        "solo alto",
+        "alto solo",
+        "voices – alto",
+        "voices - alto"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorSolo",
+      "name": "Solo tenor",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "tenorSolo.svg",
+      "aliases": [
+        "solo tenor",
+        "tenor solo",
+        "voices – tenor",
+        "voices - tenor"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassSolo",
+      "name": "Solo bass voice",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "bassSolo.svg",
+      "aliases": [
+        "solo bass voice",
+        "bass solo voice",
+        "voices – bass",
+        "voices - bass"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sopranoChoir",
+      "name": "Soprano choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "sopranoChoir.svg",
+      "aliases": [
+        "soprano choir",
+        "choir – soprano",
+        "choir - soprano"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "altoChoir",
+      "name": "Alto choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "altoChoir.svg",
+      "aliases": [
+        "alto choir",
+        "choir – alto",
+        "choir - alto"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "tenorChoir",
+      "name": "Tenor choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "tenorChoir.svg",
+      "aliases": [
+        "tenor choir",
+        "choir – tenor",
+        "choir - tenor"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bassChoir",
+      "name": "Bass choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "bassChoir.svg",
+      "aliases": [
+        "bass choir",
+        "choir – bass",
+        "choir - bass"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "mixedChoir",
+      "name": "Mixed choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "mixedChoir.svg",
+      "aliases": [
+        "mixed choir",
+        "satb choir",
+        "full choir"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "childrenChoir",
+      "name": "Children's choir",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "childrenChoir.svg",
+      "aliases": [
+        "children's choir",
+        "children choir",
+        "boys choir"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "stringQuartet",
+      "name": "String quartet",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "stringQuartet.svg",
+      "aliases": [
+        "string quartet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "woodwindQuintet",
+      "name": "Woodwind quintet",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "woodwindQuintet.svg",
+      "aliases": [
+        "woodwind quintet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "brassQuintet",
+      "name": "Brass quintet",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "brassQuintet.svg",
+      "aliases": [
+        "brass quintet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "chamberOrchestra",
+      "name": "Chamber orchestra",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "chamberOrchestra.svg",
+      "aliases": [
+        "chamber orchestra"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "symphonyOrchestra",
+      "name": "Symphony orchestra",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "symphonyOrchestra.svg",
+      "aliases": [
+        "symphony orchestra",
+        "full orchestra",
+        "orchestra ensemble"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "percussionEnsemble",
+      "name": "Percussion ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "percussionEnsemble.svg",
+      "aliases": [
+        "percussion ensemble"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "lowBrass",
+      "name": "Low brass ensemble",
+      "group": "Bowed strings, voices and ensembles",
+      "svg": "lowBrass.svg",
+      "aliases": [
+        "low brass"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "analogSynth",
+      "name": "Analog synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "analogSynth.svg",
+      "aliases": [
+        "analog synthesizer",
+        "analog synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "fmSynth",
+      "name": "FM synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "fmSynth.svg",
+      "aliases": [
+        "fm synthesizer",
+        "fm synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "wavetableSynth",
+      "name": "Wavetable synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "wavetableSynth.svg",
+      "aliases": [
+        "wavetable synthesizer",
+        "wavetable synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "additiveSynth",
+      "name": "Additive synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "additiveSynth.svg",
+      "aliases": [
+        "additive synthesizer",
+        "additive synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "granularSynth",
+      "name": "Granular synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "granularSynth.svg",
+      "aliases": [
+        "granular synthesizer",
+        "granular synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "physicalSynth",
+      "name": "Physical modeling synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "physicalSynth.svg",
+      "aliases": [
+        "physical modeling synth",
+        "physical modelling synth"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "modularSynth",
+      "name": "Modular synthesizer",
+      "group": "Electronic instruments and special sounds",
+      "svg": "modularSynth.svg",
+      "aliases": [
+        "modular synth",
+        "modular synthesizer"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "samplerIcon",
+      "name": "Sampler",
+      "group": "Electronic instruments and special sounds",
+      "svg": "samplerIcon.svg",
+      "aliases": [
+        "studio sampler",
+        "sampler"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "drumMachine",
+      "name": "Drum machine",
+      "group": "Electronic instruments and special sounds",
+      "svg": "drumMachine.svg",
+      "aliases": [
+        "drum machine"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "theremin",
+      "name": "Theremin",
+      "group": "Electronic instruments and special sounds",
+      "svg": "theremin.svg",
+      "aliases": [
+        "theremin"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "ondesMartenot",
+      "name": "Ondes Martenot",
+      "group": "Electronic instruments and special sounds",
+      "svg": "ondesMartenot.svg",
+      "aliases": [
+        "ondes martenot"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "mellotron",
+      "name": "Mellotron",
+      "group": "Electronic instruments and special sounds",
+      "svg": "mellotron.svg",
+      "aliases": [
+        "mellotron"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "flugelMute",
+      "name": "Muted flugelhorn",
+      "group": "Woodwinds and brass",
+      "svg": "flugelMute.svg",
+      "aliases": [
+        "muted flugelhorn"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "slideTrumpet",
+      "name": "Slide trumpet",
+      "group": "Woodwinds and brass",
+      "svg": "slideTrumpet.svg",
+      "aliases": [
+        "slide trumpet"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "musicalGlasses",
+      "name": "Musical glasses",
+      "group": "Percussion",
+      "svg": "musicalGlasses.svg",
+      "aliases": [
+        "musical glasses"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "bellLyra",
+      "name": "Bell lyra",
+      "group": "Percussion",
+      "svg": "bellLyra.svg",
+      "aliases": [
+        "bell lyra",
+        "bell lyre"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "sandpaperBlocks",
+      "name": "Sandpaper blocks",
+      "group": "Percussion",
+      "svg": "sandpaperBlocks.svg",
+      "aliases": [
+        "sandpaper block"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "rainstick",
+      "name": "Rainstick",
+      "group": "Percussion",
+      "svg": "rainstick.svg",
+      "aliases": [
+        "rainstick"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "oceanDrum",
+      "name": "Ocean drum",
+      "group": "Percussion",
+      "svg": "oceanDrum.svg",
+      "aliases": [
+        "ocean drum"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "slideWhistle",
+      "name": "Slide whistle",
+      "group": "Percussion",
+      "svg": "slideWhistle.svg",
+      "aliases": [
+        "slide whistle"
+      ],
+      "approval": "pending"
+    },
+    {
+      "id": "siren",
+      "name": "Siren",
+      "group": "Percussion",
+      "svg": "siren.svg",
+      "aliases": [
+        "siren"
+      ],
+      "approval": "pending"
+    }
+  ]
+}

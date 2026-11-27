@@ -38,8 +38,10 @@ on:
       - feature/studio-composer-refinement-m39a
       - feature/studio-instrument-library-m39b
       - feature/studio-inspector-controls-m39c
+      - feature/studio-themes-icons-m39d
   pull_request:
     branches:
+      - feature/studio-themes-icons-m39d
       - feature/studio-inspector-controls-m39c
       - feature/studio-instrument-library-m39b
       - feature/studio-composer-refinement-m39a

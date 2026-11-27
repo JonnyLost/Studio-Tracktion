@@ -3,6 +3,7 @@
 #include "StudioSynth.h"
 #include "StudioGeneralMidi.h"
 #include "StudioUI.h"
+#include "StudioInstrumentIcons.h"
 #include "StudioLibraryManager.h"
 #include <algorithm>
 #include <optional>
@@ -19,47 +20,9 @@ bool isAria (const PluginDescription& plugin)
         || (plugin.manufacturerName.containsIgnoreCase ("Garritan") && plugin.name.containsIgnoreCase ("ARIA"));
 }
 
-void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, bool effect, Colour colour)
+void drawInstrument (Graphics& g, Rectangle<float> bounds, const String& name, const String& family, bool effect, Colour colour)
 {
-    const auto scale = jmin (bounds.getWidth() / 100.0f, bounds.getHeight() / 60.0f);
-    const auto box = bounds.withSizeKeepingCentre (100.0f * scale, 60.0f * scale);
-    const auto transform = AffineTransform::scale (scale)
-                               .translated (box.getX(), box.getY());
-    Graphics::ScopedSaveState save (g);
-    g.addTransform (transform);
-    g.setColour (colour);
-    if (effect)
-    {
-        // Compact native equaliser/processor icon: effects should not appear
-        // as additional MIDI keyboards in the Apple collection.
-        g.drawRoundedRectangle (8.0f, 9.0f, 84.0f, 42.0f, 5.0f, 1.5f);
-        for (int channel = 0; channel < 3; ++channel)
-        {
-            const float x = 29.0f + channel * 21.0f;
-            const float handle = 24.0f + ((channel + 1) % 3) * 6.5f;
-            g.drawLine (x, 15.0f, x, 45.0f, 2.0f);
-            g.fillRoundedRectangle (x - 6.0f, handle - 2.5f, 12.0f, 5.0f, 1.5f);
-        }
-    }
-    else if (orchestra)
-    {
-        // Simple in-house flute silhouette identifies the orchestral player.
-        g.addTransform (AffineTransform::rotation (-0.46f, 50.0f, 30.0f));
-        g.drawRoundedRectangle (7.0f, 26.0f, 86.0f, 8.0f, 3.5f, 2.0f);
-        g.drawLine (25.0f, 22.0f, 88.0f, 22.0f, 1.5f);
-        for (int x : { 31, 42, 53, 64, 76, 85 })
-            g.drawEllipse ((float) x, 17.0f, 5.0f, 5.0f, 1.6f);
-        g.drawVerticalLine (16, 26.0f, 35.0f);
-        g.drawVerticalLine (89, 25.0f, 35.0f);
-    }
-    else
-    {
-        g.drawRoundedRectangle (8.0f, 10.0f, 84.0f, 40.0f, 5.0f, 2.0f);
-        for (int x : { 22, 36, 50, 64, 78 })
-            g.drawVerticalLine (x, 12.0f, 49.0f);
-        for (int x : { 18, 32, 60, 74 })
-            g.fillRect (x, 11, 8, 24);
-    }
+    drawInstrumentIcon(g,bounds,effect?InstrumentIcon::effect:instrumentIcon(name,family),colour);
 }
 }
 
@@ -540,7 +503,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
         return;
     }
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.family == "Orchestral", entry.effect, colours::action);
+    drawInstrument (g, bounds.removeFromLeft (appearance.px (25)).reduced (appearance.px (2)).toFloat(), entry.name, entry.family, entry.effect, colours::action);
     bounds.removeFromLeft (appearance.px (4));
     g.drawFittedText (entry.name, bounds.removeFromTop (appearance.line (12, 0)), Justification::centredLeft, 1, 1.0f);
     g.setFont (uiFont (10.5f));
@@ -691,7 +654,7 @@ void InstrumentBrowser::paint (Graphics& g)
     {
         g.setColour (colours::well);
         g.fillRoundedRectangle (art.toFloat(), (float) appearance.px (4));
-        drawInstrument (g, art.toFloat().reduced (2.0f), e->family == "Orchestral", e->effect, colours::action);
+        drawInstrument (g, art.toFloat().reduced (2.0f), e->name, e->family, e->effect, colours::action);
     }
 }
 }

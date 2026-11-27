@@ -203,6 +203,8 @@ string(REPLACE "${header_fill}" [=[    auto area = getLocalBounds().withTrimmedR
         g.setColour (studio::colours::focus.withAlpha (0.38f));
         g.drawRect (area, 1);
     }
+    if (!track->isFolderTrack())
+        studio::drawInstrumentIcon(g,getLocalBounds().removeFromTop(studio::appearance.line(12,2)+studio::appearance.px(3)).removeFromRight(studio::appearance.px(21)).toFloat().reduced(2.0f),studio::instrumentIcon(track->getName(),track->state.getProperty("studioTrackIcon").toString()),studio::colours::action);
     // A visible subtle grip indicates the track header can be resized.
     g.setColour (studio::colours::divider.brighter (0.25f));
     g.fillRoundedRectangle (getLocalBounds().removeFromBottom (studio::appearance.px (3))
@@ -271,6 +273,7 @@ string(REPLACE "${track_header_geometry}" [=[    const auto& m = studio::appeara
     auto nameRow = r.removeFromTop (m.line (12, 2));
     if (track->isFolderTrack()) nameRow.removeFromLeft (m.px (16));
     if (track->getParentFolderTrack() != nullptr) nameRow.removeFromLeft (m.px (9));
+    if (!track->isFolderTrack()) nameRow.removeFromRight(m.px(17));
     trackName.setBounds (nameRow);
 
     const bool showMini = track->isFolderTrack()
@@ -567,7 +570,7 @@ string(REPLACE "${studio_track_name_anchor}" [=[    if (te::TrackList::isTrack (
             updateMiniControls();
         else if (i == te::IDs::mute)]=] editor "${editor}")
 
-string(PREPEND editor "#include \"StudioUI.h\"\n#include \"MusicalRuler.h\"\n#include \"SpatialRouting.h\"\n")
+string(PREPEND editor "#include \"StudioUI.h\"\n#include \"StudioInstrumentIcons.h\"\n#include \"MusicalRuler.h\"\n#include \"SpatialRouting.h\"\n")
 # The stock example always replaces clip selection on click. Keep Shift-click
 # additive/toggle selection without modifying the Tracktion checkout itself.
 set(single_clip_selection [=[void ClipComponent::mouseDown (const MouseEvent&)

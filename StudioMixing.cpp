@@ -3,6 +3,7 @@
 #include "StudioSampler.h"
 #include "StudioSynth.h"
 #include "AtelierInspectorPanel.h"
+#include "StudioInstrumentIcons.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
 
@@ -983,13 +984,17 @@ public:
         g.drawRoundedRectangle (bounds, radius, selected ? 1.25f : 0.75f);
         g.setColour (accent);
         g.fillRoundedRectangle (bounds.reduced (radius, 0.0f).withHeight (2.0f), 1.0f);
+        if (! masterStrip)
+            drawInstrumentIcon(g,Rectangle<float>((float)appearance.px(5),(float)appearance.px(6),(float)appearance.px(17),(float)appearance.px(17)),instrumentIcon(name.getButtonText()),colours::action);
     }
 
     void resized() override
     {
         const auto& m = appearance;
         auto area = getLocalBounds().reduced (m.px (6), m.px (4));
-        name.setBounds (area.removeFromTop (m.control (24)));
+        auto nameRow = area.removeFromTop (m.control (24));
+        if (! masterStrip) nameRow.removeFromLeft(m.px(18));
+        name.setBounds (nameRow);
         identity.setBounds (area.removeFromTop (m.line (11, 3)));
         area.removeFromTop (m.px (3));
         if (! masterStrip)
