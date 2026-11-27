@@ -86,6 +86,7 @@ void StudioPianoRoll::setClip (te::MidiClip::Ptr next)
     draggedNote = {};
     clip = std::move (next);
     controllers.setClip (clip.get());
+    refreshPerformanceLane();
     comparisonClips.clear();
     transportWithinClip = false;
     horizontal.setCurrentRangeStart (0, dontSendNotification);
@@ -167,7 +168,7 @@ int StudioPianoRoll::minimumContentHeight (int width)
         { { &tool, 85 }, { &grid, 94 }, { &quantize, 83 }, { &undo, 54 }, { &redo, 54 },
           { &verticalZoomIn, 31 }, { &verticalZoomOut, 31 }, { &zoomIn, 31 }, { &zoomOut, 31 },
           { &expression, 112 } })
-        + m.line (13, 2) + m.control (24) + m.scrollbar() + m.px (118) + controllers.preferredHeight();
+        + m.line (13, 2) + m.control (24) + m.scrollbar() + m.px (118) + controllers.preferredHeight() + (performanceLaneVisible ? m.control(38) : 0);
 }
 
 void StudioPianoRoll::resized()
@@ -184,6 +185,7 @@ void StudioPianoRoll::resized()
     const auto scrollbar = m.scrollbar();
     rulerArea = rulerRow.withTrimmedLeft (keyWidth).withTrimmedRight (scrollbar);
     auto controllerRow = area.removeFromBottom (controllers.preferredHeight()).withTrimmedRight (scrollbar);
+    performanceArea = performanceLaneVisible ? area.removeFromBottom(m.control(38)).withTrimmedRight(scrollbar) : Rectangle<int>{};
     auto horizontalRow = area.removeFromBottom (scrollbar);
     vertical.setBounds (area.removeFromRight (scrollbar));
     controllers.setBounds (controllerRow);
@@ -274,6 +276,7 @@ void StudioPianoRoll::setTransportPosition (te::TimePosition time)
         }
     }
     updateControllerPlayhead();
+    if(performanceLaneVisible)repaint(performanceArea);
     // The arrangement and piano roll read the same transport clock. Avoid
     // repainting if neither the visible state nor screen position changed.
     if (oldVisible == transportWithinClip
@@ -324,7 +327,7 @@ te::MidiNote* StudioPianoRoll::noteAt (Point<int> point) const
     // Iterate backwards so a later overlapping note receives the click.
     const auto& notes = clip->getSequence().getNotes();
     for (int i = notes.size(); --i >= 0;)
-        if (noteBounds (*notes[i]).contains (point))
+        if (!studio::designer::isNamedEvent(notes[i]->state) && noteBounds (*notes[i]).contains (point))
             return notes[i];
     return nullptr;
 }
@@ -522,8 +525,89 @@ void StudioPianoRoll::paint (Graphics& g)
         g.restoreState();
     }
     paintVelocity (g);
+    paintPerformance(g);
     paintRuler (g);
     paintPlayhead (g);
+}
+
+void StudioPianoRoll::refreshPerformanceLane()
+{
+    bool visible=false;
+    if(clip&&clip->hasValidSequence())
+    {
+        visible=performanceProfile&&performanceProfile(*clip).has_value();
+        if(!visible)visible=!studio::designer::namedPoints(*clip).empty();
+    }
+    if(visible!=performanceLaneVisible)
+    {
+        performanceLaneVisible=visible;
+        resized();if(onControllerLayout)onControllerLayout();
+    }
+    if(visible)repaint(performanceArea);
+}
+
+void StudioPianoRoll::paintPerformance(Graphics& g)
+{
+    if(!performanceLaneVisible||performanceArea.isEmpty()||!clip)return;
+    using namespace studio::designer;
+    auto area=performanceArea;
+    g.setColour(studio::colours::panel);g.fillRect(area);
+    g.setColour(studio::colours::text);g.setFont(studio::uiFont(11));
+    g.drawFittedText("Articulations",area.removeFromLeft(keyWidth).reduced(2),Justification::centred,2);
+    Graphics::ScopedSaveState guard(g);g.reduceClipRegion(area);
+    auto points=namedPoints(*clip);
+    for(size_t i=0;i<points.size();++i)
+    {
+        auto& point=points[i];const int x=xAt(point.beat);
+        int right=i+1<points.size()?xAt(points[i+1].beat):area.getRight();
+        if(right<x+8)right=x+8;
+        auto tile=Rectangle<int>(x,area.getY()+3,jmin(180,right-x),area.getHeight()-6);
+        if(!tile.intersects(area))continue;
+        g.setColour(point.state["studioPerformanceKind"].toString()=="articulation"?studio::colours::action:studio::colours::control);
+        g.fillRoundedRectangle(tile.toFloat().reduced(1),3);
+        g.setColour(studio::colours::text);
+        auto label=point.state["studioPerformanceLabel"].toString();
+        if(point.type!="note")label+=" "+String(point.value);
+        g.drawFittedText(label,tile.reduced(3),Justification::centredLeft,1);
+    }
+    if(points.empty()){g.setColour(studio::colours::secondary);g.drawFittedText("Click to insert an assigned articulation or control",area.reduced(5),Justification::centredLeft,1);}
+    if(transportWithinClip){g.setColour(studio::colours::record);g.drawVerticalLine(xAt(transportSourceBeat),float(area.getY()),float(area.getBottom()));}
+}
+
+void StudioPianoRoll::performanceMenu(const MouseEvent& event)
+{
+    using namespace studio::designer;
+    if(!clip||!editingEnabled||!canWritePerformance||!canWritePerformance()||!supportedPerformanceClip(*clip))return;
+    if(event.x<performanceArea.getX()+keyWidth)return;
+    const auto beat=snap(beatAt(event.x));if(!fits(*clip,beat))return;
+    auto p=performanceProfile?performanceProfile(*clip):std::nullopt;
+    PopupMenu menu;
+    const auto target=clip;const Component::SafePointer<StudioPianoRoll> safe(this);
+    const auto valid=[safe,target]{return safe!=nullptr&&safe->clip==target&&safe->editingEnabled&&safe->canWritePerformance&&safe->canWritePerformance()&&supportedPerformanceClip(*target);};
+    if(p)
+    {
+        menu.addSectionHeader("Insert named MIDI event");
+        for(const auto& e:p->elements)
+            if(e.binding.type!="unassigned"&&e.binding.resolvedChannel(p->channel)==clip->getMidiChannel().getChannelNumber())
+                menu.addItem(e.label,[safe,target,p=*p,e,beat,valid]{
+                    if(!valid()||!safe->performanceProfile||safe->performanceProfile(*target)!=std::optional<Profile>(p))return;
+                    auto* undo=target->getUndoManager();if(undo)undo->beginNewTransaction("Insert named articulation/control");
+                    auto result=writePerformance(*target,p,e,beat,e.binding.value,undo);
+                    if(undo)undo->beginNewTransaction();
+                    if(result.failed())AlertWindow::showMessageBoxAsync(MessageBoxIconType::WarningIcon,"Named MIDI event",result.getErrorMessage());
+                    safe->refresh();
+                });
+    }
+    for(const auto& point:namedPoints(*clip))
+        if(std::abs(xAt(point.beat)-event.x)<=8)
+        {
+            menu.addItem("Delete "+point.state["studioPerformanceLabel"].toString(),[safe,target,state=point.state,valid]{
+                if(!valid())return;
+                auto* undo=target->getUndoManager();if(undo)undo->beginNewTransaction("Delete named MIDI event");
+                removeNamed(*target,state,undo);if(undo)undo->beginNewTransaction();safe->refresh();
+            });
+        }
+    if(menu.getNumItems()>0)menu.showMenuAsync(PopupMenu::Options().withTargetScreenArea(Rectangle<int>(event.getScreenPosition().x,event.getScreenPosition().y,1,1)));
 }
 
 void StudioPianoRoll::paintGrid (Graphics& g)
@@ -718,6 +802,7 @@ void StudioPianoRoll::paintNotes (Graphics& g)
             }
     for (auto* note : clip->getSequence().getNotes())
     {
+        if(studio::designer::isNamedEvent(note->state))continue;
         auto bounds = noteBounds (*note);
         if ((gesture == Gesture::draw || gesture == Gesture::move
              || gesture == Gesture::resizeStart || gesture == Gesture::resizeEnd)
@@ -772,6 +857,7 @@ void StudioPianoRoll::paintVelocity (Graphics& g)
     g.reduceClipRegion (velocityArea);
     for (auto* note : clip->getSequence().getNotes())
     {
+        if(studio::designer::isNamedEvent(note->state))continue;
         const int x = xAt (note->getStartBeat().inBeats());
         if (x < velocityArea.getX() || x >= velocityArea.getRight())
             continue;
@@ -790,6 +876,7 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
 {
     if (clip == nullptr || ! clip->hasValidSequence())
         return;
+    if(performanceArea.contains(event.getPosition())){performanceMenu(event);return;}
     if (event.mods.isPopupMenu())
     {
         PopupMenu menu;
@@ -861,7 +948,7 @@ void StudioPianoRoll::mouseDown (const MouseEvent& event)
         if (hit == nullptr || std::abs (xAt (hit->getStartBeat().inBeats()) - point.x) > 8)
         {
             for (auto* note : clip->getSequence().getNotes())
-                if (std::abs (xAt (note->getStartBeat().inBeats()) - point.x) <= 5)
+                if (!studio::designer::isNamedEvent(note->state) && std::abs (xAt (note->getStartBeat().inBeats()) - point.x) <= 5)
                 {
                     hit = note;
                     break;
@@ -1013,7 +1100,7 @@ void StudioPianoRoll::mouseDrag (const MouseEvent& event)
         selectedNotes = lassoInitialSelection;
         if (clip != nullptr)
             for (auto* note : clip->getSequence().getNotes())
-                if (noteBounds (*note).intersects (lassoBounds))
+                if (!studio::designer::isNamedEvent(note->state) && noteBounds (*note).intersects (lassoBounds))
                     selectedNotes.addIfNotAlreadyThere (note->state);
         selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
         repaint();
@@ -1171,7 +1258,7 @@ void StudioPianoRoll::deleteSelected()
         const auto toRemove = selectedNotes;
         selectOnlyNote ({});
         for (auto state : toRemove)
-            if (auto* note = clip->getSequence().getNoteFor (state))
+            if (auto* note = clip->getSequence().getNoteFor (state);note&&!studio::designer::isNamedEvent(note->state))
                 clip->getSequence().removeNote (*note, um);
         refresh();
     }
@@ -1187,7 +1274,7 @@ void StudioPianoRoll::quantizeNotes()
     const bool hasSelection = ! selectedNotes.isEmpty();
     for (auto* note : clip->getSequence().getNotes())
     {
-        if (hasSelection && ! selectedNotes.contains (note->state))
+        if (studio::designer::isNamedEvent(note->state) || (hasSelection && ! selectedNotes.contains (note->state)))
             continue;
         const auto start = snap (note->getStartBeat().inBeats());
         const auto end = snap (note->getEndBeat().inBeats());
@@ -1220,7 +1307,7 @@ bool StudioPianoRoll::keyPressed (const KeyPress& key)
             {
                 selectedNotes.clear();
                 for (auto* note : clip->getSequence().getNotes())
-                    selectedNotes.add (note->state);
+                    if(!studio::designer::isNamedEvent(note->state))selectedNotes.add (note->state);
                 selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
                 repaint();
             }
