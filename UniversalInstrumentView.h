@@ -104,6 +104,24 @@ public:
         if(!volume.isMouseButtonDown())volume.setValue(db,dontSendNotification);
         if(!pan.isMouseButtonDown())pan.setValue(p,dontSendNotification);
     }
+   #if STUDIO_SPATIAL_TESTS
+    int visibleElementCount() const {return (int)controls.size();}
+    bool exercise(const String& id,int value)
+    {
+        for(auto& c:controls)if(c->element.id==id)
+        {
+            if(c->continuous){if(!c->slider.isEnabled())return false;c->slider.setValue(value,juce::sendNotificationSync);}
+            else {if(!c->button.isEnabled()||!c->button.onClick)return false;c->button.onClick();}
+            return true;
+        }
+        return false;
+    }
+    int displayedValue(const String& id) const
+    {
+        for(const auto& c:controls)if(c->element.id==id&&c->continuous)return (int)c->slider.getValue();
+        return -1;
+    }
+   #endif
     void resized() override
     {
         using namespace juce;
