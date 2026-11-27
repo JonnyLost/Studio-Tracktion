@@ -285,6 +285,7 @@ struct Render
     std::vector<Event> events;
     std::vector<std::string> articulations; // event index 1-based, zero = leave articulation unchanged
     int unassignedRows=0;
+    Harmony harmony;
 };
 // Compile off the audio thread. No routing fallback: absent destinations fail
 // closed. Unassigned rows are silent and counted. Resolve collisions on the
@@ -301,7 +302,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
 {
     auto fail=[&](const char* why){error=why;return false;};
     if(!p.valid()||repeats<1||repeats>maxRepeats)return fail("Invalid pattern or repeat count.");
-    Render next;next.duration=p.duration()*repeats;
+    Render next;next.duration=p.duration()*repeats;next.harmony=p.harmony;
     const bool solo=std::any_of(p.rows.begin(),p.rows.end(),[](const auto& r){return r.solo;});
     for(const auto& row:p.rows)
     {
