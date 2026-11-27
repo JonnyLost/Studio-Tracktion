@@ -729,6 +729,11 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/OrchestralStage.jpg
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
+juce_add_binary_data(StudioInstrumentCatalogAssets
+    NAMESPACE StudioInstrumentCatalogData
+    HEADER_NAME StudioInstrumentCatalogData.h
+    SOURCES assets/instrument-designer/catalog-v1.json)
+target_link_libraries(Studio PRIVATE StudioInstrumentCatalogAssets)
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h AriaCatalog.cpp AriaCatalog.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
@@ -773,6 +778,13 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(StudioUniversalInstrumentCatalogTests tests/UniversalInstrumentCatalogTests.cpp)
+    target_include_directories(StudioUniversalInstrumentCatalogTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(StudioUniversalInstrumentCatalogTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioUniversalInstrumentCatalogTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioUniversalInstrumentCatalogTests PRIVATE juce::juce_core StudioInstrumentCatalogAssets)
+    add_test(NAME StudioUniversalInstrumentCatalog COMMAND StudioUniversalInstrumentCatalogTests)
+
     add_executable(StudioEnvironmentTests tests/EnvironmentSelectionTests.cpp)
     target_compile_features(StudioEnvironmentTests PRIVATE cxx_std_20)
     add_test(NAME StudioEnvironmentSelection COMMAND StudioEnvironmentTests)
