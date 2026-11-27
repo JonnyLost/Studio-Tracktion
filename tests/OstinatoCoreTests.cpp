@@ -169,5 +169,23 @@ int main()
     require(clipped.setRowTiming(1,TimingMode::independentCycle,1,7,4),"long cycle");
     clipped.rows[0].steps[0]={true,false,90,1000};
     require(compile(clipped,{"t"},1,second,error)&&second.notes.size()==1&&second.notes[0].end==clipped.duration(),"clip partial cycle at finite render end");
+    // Exhaust all subdivision counts and check the matrix geometry agrees
+    // with the generated note boundaries over two cycles.
+    Pattern sweep;sweep.rows[0].trackId="t";
+    require(sweep.setMasterMeter(7,8,1,4),"7/8 master span");
+    for(int cells=1;cells<=maxSteps;++cells)
+    {
+        for(auto& step:sweep.rows[0].steps)step.enabled=false;
+        require(sweep.setRowTiming(1,TimingMode::sharedSpan,cells),"all supported divisions");
+        auto& row=sweep.rows[0];
+        for(auto& step:row.steps){step.enabled=true;step.gate=1000;}
+        require(compile(sweep,{"t"},2,second,error)&&second.notes.size()==size_t(2*cells),"division sweep count");
+        for(int i=0;i<cells*2;++i)
+        {
+            const auto origin=(i/cells)*sweep.duration();
+            require(second.notes[size_t(i)].start==origin+sweep.rowBoundary(row,size_t(i%cells))
+                &&second.notes[size_t(i)].end==origin+sweep.rowBoundary(row,size_t(i%cells+1)),"matrix geometry matches engine");
+        }
+    }
     std::cout<<"O1/O2 ostinato core: "<<checks<<" checks passed\n";
 }
