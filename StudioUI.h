@@ -288,6 +288,16 @@ public:
                 g.drawLine (centre - tickOuter, yy, centre - tickInner, yy, 1.0f);
                 g.drawLine (centre + tickInner, yy, centre + tickOuter, yy, 1.0f);
             }
+            // Preserve the mixer unity-gain reference (the scale is otherwise relative).
+            if (slider.getProperties().contains ("studioFader"))
+            {
+                const auto unity = slider.getPositionOfValue (0.0);
+                if (unity >= (float) y && unity <= (float) (y + height))
+                {
+                    g.setColour (Colour (themes::hardwareScale).withMultipliedAlpha (opacity));
+                    g.drawLine (centre - tickOuter, unity, centre + tickOuter, unity, 1.5f);
+                }
+            }
             const float halfHeight = (float) appearance.px (8);
             const auto thumb = Rectangle<float> (2.0f * halfThumb, 2.0f * halfHeight).withCentre ({ centre, position });
             g.setColour (colours::well.withMultipliedAlpha (opacity));
