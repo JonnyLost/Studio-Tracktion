@@ -50,7 +50,7 @@ public:
         Catalog next;
         if(auto r=JSON::parse(json,next.source);r.failed())return r;
         if(!next.source.isObject()||next.source["schema"].toString()!="studio.orchestral-atlas.master.v1"||
-           !integer(next.source["revision"])||int(next.source["revision"])!=1)
+           !integer(next.source["revision"])||juce::int64(next.source["revision"])!=1)
             return fail("Unsupported seating atlas schema.");
         auto coord=next.source["coordinateSystem"];
         if(!coord.isObject()||coord["units"].toString()!="schematic"||
@@ -88,7 +88,8 @@ public:
             Layout l;
             l.id=row["id"].toString();l.plate=row["plate"].toString();l.title=row["title"].toString();
             l.subtitle=row["subtitle"].toString();l.confidence=row["confidence"].toString();
-            l.status=row["status"].toString();l.mode=row["mode"].toString();l.number=int(row["number"]);
+            l.status=row["status"].toString();l.mode=row["mode"].toString();if(juce::int64(row["number"])<1||juce::int64(row["number"])>256)return fail("Invalid plate number.");
+            l.number=int(row["number"]);
             if(l.number<1||l.number>256||!numbers.insert(l.number).second||
                !ids.insert(l.id).second||!plates.insert(l.plate).second)
                 return fail("Duplicate or invalid plate identity.");
@@ -98,7 +99,7 @@ public:
             const auto count=row["chairCount"];
             if(!count.isVoid())
             {
-                if(!integer(count)||int(count)<0||int(count)>512)return fail("Invalid reported chair count.");
+                if(!integer(count)||juce::int64(count)<0||juce::int64(count)>512)return fail("Invalid reported chair count.");
                 l.chairCount=int(count);
             }
             const auto placements=row["placements"];
@@ -172,7 +173,8 @@ private:
         if(!v.isString())return false;
         const auto s=v.toString();
         if((!empty&&s.isEmpty())||s.getNumBytesAsUTF8()>limit)return false;
-        for(auto c:s)if(c<32||c==127)return false;
+        auto chars=s.getCharPointer();
+        while(!chars.isEmpty()){const auto c=chars.getAndAdvance();if(c<32||c==127)return false;}
         return true;
     }
 };
