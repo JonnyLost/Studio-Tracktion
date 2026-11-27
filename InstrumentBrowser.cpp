@@ -258,6 +258,10 @@ void InstrumentBrowser::rebuildCatalog()
         entries.push_back ({ "studio-synth-" + synth::familyKey (engine), "Studio Synth | " + title, "Synth", title,
                             "Studio | Native instrument", "Open " + title + " factory sounds and edit the instrument.", {}, true });
     }
+    for (const auto& sound : synth::catalog().sounds)
+        entries.push_back ({ "studio-preset-" + sound.id, sound.name, "Synth Sounds",
+                             synth::familyName (sound.family), "Studio Synth | " + sound.category,
+                             sound.summary, {}, true });
     entries.push_back ({ "studio-sampler", "Studio Sampler", "Studio", "Sampler", "Studio | Native instrument",
                          "Play WAV and AIFF samples, edit the sound, and build multisample instruments.", {}, true });
     std::stable_sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
@@ -431,6 +435,10 @@ void InstrumentBrowser::loadSelected (bool newTrack)
     {
         if (! newTrack && samplerOnTarget && openSampler) openSampler();
         else if (loadSampler) loadSampler (newTrack);
+    }
+    else if (entry->key.startsWith ("studio-preset-"))
+    {
+        if (loadSynth) loadSynth ("preset:" + entry->key.fromFirstOccurrenceOf ("studio-preset-", false, false), newTrack);
     }
     else if (entry->key.startsWith ("studio-synth-"))
     {
@@ -679,15 +687,6 @@ void InstrumentBrowser::paint (Graphics& g)
     g.fillRoundedRectangle (detail, (float) appearance.px (5));
     g.setColour (colours::divider);
     g.drawRoundedRectangle (detail, (float) appearance.px (5), 0.75f);
-    if (false && ! detailPanel.isEmpty())
-    {
-        const float x = (float) detailPanel.getX() + 2.0f;
-        const float mid = (float) detailPanel.getCentreY();
-        g.setColour (colours::secondary.withAlpha (0.72f));
-        for (int i = -2; i <= 2; ++i)
-            g.fillRoundedRectangle (x, mid + i * (float) appearance.px (7),
-                                    (float) appearance.px (2), (float) appearance.px (4), 1.0f);
-    }
     if (const auto* e = selected(); e && art.getHeight() > 8)
     {
         g.setColour (colours::well);

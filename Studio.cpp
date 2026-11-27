@@ -4637,7 +4637,7 @@ private:
                 }
                 else if (showNativeInstrument (*savedPlugin))
                 {
-                    if (restoreFloating) instrumentWorkspace.setFloating (true);
+                    if (restoreFloating) { setDockMode (instrumentWorkspace.rememberedLayout()); instrumentWorkspace.setFloating (true); }
                 }
             }
         if (create)
@@ -5340,7 +5340,8 @@ private:
             }
             const auto wanted = studio::synth::parseFamily (family);
             const auto& catalog = studio::synth::catalog().sounds;
-            const auto first = std::find_if (catalog.begin(), catalog.end(), [wanted] (const auto& sound) { return sound.family == wanted; });
+            const auto first = std::find_if (catalog.begin(), catalog.end(), [&] (const auto& sound)
+            { return family.startsWith ("preset:") ? sound.id == family.substring (7) : sound.family == wanted; });
             if (first == catalog.end())
             {
                 pluginStatus ("No Studio Synth presets were found for that family.");
@@ -5521,6 +5522,9 @@ private:
             String selectedAppleInstrument, soundKey;
             int currentGeneralMidi = -1;
             if (hasSampler) soundKey = "studio-sampler";
+            if (hasSynth)
+                if (auto* native = dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)); native != nullptr && native->factoryID().isNotEmpty())
+                    soundKey = "studio-preset-" + native->factoryID();
             if (target != nullptr)
                 if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
                     soundKey = hosted->desc.createIdentifierString();
@@ -5711,7 +5715,12 @@ private:
             previous->deleteFromParent();
         }
         if (instrument)
-            track->setName (studio::gm::valid (gmProgram) ? String (studio::gm::name (gmProgram)) : plugin->getName());
+        {
+            auto name = studio::gm::valid (gmProgram) ? String (studio::gm::name (gmProgram)) : plugin->getName();
+            if (auto* native = dynamic_cast<studio::synth::Plugin*> (plugin.get()); native != nullptr && native->presetName().isNotEmpty())
+                name = native->presetName();
+            track->setName (name);
+        }
         if (newTrack != nullptr) selection.selectOnly (track);
         if (studio::gm::valid (gmProgram))
         {
@@ -6826,7 +6835,32 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     loadProject (folder.getChildFile ("Another Project.tracktionedit"), true);
     if (instrumentWorkspace.getEditor() != nullptr || instrumentWorkspace.isFloating())
         return fail ("switching projects must clear the editor");
-    std::puts ("Native instrument workspace, playback, preset browser, appearance and restoration passed.");
+    // Real replacement path on a disposable project, not a mock catalogue.
+    browser.loadSynth ("analog", true);
+    auto* replacementTrack = workflowTrack();
+    if (replacementTrack == nullptr || dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*replacementTrack)) == nullptr)
+        return fail ("prepare replacement fixture");
+    const auto replacementId = replacementTrack->itemID;
+    const auto trackCount = te::getAudioTracks (*edit).size();
+    const auto before = studio::findInstrument (*replacementTrack)->itemID;
+    auto replacementClip = replacementTrack->insertMIDIClip ("Keep phrase",
+        { te::TimePosition::fromSeconds (0), te::TimePosition::fromSeconds (2) }, nullptr);
+    auto effect = edit->getPluginCache().createNewPlugin (te::EqualiserPlugin::xmlTypeName, {});
+    if (replacementClip == nullptr || effect == nullptr) return fail ("prepare clip and effect");
+    const auto clipId = replacementClip->itemID;
+    replacementTrack->pluginList.insertPlugin (effect, 1, nullptr);
+    const auto effectId = effect->itemID;
+    setLibraryOpen (true);
+    browser.loadSampler (false);
+    auto* currentTrack = trackById (replacementId);
+    if (currentTrack == nullptr || te::getAudioTracks (*edit).size() != trackCount
+        || dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*currentTrack)) == nullptr
+        || te::findPluginForID (*edit, before) != nullptr || te::findPluginForID (*edit, effectId) == nullptr
+        || te::findClipForID (*edit, clipId) == nullptr)
+        return fail ("replace instrument without losing track, MIDI or effects");
+    replacementClip = nullptr; effect = nullptr;
+    setLibraryOpen (false);
+    std::puts ("Native instrument workspace, playback, preset browser, appearance, restoration and replacement passed.");
     return 0;
 }
 
