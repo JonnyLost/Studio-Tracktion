@@ -22,7 +22,7 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton,&variationButton})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
@@ -35,6 +35,8 @@ public:
         interval.setInputRestrictions(4,"-0123456789");repeatCount.setInputRestrictions(3,"0123456789");repeatCount.setText("4",false);
         pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);pitchMode.addItem("Follow played root",3);pitchMode.addItem("Scale degrees",4);pitchMode.addItem("Chord tones",5);pitchMode.addItem("Arpeggio up",6);pitchMode.addItem("Arpeggio down",7);pitchMode.addItem("Arpeggio bounce",8);
         harmonyButton.onClick=[this]{editHarmony();};
+        variationButton.onClick=[this]{editVariations();};
+        variationButton.setTooltip("Set A–D cycle sequence, fills, humanization and density evolution.");
         harmonyButton.setTooltip("Set the starting root, scale and chord. Dedicated MIDI input changes the live harmony during audition.");
         interval.setTooltip("Signed semitones relative to row root");repeatCount.setTooltip("Finite audition master repeats (1–256)");
         densityThreshold.setInputRestrictions(3,"0123456789");densityThreshold.setTooltip("0 = essential; 1–127 = optional at CC11 density threshold");
@@ -141,7 +143,7 @@ public:
         applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
         line=a.removeFromTop(h);
         add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        advanced.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));harmonyButton.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));status.setBounds(line.reduced(gap));
+        advanced.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));harmonyButton.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));variationButton.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));status.setBounds(line.reduced(gap));
         auto controls=a.removeFromBottom(h+caption);
         hardware.setBounds(controls.removeFromRight(controls.getWidth()/3).reduced(gap));
         field(intensity,intensityLabel,controls.removeFromLeft(controls.getWidth()/2));field(density,densityLabel,controls);
@@ -206,7 +208,7 @@ private:
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
     juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
     juce::TextEditor interval,repeatCount,densityThreshold;
-    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"};
+    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"},variationButton{"Variations…"};
     juce::Slider intensity,density;
     juce::TextButton hardware{"MIDI input: Off"};
     juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","CC1 · Intensity"},densityLabel{"","CC11 · Density"};
@@ -379,7 +381,7 @@ private:
     {
         for(auto* c:std::initializer_list<juce::Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&track,&pitch,&channel,&mode,&applyRow,&mute,&solo,&cell,&velocity,&gate,&accent,&enabled,&applyCell})c->setEnabled(writable);
         remove.setEnabled(writable&&pattern.rows.size()>1);add.setEnabled(writable&&pattern.rows.size()<maxRows);
-        advanced.setEnabled(writable&&!auditioning);harmonyButton.setEnabled(writable&&!auditioning);
+        advanced.setEnabled(writable&&!auditioning);harmonyButton.setEnabled(writable&&!auditioning);variationButton.setEnabled(writable&&!auditioning);
         hardware.setEnabled(writable&&!auditioning&&bool(chooseHardware));densityThreshold.setEnabled(writable&&!auditioning);
         pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
         power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
@@ -471,6 +473,37 @@ private:
             safe->commit(std::move(p));
         }),true);
     }
+    void editVariations()
+    {
+        using namespace juce;
+        if(!writable||auditioning)return;
+        const auto snapshot=pattern;
+        const auto& v=pattern.variations;
+        auto* w=new AlertWindow("Variations and evolution","One letter per master cycle. Set step membership in Step details (A–D or F for additive fills). Humanization is repeatable with the same seed.",MessageBoxIconType::NoIcon,this);
+        w->addTextEditor("sequence",String::fromUTF8(v.sequence.c_str()),"Sequence (A–D, max 64)");
+        w->addTextEditor("fill",String(v.fillEvery),"Fill every N cycles (0 = off)");
+        w->addTextEditor("timing",String(v.timing),"Timing variation (0–200 / 1000 cell)");
+        w->addTextEditor("velocity",String(v.velocity),"Velocity variation (0–30)");
+        w->addTextEditor("seed",String(v.seed),"Random seed (0–999999)");
+        w->addTextEditor("first",String(v.densityStart),"Starting density ceiling (0–127)");
+        w->addTextEditor("last",String(v.densityEnd),"Ending density ceiling (0–127)");
+        w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        const Component::SafePointer<MatrixEditor> safe(this);
+        w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot](int result){
+            if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            auto p=snapshot;auto& v=p.variations;
+            v.sequence=w->getTextEditorContents("sequence").trim().toUpperCase().toStdString();
+            auto read=[&](const char* key,int& value){
+                auto t=w->getTextEditorContents(key).trim();
+                if(t.isEmpty()||t.length()>6||!t.containsOnly("0123456789"))return false;
+                value=t.getIntValue();return true;
+            };
+            if(!read("fill",v.fillEvery)||!read("timing",v.timing)||!read("velocity",v.velocity)||!read("seed",v.seed)
+                ||!read("first",v.densityStart)||!read("last",v.densityEnd)||!v.valid())
+            {safe->say("Invalid variation settings.");return;}
+            safe->commit(std::move(p));
+        }),true);
+    }
     void editAdvanced()
     {
         using namespace juce;
@@ -487,6 +520,9 @@ private:
         w->addTextEditor("strikes",String(step.strikes),"Strikes (1–8)");
         w->addTextEditor("offset",String(step.offset),"Timing offset (−450 to +450 / 1000)");
         w->addTextEditor("chance",String(step.chance),"Probability (0–100%)");
+        String membership;
+        for(int i=0;i<5;++i)if(step.variationMask&(1u<<i))membership+=String::charToString("ABCDF"[i]);
+        w->addTextEditor("variation",membership,"Variations (A B C D F, no spaces)");
         w->addComboBox("art",names,"Articulation");
         w->getComboBoxComponent("art")->setSelectedItemIndex(current,dontSendNotification);
         w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
@@ -504,6 +540,11 @@ private:
                 auto& s=r.steps[index];
                 if(!readSigned("span",1,16,s.sustainCells)||!readSigned("strikes",1,8,s.strikes)||!readSigned("offset",-450,450,s.offset)||!readSigned("chance",0,100,s.chance))
                 {safe->say("Invalid step details.");return;}
+                const auto letters=w->getTextEditorContents("variation").trim().toUpperCase().toStdString();
+                if(letters.empty()||letters.size()>5||letters.find_first_not_of("ABCDF")!=std::string::npos)
+                {safe->say("Use A–D and/or F for step membership.");return;}
+                s.variationMask=0;
+                for(char letter:letters)s.variationMask|=1u<<(letter=='F'?4:letter-'A');
                 const int choice=w->getComboBoxComponent("art")->getSelectedItemIndex();
                 if(choice==0)s.articulation.clear();else if(choice>0&&choice<=(int)choices.size())s.articulation=choices[size_t(choice-1)].first;
                 if(safe->commit(std::move(p)))safe->select(id,index);
@@ -515,7 +556,8 @@ private:
     {
         std::vector<std::string> ids;for(const auto& t:tracks)ids.push_back(t.id);
         Render render;std::string error;
-        if(!compile(pattern,ids,1,render,error)){say(juce::String::fromUTF8(error.c_str()));return;}
+        int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}
+        if(!compile(pattern,ids,repeats,render,error)){say(juce::String::fromUTF8(error.c_str()));return;}
         say(juce::String((int)render.notes.size())+" notes · "+juce::String(render.duration/double(ticksPerQuarter),2)+" beats · "+juce::String(render.unassignedRows)+" unassigned rows. No MIDI sent.");
     }
 };
