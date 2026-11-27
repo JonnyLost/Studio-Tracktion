@@ -6759,10 +6759,12 @@ private:
         // Complete preflight before touching the edit. In particular never
         // insert over existing MIDI or audio on a destination, even if muted.
         std::set<int> checked;
+        std::map<int,int> initialClipCounts,addedClipCounts;
         for(const auto& part:plan.parts)
         {
             if(!checked.insert(part.route).second)continue;
             auto* track=targets[size_t(part.route)];
+            initialClipCounts[part.route]=track->getClips().size();
             auto* plugin=studio::findInstrument(*track);
             if(!plugin||track->isFrozen(te::Track::anyFreeze)||!plugin->isEnabled())
                 return Result::fail("A destination instrument is disabled or frozen.");
@@ -6796,8 +6798,10 @@ private:
             if(size_t(sequence.getNotes().size())!=part.notes.size()||
                size_t(sequence.getControllerEvents().size())!=part.controllers.size())return rollback();
             if(!first)first=clip;
-            ++regionCount;
+            ++regionCount;++addedClipCounts[part.route];
         }
+        for(const auto& [route,count]:addedClipCounts)
+            if(targets[size_t(route)]->getClips().size()!=initialClipCounts.at(route)+count)return rollback();
         undo.beginNewTransaction();
         return Result::ok();
     }
@@ -7527,7 +7531,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         const auto notes=printed->getSequence().getNotes();
         if(printed->getPosition().getStart()!=at||notes.size()!=2||
            notes[0]->getStartBeat()!=te::BeatPosition()||
-           notes[0]->getLengthBeats()!=te::BeatDuration::fromBeats(.125))
+           notes[0]->getEndBeat()-notes[0]->getStartBeat()!=te::BeatDuration::fromBeats(.125))
             return fail("print exact beat timing");
         te::MidiClip::Ptr rejected;int rejectedCount=0;
         if(printOstinato(source,2,ConductingValues{},rejected,rejectedCount).wasOk()||rejectedCount!=0)
