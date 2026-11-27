@@ -21,6 +21,7 @@ using namespace tracktion::literals;
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
 #include "OstinatoMatrix.h"
+#include "OstinatoAudition.h"
 #include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -916,6 +917,7 @@ public:
         };
         play.onClick = [this]
         {
+            stopOstinato("Audition stopped for arrangement playback.");
             piano.silencePreview();
             if (edit != nullptr && ! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording())
                 EngineHelpers::togglePlay (*edit);
@@ -923,6 +925,7 @@ public:
         stop.setTooltip ("Stop playback or keep the current recording");
         stop.onClick = [this]
         {
+            stopOstinato("Audition stopped.");
             if (edit == nullptr) return;
             if (edit->getTransport().isRecording())
                 toggleRecordKeepingTake();
@@ -985,6 +988,7 @@ public:
 
     ~StudioView() override
     {
+        stopOstinato("Audition stopped.");
         if(ostinatoWindow)ostinatoWindow->setLookAndFeel(nullptr);
         ostinatoWindow.reset();
         if (monitorWindow != nullptr)
@@ -2546,6 +2550,17 @@ private:
     std::unique_ptr<ArticulationWindow> articulationWindow;
     std::unique_ptr<studio::ostinato::MatrixWindow> ostinatoWindow;
     unsigned ostinatoRefreshTicks=0;
+    struct OstinatoTimer final:juce::Timer {std::function<void()> tick;void timerCallback()override{if(tick)tick();}};
+    OstinatoTimer ostinatoTimer;
+    struct OstinatoRoute{te::EditItemID track,plugin;};
+    std::vector<OstinatoRoute> ostinatoRoutes;
+    studio::ostinato::TimedRender ostinatoRender;
+    std::unique_ptr<studio::ostinato::AuditionCursor> ostinatoCursor;
+    double ostinatoStartMs=0;
+    uint64 ostinatoGeneration=0;
+    const void* ostinatoContext=nullptr;
+    te::TimePosition ostinatoPosition;
+    bool ostinatoDispatchFailed=false;
 
     struct PendingPlugin
     {
@@ -4373,6 +4388,7 @@ private:
 
     void toggleRecordKeepingTake()
     {
+        stopOstinato("Audition stopped for recording.");
         if (edit == nullptr)
             return;
         // A held piano-roll audition must release before record is engaged,
@@ -4682,6 +4698,7 @@ private:
             return;
         }
 
+        stopOstinato("Audition stopped for project change.");
         if (edit != nullptr)
         {
             edit->getTransport().stop (false, false);
@@ -6435,7 +6452,88 @@ private:
 
     bool canEditOstinato() const
     {
-        return edit&&canEditRegions()&&!ariaReviewPending&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording();
+        return !ostinatoCursor&&edit&&canEditRegions()&&!ariaReviewPending&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording();
+    }
+    te::AudioTrack* ostinatoRoute(size_t index,bool release)
+    {
+        if(!edit||ostinatoGeneration!=projectGeneration||index>=ostinatoRoutes.size()
+            ||edit->getTransport().getCurrentPlaybackContext()!=ostinatoContext)return nullptr;
+        const auto& route=ostinatoRoutes[index];
+        auto* track=trackById(route.track);
+        if(!track)return nullptr;
+        auto* plugin=studio::findInstrument(*track);
+        if(!plugin||plugin->itemID!=route.plugin)return nullptr;
+        if(!release)
+        {
+            if(track->isFrozen(te::Track::anyFreeze)||!plugin->isEnabled())return nullptr;
+            if(auto* au=dynamic_cast<te::ExternalPlugin*>(plugin);au&&(au->isInitialisingAsync()||!au->getAudioPluginInstance()))return nullptr;
+        }
+        return track;
+    }
+    void sendOstinato(const studio::ostinato::Event& e)
+    {
+        if(auto* track=ostinatoRoute(size_t(e.route),!e.on))
+            track->injectLiveMidiMessage(e.on?MidiMessage::noteOn(e.channel,e.pitch,(uint8)e.velocity):MidiMessage::noteOff(e.channel,e.pitch),{});
+        else if(e.on)ostinatoDispatchFailed=true;
+    }
+    void stopOstinato(const String& reason)
+    {
+        ostinatoTimer.stopTimer();
+        if(!ostinatoCursor)return;
+        ostinatoCursor->stop([this](const auto& e){sendOstinato(e);});
+        ostinatoCursor.reset();ostinatoRoutes.clear();ostinatoRender={};ostinatoContext=nullptr;
+        if(ostinatoWindow){ostinatoWindow->editor().auditionState(false,reason);refreshOstinato();}
+    }
+    void tickOstinato()
+    {
+        if(!ostinatoCursor)return;
+        if(!edit||!ostinatoWindow||!ostinatoWindow->isVisible()||busy||ariaReviewPending||pendingPlugin.has_value()
+            ||edit->getTransport().isPlaying()||edit->getTransport().isRecording()
+            ||edit->getTransport().getPosition()!=ostinatoPosition)
+        {stopOstinato("Audition stopped — playback context changed.");return;}
+        for(size_t i=0;i<ostinatoRoutes.size();++i)if(!ostinatoRoute(i,false)){stopOstinato("Audition stopped — instrument changed.");return;}
+        const bool keep=ostinatoCursor->advance((Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0,[this](const auto& e){sendOstinato(e);});
+        if(!keep||ostinatoDispatchFailed)stopOstinato(!ostinatoDispatchFailed&&ostinatoCursor->completed()?"Audition complete.":"Audition stopped — timing or destination changed.");
+    }
+    void startOstinato(const studio::ostinato::Pattern& p,int repeats)
+    {
+        using namespace studio::ostinato;
+        if(!ostinatoWindow)return;
+        auto fail=[this](const String& reason){ostinatoWindow->editor().auditionState(false,reason);};
+        if(!canEditOstinato()||pendingPlugin.has_value()||!edit->getTransport().getCurrentPlaybackContext())
+        {fail("Stop transport and wait for the audio engine and instruments to be ready.");return;}
+        Pattern stored;const auto payload=edit->state.getProperty("studioOstinatoPattern").toString().toStdString();
+        if((!payload.empty()&&!decode(payload,stored))||stored!=p){fail("Pattern changed — reopen or refresh before audition.");return;}
+        std::vector<std::string> ids;
+        for(auto* t:te::getAudioTracks(*edit))if(studio::findInstrument(*t)!=nullptr)ids.push_back(t->itemID.toString().toStdString());
+        Render generated;std::string error;
+        if(!compile(p,ids,repeats,generated,error)){fail(String::fromUTF8(error.c_str()));return;}
+        if(generated.notes.empty()){fail("No active assigned notes to audition.");return;}
+        std::vector<OstinatoRoute> routes;
+        for(const auto& id:generated.routes)
+        {
+            te::AudioTrack* target=nullptr;
+            for(auto* t:te::getAudioTracks(*edit))if(t->itemID.toString().toStdString()==id){target=t;break;}
+            auto* instrument=target?studio::findInstrument(*target):nullptr;
+            if(!target||!instrument||target->isFrozen(te::Track::anyFreeze)||!instrument->isEnabled())
+            {fail("An assigned instrument is unavailable or frozen.");return;}
+            if(auto* au=dynamic_cast<te::ExternalPlugin*>(instrument);au&&(au->isInitialisingAsync()||!au->getAudioPluginInstance()))
+            {fail("An assigned Audio Unit is still loading.");return;}
+            routes.push_back({target->itemID,instrument->itemID});
+        }
+        const auto origin=edit->getTransport().getPosition();
+        const auto beat=edit->tempoSequence.toBeats(origin);
+        TimedRender timed;
+        if(!prepareAudition(std::move(generated),[&](Tick tick){return edit->tempoSequence.toTime(beat+te::BeatDuration::fromBeats(double(tick)/ticksPerQuarter)).inSeconds();},timed))
+        {fail("Audition duration or tempo mapping is invalid (maximum ten minutes).");return;}
+        piano.silencePreview();dockedKeyboard.releaseNotes();if(midiKeyboardWindow)midiKeyboardWindow->panel.releaseNotes();
+        ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
+        ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
+        ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
+        ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();
+        ostinatoWindow->editor().auditionState(true,"Audition playing — avoid other MIDI input. Stop to edit.");
+        refreshOstinato();
+        ostinatoTimer.tick=[this]{tickOstinato();};ostinatoTimer.startTimer(5);tickOstinato();
     }
     void refreshOstinato()
     {
@@ -6480,6 +6578,9 @@ private:
         panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
         panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
         panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
+        panel.stopAudition=[safe]{if(safe!=nullptr)safe->stopOstinato("Audition stopped.");};
+        ostinatoWindow->onClose=panel.stopAudition;
         refreshOstinato();ostinatoWindow->setVisible(true);ostinatoWindow->toFront(true);
     }
 
