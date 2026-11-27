@@ -19,6 +19,7 @@ using namespace tracktion::literals;
 #include "ComposerTracks.h"
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
+#include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
 #include "MidiPerformanceFocus.h"
@@ -6928,6 +6929,21 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
 
 int StudioView::runInterfaceReview (const File& output)
 {
+    // All vector assets must be drawable, including newly introduced variants.
+    for (int i=0;i<(int)studio::InstrumentIcon::count;++i)
+    {
+        const auto& path=studio::instrumentIconPath(static_cast<studio::InstrumentIcon>(i));
+        if(path.isEmpty() || !Rectangle<float>(0,0,64,64).contains(path.getBounds()))
+            { std::fprintf(stderr,"Instrument vector bounds failed: %d\n",i); return 1; }
+    }
+    using Icon=studio::InstrumentIcon;
+    if(studio::instrumentIcon("Bass Clarinet","Woodwinds")!=Icon::bassClarinet
+        || studio::instrumentIcon("Contrabass Flute","Woodwinds")!=Icon::contrabassFlute
+        || studio::instrumentIcon("Piccolo Trumpet","Brass")!=Icon::piccoloTrumpet
+        || studio::instrumentIcon("Bass Drum","Percussion")!=Icon::bassDrum
+        || studio::instrumentIcon("Harpsichord","Keyboards")!=Icon::harpsichord
+        || studio::instrumentIcon("Cello","Orchestral Strings")!=Icon::cello)
+        { std::fprintf(stderr,"Instrument icon identity failed\n"); return 1; }
     stopTimer();
     environmentWelcome.dismiss();
     const ScopedValueSetter<studio::AppearanceMetrics> appearanceScope (studio::appearance, studio::appearance);
