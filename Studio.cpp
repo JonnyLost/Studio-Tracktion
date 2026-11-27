@@ -21,6 +21,7 @@ using namespace tracktion::literals;
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
 #include "StudioInstrumentIcons.h"
+#include "InstrumentDesigner.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
 #include "MidiPerformanceFocus.h"
@@ -984,6 +985,7 @@ public:
 
     ~StudioView() override
     {
+        designerWindow.reset();
         if (monitorWindow != nullptr)
         {
             monitorWindow->clearContentComponent();
@@ -1627,6 +1629,7 @@ public:
         if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
+        if (designerWindow) { studio::retintStudioComponent(*designerWindow, previous); designerWindow->appearanceChanged(); }
         dockedKeyboard.refreshTheme();
         keyboardDockSurround.repaint();
         if (midiKeyboardWindow)
@@ -1681,6 +1684,7 @@ public:
         articulation.appearanceChanged();
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
+        if (designerWindow) designerWindow->appearanceChanged();
         fitFloatingMonitor();
         if (edit != nullptr)
             for (auto* track : te::getAudioTracks (*edit))
@@ -1938,6 +1942,7 @@ public:
             if (safe != nullptr) safe->resources.onOpen();
         });
         menu.addSubMenu ("Diagnostics", diagnostics);
+        menu.addItem ("Instrument Designer...", [safe] { if (safe != nullptr) safe->showInstrumentDesigner(); });
         PopupMenu activities;
         populateActivityMenu (activities);
         menu.addSubMenu ("Musical Workspaces", activities);
@@ -1980,7 +1985,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner
     };
 
     PopupMenu applicationMenu (int index)
@@ -2098,7 +2103,13 @@ public:
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
-            case 8: // Help
+            case 8: // Instruments
+                add (mBrowser, "Instrument Browser");
+                add (mInstrumentDesigner, "Instrument Designer...");
+                add (mOpenSelectedInstrument, "Open Selected Instrument", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
+                add (mPluginManager, "Plug-in Manager...");
+                break;
+            case 9: // Help
                 add (mAboutStudio, "About Studio...");
                 add (mKeyboardHelp, "Find and Run Commands...  (Shift-Command-P)");
                 break;
@@ -2170,6 +2181,7 @@ public:
             case mAudioSettings: invoke (audioSettings); break;
             case mPluginManager: invoke (plugins); break;
             case mSettings: showStudioSettings(); break;
+            case mInstrumentDesigner: showInstrumentDesigner(); break;
             case mAtelier:
                 if (auto* target = workflowTrack())
                     if (auto* inst = studio::findInstrument (*target))
@@ -2350,6 +2362,7 @@ private:
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    std::unique_ptr<studio::designer::DesignerWindow> designerWindow;
     studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
@@ -6421,6 +6434,22 @@ private:
         devices.setDeviceNumChannels (*output, 2);
     }
 
+    void showInstrumentDesigner()
+    {
+        studio::designer::SourceContext context;
+        if (auto* track = workflowTrack())
+        {
+            context.track = track->getName();
+            if (auto* external = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*track)))
+            {
+                context.pluginId = external->desc.createIdentifierString();
+                context.pluginVersion = external->desc.version;
+            }
+        }
+        if (designerWindow == nullptr) designerWindow = std::make_unique<studio::designer::DesignerWindow>(context);
+        designerWindow->open(std::move(context));
+    }
+
     void showStudioSettings()
     {
         DialogWindow::LaunchOptions options;
@@ -7319,9 +7348,16 @@ int StudioView::runInterfaceReview (const File& output)
     if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
     // Each macOS menu category must expose at least one real command; keep
     // menu generation platform-neutral so Linux CI can verify its structure.
-    for (int category = 0; category < 9; ++category)
+    for (int category = 0; category < 10; ++category)
         if (applicationMenu (category).getNumItems() == 0)
             return fail ("native application menu has no commands");
+    {
+        auto folder=File::getSpecialLocation(File::tempDirectory).getNonexistentChildFile("StudioDesignerReview","",false);
+        studio::designer::DesignerPanel designer({},folder);
+        const bool verified=designer.verifyDesigner();
+        folder.deleteRecursively();
+        if(!verified) return fail("instrument designer profile creation and recall");
+    }
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
@@ -7766,7 +7802,7 @@ public:
     Component::SafePointer<StudioView> target;
     StringArray getMenuBarNames() override
     {
-        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Help" };
+        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Instruments", "Help" };
     }
     PopupMenu getMenuForIndex (int index, const String&) override
     {

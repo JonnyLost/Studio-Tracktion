@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - integration/studio-0.2-m44-consolidated
+      - feature/studio-universal-articulation-catalog-m45
+      - feature/studio-instrument-designer-m46
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -47,6 +49,9 @@ on:
       - feature/studio-theme-isolation-m43
   pull_request:
     branches:
+      - integration/studio-0.2-m44-consolidated
+      - feature/studio-universal-articulation-catalog-m45
+      - feature/studio-instrument-designer-m46
       - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
