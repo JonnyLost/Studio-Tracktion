@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../OstinatoCore.h"
 #include "../OstinatoAudition.h"
+#include "../OstinatoArticulations.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -28,7 +29,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 5 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 6 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -255,5 +256,29 @@ int main()
     require(!compile(conflicting,{"t"},1,planned,error),"reject cross-tier overlap");
     conflicting.rows[1].pitch=61;
     require(compile(conflicting,{"t"},1,planned,error),"different pitch optional row valid");
-    std::cout<<"O1–O5 ostinato core: "<<checks<<" checks passed\n";
+    const std::string v4="STUDIO_OSTINATO 4 \"Legacy\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 64\n";
+    require(decode(v4,restored)&&restored.rows[0].steps[0].repeats==1&&restored.rows[0].steps[0].probability==100&&restored.rows[0].steps[0].articulation.empty(),"v4 advanced step migration");
+    Pattern advanced;advanced.rows[0].trackId="t";
+    auto& step=advanced.rows[0].steps[1];step.enabled=true;step.repeats=3;step.gate=500;step.offset=125;step.articulation="spiccato-id";
+    Render artRender;
+    require(compile(advanced,{"t"},1,artRender,error)&&artRender.notes.size()==3&&artRender.articulations.size()==1,"ratchets with named articulation");
+    require(artRender.notes[0].start==2700&&artRender.notes[0].end==3100&&artRender.notes[1].start==3500&&artRender.notes[2].start==4300,"ratchet boundaries and offset");
+    require(artRender.notes[0].articulation==0&&artRender.events.front().articulation==0,"articulation survives event compilation");
+    require(decode(encode(advanced),restored)&&restored==advanced,"advanced schema round trip");
+    std::vector<ArticulationBinding> bindings{{artRender.articulations[0],false,24,100}};
+    require(validateArticulations(artRender,bindings,error),"valid named keyswitch");
+    require(!validateArticulations(artRender,{},error),"missing binding refuses audition");
+    bindings[0].number=60;require(!validateArticulations(artRender,bindings,error),"keyswitch pitch collision");
+    bindings[0].controller=true;bindings[0].number=64;require(!validateArticulations(artRender,bindings,error),"sustain rejected as articulation");
+    bindings[0].number=11;require(validateArticulations(artRender,bindings,error),"fixed expression controller mapping");
+    auto overlapping=artRender;overlapping.notes.push_back({2750,3000,0,1,70,80});
+    std::sort(overlapping.notes.begin(),overlapping.notes.end(),[](const auto& x,const auto& y){return x.start<y.start;});
+    require(!validateArticulations(overlapping,bindings,error),"shared channel overlapping articulated notes rejected");
+    step.repeats=1;step.gate=3000;step.offset=-250;
+    require(compile(advanced,{"t"},1,artRender,error)&&artRender.notes[0].start==1800&&artRender.notes[0].end==9000,"extended gate and negative offset");
+    step.probability=0;require(compile(advanced,{"t"},1,artRender,error)&&artRender.notes.empty(),"zero probability");
+    step.probability=50;require(compile(advanced,{"t"},32,artRender,error)&&!artRender.notes.empty()&&artRender.notes.size()<32,"probabilistic triggering");
+    require(compile(advanced,{"t"},32,second,error)&&second.events==artRender.events,"probability repeatable");
+    step.repeats=2;require(!advanced.valid(),"extended gate with ratchets rejected");
+    std::cout<<"O1–O6 ostinato core: "<<checks<<" checks passed\n";
 }
