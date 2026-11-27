@@ -70,6 +70,7 @@ int main()
                 const auto synth = studio::atelierLayout (width, 0, AtelierProfile::synth, false, activityMetrics);
                 if (essential.controllerRows * essential.columns != 4 || expanded.controllerRows * expanded.columns != 8
                     || expanded.total <= essential.total || sampler.articulationRows != 1
+                    || (ui == 100 && text == 100 && width >= 365 && essential.total > 430)
                     || synth.controllerRows != 0 || synth.articulationRows != 0 || synth.total >= essential.total
                     || ! studio::atelierControllerVisible (AtelierProfile::sampler, true, 3)
                     || studio::atelierControllerVisible (AtelierProfile::sampler, true, 5)

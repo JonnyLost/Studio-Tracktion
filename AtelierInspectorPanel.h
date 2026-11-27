@@ -3,6 +3,7 @@
 #include "StudioMixing.h"
 #include "ArticulationMappings.h"
 #include "AtelierLayout.h"
+#include "StudioKeyboardPerformanceState.h"
 #include <array>
 #include <vector>
 
@@ -18,6 +19,7 @@ public:
     void setEdit (tracktion::Edit*);
     void refresh (tracktion::AudioTrack*, bool editable);
     void appearanceChanged();
+    void reflectPerformance (tracktion::EditItemID, const KeyboardPerformanceValues&);
     void suspend() { releaseSustain(); }
     int desiredHeight (int width) const;
     void resized() override;

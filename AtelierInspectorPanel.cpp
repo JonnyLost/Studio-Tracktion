@@ -7,6 +7,7 @@
 #include "StudioSampler.h"
 #include "StudioSynth.h"
 #include "StudioLibraryPresentation.h"
+#include "SharedInstrumentControls.h"
 #include <cmath>
 
 namespace studio
@@ -186,7 +187,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         knob.onValueChange = [this, i]
         {
             if (updating) return;
-            writeCCState();
+            if (auto* t = track()) writeSharedCC (t->state, controllers[i].cc, roundToInt (ccKnobs[i].getValue()));
             sendCC ((int) i);
         };
     }
@@ -545,8 +546,9 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     }
     else if (!nativeMode && nativePortraitToken.isNotEmpty())
     {nativePortraitToken.clear();loadArtwork();}
-    artworkPicker.setVisible(!nativeMode);
-    artCaption.setVisible(nativeMode);
+    artworkPicker.setVisible(false);
+    artCaption.setVisible(false);
+    originalInstrument.setVisible(false);
     artCaption.setText(nativeMode?(presentation.family.isNotEmpty()?presentation.family:String("Native instrument")):portraitName,dontSendNotification);
     originalInstrument.setButtonText(nativeMode?"Open Sampler":synthesizer?"Open Synth":"Open Plug-in");
     mappingsButton.setButtonText(nativeMode?"Sampler articulations":"Edit articulations");
@@ -609,10 +611,15 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     bool live = canSendMidi();
     if (! live && pedalChannel > 0) releaseSustain();
     const bool showMidi = mode != AtelierProfile::synth;
+    const bool showAdvanced = mode == AtelierProfile::hosted && advancedMidi;
     bool layoutChanged = ccHeading.isVisible() != showMidi || moreControls.isVisible() != (mode == AtelierProfile::hosted);
     for (auto* component : std::initializer_list<Component*> { &mappingsHeading, &mappingsButton, &ccHeading, &midiChannel, &sendValues, &midiStatus })
         component->setVisible (showMidi);
     moreControls.setVisible (mode == AtelierProfile::hosted);
+    midiChannel.setVisible (showAdvanced);
+    sendValues.setVisible (showAdvanced);
+    midiStatus.setVisible (showAdvanced);
+    micStatus.setVisible (false);
     moreControls.setButtonText (advancedMidi ? "Essential controls" : "More MIDI controls");
     moreControls.setToggleState (advancedMidi, dontSendNotification);
     for(size_t i=0;i<ccKnobs.size();++i)
@@ -642,6 +649,19 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     if (midiStatus.getText() != summary)
         midiStatus.setText (summary, dontSendNotification);
 }
+void AtelierInspectorPanel::reflectPerformance (te::EditItemID id, const KeyboardPerformanceValues& values)
+{
+    if (trackId != id) return;
+    using V = KeyboardPerformanceValues;
+    const ScopedValueSetter<bool> hold (updating, true);
+    const auto set = [&] (int index, V::Parameter parameter, int value)
+    {
+        if ((values.changed & V::bit(parameter)) && !ccKnobs[(size_t)index].isMouseButtonDown())
+            ccKnobs[(size_t)index].setValue(value,dontSendNotification);
+    };
+    set(0,V::modulation,values.mod); set(2,V::volume,values.vol);
+    set(3,V::expression,values.expr); set(6,V::brightness,values.tone); set(7,V::room,values.reverb);
+}
 void AtelierInspectorPanel::appearanceChanged() { resized(); repaint(); }
 
 int AtelierInspectorPanel::desiredHeight (int width) const
@@ -654,26 +674,23 @@ void AtelierInspectorPanel::resized()
     const auto& m = appearance;
     const auto mode = profile();
     const auto layout = atelierLayout (getWidth(), (int) mappings.size(), mode, advancedMidi, m);
-    auto area = getLocalBounds().reduced (m.px (9), m.px (9));
-    heading.setBounds (area.removeFromTop (m.control (26)));
-    instrumentName.setBounds (area.removeFromTop (m.control (25, 11)));
-    area.removeFromTop (m.px (6));
+    auto area = getLocalBounds().reduced (m.px (6), m.px (5));
+    heading.setBounds (area.removeFromTop (m.control (20)));
+    instrumentName.setBounds (area.removeFromTop (m.control (20, 11)));
+    area.removeFromTop (m.px (3));
     imageBounds = area.removeFromTop (layout.portrait);
-    auto artworkRow = area.removeFromTop (m.control (28, 11));
-    originalInstrument.setBounds (artworkRow.removeFromRight (jmin (artworkRow.getWidth() / 2, m.span (113))).reduced (m.px (2), 0));
-    artworkPicker.setBounds (artworkRow);
-    artCaption.setBounds (mode == AtelierProfile::sampler ? artworkRow : Rectangle<int>{});
+    originalInstrument.setBounds ({}); artworkPicker.setBounds ({}); artCaption.setBounds ({});
     articulationBounds = {};
     for (auto& pad : articulationPads) pad.setBounds ({});
     if (layout.articulationRows > 0)
     {
-        area.removeFromTop (m.px (9));
-        auto section = area.removeFromTop (m.control (20) + layout.articulationRows * m.control (37) + m.control (28));
+        area.removeFromTop (m.px (3));
+        auto section = area.removeFromTop (m.control (18) + layout.articulationRows * m.control (25, 10) + m.control (24, 11));
         articulationBounds = section;
-        mappingsHeading.setBounds (section.removeFromTop (m.control (20)));
+        mappingsHeading.setBounds (section.removeFromTop (m.control (18)));
         for (int row = 0; row < layout.articulationRows; ++row)
         {
-            auto items = section.removeFromTop (m.control (37));
+            auto items = section.removeFromTop (m.control (25, 10));
             const int w = items.getWidth() / layout.columns;
             for (int col = 0; col < layout.columns; ++col)
             {
@@ -683,21 +700,22 @@ void AtelierInspectorPanel::resized()
                     articulationPads[(size_t) index].setBounds (bounds);
             }
         }
-        mappingsButton.setBounds (section.removeFromTop (m.control (28)).reduced (m.px (2), 0));
+        mappingsButton.setBounds (section.removeFromTop (m.control (24, 11)).reduced (m.px (2), 0));
     }
     else { mappingsHeading.setBounds ({}); mappingsButton.setBounds ({}); }
     ccBounds = {};
     for (size_t i = 0; i < ccKnobs.size(); ++i) { ccKnobs[i].setBounds ({}); ccLabels[i].setBounds ({}); }
     if (layout.controllerRows > 0)
     {
-        area.removeFromTop (m.px (9));
-        const int toggleHeight = mode == AtelierProfile::hosted ? m.control (27) : 0;
-        auto section = area.removeFromTop (m.control (20) + toggleHeight + m.control (28)
-                                          + layout.controllerRows * layout.controllerCell + m.control (30, 10));
+        area.removeFromTop (m.px (3));
+        const bool expanded = mode == AtelierProfile::hosted && advancedMidi;
+        auto section = area.removeFromTop (m.control (24, 11) + layout.controllerRows * layout.controllerCell
+                                          + (expanded ? m.control (26) + m.control (26,10) : 0));
         ccBounds = section;
-        ccHeading.setBounds (section.removeFromTop (m.control (20)));
-        moreControls.setBounds (section.removeFromTop (toggleHeight).reduced (m.px (2), 0));
-        auto midiRow = section.removeFromTop (m.control (28));
+        auto header = section.removeFromTop (m.control (24,11));
+        moreControls.setBounds (mode == AtelierProfile::hosted ? header.removeFromRight (header.getWidth()/2).reduced (1) : Rectangle<int>{});
+        ccHeading.setBounds (header);
+        auto midiRow = expanded ? section.removeFromTop (m.control (26)) : Rectangle<int>{};
         midiChannel.setBounds (midiRow.removeFromLeft (jmin (m.span (106), midiRow.getWidth() / 2)));
         sendValues.setBounds (midiRow.reduced (m.px (2), 0));
         int slot = 0;
@@ -717,10 +735,10 @@ void AtelierInspectorPanel::resized()
     else
         for (auto* component : std::initializer_list<Component*> { &ccHeading, &moreControls, &midiChannel, &sendValues, &midiStatus })
             component->setBounds ({});
-    area.removeFromTop (m.px (9));
-    mixerBounds = area.removeFromTop (m.control (22) + m.px (204));
+    area.removeFromTop (m.px (3));
+    mixerBounds = area.removeFromTop (m.control (20) + m.px (80));
     auto mixArea = mixerBounds;
-    mixHeading.setBounds (mixArea.removeFromTop (m.control (22)));
+    mixHeading.setBounds (mixArea.removeFromTop (m.control (20)));
     const int stripW = mixArea.getWidth() / 3;
     for (auto [label, control] : std::initializer_list<std::pair<Label*, Slider*>> {
              { &volumeLabel, &volume }, { &panLabel, &pan }, { &roomLabel, &roomSend } })
@@ -729,9 +747,9 @@ void AtelierInspectorPanel::resized()
         label->setBounds (strip.removeFromTop (m.control (20, 10)));
         control->setBounds (strip);
     }
-    area.removeFromTop (m.px (5));
-    micStatus.setBounds (area.removeFromTop (m.control (30, 10)));
-    auto actionsRow = area.removeFromTop (m.control (34));
+    area.removeFromTop (m.px (3));
+    micStatus.setBounds ({});
+    auto actionsRow = area.removeFromTop (m.control (26,11));
     fullInstrument.setBounds (actionsRow.removeFromLeft (actionsRow.getWidth() / 2).reduced (m.px (2), 0));
     stageButton.setBounds (actionsRow.reduced (m.px (2), 0));
 }
@@ -797,11 +815,17 @@ bool AtelierInspectorPanel::verifyInspectorBindings()
     }
     writeCCState();
     const bool saved = t->state.getProperty (ccProperty).toString().startsWith ("76,");
+    writeSharedCC (t->state, 11, 93);
+    const auto shared = sharedKeyboardValues (t->state);
+    const bool linked = shared.mod == 76 && shared.expr == 93;
+    auto observation = shared; observation.mod = 47;
+    reflectPerformance (t->itemID, observation);
+    const bool silent = roundToInt (ccKnobs[0].getValue()) == 47 && readSharedCC (t->state)[0] == 76;
     t->state.setProperty (ccProperty, before, nullptr);
     ccStateLoaded = false;
     cachedCCState.clear();
     refresh (t, editing);
-    return saved;
+    return saved && linked && silent;
 }
 #endif
 }
