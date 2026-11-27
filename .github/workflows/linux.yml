@@ -42,8 +42,10 @@ on:
       - feature/studio-composer-acceptance-m39e
       - feature/studio-hardware-console-m40
       - feature/studio-deep-black-m41
+      - feature/studio-cream-ruler-m42
   pull_request:
     branches:
+      - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
       - feature/studio-hardware-console-m40
       - feature/studio-composer-acceptance-m39e
