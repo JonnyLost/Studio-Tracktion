@@ -5879,10 +5879,12 @@ private:
             if (! busy)
                 if (auto* selected = trackById (id))
                     if (auto* instrument = studio::findInstrument (*selected))
+                    {
                         if (selected->state.hasProperty("studioUniversalInstrument") && workflowTrack()==selected)
                         { refreshUniversalInstrument(); if(universalAvailable){showUniversalInstrument();return;} }
                         if (! showFullAtelierInstrument (*instrument))
                             showNativeInstrument (*instrument);
+                    }
         };
         trackActions.openArticulations = [this] (te::EditItemID id)
         {
@@ -6510,6 +6512,7 @@ private:
         const auto tid=track!=nullptr?track->itemID:te::EditItemID{};
         const auto pid=hosted!=nullptr?hosted->itemID:te::EditItemID{};
         const auto serialized=track!=nullptr?track->state.getProperty("studioUniversalInstrument").toString():String();
+        if(track!=nullptr&&serialized.isEmpty())universalStates.erase(tid.toString());
         auto* state=track!=nullptr&&!serialized.isEmpty()?&universalStates[tid.toString()]:nullptr;
         if(state&&state->serialized!=serialized){state->serialized=serialized;state->attachment=studio::designer::Attachment::parse(serialized);state->values={};}
         const bool available=state&&state->attachment&&hosted&&state->attachment->matches(pid.toString(),hosted->desc.createIdentifierString(),hosted->desc.version);
@@ -6537,7 +6540,8 @@ private:
         surface.openOriginal=[this]{if(auto* t=workflowTrack())if(auto* p=universalHosted(t))p->showWindowExplicitly();};
         surface.mixerChange=[this](bool volume,double value){
             auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
-                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot)return;
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin)return;
             if(auto* p=t->getVolumePlugin()){if(volume)p->setVolumeDb((float)value);else p->setPan((float)value);}
         };
         surface.perform=[this](const String& id,int value){performUniversal(id,value);};
@@ -6587,7 +6591,7 @@ private:
     void chooseUniversalProfile()
     {
         auto* t=workflowTrack();auto* hosted=universalHosted(t);
-        if(!t||!hosted||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isPlaying())return;
+        if(!t||!hosted||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isPlaying()){message.setText("Select a stopped hosted instrument track first.",dontSendNotification);return;}
         const auto profiles=studio::designer::ProfileStore(studio::designer::ProfileStore::localDirectory()).list();
         PopupMenu menu;int index=0;
         for(const auto& p:profiles)
