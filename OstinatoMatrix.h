@@ -38,10 +38,8 @@ public:
         cell.setTooltip("Selected cell number (1-based)");velocity.setTooltip("MIDI velocity 1–127");
         gate.setTooltip("Gate in thousandths (750 = 75%)");
         mode.addItem("Follow grid",1);mode.addItem("Shared span",2);mode.addItem("Independent cycle",3);
-        for(int d:{1,2,4,5,6,8,10,12,15,16,20,24,25,30,32})if(ticksPerQuarter%d==0)masterDivision.addItem(String(d)+" / beat",d);
+        for(int d=1;d<=32;++d)if(ticksPerQuarter%d==0)masterDivision.addItem(String(d)+" / beat",d);
         for(int d:{1,2,4,8,16,32})denominator.addItem("/ "+String(d),d);
-        // Include every exact O1 master divisor, including uncommon values.
-        for(int d=1;d<=32;++d)if(ticksPerQuarter%d==0&&masterDivision.indexOfItemId(d)<0)masterDivision.addItem(String(d)+" / beat",d);
         status.setJustificationType(Justification::centredLeft);
         name.onReturnKey=[this]{applyMasterEdit();};
         applyMaster.onClick=[this]{applyMasterEdit();};
@@ -130,6 +128,7 @@ public:
     }
 
    #if STUDIO_SPATIAL_TESTS
+    bool reviewToggleFirstStep(){auto* r=row();if(!r)return false;const auto id=r->id;const bool before=r->steps[0].enabled;toggle(id,0);return row()->steps[0].enabled!=before;}
     bool verifyEditor()
     {
         setContext({},{{"taiko","Taiko"},{"claves","Claves"}},true);
@@ -384,7 +383,7 @@ class MatrixWindow final : public juce::DocumentWindow
 public:
     MatrixWindow():DocumentWindow("Studio — Ostinato Engine",colours::canvas,closeButton)
     {
-        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(640,380,1800,1100);
+        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(640,420,1800,1100);
         panel=new MatrixEditor;setContentOwned(panel,true);
         if(auto* display=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         {
