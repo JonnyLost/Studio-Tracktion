@@ -24,6 +24,9 @@ public:
                 &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
+        effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
+        for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})
+        {addAndMakeVisible(*l);l->setFont(uiFont(10));l->setJustificationType(Justification::centredLeft);}
         name.setTextToShowWhenEmpty("Pattern name",colours::secondary);
         name.setInputRestrictions(160);name.setReturnKeyStartsNewLine(false);
         for(auto* e:{&masterSteps,&pitch,&channel,&division,&numerator,&bars,&cell,&velocity,&gate})
@@ -87,6 +90,7 @@ public:
     {
         viewport.setScrollBarThickness(appearance.scrollbar());
         status.setFont(uiFont(12));
+        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})l->setFont(uiFont(10));
         resized();repaint();matrix.repaint();
     }
     void paint(juce::Graphics& g) override {g.fillAll(colours::canvas);}
@@ -94,30 +98,33 @@ public:
     {
         auto a=getLocalBounds().reduced(appearance.px(8));
         const int h=appearance.control(30),gap=appearance.px(3);
-        auto line=a.removeFromTop(h);
+        const int caption=appearance.control(15);
+        auto field=[&](juce::Component& c,juce::Label& l,juce::Rectangle<int> r){r=r.reduced(gap,0);l.setBounds(r.removeFromTop(caption));c.setBounds(r.reduced(0,gap));};
+        auto line=a.removeFromTop(h+caption);
         name.setBounds(line.removeFromLeft(line.getWidth()*2/5).reduced(gap));
-        masterSteps.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
+        field(masterSteps,masterCountLabel,line.removeFromLeft(line.getWidth()/5));
         masterDivision.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
         applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
         line=a.removeFromTop(h);
         add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
         status.setBounds(line.reduced(gap));
-        auto bottom=a.removeFromBottom(h*3);
-        line=bottom.removeFromTop(h);
+        auto bottom=a.removeFromBottom((h+caption)*3);
+        line=bottom.removeFromTop(h+caption);
         track.setBounds(line.removeFromLeft(line.getWidth()*2/7).reduced(gap));
-        pitch.setBounds(line.removeFromLeft(line.getWidth()/7).reduced(gap));channel.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));
+        field(pitch,pitchLabel,line.removeFromLeft(line.getWidth()/7));field(channel,channelLabel,line.removeFromLeft(line.getWidth()/6));
         mute.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));solo.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));
         mode.setBounds(line.reduced(gap));
-        line=bottom.removeFromTop(h);
-        division.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));numerator.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        denominator.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));bars.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
+        line=bottom.removeFromTop(h+caption);
+        field(division,divisionLabel,line.removeFromLeft(line.getWidth()/6));field(numerator,numeratorLabel,line.removeFromLeft(line.getWidth()/5));
+        denominator.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));field(bars,barsLabel,line.removeFromLeft(line.getWidth()/3));
         applyRow.setBounds(line.reduced(gap));
-        line=bottom.removeFromTop(h);
-        cell.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));velocity.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        gate.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));accent.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
+        line=bottom.removeFromTop(h+caption);
+        field(cell,cellLabel,line.removeFromLeft(line.getWidth()/6));field(velocity,velocityLabel,line.removeFromLeft(line.getWidth()/5));
+        field(gate,gateLabel,line.removeFromLeft(line.getWidth()/4));accent.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
         enabled.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));applyCell.setBounds(line.reduced(gap));
         auto side=a.removeFromRight(juce::jmin(a.getWidth()/4,appearance.span(116)));
-        for(auto* b:{&power,&mixer,&effects,&stage,&print})b->setBounds(side.removeFromTop(h+gap).reduced(gap));
+        const int utilityHeight=juce::jmin(h+gap,side.getHeight()/5);
+        for(auto* b:{&power,&mixer,&effects,&stage,&print})b->setBounds(side.removeFromTop(utilityHeight).reduced(gap));
         viewport.setBounds(a.reduced(gap));
         matrix.setSize(matrix.preferredWidth(viewport.getWidth()),matrix.preferredHeight());
     }
@@ -156,7 +163,7 @@ private:
     juce::TextButton applyMaster{"Set grid"},add{"+ Row"},remove{"− Row"},applyRow{"Apply row"},applyCell{"Apply step"},
         preview{"Check pattern"},mixer{"Mixer"},stage{"Stage"},effects{"Effects"},print{"Print MIDI"},power{"Engine off"};
     juce::ToggleButton mute{"Mute"},solo{"Solo"},accent{"Accent"},enabled{"Active"};
-    juce::Label status;
+    juce::Label status,masterCountLabel{"","Grid steps"},pitchLabel{"","MIDI note"},channelLabel{"","Channel"},divisionLabel{"","Divisions"},numeratorLabel{"","Meter"},barsLabel{"","Bars"},cellLabel{"","Step"},velocityLabel{"","Velocity"},gateLabel{"","Gate / 1000"};
     juce::Viewport viewport;
 
     class Matrix final : public juce::Component
@@ -194,7 +201,9 @@ private:
             using namespace juce;
             g.fillAll(colours::panel);g.setFont(uiFont(12));g.setColour(colours::text);
             const int h=headerHeight(),rh=rowHeight(),l=left(),r=right();
-            g.drawFittedText("Track / note",Rectangle<int>(4,0,l-8,h),Justification::centredLeft,1);
+            const int noteWidth=appearance.span(52);
+            g.drawFittedText("Track",Rectangle<int>(4,0,l-noteWidth-8,h),Justification::centredLeft,1);
+            g.drawFittedText("Note",Rectangle<int>(l-noteWidth,0,noteWidth,h),Justification::centred,1);
             g.drawFittedText("Pattern matrix — first cycle",Rectangle<int>(l+4,0,getWidth()-l-r-8,h),Justification::centredLeft,1);
             g.drawFittedText("Division",Rectangle<int>(getWidth()-r,0,r,h),Justification::centred,1);
             for(size_t i=0;i<owner.pattern.rows.size();++i)
@@ -203,9 +212,11 @@ private:
                 g.setColour(row.id==owner.selected?colours::selected:colours::control);
                 g.fillRect(0,y,l-2,rh-1);
                 g.setColour(colours::text);
-                auto text=owner.trackName(row.trackId)+"  ·  "+MidiMessage::getMidiNoteName(row.pitch,true,true,4);
-                if(row.mute)text+=" M";if(row.solo)text+=" S";
-                g.drawFittedText(text,Rectangle<int>(4,y,l-8,rh),Justification::centredLeft,1);
+                auto text=String((int)i+1)+"  "+owner.trackName(row.trackId);
+                if(row.mute)text+=" M";
+                if(row.solo)text+=" S";
+                g.drawFittedText(text,Rectangle<int>(4,y,l-noteWidth-8,rh),Justification::centredLeft,1);
+                g.drawFittedText(MidiMessage::getMidiNoteName(row.pitch,true,true,4),Rectangle<int>(l-noteWidth,y,noteWidth-2,rh),Justification::centred,1);
                 for(size_t j=0;j<row.steps.size();++j)
                 {
                     const auto& step=row.steps[j];const int x=xFor(owner.pattern.rowBoundary(row,j)),end=xFor(owner.pattern.rowBoundary(row,j+1));
@@ -236,7 +247,7 @@ private:
             const int y=e.y-headerHeight();if(y<0)return;
             const auto index=size_t(y/rowHeight());if(index>=owner.pattern.rows.size())return;
             const auto id=owner.pattern.rows[index].id;const int hit=cellAt(e.x,index);
-            owner.select(id,hit>=0?size_t(hit):0);
+            grabKeyboardFocus();owner.select(id,hit>=0?size_t(hit):0);
             if(hit>=0&&!e.mods.isPopupMenu())owner.toggle(id,size_t(hit));
         }
         bool keyPressed(const juce::KeyPress& k)override
@@ -273,7 +284,7 @@ private:
         int choice=1;
         if(auto* r=row())
         {
-            for(size_t i=0;i<tracks.size();++i){track.addItem(String::fromUTF8(tracks[i].name.c_str()),int(i)+2);if(tracks[i].id==r->trackId)choice=int(i)+2;}
+            for(size_t i=0;i<tracks.size();++i){track.addItem(String((int)i+1)+". "+String::fromUTF8(tracks[i].name.c_str()),int(i)+2);if(tracks[i].id==r->trackId)choice=int(i)+2;}
             if(!r->trackId.empty()&&choice==1){choice=int(tracks.size())+2;track.addItem("Missing track (retained)",choice);}
         }
         track.setSelectedId(choice,dontSendNotification);
