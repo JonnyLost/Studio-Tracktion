@@ -8,6 +8,7 @@ on:
       - feature/studio-ostinato-matrix-o3
       - feature/studio-ostinato-routing-o4
       - feature/studio-ostinato-conducting-o5
+      - feature/studio-ostinato-step-articulations-o6
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -54,6 +55,7 @@ on:
       - feature/studio-ostinato-matrix-o3
       - feature/studio-ostinato-routing-o4
       - feature/studio-ostinato-conducting-o5
+      - feature/studio-ostinato-step-articulations-o6
       - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
