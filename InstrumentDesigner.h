@@ -1,0 +1,327 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+#include "StudioUI.h"
+#include "StudioInstrumentIcons.h"
+#include "UniversalInstrumentCatalog.h"
+#include "StudioInstrumentCatalogData.h"
+#include "InstrumentProfile.h"
+#include <optional>
+
+namespace studio::designer
+{
+struct SourceContext { String track, pluginId, pluginVersion; };
+class DesignerPanel final : public juce::Component
+{
+public:
+    explicit DesignerPanel(SourceContext source)
+        : context(std::move(source)), store(ProfileStore::localDirectory())
+    {
+        using namespace juce;
+        addAndMakeVisible(viewport); viewport.setViewedComponent(&body,false);
+        int bytes=0;
+        const auto* data=StudioInstrumentCatalogData::getNamedResource(StudioInstrumentCatalogData::namedResourceList[0],bytes);
+        auto result=data!=nullptr ? catalog.load(String::fromUTF8(data,bytes)) : Result::fail("Missing embedded catalog");
+        ready=result.wasOk();
+        for (auto* c : std::initializer_list<Component*>{&heading,&contextLabel,&collection,&load,&newProfile,&duplicate,&save,&discard,
+             &name,&library,&patch,&variant,&channel,&slot,&instrumentSearch,&instrument,&artworkSearch,&artwork,
+             &kind,&candidateSearch,&candidates,&allTechniques,&add,&elements,&label,&style,&transport,&full,
+             &apply,&up,&down,&remove,&channelInfo,&status,&preview})
+            body.addAndMakeVisible(*c);
+        heading.setText("Instrument Designer",dontSendNotification);
+        heading.setFont(uiFont(20,Font::bold));
+        contextLabel.setFont(uiFont(12)); status.setFont(uiFont(12));
+        status.setJustificationType(Justification::centredLeft);
+        for (auto* e : {&name,&library,&patch,&variant,&channel,&slot})
+            e->onTextChange=[this]{ if(!refreshing) dirty=true; };
+        setupField(name,"Profile name"); setupField(library,"Library"); setupField(patch,"Patch name or stable ID");
+        setupField(variant,"Patch variant"); setupField(channel,"MIDI channel 1–16"); setupField(slot,"ARIA slot 1–16");
+        setupField(instrumentSearch,"Search instruments"); setupField(artworkSearch,"Search vector artwork");
+        setupField(candidateSearch,"Search available techniques or controls"); setupField(label,"Custom button or control label");
+        kind.addItem("Articulations",1); kind.addItem("Performance controls",2); kind.setSelectedId(1,dontSendNotification);
+        style.addItem("Button",1); style.addItem("Knob",2); style.addItem("Fader",3);
+        instrumentSearch.onTextChange=[this]{ refillInstruments(false); };
+        artworkSearch.onTextChange=[this]{ refillInstruments(true); };
+        instrument.onChange=[this]{
+            if(refreshing) return;
+            if(auto id=choice(instrument,instrumentIds);id.isNotEmpty())
+            { profile.instrument=id; if(profile.artwork.isEmpty()) profile.artwork=id; dirty=true; refillCandidates(); preview.repaint(); }
+        };
+        artwork.onChange=[this]{ if(!refreshing) { profile.artwork=choice(artwork,artworkIds); dirty=true; preview.repaint(); }};
+        kind.onChange=[this]{refillCandidates();}; candidateSearch.onTextChange=[this]{refillCandidates();};
+        allTechniques.onClick=[this]{refillCandidates();}; elements.onChange=[this]{refreshElement();};
+        channelInfo.onClick=[this]{profile.channelInfo=channelInfo.getToggleState();dirty=true;preview.repaint();};
+        add.onClick=[this]{addElement();}; apply.onClick=[this]{applyElement();};
+        up.onClick=[this]{move(-1);}; down.onClick=[this]{move(1);};
+        remove.onClick=[this]{int i=elements.getSelectedItemIndex();if(validIndex(i)){profile.elements.erase(profile.elements.begin()+i);dirty=true;refreshElements(jmin(i,(int)profile.elements.size()-1));}};
+        save.onClick=[this]{saveCurrent();};
+        newProfile.onClick=[this]{if(canSwitch()) startNew();};
+        load.onClick=[this]{if(canSwitch()) loadSelected();};
+        duplicate.onClick=[this]{if(readFields()){profile=profile.duplicate();dirty=true;refresh();say("Copy created. Save to retain it.");}};
+        discard.onClick=[this]{
+            // Explicit discard restores the last saved profile; for a new draft resets it.
+            if(saved){profile=*saved;dirty=false;refresh();say("Restored saved profile.");}
+            else startNew();
+        };
+        refreshCollection(); startNew();
+        if(!ready){ say(result.getErrorMessage()); body.setEnabled(false); }
+        setSize(920,620);
+    }
+    void setContext(SourceContext source)
+    {
+        context=std::move(source);
+        contextLabel.setText(context.track.isEmpty() ? "Design a standalone profile" : "Selected track: "+context.track+" (reference only)",juce::dontSendNotification);
+    }
+    bool hasUnsavedChanges() const { return dirty; }
+    void resized() override
+    {
+        viewport.setBounds(getLocalBounds());
+        const int w=juce::jmax(640,getWidth()-22), line=juce::jmax(28,appearance.control(30));
+        const int h=juce::jmax(getHeight(), 18*line+188);
+        body.setSize(w,h);
+        auto r=body.getLocalBounds().reduced(12);
+        heading.setBounds(r.removeFromTop(line)); contextLabel.setBounds(r.removeFromTop(line));
+        auto row=r.removeFromTop(line);
+        collection.setBounds(row.removeFromLeft(row.getWidth()/2).reduced(2));
+        load.setBounds(row.removeFromLeft(row.getWidth()/4).reduced(2));
+        newProfile.setBounds(row.removeFromLeft(row.getWidth()/3).reduced(2));
+        duplicate.setBounds(row.removeFromLeft(row.getWidth()/2).reduced(2)); discard.setBounds(row.reduced(2));
+        auto columns=r.removeFromTop(11*line);
+        auto left=columns.removeFromLeft(columns.getWidth()/2).reduced(4);
+        auto right=columns.reduced(4);
+        for(auto* c : std::initializer_list<Component*>{&name,&library,&patch,&variant,&channel,&slot,&instrumentSearch,&instrument,&artworkSearch,&artwork,&channelInfo})
+            c->setBounds(left.removeFromTop(line).reduced(2));
+        for(auto* c : std::initializer_list<Component*>{&kind,&candidateSearch,&allTechniques,&candidates,&add,&elements,&label,&style})
+            c->setBounds(right.removeFromTop(line).reduced(2));
+        auto visibility=right.removeFromTop(line);
+        transport.setBounds(visibility.removeFromLeft(visibility.getWidth()/2)); full.setBounds(visibility);
+        apply.setBounds(right.removeFromTop(line).reduced(2));
+        auto reorder=right.removeFromTop(line);
+        up.setBounds(reorder.removeFromLeft(reorder.getWidth()/3).reduced(2));
+        down.setBounds(reorder.removeFromLeft(reorder.getWidth()/2).reduced(2)); remove.setBounds(reorder.reduced(2));
+        auto footer=r.removeFromBottom(line);
+        save.setBounds(footer.removeFromRight(juce::jmin(180,footer.getWidth()/3)).reduced(2)); status.setBounds(footer.reduced(2));
+        preview.setBounds(r.reduced(4));
+    }
+private:
+    using Component=juce::Component;
+    using StringArray=juce::StringArray;
+    using ComboBox=juce::ComboBox;
+    using TextEditor=juce::TextEditor;
+    using TextButton=juce::TextButton;
+    using ToggleButton=juce::ToggleButton;
+    using Label=juce::Label;
+    using Graphics=juce::Graphics;
+    SourceContext context;
+    Catalog catalog; ProfileStore store; Profile profile;
+    std::optional<Profile> saved;
+    std::vector<Profile> profiles;
+    bool dirty=false, refreshing=false, ready=false;
+    juce::Viewport viewport;
+    Component body;
+    Label heading,contextLabel,status;
+    ComboBox collection,instrument,artwork,kind,candidates,elements,style;
+    TextEditor name,library,patch,variant,channel,slot,instrumentSearch,artworkSearch,candidateSearch,label;
+    TextButton load{"Open"},newProfile{"New"},duplicate{"Duplicate"},save{"Save profile"},discard{"Discard edits"},
+               add{"Add to layout"},apply{"Apply element"},up{"Move up"},down{"Move down"},remove{"Remove"};
+    ToggleButton allTechniques{"Show all techniques"},transport{"Transport"},full{"Full view"},channelInfo{"Show channel information"};
+    StringArray instrumentIds,artworkIds,candidateIds;
+    struct Preview final : Component
+    {
+        explicit Preview(DesignerPanel& p):owner(p){}
+        DesignerPanel& owner;
+        void paint(Graphics& g) override
+        {
+            using namespace juce;
+            g.fillAll(colours::panel);
+            auto area=getLocalBounds().reduced(8);
+            g.setColour(colours::text);g.setFont(uiFont(13,Font::bold));
+            g.drawText("Layout preview — unassigned controls (no MIDI)",area.removeFromTop(24),Justification::centredLeft);
+            auto strip=area.removeFromTop(38);
+            g.setColour(colours::well);g.fillRoundedRectangle(strip.toFloat(),4);
+            g.setColour(colours::secondary);g.setFont(uiFont(10));
+            g.drawText("Transport",strip.removeFromLeft(78),Justification::centredLeft);
+            drawElements(g,strip,true);
+            area.removeFromTop(6);
+            auto art=area.removeFromLeft(jmin(105,area.getWidth()/5));
+            auto item=owner.catalog.instrument(owner.profile.artwork.isEmpty()?owner.profile.instrument:owner.profile.artwork);
+            auto title=item["name"].toString();
+            drawInstrumentIcon(g,art.removeFromTop(jmax(0,art.getHeight()-24)).toFloat().reduced(5),instrumentIcon(title),colours::action);
+            g.setColour(colours::text);g.drawFittedText(title,art,Justification::centred,1);
+            if(owner.profile.channelInfo)
+            {
+                auto info=area.removeFromRight(jmin(112,area.getWidth()/4));
+                g.setColour(colours::secondary);
+                g.drawFittedText("Channel info\n"+owner.channel.getText()+" / Slot "+owner.slot.getText(),info,Justification::centred,3);
+            }
+            drawElements(g,area,false);
+        }
+        void drawElements(Graphics& g,juce::Rectangle<int> a,bool compact)
+        {
+            using namespace juce;
+            int shown=0,hidden=0;
+            for(const auto& e:owner.profile.elements)
+            {
+                if(!(compact?e.transport:e.full))continue;
+                const int w=compact?75:92;
+                if(a.getWidth()<w || a.getHeight()<12){++hidden;continue;}
+                auto cell=a.removeFromLeft(w).reduced(2);
+                g.setColour(colours::control);g.fillRoundedRectangle(cell.toFloat(),3);
+                g.setColour(colours::secondary);g.setFont(uiFont(10));
+                if(!compact && e.presentation!="button")
+                {
+                    auto shape=cell.removeFromTop(jmax(0,cell.getHeight()-22)).toFloat().reduced(8);
+                    if(e.presentation=="knob"){auto d=jmin(shape.getWidth(),shape.getHeight());g.drawEllipse(shape.withSizeKeepingCentre(d,d),1.5f);}
+                    else g.drawRoundedRectangle(shape.withSizeKeepingCentre(8,shape.getHeight()),2,1.5f);
+                }
+                g.drawFittedText(e.label,cell,Justification::centred,2);++shown;
+            }
+            if(hidden>0 && a.getWidth()>10){g.setColour(colours::secondary);g.drawFittedText("+"+String(hidden),a,Justification::centred,1);}
+            if(shown==0 && hidden==0){g.setColour(colours::secondary);g.drawFittedText("No controls selected",a,Justification::centred,1);}
+        }
+    } preview{*this};
+    static void setupField(TextEditor& e,const String& hint){e.setTextToShowWhenEmpty(hint,colours::secondary);e.setTitle(hint);}
+    void say(const String& s){status.setText(s,juce::dontSendNotification);}
+    static String choice(const ComboBox& c,const StringArray& ids){int i=c.getSelectedItemIndex();return juce::isPositiveAndBelow(i,ids.size())?ids[i]:String();}
+    bool validIndex(int i)const{return juce::isPositiveAndBelow(i,(int)profile.elements.size());}
+    bool canSwitch(){if(!dirty)return true;say("Save or discard changes before opening another profile.");return false;}
+    void refillInstruments(bool art)
+    {
+        using namespace juce;
+        auto& box=art?artwork:instrument;auto& ids=art?artworkIds:instrumentIds;
+        auto current=art?profile.artwork:profile.instrument;
+        ids=catalog.searchInstruments(art?artworkSearch.getText():instrumentSearch.getText());
+        box.clear(dontSendNotification);
+        for(int i=0;i<ids.size();++i)box.addItem(catalog.instrument(ids[i])["name"].toString(),i+1);
+        box.setSelectedId(ids.indexOf(current)+1,dontSendNotification);
+        box.setTextWhenNothingSelected(art?"Choose artwork silhouette":"Choose physical instrument");
+    }
+    void refillCandidates()
+    {
+        using namespace juce;
+        const bool art=kind.getSelectedId()==1;
+        auto ids=art?(allTechniques.getToggleState()?catalog.allTechniques():catalog.candidateTechniques(profile.instrument)):catalog.allControls();
+        candidates.clear(dontSendNotification);candidateIds.clear();
+        for(const auto& id:ids)
+        {
+            auto item=art?catalog.technique(id):catalog.control(id);
+            auto title=item["name"].toString();
+            if(candidateSearch.getText().isNotEmpty() && !title.containsIgnoreCase(candidateSearch.getText()) && !id.containsIgnoreCase(candidateSearch.getText()))continue;
+            candidateIds.add(id);candidates.addItem(title+" ["+id+"]",candidateIds.size());
+        }
+        if(!candidateIds.isEmpty())candidates.setSelectedId(1,dontSendNotification);
+    }
+    void refreshElements(int selected)
+    {
+        using namespace juce;
+        elements.clear(dontSendNotification);
+        for(int i=0;i<(int)profile.elements.size();++i)
+        {
+            const auto& e=profile.elements[(size_t)i];
+            elements.addItem(String(i+1)+". "+e.label+" ["+(e.transport?"T":"")+(e.full?"F":"")+"]",i+1);
+        }
+        elements.setSelectedId(validIndex(selected)?selected+1:0,dontSendNotification);
+        refreshElement();preview.repaint();
+    }
+    void refreshElement()
+    {
+        using namespace juce;
+        const int i=elements.getSelectedItemIndex();const bool valid=validIndex(i);
+        for(auto* c:std::initializer_list<Component*>{&label,&style,&transport,&full,&apply,&up,&down,&remove})c->setEnabled(valid);
+        if(!valid){label.clear();return;}
+        const auto& e=profile.elements[(size_t)i];
+        label.setText(e.label,false);style.setSelectedId(e.presentation=="button"?1:e.presentation=="knob"?2:3,dontSendNotification);
+        style.setEnabled(e.kind=="control");transport.setToggleState(e.transport,dontSendNotification);full.setToggleState(e.full,dontSendNotification);
+        up.setEnabled(i>0);down.setEnabled(i+1<(int)profile.elements.size());
+    }
+    void addElement()
+    {
+        if(profile.instrument.isEmpty()){say("Choose an instrument first.");return;}
+        auto id=choice(candidates,candidateIds);if(id.isEmpty()||profile.elements.size()>=128)return;
+        bool art=kind.getSelectedId()==1;
+        auto item=art?catalog.technique(id):catalog.control(id);
+        profile.elements.push_back({juce::Uuid().toString(),id,item["name"].toString(),art?"articulation":"control",art?"button":"knob",true,true});
+        dirty=true;refreshElements((int)profile.elements.size()-1);say("Added unassigned control.");
+    }
+    bool applyElement(bool report=true)
+    {
+        const int i=elements.getSelectedItemIndex();if(!validIndex(i))return true;
+        auto e=profile.elements[(size_t)i];
+        e.label=label.getText().trim();
+        e.presentation=style.getSelectedId()==1?"button":style.getSelectedId()==2?"knob":"fader";
+        e.transport=transport.getToggleState();e.full=full.getToggleState();
+        if(e.label.isEmpty()||e.label.length()>80||(!e.transport&&!e.full)){say("Enter a label and choose at least one view.");return false;}
+        if(!(e==profile.elements[(size_t)i])){profile.elements[(size_t)i]=e;dirty=true;}
+        refreshElements(i);if(report)say("Layout updated.");return true;
+    }
+    void move(int offset)
+    {
+        int i=elements.getSelectedItemIndex();if(!validIndex(i)||!validIndex(i+offset)||!applyElement(false))return;
+        std::swap(profile.elements[(size_t)i],profile.elements[(size_t)(i+offset)]);dirty=true;refreshElements(i+offset);
+    }
+    bool readFields()
+    {
+        if(!applyElement(false))return false;
+        auto p=profile;p.name=name.getText().trim();p.library=library.getText().trim();p.patch=patch.getText().trim();p.variant=variant.getText().trim();
+        if(!channel.getText().containsOnly("0123456789")||!slot.getText().containsOnly("0123456789")){say("Channel and slot must be integers 1–16.");return false;}
+        p.channel=channel.getText().getIntValue();p.slot=slot.getText().getIntValue();
+        if(auto r=p.validate();r.failed()){say(r.getErrorMessage());return false;}
+        profile=std::move(p);return true;
+    }
+    void refresh()
+    {
+        using namespace juce;
+        const ScopedValueSetter<bool> guard(refreshing,true);
+        name.setText(profile.name,false);library.setText(profile.library,false);patch.setText(profile.patch,false);variant.setText(profile.variant,false);
+        channel.setText(String(profile.channel),false);slot.setText(String(profile.slot),false);
+        instrumentSearch.setText({},false);artworkSearch.setText({},false);
+        channelInfo.setToggleState(profile.channelInfo,dontSendNotification);
+        refillInstruments(false);refillInstruments(true);refillCandidates();refreshElements(-1);setContext(context);
+    }
+    void startNew()
+    {
+        profile=Profile{};saved.reset();
+        if(context.track.isNotEmpty()){profile.name=context.track;profile.pluginId=context.pluginId;profile.pluginVersion=context.pluginVersion;}
+        dirty=false;refresh();say("Choose an instrument, then add articulations and controls.");
+    }
+    void refreshCollection()
+    {
+        using namespace juce;
+        profiles=store.list();collection.clear(dontSendNotification);
+        for(int i=0;i<(int)profiles.size();++i)
+        {
+            const auto& p=profiles[(size_t)i];collection.addItem(p.name+" ("+p.id.substring(0,8)+")",i+1);
+            if(p.id==profile.id)collection.setSelectedId(i+1,dontSendNotification);
+        }
+        collection.setTextWhenNothingSelected("Saved instrument collection");
+    }
+    void loadSelected()
+    {
+        int i=collection.getSelectedItemIndex();if(!juce::isPositiveAndBelow(i,(int)profiles.size()))return;
+        profile=profiles[(size_t)i];saved=profile;dirty=false;refresh();say("Profile opened — no live instrument changes.");
+    }
+    void saveCurrent()
+    {
+        if(!readFields())return;
+        if(auto r=store.save(profile);r.failed()){say(r.getErrorMessage());return;}
+        saved=profile;dirty=false;refreshCollection();say("Saved to your instrument collection.");
+    }
+};
+class DesignerWindow final : public juce::DocumentWindow
+{
+public:
+    explicit DesignerWindow(SourceContext context)
+        : DocumentWindow("Studio — Instrument Designer",colours::canvas,closeButton)
+    {
+        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(660,420,1800,1200);
+        panel=new DesignerPanel(std::move(context));setContentOwned(panel,true);
+        auto bounds=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+        const int w=bounds?juce::jmin(920,bounds->userArea.getWidth()-32):920;
+        const int h=bounds?juce::jmin(620,bounds->userArea.getHeight()-60):620;
+        centreWithSize(w,h);
+    }
+    void closeButtonPressed() override {setVisible(false);} // preserve the unsaved draft while Studio is running
+    void open(SourceContext context){panel->setContext(std::move(context));setVisible(true);toFront(true);}
+private:
+    DesignerPanel* panel=nullptr; // owned by DocumentWindow
+};
+}
