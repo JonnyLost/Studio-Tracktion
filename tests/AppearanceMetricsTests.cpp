@@ -75,7 +75,7 @@ int main()
         || contrast (hardwareIvory, hardwareInk) < 4.5
         || contrast (console.argb[text], hardwareRecord) < 4.5
         || contrast (hardwareScale, console.argb[control]) < 3.0
-        || contrast (console.argb[signal], console.argb[raised]) < 3.0) return 1;
+        || contrast (console.argb[studio::themes::signal], console.argb[raised]) < 3.0) return 1;
     for (auto surface : {rail, canvas, timeline, panel, control, raised, selected, well})
         for (auto foreground : {text, secondary, action, focus, atelierAccent})
             if (contrast (console.argb[foreground], console.argb[surface]) < 4.5) return 1;

@@ -17,7 +17,9 @@ xcrun vtool -show-build "$executable" | grep -Eq '^[[:space:]]+minos 14\.0(\.0)?
 otool -L "$executable"
 
 if [[ -n "$approved_icon" ]]; then
-    [[ "$(sips -g pixelWidth -g pixelHeight "$approved_icon")" == *'pixelWidth: 1024'*'pixelHeight: 1024'* ]]
+    dimensions="$(sips -g pixelWidth -g pixelHeight "$approved_icon")"
+    grep -Eq '^[[:space:]]+pixelWidth: 1024$' <<< "$dimensions"
+    grep -Eq '^[[:space:]]+pixelHeight: 1024$' <<< "$dimensions"
     icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$plist")
     test "$icon" = AppIcon.icns
     test -s "$app/Contents/Resources/$icon"

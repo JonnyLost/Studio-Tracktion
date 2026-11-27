@@ -6086,10 +6086,6 @@ private:
                 return;
             }
             track = newTrack.get();
-            const auto* sampler = dynamic_cast<const studio::sampler::Plugin*> (plugin.get());
-            track->setName (appliedAriaCapture ? ariaPatch : studio::gm::valid (gmProgram)
-                ? String (studio::gm::name (gmProgram)) : sampler != nullptr && sampler->instrument().preset.isNotEmpty()
-                    ? sampler->instrument().name : plugin->getName());
         }
 
         auto* previous = instrument && ! addNew ? studio::findInstrument (*track) : nullptr;
@@ -6115,7 +6111,14 @@ private:
         }
         if (instrument)
         {
-            auto name = studio::gm::valid (gmProgram) ? String (studio::gm::name (gmProgram)) : plugin->getName();
+            auto name = plugin->getName();
+            if (appliedAriaCapture)
+                name = ariaPatch;
+            else if (studio::gm::valid (gmProgram))
+                name = studio::gm::name (gmProgram);
+            else if (const auto* sampler = dynamic_cast<const studio::sampler::Plugin*> (plugin.get());
+                     sampler != nullptr && sampler->instrument().preset.isNotEmpty())
+                name = sampler->instrument().name;
             if (auto* native = dynamic_cast<studio::synth::Plugin*> (plugin.get()); native != nullptr && native->presetName().isNotEmpty())
                 name = native->presetName();
             track->setName (name);

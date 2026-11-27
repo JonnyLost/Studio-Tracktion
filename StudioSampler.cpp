@@ -30,8 +30,7 @@ float bounded (const XmlElement& xml, const char* key, float fallback, float min
 XmlElement encode (const Instrument& model, const File& base, bool project)
 {
     XmlElement xml (documentTag);
-    const bool hasEmbedded = std::any_of (model.zones.begin(), model.zones.end(), [] (const auto& z) { return z.soundFont.has_value(); });
-    xml.setAttribute ("version", hasEmbedded ? version : 3);
+    xml.setAttribute ("version", version);
     xml.setAttribute ("name", model.name);
     xml.setAttribute ("preset", model.preset);
     xml.setAttribute ("dirty", model.dirty);

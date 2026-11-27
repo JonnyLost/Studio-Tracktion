@@ -52,7 +52,12 @@ else
     printf '%s\n' 'Approved Studio icon is unavailable. Building a preview bundle.' >&2
 fi
 
-build="$source_dir/build-m44-intel"
+build="$source_dir/build/m44-intel"
+mkdir -p "$build"
+mkdir "$build/.install-lock" || die "Another Studio build is active in $build."
+trap 'rmdir "$build/.install-lock"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cmake -S "$source_dir" -B "$build" -G Xcode -DTRACKTION_ROOT="$tracktion" \
     -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
     -DBUILD_TESTING=OFF -DSTUDIO_ICON_FILE="$icon"
@@ -87,7 +92,7 @@ cleanup() {
         fi
     fi
     rm -rf "$stage"
-    rmdir "$destination/.studio-install-lock"
+    rmdir "$destination/.studio-install-lock" "$build/.install-lock"
     exit "$result"
 }
 if ! mkdir "$destination/.studio-install-lock"; then
