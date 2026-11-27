@@ -2570,6 +2570,8 @@ private:
     te::TimePosition ostinatoPosition;
     bool ostinatoDispatchFailed=false;
     studio::ostinato::ConductingInput ostinatoInput;
+    studio::ostinato::Harmony ostinatoHarmony;
+    studio::ostinato::HarmonyLatch ostinatoHarmonyLatch;
     String ostinatoDevice;
     int ostinatoChannel=1;
     studio::ostinato::ConductingMapping ostinatoMapping;
@@ -6511,6 +6513,14 @@ private:
         auto* track=ostinatoRoute(size_t(e.route),!e.on);
         if(!track){if(e.on)ostinatoDispatchFailed=true;return;}
         auto& route=ostinatoRoutes[size_t(e.route)];
+        for(const auto& entry:route.mappings)
+            if(entry.second.message==studio::ArticulationMessage::keyswitch&&entry.second.channel==e.channel&&entry.second.number==e.pitch)
+            {
+                // Live harmony can move a musical pitch onto a reserved switch.
+                // Neither its note-on nor its cleanup note-off may be emitted.
+                if(e.on)ostinatoDispatchFailed=true;
+                return;
+            }
         auto it=route.mappings.find(e.articulation);
         const auto* mapping=it==route.mappings.end()?nullptr:&it->second;
         if(e.articulation&&!mapping){ostinatoDispatchFailed=true;return;}
@@ -6620,8 +6630,19 @@ private:
         {stopOstinato("Audition stopped — conducting input was disconnected or routed.");return;}
         auto& panel=ostinatoWindow->editor();
         const auto values=ostinatoInput.consume(panel.conducting());panel.setConducting(values);
-        const bool keep=ostinatoCursor->advance((Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0,values,[this](const auto& e){sendOstinato(e);});
-        if(!keep||ostinatoDispatchFailed)stopOstinato(!ostinatoDispatchFailed&&ostinatoCursor->completed()?"Audition complete.":"Audition stopped — timing or destination changed.");
+        const double elapsed=(Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0;
+        if(ostinatoInput.attached())
+            ostinatoHarmony=ostinatoHarmonyLatch.consume(ostinatoInput.chordSnapshot(),elapsed,ostinatoHarmony);
+        panel.reflectHarmony(ostinatoHarmony);
+        const bool keep=ostinatoCursor->advance(elapsed,values,ostinatoHarmony,[this](const auto& e){sendOstinato(e);});
+        if(!keep||ostinatoDispatchFailed)
+        {
+            const auto skipped=ostinatoCursor->skippedNotes();
+            const String reason=!ostinatoDispatchFailed&&ostinatoCursor->completed()
+                ? (skipped?"Audition complete — "+String((int)skipped)+" colliding/out-of-range notes skipped.":String("Audition complete."))
+                : String("Audition stopped — timing, pitch safety or destination changed.");
+            stopOstinato(reason);
+        }
     }
     void startOstinato(const studio::ostinato::Pattern& p,int repeats)
     {
@@ -6681,6 +6702,7 @@ private:
         piano.silencePreview();dockedKeyboard.releaseNotes();if(midiKeyboardWindow)midiKeyboardWindow->panel.releaseNotes();
         ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoTempoHash=edit->tempoSequence.getInternalSequence().hash();ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
         ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
+        ostinatoHarmony=p.harmony;ostinatoHarmonyLatch={};
         ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
         if(input)ostinatoInput.attach(std::move(input),ostinatoChannel,ostinatoMapping);
         ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();

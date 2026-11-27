@@ -21,22 +21,29 @@ public:
     void detach()
     {
         if(device)device->removeListener(this);
-        device.reset();mailbox.reset();
+        device.reset();mailbox.reset();harmony.reset();
     }
     bool attached()const{return bool(device);}
     bool matches(const std::shared_ptr<tracktion::PhysicalMidiInputDevice>& d)const{return device==d;}
     ConductingValues consume(ConductingValues current){return mailbox.consume(current);}
+    HarmonyMailbox::Snapshot chordSnapshot()const{return harmony.snapshot();}
 private:
     void handleIncomingMidiMessage(const juce::MidiMessage& m)override
     {
-        if(m.isController()&&m.getChannel()==channel.load(std::memory_order_relaxed))
+        if(m.getChannel()!=channel.load(std::memory_order_relaxed))return;
+        if(m.isNoteOn())harmony.note(m.getNoteNumber(),true);
+        else if(m.isNoteOff())harmony.note(m.getNoteNumber(),false);
+        else if(m.isController())
         {
             const ConductingMapping mapping{intensityCC.load(std::memory_order_relaxed),densityCC.load(std::memory_order_relaxed)};
-            mailbox.receive(mapping.role(m.getControllerNumber()),m.getControllerValue());
+            const int cc=m.getControllerNumber();
+            if(cc==120||cc==121||cc==123)harmony.releaseAll();
+            mailbox.receive(mapping.role(cc),m.getControllerValue());
         }
     }
     std::shared_ptr<tracktion::PhysicalMidiInputDevice> device;
     ConductingMailbox mailbox;
+    HarmonyMailbox harmony;
     std::atomic<int> channel{1},intensityCC{1},densityCC{11};
 };
 }

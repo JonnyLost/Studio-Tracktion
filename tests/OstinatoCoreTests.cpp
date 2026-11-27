@@ -28,7 +28,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 6 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 8 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -282,5 +282,72 @@ int main()
     require(!compile(conflict,{"t"},1,b6,error),"reject simultaneous differing techniques on shared channel");
     conflict.rows[1].channel=2;
     require(compile(conflict,{"t"},1,b6,error),"independent articulation channels");
-    std::cout<<"O1–O6 ostinato core: "<<checks<<" checks passed\n";
+    Harmony cMajor;
+    require(resolvePitch({PitchMode::scaleDegree,60,2},cMajor)==64&&resolvePitch({PitchMode::scaleDegree,60,-1},cMajor)==59,"signed scale degrees");
+    Harmony dMinor{2,Scale::naturalMinor,0x089};
+    require(resolvePitch({PitchMode::scaleDegree,60,2},dMinor)==65&&resolvePitch({PitchMode::chordDegree,60,2},dMinor)==69,"D minor scale and chord");
+    require(resolvePitch({PitchMode::followRoot,60,7},dMinor)==69,"live root relative interval");
+    for(int i=0;i<6;++i)
+    {
+        const int up[]={60,64,67,60,64,67},down[]={67,64,60,67,64,60},bounce[]={60,64,67,64,60,64};
+        require(resolvePitch({PitchMode::arpUp,60,i},cMajor)==up[i],"ascending arp");
+        require(resolvePitch({PitchMode::arpDown,60,i},cMajor)==down[i],"descending arp");
+        require(resolvePitch({PitchMode::arpBounce,60,i},cMajor)==bounce[i],"bouncing arp");
+    }
+    Pattern harmonyPattern;harmonyPattern.rows[0].trackId="t";harmonyPattern.rows[0].pitchMode=PitchMode::chordDegree;
+    harmonyPattern.rows[0].steps[0].enabled=true;harmonyPattern.rows[0].steps[0].gate=1000;
+    harmonyPattern.rows[0].steps[1].enabled=true;harmonyPattern.rows[0].steps[1].interval=2;
+    harmonyPattern.harmony=dMinor;
+    Render harmonyRender;
+    require(compile(harmonyPattern,{"t"},1,harmonyRender,error)&&harmonyRender.notes.size()==2&&harmonyRender.notes[0].pitch==62&&harmonyRender.notes[1].pitch==69,"authored chord rendering");
+    require(decode(encode(harmonyPattern),restored)&&restored==harmonyPattern,"schema 6 round trip");
+    const std::string v5="STUDIO_OSTINATO 5 \"Old\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 0 1 1 0 100 \"\"\n";
+    require(decode(v5,restored)&&restored.harmony==cMajor&&restored.rows[0].pitchMode==PitchMode::fixed,"schema 5 migration");
+    HarmonyMailbox keys;HarmonyLatch latch;Harmony current;
+    keys.note(62,true);keys.note(65,true);keys.note(69,true);
+    current=latch.consume(keys.snapshot(),0,current);require(current==cMajor,"chord attack settling");
+    current=latch.consume(keys.snapshot(),.04,current);require(current.root==2&&current.chord==0x089,"held chord bass and intervals");
+    keys.releaseAll();current=latch.consume(keys.snapshot(),.1,current);require(current.root==2&&current.chord==0x089,"release latches chord");
+    keys.note(64,true);keys.note(68,true);keys.note(71,true);
+    current=latch.consume(keys.snapshot(),.2,current);current=latch.consume(keys.snapshot(),.24,current);
+    require(current.root==4&&current.chord==0x091,"new chord");
+    TimedRender harmonicTimed;require(prepareAudition(harmonyRender,[](Tick t){return double(t)/ticksPerQuarter;},harmonicTimed),"prepare harmonic audition");
+    std::vector<Event> heard;AuditionCursor harmonicCursor(harmonicTimed);
+    auto hear=[&](const Event& e){heard.push_back(e);};
+    require(harmonicCursor.advance(0,ConductingValues{},cMajor,hear)&&heard.size()==1&&heard[0].pitch==60,"live first attack");
+    require(harmonicCursor.advance(.25,ConductingValues{},dMinor,hear)&&heard.size()==3&&!heard[1].on&&heard[1].pitch==60&&heard[2].pitch==69,"old pitch releases across chord change");
+    harmonicCursor.stop(hear);require(heard.size()==4&&!heard.back().on&&heard.back().pitch==69,"stop releases resolved pitch");
+    auto collision=harmonyPattern;collision.harmony=cMajor;require(collision.addRow(),"add collision row");
+    collision.rows[1].trackId="t";collision.rows[1].pitch=62;collision.rows[1].steps[0].enabled=true;
+    require(compile(collision,{"t"},1,harmonyRender,error)&&prepareAudition(harmonyRender,[](Tick t){return double(t)/ticksPerQuarter;},harmonicTimed),"prepare possible live collision");
+    AuditionCursor collided(harmonicTimed);heard.clear();
+    require(collided.advance(0,ConductingValues{},dMinor,hear)&&collided.skippedNotes()==1&&heard.size()==1,"live pitch collision skipped");
+    collided.stop(hear);require(heard.size()==2&&heard[0].pitch==heard[1].pitch,"collision retains ownership");
+    Harmony recognize=cMajor;recognize.recognizeInversions=true;
+    std::array<bool,128> inversion{};
+    inversion[52]=inversion[55]=inversion[60]=true;
+    require(harmonyFromKeys(inversion,cMajor).root==4,"legacy bass-relative interpretation");
+    require(harmonyFromKeys(inversion,recognize)==recognize,"recognize C major first inversion");
+    for(int root=0;root<12;++root)
+    {
+        for(unsigned quality:{0x091u,0x089u,0x491u,0x891u,0x489u})
+        {
+            std::array<bool,128> voiced{};
+            // Put the third in the bass, retain all chord tones in the upper octave.
+            const int third=(quality&8)?3:4;
+            voiced[size_t(36+root+third)]=true;
+            for(int i=0;i<12;++i)if(quality&(1u<<i))voiced[size_t(60+root+i)]=true;
+            auto inferred=harmonyFromKeys(voiced,recognize);
+            require(inferred.root==root&&inferred.chord==quality,"all roots and common inverted triads/sevenths");
+        }
+    }
+    inversion={};inversion[52]=inversion[56]=inversion[60]=true;
+    require(harmonyFromKeys(inversion,recognize).root==4,"ambiguous augmented chord retains bass");
+    inversion={};
+    require(harmonyFromKeys(inversion,recognize)==recognize,"empty chord retains last harmony");
+    auto savedHarmony=harmonyPattern;savedHarmony.harmony.recognizeInversions=true;
+    require(decode(encode(savedHarmony),restored)&&restored==savedHarmony,"schema 7 root rule round trip");
+    const std::string v6="STUDIO_OSTINATO 6 \"Old\" 1 4 1 0 0 145\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 0 1 1 0 100 \"\"\n";
+    require(decode(v6,restored)&&restored.harmony==cMajor,"schema 6 keeps bass-relative rule");
+    std::cout<<"O1–O7 ostinato core: "<<checks<<" checks passed\n";
 }

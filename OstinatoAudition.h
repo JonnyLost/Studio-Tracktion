@@ -75,6 +75,59 @@ public:
     }
 private:std::atomic<unsigned> packed{0};
 };
+// Dedicated keyboard chord input: note states only, no audio/MIDI forwarding.
+class HarmonyMailbox
+{
+public:
+    void reset() noexcept
+    {
+        for(auto& k:keys)k.store(false,std::memory_order_relaxed);
+        revision.store(0);press.store(0);
+    }
+    void note(int pitch,bool on) noexcept
+    {
+        if(pitch<0||pitch>127)return;
+        keys[size_t(pitch)].store(on,std::memory_order_relaxed);
+        if(on)press.fetch_add(1,std::memory_order_relaxed);
+        revision.fetch_add(1,std::memory_order_release);
+    }
+    void releaseAll() noexcept
+    {
+        for(auto& k:keys)k.store(false,std::memory_order_relaxed);
+        revision.fetch_add(1,std::memory_order_release);
+    }
+    struct Snapshot{std::array<bool,128> keys{};unsigned revision=0,press=0;};
+    Snapshot snapshot()const noexcept
+    {
+        Snapshot s;
+        s.revision=revision.load(std::memory_order_acquire);
+        for(size_t i=0;i<keys.size();++i)s.keys[i]=keys[i].load(std::memory_order_relaxed);
+        s.press=press.load(std::memory_order_relaxed);
+        return s;
+    }
+private:
+    std::array<std::atomic<bool>,128> keys{};
+    std::atomic<unsigned> revision{0},press{0};
+};
+// Settle chord attacks over 35 ms. Release-only changes do not replace
+// a latched chord, so lifting fingers doesn't cause accidental inversions.
+class HarmonyLatch
+{
+public:
+    Harmony consume(const HarmonyMailbox::Snapshot& s,double now,Harmony current)
+    {
+        if(s.press!=lastPress){lastPress=s.press;pending=true;}
+        if(s.revision!=lastRevision){lastRevision=s.revision;changedAt=now;}
+        if(pending&&now-changedAt>=.035)
+        {
+            current=harmonyFromKeys(s.keys,current);pending=false;
+        }
+        return current;
+    }
+private:
+    unsigned lastPress=0,lastRevision=0;
+    double changedAt=0;bool pending=false;
+};
 class AuditionCursor
 {
 public:
@@ -83,7 +136,7 @@ public:
     AuditionCursor(const TimedRender&&)=delete;
     template<class Sink> void stop(Sink&& send)
     {
-        for(size_t i=0;i<count;++i){auto e=held[i];e.on=false;e.velocity=0;send(e);}
+        for(size_t i=0;i<count;++i){auto e=held[i].event;e.on=false;e.velocity=0;send(e);}
         count=0;finished=true;
     }
     // No catch-up burst after a blocked UI. Fail closed and release owned notes.
@@ -93,8 +146,12 @@ public:
     }
     template<class Sink> bool advance(double now,ConductingValues controls,Sink&& send)
     {
+        return advance(now,controls,render.midi.harmony,std::forward<Sink>(send));
+    }
+    template<class Sink> bool advance(double now,ConductingValues controls,const Harmony& harmony,Sink&& send)
+    {
         if(finished)return false;
-        if(!std::isfinite(now)||now<previous){stop(send);return false;}
+        if(!harmony.valid()||!std::isfinite(now)||now<previous){stop(send);return false;}
         previous=now;
         if(index<render.deadlines.size()&&now-render.deadlines[index]>.100){stop(send);return false;}
         size_t dispatched=0;
@@ -102,24 +159,34 @@ public:
         {
             if(++dispatched>512){stop(send);return false;}
             auto e=render.midi.events[index++];
-            auto it=std::find_if(held.begin(),held.begin()+count,[&](const auto& a){return a.route==e.route&&a.channel==e.channel&&a.pitch==e.pitch;});
+            auto it=std::find_if(held.begin(),held.begin()+count,[&](const auto& a){return a.event.route==e.route&&a.event.channel==e.channel&&a.referencePitch==e.pitch;});
             if(e.on)
             {
                 if(e.densityThreshold>std::clamp(controls.density,0,127))continue;
                 e.velocity=conductedVelocity(e.velocity,controls.intensity);
                 if(it!=held.begin()+count||count>=held.size()){stop(send);return false;}
-                held[count++]=e;send(e);
+                const int reference=e.pitch;
+                if(int(e.recipe.mode)>=2)e.pitch=resolvePitch(e.recipe,harmony);
+                // Never steal a held note when harmony changes or two recipes
+                // converge. The matching reference off will be ignored.
+                if(e.pitch<0||e.pitch>127||std::any_of(held.begin(),held.begin()+count,[&](const auto& a){
+                    return a.event.route==e.route&&a.event.channel==e.channel&&a.event.pitch==e.pitch;
+                })){++skipped;continue;}
+                held[count++]={e,reference};send(e);
             }
-            else if(it!=held.begin()+count){*it=held[--count];send(e);}
+            else if(it!=held.begin()+count){e.pitch=it->event.pitch;*it=held[--count];send(e);}
         }
         if(now>=render.duration){stop(send);return false;}
         return true;
     }
+    size_t skippedNotes()const{return skipped;}
     bool completed()const{return index==render.deadlines.size()&&previous>=render.duration;}
 private:
     const TimedRender& render;
     size_t index=0,count=0;
-    std::array<Event,maxRows> held{};
+    struct Held{Event event;int referencePitch=0;};
+    std::array<Held,maxRows> held{};
+    size_t skipped=0;
     double previous=0;
     bool finished=false;
 };

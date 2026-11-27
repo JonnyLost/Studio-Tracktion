@@ -22,7 +22,7 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
@@ -33,7 +33,9 @@ public:
         for(auto* e:{&masterSteps,&pitch,&channel,&division,&numerator,&bars,&cell,&velocity,&gate})
             e->setInputRestrictions(5,"0123456789");
         interval.setInputRestrictions(4,"-0123456789");repeatCount.setInputRestrictions(3,"0123456789");repeatCount.setText("4",false);
-        pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);
+        pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);pitchMode.addItem("Follow played root",3);pitchMode.addItem("Scale degrees",4);pitchMode.addItem("Chord tones",5);pitchMode.addItem("Arpeggio up",6);pitchMode.addItem("Arpeggio down",7);pitchMode.addItem("Arpeggio bounce",8);
+        harmonyButton.onClick=[this]{editHarmony();};
+        harmonyButton.setTooltip("Set the starting root, scale and chord. Dedicated MIDI input changes the live harmony during audition.");
         interval.setTooltip("Signed semitones relative to row root");repeatCount.setTooltip("Finite audition master repeats (1–256)");
         densityThreshold.setInputRestrictions(3,"0123456789");densityThreshold.setTooltip("0 = essential; 1–127 = optional at CC11 density threshold");
         for(auto* slider:{&intensity,&density}){slider->setSliderStyle(Slider::LinearHorizontal);slider->setTextBoxStyle(Slider::TextBoxRight,false,44,20);slider->setRange(0,127,1);slider->setValue(127,dontSendNotification);}
@@ -56,6 +58,7 @@ public:
         remove.setTooltip("Remove the selected pattern row (Studio Undo can restore it). Does not delete an arrangement track.");
         applyRow.onClick=[this]{applyRowEdit();};
         mode.onChange=[this]{updateTimingFields();};
+        pitchMode.onChange=[this]{updatePitchCaption();};
         applyCell.onClick=[this]{applyCellEdit();};
         advanced.onClick=[this]{editAdvanced();};
         cell.onReturnKey=[this]{
@@ -87,7 +90,15 @@ public:
     }
     void hardwareLabel(const juce::String& text){hardware.setButtonText(text);hardware.setTooltip(text);}
 
-    void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");updateEnabled();say(statusText);}
+    void reflectHarmony(const Harmony& h)
+    {
+        static const char* names[]={"C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"};
+        if(!h.valid())return;
+        juce::String label=names[h.root];label+=" · ";
+        for(int i=0;i<12;++i)if(h.chord&(1u<<i)){label+=names[(h.root+i)%12];label+=" ";}
+        if(harmonyButton.getButtonText()!=label){harmonyButton.setButtonText(label);harmonyButton.setTooltip(label+" — click while stopped to edit starting harmony");}
+    }
+    void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");if(!active)reflectHarmony(pattern.harmony);updateEnabled();say(statusText);}
 
     void setContext(const std::string& serialized,std::vector<TrackChoice> choices,bool editable)
     {
@@ -130,7 +141,7 @@ public:
         applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
         line=a.removeFromTop(h);
         add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        advanced.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));status.setBounds(line.reduced(gap));
+        advanced.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));harmonyButton.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));status.setBounds(line.reduced(gap));
         auto controls=a.removeFromBottom(h+caption);
         hardware.setBounds(controls.removeFromRight(controls.getWidth()/3).reduced(gap));
         field(intensity,intensityLabel,controls.removeFromLeft(controls.getWidth()/2));field(density,densityLabel,controls);
@@ -195,7 +206,7 @@ private:
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
     juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
     juce::TextEditor interval,repeatCount,densityThreshold;
-    juce::TextButton advanced{"Step details…"};
+    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"};
     juce::Slider intensity,density;
     juce::TextButton hardware{"MIDI input: Off"};
     juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","CC1 · Intensity"},densityLabel{"","CC11 · Density"};
@@ -275,7 +286,7 @@ private:
 
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
-                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::intervals?String(step.interval):String(j+1);g.drawFittedText(label,rect,Justification::centred,1);}
+                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::fixed?String(j+1):int(row.pitchMode)>=5?String(int(j)+step.interval):String(step.interval);g.drawFittedText(label,rect,Justification::centred,1);}
                 }
                 g.setColour(colours::text);
                 String detail=String(row.steps.size());
@@ -341,6 +352,7 @@ private:
         if(auto* r=row())
         {
             pitchMode.setSelectedId(int(r->pitchMode)+1,dontSendNotification);
+            updatePitchCaption();
             set(pitch,r->pitch);set(channel,r->channel);set(division,(int)r->steps.size());
             mode.setSelectedId(int(r->timing)+1,dontSendNotification);set(numerator,r->numerator);
             denominator.setSelectedId(r->denominator,dontSendNotification);set(bars,r->bars);
@@ -348,7 +360,14 @@ private:
             auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);set(gate,s.gate);set(interval,s.interval);set(densityThreshold,s.densityThreshold);
             accent.setToggleState(s.accent,dontSendNotification);enabled.setToggleState(s.enabled,dontSendNotification);
         }
+        if(!auditioning)reflectHarmony(pattern.harmony);
         updateTimingFields();
+    }
+    void updatePitchCaption()
+    {
+        const int m=pitchMode.getSelectedId();
+        intervalLabel.setText(m>=6?"Arp phase":m==4||m==5?"Degree":"Semitones",juce::dontSendNotification);
+        interval.setTooltip(m>=6?"Signed offset to the cell-index arpeggio phase":m==4||m==5?"Signed zero-based scale or chord degree (0 = root)":"Signed semitones relative to the row or played root");
     }
     void updateTimingFields()
     {
@@ -360,7 +379,7 @@ private:
     {
         for(auto* c:std::initializer_list<juce::Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&track,&pitch,&channel,&mode,&applyRow,&mute,&solo,&cell,&velocity,&gate,&accent,&enabled,&applyCell})c->setEnabled(writable);
         remove.setEnabled(writable&&pattern.rows.size()>1);add.setEnabled(writable&&pattern.rows.size()<maxRows);
-        advanced.setEnabled(writable&&!auditioning);
+        advanced.setEnabled(writable&&!auditioning);harmonyButton.setEnabled(writable&&!auditioning);
         hardware.setEnabled(writable&&!auditioning&&bool(chooseHardware));densityThreshold.setEnabled(writable&&!auditioning);
         pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
         power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
@@ -421,6 +440,36 @@ private:
             auto& s=r.steps[size_t(c-1)];s.enabled=enabled.getToggleState();s.accent=accent.getToggleState();s.velocity=v;s.gate=g;s.interval=text.getIntValue();s.densityThreshold=tier;
             if(commit(std::move(p)))select(selected,size_t(c-1));return;
         }
+    }
+    void editHarmony()
+    {
+        using namespace juce;
+        if(!writable||auditioning)return;
+        const auto snapshot=pattern;
+        auto* w=new AlertWindow("Starting harmony","Choose the starting harmony for all following rows. The row MIDI note sets the register. Scale and chord degrees are zero-based; arpeggios use cell index plus the step interval.",MessageBoxIconType::NoIcon,this);
+        StringArray roots{"C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"};
+        StringArray scales{"Major","Natural minor","Harmonic minor","Dorian","Mixolydian","Major pentatonic","Chromatic"};
+        StringArray chords{"Major","Minor","Diminished","Augmented","Sus2","Sus4","Dominant 7","Major 7","Minor 7","Root only","Keep current chord"};
+        const std::array<unsigned,10> masks{0x091,0x089,0x049,0x111,0x085,0x0a1,0x491,0x891,0x489,1};
+        w->addComboBox("root",roots,"Root");w->addComboBox("scale",scales,"Scale");w->addComboBox("chord",chords,"Chord");
+        w->addComboBox("rootRule",StringArray{"Lowest played note","Recognize chord root"},"Keyboard root rule");
+        w->getComboBoxComponent("rootRule")->setSelectedItemIndex(pattern.harmony.recognizeInversions?1:0,dontSendNotification);
+        w->getComboBoxComponent("root")->setSelectedItemIndex(pattern.harmony.root,dontSendNotification);
+        w->getComboBoxComponent("scale")->setSelectedItemIndex(int(pattern.harmony.scale),dontSendNotification);
+        const auto found=std::find(masks.begin(),masks.end(),pattern.harmony.chord);
+        w->getComboBoxComponent("chord")->setSelectedItemIndex(int(found-masks.begin()),dontSendNotification);
+        w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        const Component::SafePointer<MatrixEditor> safe(this);
+        w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot,masks](int result){
+            if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            auto p=snapshot;
+            p.harmony.root=w->getComboBoxComponent("root")->getSelectedItemIndex();
+            p.harmony.recognizeInversions=w->getComboBoxComponent("rootRule")->getSelectedItemIndex()==1;
+            p.harmony.scale=static_cast<Scale>(w->getComboBoxComponent("scale")->getSelectedItemIndex());
+            const int chord=w->getComboBoxComponent("chord")->getSelectedItemIndex();
+            if(chord>=0&&chord<int(masks.size()))p.harmony.chord=masks[size_t(chord)];
+            safe->commit(std::move(p));
+        }),true);
     }
     void editAdvanced()
     {

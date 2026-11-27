@@ -30,7 +30,86 @@ struct Step
     std::string articulation{}; // exact saved mapping ID; no inferred vendor mapping
     bool operator==(const Step&) const=default;
 };
-enum class PitchMode { fixed=0, intervals=1 };
+enum class PitchMode { fixed=0, intervals=1, followRoot=2, scaleDegree=3, chordDegree=4, arpUp=5, arpDown=6, arpBounce=7 };
+enum class Scale { major=0, naturalMinor, harmonicMinor, dorian, mixolydian, pentatonicMajor, chromatic };
+struct Harmony
+{
+    int root=0; // pitch class, C=0
+    Scale scale=Scale::major;
+    unsigned chord=0x091; // relative pitch classes C E G
+    bool recognizeInversions=false; // opt-in exact chord-root recognition; default bass-relative
+    bool valid()const{return root>=0&&root<12&&int(scale)>=0&&int(scale)<=6&&chord>0&&chord<4096&&(chord&1);}
+    bool operator==(const Harmony&)const=default;
+};
+struct PitchRecipe
+{
+    PitchMode mode=PitchMode::fixed;
+    int anchor=60,degree=0;
+    bool operator==(const PitchRecipe&)const=default;
+};
+inline int positiveMod(int x,int n){return (x%n+n)%n;}
+inline int degreeOffset(unsigned mask,int degree)
+{
+    std::array<int,12> tones{};int count=0;
+    for(int i=0;i<12;++i)if(mask&(1u<<i))tones[size_t(count++)]=i;
+    if(!count)return 0;
+    const int index=positiveMod(degree,count);
+    return tones[size_t(index)]+12*((degree-index)/count);
+}
+inline unsigned scaleMask(Scale s)
+{
+    switch(s)
+    {
+        case Scale::major:return 0xab5;
+        case Scale::naturalMinor:return 0x5ad;
+        case Scale::harmonicMinor:return 0x9ad;
+        case Scale::dorian:return 0x6ad;
+        case Scale::mixolydian:return 0x6b5;
+        case Scale::pentatonicMajor:return 0x295;
+        case Scale::chromatic:return 0xfff;
+    }
+    return 0xab5;
+}
+inline int resolvePitch(PitchRecipe r,const Harmony& h)
+{
+    if(r.mode==PitchMode::fixed)return r.anchor;
+    if(r.mode==PitchMode::intervals)return r.anchor+r.degree;
+    // Nearest root to the authored register; tritone ties choose downward.
+    const int root=r.anchor+positiveMod(h.root-r.anchor+6,12)-6;
+    if(r.mode==PitchMode::followRoot)return root+r.degree;
+    if(r.mode==PitchMode::scaleDegree)return root+degreeOffset(scaleMask(h.scale),r.degree);
+    if(r.mode==PitchMode::chordDegree)return root+degreeOffset(h.chord,r.degree);
+    int count=0;for(int i=0;i<12;++i)if(h.chord&(1u<<i))++count;
+    if(count<1)return -1;
+    if(r.mode==PitchMode::arpUp)return root+degreeOffset(h.chord,positiveMod(r.degree,count));
+    if(r.mode==PitchMode::arpDown)return root+degreeOffset(h.chord,count-1-positiveMod(r.degree,count));
+    const int period=std::max(1,2*(count-1)),position=positiveMod(r.degree,period);
+    return root+degreeOffset(h.chord,std::min(position,period-position));
+}
+inline Harmony harmonyFromKeys(const std::array<bool,128>& keys,Harmony previous)
+{
+    int bass=-1;unsigned mask=0;
+    for(int i=0;i<128;++i)if(keys[size_t(i)]){if(bass<0)bass=i;mask|=1u<<positiveMod(i-bass,12);}
+    if(bass<0)return previous;
+    const int bassClass=bass%12;
+    previous.root=bassClass;previous.chord=mask;
+    if(!previous.recognizeInversions)return previous;
+    // Recognize only exact pitch-class sets, not implied or missing tones.
+    // Ambiguous symmetric/suspended sets deliberately retain the bass root.
+    constexpr std::array<unsigned,12> shapes{
+        0x091,0x089,0x049,0x111,0x085,0x0a1,0x491,0x891,0x489,0x449,0x249,0x889
+    };
+    int candidate=-1;unsigned candidateMask=0;
+    for(int shift=0;shift<12;++shift)
+    {
+        const unsigned relative=((mask>>shift)|(mask<<(12-shift)))&0xfff;
+        if(std::find(shapes.begin(),shapes.end(),relative)==shapes.end())continue;
+        if(candidate>=0)return previous;
+        candidate=(bassClass+shift)%12;candidateMask=relative;
+    }
+    if(candidate>=0){previous.root=candidate;previous.chord=candidateMask;}
+    return previous;
+}
 enum class TimingMode { followGrid=0, sharedSpan=1, independentCycle=2 };
 struct Row
 {
@@ -56,6 +135,7 @@ struct Pattern
     std::string name="New ostinato";
     int stepCount=16,stepsPerQuarter=4;
     std::vector<Row> rows{Row{}};
+    Harmony harmony;
     bool operator==(const Pattern&) const=default;
     Tick stepTicks() const {return stepsPerQuarter>0?ticksPerQuarter/stepsPerQuarter:0;}
     Tick duration() const {return stepTicks()*stepCount;}
@@ -65,7 +145,7 @@ struct Pattern
     }
     bool valid() const
     {
-        if(!textValid(name,160)||stepCount<1||stepCount>maxSteps||stepsPerQuarter<1||stepsPerQuarter>32
+        if(!harmony.valid()||!textValid(name,160)||stepCount<1||stepCount>maxSteps||stepsPerQuarter<1||stepsPerQuarter>32
             ||ticksPerQuarter%stepsPerQuarter||rows.empty()||rows.size()>maxRows)return false;
         std::set<std::uint32_t> ids;
         for(const auto& r:rows)
@@ -76,7 +156,7 @@ struct Pattern
             if(r.timing==TimingMode::followGrid&&r.steps.size()!=size_t(stepCount))return false;
             if(r.timing!=TimingMode::followGrid&&r.timing!=TimingMode::sharedSpan&&r.timing!=TimingMode::independentCycle)return false;
             if(r.timing!=TimingMode::independentCycle&&(r.numerator!=4||r.denominator!=4||r.bars!=1))return false;
-            if(r.pitchMode!=PitchMode::fixed&&r.pitchMode!=PitchMode::intervals)return false;
+            if(int(r.pitchMode)<0||int(r.pitchMode)>7)return false;
             for(size_t i=0;i<r.steps.size();++i)
             {
                 const auto& s=r.steps[i];
@@ -155,7 +235,7 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 5 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
+    out<<"STUDIO_OSTINATO 7 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<' '<<p.harmony.root<<' '<<int(p.harmony.scale)<<' '<<p.harmony.chord<<' '<<int(p.harmony.recognizeInversions)<<'\n';
     for(const auto& r:p.rows)
     {
         out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
@@ -170,7 +250,9 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version<1||version>5)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>7)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+    if(version>=6){int scale=-1;if(!(in>>p.harmony.root>>scale>>p.harmony.chord)||scale<0||scale>6)return false;p.harmony.scale=static_cast<Scale>(scale);if(!p.harmony.valid())return false;}
+    if(version>=7){int recognize=-1;if(!(in>>recognize)||recognize<0||recognize>1)return false;p.harmony.recognizeInversions=recognize==1;}
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -186,7 +268,7 @@ inline bool decode(const std::string& text,Pattern& output)
             int mode=-1;
             if(!(in>>mode>>r.numerator>>r.denominator>>r.bars>>cells)||mode<0||mode>2||cells<1||cells>maxSteps)return false;
             r.timing=static_cast<TimingMode>(mode);
-            if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>1)return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
+            if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>(version>=6?7:1))return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
         }
         r.steps.resize(size_t(cells));
         for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold))||(version>=5&&!(in>>s.sustainCells>>s.strikes>>s.offset>>s.chance>>std::quoted(s.articulation))))return false;
@@ -201,6 +283,7 @@ struct Note
     int route=0,channel=1,pitch=60,velocity=90;
     int densityThreshold=0;
     int articulation=0;
+    PitchRecipe recipe{};
     bool operator==(const Note&) const=default;
 };
 struct Event
@@ -210,6 +293,7 @@ struct Event
     bool on=false;
     int densityThreshold=0;
     int articulation=0;
+    PitchRecipe recipe{};
     bool operator==(const Event&) const=default;
 };
 struct Render
@@ -220,6 +304,7 @@ struct Render
     std::vector<Event> events;
     std::vector<std::string> articulations; // event index 1-based, zero = leave articulation unchanged
     int unassignedRows=0;
+    Harmony harmony;
 };
 // Compile off the audio thread. No routing fallback: absent destinations fail
 // closed. Unassigned rows are silent and counted. Resolve collisions on the
@@ -236,7 +321,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
 {
     auto fail=[&](const char* why){error=why;return false;};
     if(!p.valid()||repeats<1||repeats>maxRepeats)return fail("Invalid pattern or repeat count.");
-    Render next;next.duration=p.duration()*repeats;
+    Render next;next.duration=p.duration()*repeats;next.harmony=p.harmony;
     const bool solo=std::any_of(p.rows.begin(),p.rows.end(),[](const auto& r){return r.solo;});
     for(const auto& row:p.rows)
     {
@@ -283,7 +368,13 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                     const Tick tail=s.sustainCells>1?p.rowBoundary(row,index+size_t(s.sustainCells))-p.rowBoundary(row,index+size_t(s.sustainCells)-1):hitWidth;
                     const Tick length=(s.sustainCells>1?width-tail:0)+std::max<Tick>(1,tail*s.gate/1000);
                     if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
-                    next.notes.push_back({hitStart,std::min({hitStart+length,next.duration,origin+span}),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold,art});
+                    PitchRecipe recipe{row.pitchMode,row.pitch,s.interval};
+                    if(row.pitchMode==PitchMode::arpUp||row.pitchMode==PitchMode::arpDown||row.pitchMode==PitchMode::arpBounce)
+                        recipe.degree=int(index)+s.interval;
+                    const int pitch=resolvePitch(recipe,p.harmony);
+                    if(pitch<0||pitch>127)return fail("Harmonic pitch is out of MIDI range.");
+                    if(int(row.pitchMode)<2)recipe={}; // legacy events retain default recipe
+                    next.notes.push_back({hitStart,std::min({hitStart+length,next.duration,origin+span}),route,row.channel,pitch,std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold,art,recipe});
                 }
             }
     }
@@ -313,7 +404,8 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         if(!normalized.empty()&&address(normalized.back())==address(n))
         {
             auto& prior=normalized.back();
-            if(prior.start==n.start){if(prior.articulation!=n.articulation)return fail("Simultaneous same-pitch notes request different articulations.");prior.end=std::max(prior.end,n.end);prior.velocity=std::max(prior.velocity,n.velocity);continue;}
+            if(prior.start==n.start){if(prior.recipe!=n.recipe)return fail("Simultaneous reference pitches use different harmonic recipes.");if(prior.articulation!=n.articulation)return fail("Simultaneous same-pitch notes request different articulations.");prior.end=std::max(prior.end,n.end);prior.velocity=std::max(prior.velocity,n.velocity);continue;}
+            if(prior.end>n.start&&(int(prior.recipe.mode)>=2||int(n.recipe.mode)>=2)&&prior.recipe!=n.recipe)return fail("Overlapping reference pitches use different harmonic recipes.");
             prior.end=std::min(prior.end,n.start);
         }
         normalized.push_back(n);
@@ -334,8 +426,8 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
     next.events.reserve(next.notes.size()*2);
     for(const auto& n:next.notes)
     {
-        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold,n.articulation});
-        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold,n.articulation});
+        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold,n.articulation,n.recipe});
+        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold,n.articulation,n.recipe});
     }
     std::sort(next.events.begin(),next.events.end(),[](const auto& a,const auto& b){
         return std::tie(a.tick,a.on,a.route,a.channel,a.pitch)<std::tie(b.tick,b.on,b.route,b.channel,b.pitch);
