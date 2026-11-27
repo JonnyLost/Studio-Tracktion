@@ -853,6 +853,8 @@ public:
         workspaceBody.addChildComponent (piano);
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
+        piano.performanceProfile=[this](te::MidiClip& clip){return performanceProfileFor(clip);};
+        piano.canWritePerformance=[this]{return canEditRegions()&&edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!chaseStarting&&!performanceWrite;};
         piano.onNoteDrawn = [this] (te::MidiClip& clip, te::BeatPosition beat, int pitch)
         {
             if (! articulation.isShowing() && ! articulationStrip.isShowing()) return;
@@ -923,12 +925,13 @@ public:
         {
             piano.silencePreview();
             if (edit != nullptr && ! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording())
-                EngineHelpers::togglePlay (*edit);
+                startWithPerformanceChase();
         };
         stop.setTooltip ("Stop playback or keep the current recording");
         stop.onClick = [this]
         {
             if (edit == nullptr) return;
+            if(chaseStarting){cancelPerformanceChase();return;}
             if (edit->getTransport().isRecording())
                 toggleRecordKeepingTake();
             else if (edit->getTransport().isPlaying())
@@ -990,6 +993,7 @@ public:
 
     ~StudioView() override
     {
+        cancelPerformanceChase();
         releaseUniversalNote();
         universalWindow.reset();
         designerWindow.reset();
@@ -1296,9 +1300,9 @@ public:
         if (environmentWelcome.isVisible()) return environmentWelcome.keyPressed (key);
         if (handleAppearanceKey (key)
             || ((articulation.isShowing() || articulationStrip.isShowing()) && articulation.keyPressed (key))) return true;
-        if (key == KeyPress::spaceKey && play.isEnabled())
+        if (key == KeyPress::spaceKey && (play.isEnabled()||chaseStarting))
         {
-            if (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording()))
+            if (chaseStarting || (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording())))
                 stop.onClick();
             else play.onClick();
             return true;
@@ -1999,7 +2003,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile, mArmPerformanceWrite, mCancelPerformanceWrite
     };
 
     PopupMenu applicationMenu (int index)
@@ -2122,6 +2126,8 @@ public:
                 add (mInstrumentDesigner, "Instrument Designer...");
                 add (mUseInstrumentProfile, "Use Saved Instrument Profile...", workflowTrack()!=nullptr);
                 add (mUniversalInstrument, "Universal Instrument View...", universalAvailable);
+                add (mArmPerformanceWrite, "Arm Performance Write on Selected MIDI Clip", performanceWrite.has_value()||canArmPerformanceWrite(), performanceWrite.has_value());
+                add (mCancelPerformanceWrite, "Discard Pending Performance Write", performanceWrite.has_value());
                 add (mDetachInstrumentProfile, "Detach Instrument Profile", workflowTrack()!=nullptr && workflowTrack()->state.hasProperty("studioUniversalInstrument"));
                 add (mOpenSelectedInstrument, "Open Selected Instrument", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
                 add (mPluginManager, "Plug-in Manager...");
@@ -2202,6 +2208,8 @@ public:
             case mUseInstrumentProfile: chooseUniversalProfile(); break;
             case mUniversalInstrument: showUniversalInstrument(); break;
             case mDetachInstrumentProfile: detachUniversalProfile(); break;
+            case mArmPerformanceWrite: togglePerformanceWrite(); break;
+            case mCancelPerformanceWrite: discardPerformanceWrite(); break;
             case mAtelier:
                 if (auto* target = workflowTrack())
                     if (auto* inst = studio::findInstrument (*target))
@@ -2386,6 +2394,17 @@ private:
     bool universalAvailable=false;
     std::function<void()> universalRelease;
     unsigned universalPulse=0;
+    struct CapturedPerformancePoint {String element;double beat;int value;};
+    struct PerformanceWrite {
+        te::EditItemID track,clip;
+        String snapshot;
+        std::vector<CapturedPerformancePoint> points;
+        bool played=false;
+    };
+    std::optional<PerformanceWrite> performanceWrite;
+    bool chaseStarting=false;
+    unsigned chaseGeneration=0;
+    std::vector<std::function<void()>> chaseReleases;
     studio::InstrumentWorkspace instrumentWorkspace { engine.getPropertyStorage().getPropertiesFile() };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -4080,6 +4099,7 @@ private:
         // A loaded project must remain editable while its ARIA slots are checked.
         piano.setEditingEnabled (ready && ! recording);
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
+        updatePerformanceWrite(playing,recording);
         const bool transportReady = ready && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
         music.refresh (transportReady);
         cycleButton.setEnabled (transportReady);
@@ -4092,9 +4112,9 @@ private:
         exportMidi.setEnabled (transportReady && ! playing);
         exportWav.setEnabled (canStartAudioExport() && ! filmWorkspace.isRendering());
         rewind.setEnabled (transportReady);
-        play.setEnabled (transportReady || (ready && recording));
+        play.setEnabled (!chaseStarting && (transportReady || (ready && recording)));
         play.setToggleState (playing && ! recording, dontSendNotification);
-        stop.setEnabled (ready && (playing || recording));
+        stop.setEnabled (ready && (playing || recording || chaseStarting));
         record.setEnabled (ready && (recording || (transportReady && ! edit->getTransport().looping)));
         record.setToggleState (recording, dontSendNotification);
         zoom.setEnabled (ready);
@@ -4416,6 +4436,7 @@ private:
     {
         if (edit == nullptr)
             return;
+        if(chaseStarting||performanceWrite){message.setText("Finish or discard Performance Write before recording a MIDI/audio take.",dontSendNotification);return;}
         // A held piano-roll audition must release before record is engaged,
         // so no preview note or trailing note-off leaks into a new take.
         piano.silencePreview();
@@ -4456,6 +4477,11 @@ private:
 
     bool canWriteProject()
     {
+        if(performanceWrite&&!performanceWrite->points.empty())
+        {
+            if(edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&canEditRegions())finishPerformanceWrite();
+            if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop playback to save pending Performance Write.",dontSendNotification);return false;}
+        }
         if (! ariaReviewPending)
             return true;
 
@@ -4688,6 +4714,7 @@ private:
 
     void loadProject (const File& file, bool create, std::optional<studio::environments::TemplateId> templateId = std::nullopt)
     {
+        if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop and commit or discard Performance Write before changing projects.",dontSendNotification);return;}
         std::vector<OriginalAriaState> pendingOriginalStates;
         bool backupAvailable = true;
         if (! create)
@@ -4723,7 +4750,9 @@ private:
             return;
         }
 
+        cancelPerformanceChase();
         releaseUniversalNote();
+        performanceWrite.reset();
         universalStates.clear();universalTrack={};universalPlugin={};universalSnapshot.clear();universalAvailable=false;
         universalStrip.setProfile({},{});
         if(universalWindow) universalWindow->panel().setProfile({},{});
@@ -6492,6 +6521,159 @@ private:
             if(studio::isInstrumentPlugin(*plugin)){if(found!=nullptr)return nullptr;found=plugin;}
         return dynamic_cast<te::ExternalPlugin*>(found);
     }
+    std::optional<studio::designer::Profile> performanceProfileFor(te::MidiClip& clip)
+    {
+        auto* track=clip.getAudioTrack();auto* hosted=universalHosted(track);
+        if(!track||!hosted)return {};
+        auto attachment=studio::designer::Attachment::parse(track->state.getProperty("studioUniversalInstrument").toString());
+        if(!attachment||!attachment->matches(hosted->itemID.toString(),hosted->desc.createIdentifierString(),hosted->desc.version))return {};
+        return attachment->profile;
+    }
+    te::MidiClip* performanceClip(te::EditItemID trackId,te::EditItemID clipId)
+    {
+        if(auto* track=trackById(trackId))
+            for(auto* c:track->getClips())if(c->itemID==clipId)return dynamic_cast<te::MidiClip*>(c);
+        return nullptr;
+    }
+    bool canArmPerformanceWrite()
+    {
+        if(!edit||!canEditRegions()||edit->getTransport().isPlaying()||edit->getTransport().isRecording()||edit->getTransport().looping||chaseStarting)return false;
+        auto selected=selection.getItemsOfType<te::MidiClip>();
+        if(selected.size()!=1)return false;
+        auto* c=selected.getFirst();
+        return c->getAudioTrack()==workflowTrack()&&studio::designer::supportedPerformanceClip(*c)&&performanceProfileFor(*c).has_value();
+    }
+    void togglePerformanceWrite()
+    {
+        if(performanceWrite)
+        {
+            if(edit&&edit->getTransport().isPlaying()){message.setText("Stop playback to commit Performance Write.",dontSendNotification);return;}
+            if(performanceWrite->points.empty()){discardPerformanceWrite();return;}
+            finishPerformanceWrite();return;
+        }
+        if(!canArmPerformanceWrite()){message.setText("Select one linear profiled MIDI clip and disable cycle before arming.",dontSendNotification);return;}
+        auto* c=selection.getItemsOfType<te::MidiClip>().getFirst();
+        performanceWrite=PerformanceWrite{c->getAudioTrack()->itemID,c->itemID,c->getAudioTrack()->state.getProperty("studioUniversalInstrument").toString(),{},false};
+        message.setText("Performance Write armed — play and use the instrument controls, then Stop.",dontSendNotification);
+    }
+    void discardPerformanceWrite()
+    {
+        performanceWrite.reset();message.setText("Pending Performance Write discarded.",dontSendNotification);
+    }
+    void capturePerformancePoint(const studio::designer::Element& e,int value)
+    {
+        if(!performanceWrite||!edit||!edit->getTransport().isPlaying()||edit->getTransport().isRecording()||edit->getTransport().looping)return;
+        auto& take=*performanceWrite;
+        if(take.track!=universalTrack||take.snapshot!=universalSnapshot)return;
+        auto* c=performanceClip(take.track,take.clip);if(!c||!studio::designer::supportedPerformanceClip(*c))return;
+        auto position=edit->getTransport().getPosition();
+        if(position<c->getPosition().getStart()||position>=c->getPosition().getEnd())return;
+        const auto beat=c->getContentBeatAtTime(position).inBeats();
+        if(!studio::designer::fits(*c,beat))return;
+        if(take.points.size()>=16384)return;
+        // Coalesce repeated moves on the same control within 1/96 beat.
+        if(!take.points.empty())
+        {
+            auto& last=take.points.back();
+            if(last.element==e.id&&std::abs(last.beat-beat)<1.0/96.0&&e.binding.type!="note"){last={e.id,beat,value};return;}
+        }
+        take.points.push_back({e.id,beat,value});take.played=true;
+    }
+    void updatePerformanceWrite(bool playing,bool recording)
+    {
+        if(!performanceWrite||!edit)return;
+        if(playing&&!recording)performanceWrite->played=true;
+        if(!playing&&!recording&&!chaseStarting&&performanceWrite->played&&canEditRegions())finishPerformanceWrite();
+    }
+    void finishPerformanceWrite()
+    {
+        using namespace studio::designer;
+        if(!performanceWrite||!edit||edit->getTransport().isPlaying()||edit->getTransport().isRecording()||!canEditRegions())return;
+        auto take=std::move(*performanceWrite);performanceWrite.reset();
+        auto* c=performanceClip(take.track,take.clip);auto* t=trackById(take.track);
+        if(!c||!t||t->state.getProperty("studioUniversalInstrument").toString()!=take.snapshot||!supportedPerformanceClip(*c))
+        {message.setText("Performance Write target changed — pending events were not inserted.",dontSendNotification);return;}
+        auto p=performanceProfileFor(*c);if(!p)return;
+        auto* undo=c->getUndoManager();if(undo)undo->beginNewTransaction("Record instrument performance");
+        int written=0,rejected=0;
+        for(const auto& point:take.points)
+        {
+            auto e=std::find_if(p->elements.begin(),p->elements.end(),[&](const auto& item){return item.id==point.element;});
+            if(e!=p->elements.end()&&writePerformance(*c,*p,*e,point.beat,point.value,undo).wasOk())++written;else ++rejected;
+        }
+        if(undo)undo->beginNewTransaction();
+        piano.refresh();message.setText("Performance Write: "+String(written)+" events saved, "+String(rejected)+" skipped.",dontSendNotification);
+    }
+    void cancelPerformanceChase()
+    {
+        ++chaseGeneration;chaseStarting=false;
+        for(auto& release:chaseReleases)release();
+        chaseReleases.clear();
+    }
+    void startWithPerformanceChase()
+    {
+        using namespace studio::designer;
+        if(!edit||busy||chaseStarting||edit->getTransport().isPlaying()||edit->getTransport().isRecording())return;
+        const auto pos=edit->getTransport().getPosition();
+        const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        releaseUniversalNote();
+        if(!ariaReviewPending&&!pendingPlugin.has_value()&&edit->getCurrentPlaybackContext()!=nullptr)
+            for(auto* track:te::getAudioTracks(*edit))
+            {
+                auto* hosted=universalHosted(track);
+                if(!hosted||!hosted->isEnabled()||!hosted->getAudioPluginInstance()||track->isFrozen(te::Track::anyFreeze))continue;
+                auto a=Attachment::parse(track->state.getProperty("studioUniversalInstrument").toString());
+                if(!a||!a->matches(hosted->itemID.toString(),hosted->desc.createIdentifierString(),hosted->desc.version))continue;
+                const auto& p=a->profile;
+                struct Prior{te::TimePosition time;NamedPoint point;};
+                std::map<String,Prior> prior;
+                for(auto* base:track->getClips())
+                    if(auto* c=dynamic_cast<te::MidiClip*>(base);c&&supportedPerformanceClip(*c))
+                        for(const auto& point:namedPoints(*c))
+                        {
+                            if(!fits(*c,point.beat))continue;
+                            const auto time=c->getTimeOfContentBeat(te::BeatPosition::fromBeats(point.beat));
+                            if(time>pos)continue;
+                            const auto ch=c->getMidiChannel().getChannelNumber();
+                            auto* e=matchingElement(p,point,ch);if(!e)continue;
+                            const auto key=String(ch)+":"+(e->kind=="articulation"?"art":point.type+":"+String(point.number));
+                            auto it=prior.find(key);
+                            if(it==prior.end()||it->second.time<=time)prior.insert_or_assign(key,Prior{time,point});
+                        }
+                for(const auto& [key,previous]:prior)
+                {
+                    if(previous.time>=pos)continue; // native sequence owns exact start events
+                    const auto& point=previous.point;
+                    const Element* element=nullptr;
+                    for(const auto& e:p.elements)if(e.id==point.state["studioPerformanceElement"].toString()){element=&e;break;}
+                    if(!element)continue;
+                    auto b=element->binding;b.value=point.value;
+                    auto midi=auditionMessage(b,p.channel);if(!midi)continue;
+                    track->injectLiveMidiMessage(*midi,{});
+                    if(b.type=="note")
+                    {
+                        const auto tid=track->itemID,pid=hosted->itemID;
+                        auto off=releaseMessage(b,p.channel);
+                        if(off)chaseReleases.push_back([safe,tid,pid,generation,off=*off]{
+                            if(safe!=nullptr&&safe->designerTarget(tid,pid,generation,true)!=nullptr)
+                                if(auto* original=safe->trackById(tid))original->injectLiveMidiMessage(off,{});
+                        });
+                    }
+                }
+            }
+        if(chaseReleases.empty()){EngineHelpers::togglePlay(*edit);return;}
+        chaseStarting=true;const auto revision=++chaseGeneration;
+        Timer::callAfterDelay(100,[safe,generation,revision,pos]{
+            if(safe==nullptr||safe->chaseGeneration!=revision)return;
+            safe->cancelPerformanceChase();
+            if(safe->edit&&safe->projectGeneration==generation&&!safe->busy
+                &&!safe->edit->getTransport().isPlaying()&&!safe->edit->getTransport().isRecording()
+                &&safe->edit->getTransport().getPosition()==pos)
+                EngineHelpers::togglePlay(*safe->edit);
+        });
+    }
+
     void releaseUniversalNote()
     {
         ++universalPulse;
@@ -6534,7 +6716,7 @@ private:
         const auto trim=seat.isValid()?studio::spatial::readSeat(seat).sendTrim:-60.0f;
         universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
         if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
-        if(changed)resized();
+        if(changed){piano.refreshPerformanceLane();resized();}
     }
     void configureUniversalSurface(studio::designer::UniversalSurface& surface)
     {
@@ -6585,6 +6767,7 @@ private:
             Timer::callAfterDelay(120,[safe,pulse]{if(safe!=nullptr&&safe->universalPulse==pulse)safe->releaseUniversalNote();});
         }
         target->injectLiveMidiMessage(*midi,{});
+        capturePerformancePoint(*item,value);
         state.values.applied(*item,p.channel,value);
         refreshUniversalInstrument();
     }
@@ -8013,6 +8196,23 @@ int StudioView::runInterfaceReview (const File& output)
     if (! spatialWorkspace.verifyMoveForInterfaceReview (*tracks[1])) return fail ("Stage seat move, undo and redo");
     auto* clip = dynamic_cast<te::MidiClip*> (tracks[0]->getClips()[0]);
     if (clip == nullptr) return fail ("fixture MIDI clip");
+    {
+        using namespace studio::designer;
+        clip->setMidiChannel(te::MidiChannel(1));
+        Profile p;p.instrument="bowed-strings.violin";
+        Element art{Uuid().toString(),"bowed.pizzicato","Pizzicato","articulation","button",true,true,Binding{"note",0,24,100}};
+        Element cc{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        p.elements={art,cc};
+        auto* undo=clip->getUndoManager();if(undo)undo->beginNewTransaction("M50 fixture");
+        const auto beat=clip->getContentBeatAtTime(clip->getPosition().getStart()).inBeats()+0.25;
+        if(writePerformance(*clip,p,art,beat,100,undo).failed()||writePerformance(*clip,p,cc,beat+0.5,95,undo).failed())return fail("write native named MIDI");
+        const auto points=namedPoints(*clip);
+        if(points.size()!=2||points[0].number!=24||points[1].value!=95||!matchingElement(p,points[0],1))return fail("named MIDI metadata and chase match");
+        auto other=art;other.id=Uuid().toString();
+        if(writePerformance(*clip,p,other,beat,100,undo).wasOk())return fail("reject overlapping keyswitch");
+        if(!removeNamed(*clip,points[0].state,undo)||!removeNamed(*clip,points[1].state,undo)||!namedPoints(*clip).empty())return fail("remove named events");
+        if(undo)undo->beginNewTransaction();
+    }
     selection.selectOnly (clip);
     piano.setClip (clip);
     setDockMode (DockMode::split);

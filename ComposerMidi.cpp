@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ComposerMidi.h"
+#include "InstrumentPerformanceSequence.h"
 #include "ComposerFiles.h"
 #include "MusicalTransport.h"
 
@@ -448,11 +449,13 @@ Result join (const Array<te::MidiClip*>& clips, te::MidiClip::Ptr& result)
         visitVisible (*clip,
             [&] (const te::MidiNote& note, te::BeatPosition start, te::BeatPosition end)
             {
-                merged.addNote (note.getNoteNumber(), start - origin, end - start, note.getVelocity(), note.getColour(), &undo);
+                if(auto* added=merged.addNote (note.getNoteNumber(), start - origin, end - start, note.getVelocity(), note.getColour(), &undo))
+                    studio::designer::copyTag(note.state,added->state,&undo);
             },
             [&] (const te::MidiControllerEvent& event, te::BeatPosition beat)
             {
-                merged.addControllerEvent (beat - origin, event.getType(), event.getControllerValue(), event.getMetadata(), &undo);
+                if(auto* added=merged.addControllerEvent (beat - origin, event.getType(), event.getControllerValue(), event.getMetadata(), &undo))
+                    studio::designer::copyTag(event.state,added->state,&undo);
             });
         clip->removeFromParent();
     }

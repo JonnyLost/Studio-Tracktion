@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include "MidiControllerLanes.h"
+#include "InstrumentPerformanceSequence.h"
 
 namespace te = tracktion;
 
@@ -25,6 +26,9 @@ public:
     void setTransportPosition (tracktion::TimePosition);
     void silencePreview();
     std::function<void()> onMidiChanged, onControllerLayout;
+    std::function<std::optional<studio::designer::Profile>(te::MidiClip&)> performanceProfile;
+    std::function<bool()> canWritePerformance;
+    void refreshPerformanceLane();
     std::function<void (tracktion::MidiClip&, tracktion::BeatPosition, int)> onNoteDrawn;
    #if STUDIO_SPATIAL_TESTS
     bool drawForReview (double sourceBeat);
@@ -60,7 +64,10 @@ private:
     juce::Label caption;
     juce::ScrollBar horizontal { false }, vertical { true };
 
-    juce::Rectangle<int> keyboard, notesArea, velocityArea, rulerArea;
+    juce::Rectangle<int> keyboard, notesArea, velocityArea, rulerArea, performanceArea;
+    bool performanceLaneVisible=false;
+    void paintPerformance(juce::Graphics&);
+    void performanceMenu(const juce::MouseEvent&);
     Gesture gesture = Gesture::none;
     juce::ValueTree draggedNote;
     double originalBeat = 0.0, originalLength = 1.0;
