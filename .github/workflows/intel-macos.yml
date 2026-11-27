@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - integration/studio-0.2-m44-consolidated
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -119,6 +120,8 @@ jobs:
   build:
     runs-on: macos-15-intel
     timeout-minutes: 55
+    env:
+      STUDIO_CONFIG: ${{ github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated' && 'Release' || 'Debug' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -170,8 +173,8 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config Debug --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
-          test "$(lipo -archs build/Studio_artefacts/Debug/Studio.app/Contents/MacOS/Studio)" = x86_64
+          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
+          test "$(lipo -archs build/Studio_artefacts/$STUDIO_CONFIG/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
           STUDIO_INSTRUMENT_SCREENSHOTS: ${{ runner.temp }}/studio-instrument-workspace
@@ -183,7 +186,7 @@ jobs:
           STUDIO_COMPOSER_AUDIO: ${{ runner.temp }}/studio-composer-audio
           STUDIO_M9_SCREENSHOTS: ${{ runner.temp }}/studio-m9-review
           STUDIO_INTERFACE_SCREENSHOTS: ${{ runner.temp }}/studio-interface-review
-        run: ctest --test-dir build -C Debug --verbose --output-on-failure --no-tests=error --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
+        run: ctest --test-dir build -C "$STUDIO_CONFIG" --verbose --output-on-failure --no-tests=error --output-junit "$RUNNER_TEMP/ctest-intel-macos.xml"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -253,14 +256,14 @@ jobs:
             archive=Studio-0.2-Integrated-Alpha-Intel-preview
             echo "::warning::Approved assets/Studio.png is pending. This archive is a preview."
           else
-            bundle=build/Studio_artefacts/Debug/Studio.app/Contents
+            bundle=build/Studio_artefacts/$STUDIO_CONFIG/Studio.app/Contents
             icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$bundle/Info.plist")
             test "$icon" = AppIcon.icns
             test -s "$bundle/Resources/$icon"
             sips -g pixelWidth -g pixelHeight assets/Studio.png | grep -q 'pixelWidth: 1024'
             sips -g pixelHeight assets/Studio.png | grep -q 'pixelHeight: 1024'
           fi
-          tools/package-intel-studio.sh build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/$archive.zip"
+          tools/package-intel-studio.sh build/Studio_artefacts/$STUDIO_CONFIG/Studio.app "$RUNNER_TEMP/$archive.zip"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: steps.integrated-app.outputs.archive != ''
@@ -268,11 +271,26 @@ jobs:
           name: ${{ steps.integrated-app.outputs.archive }}
           path: ${{ runner.temp }}/${{ steps.integrated-app.outputs.archive }}.zip
           if-no-files-found: error
-      - name: Package Intel Studio application
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
-        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/Debug/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
+      - name: Verify and package M44 Intel Release
+        if: github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated'
+        run: |
+          if [[ -f assets/Studio.png ]]; then
+            export STUDIO_ICON_FILE=assets/Studio.png
+          else
+            echo "::warning::Approved Studio icon is pending. This is an M44 preview bundle."
+          fi
+          tools/package-intel-studio.sh build/Studio_artefacts/Release/Studio.app "$RUNNER_TEMP/Studio-M44-Intel.zip"
       - uses: actions/upload-artifact@v4
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha'
+        if: github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated'
+        with:
+          name: Studio-M44-Intel-app
+          path: ${{ runner.temp }}/Studio-M44-Intel.zip
+          if-no-files-found: error
+      - name: Package Intel Studio application
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated'
+        run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/$STUDIO_CONFIG/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
+      - uses: actions/upload-artifact@v4
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated'
         with:
           name: Studio-M13-Intel-app
           path: ${{ runner.temp }}/Studio-M13-Intel.zip
