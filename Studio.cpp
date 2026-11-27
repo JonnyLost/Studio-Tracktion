@@ -22,6 +22,7 @@ using namespace tracktion::literals;
 #include "StudioUI.h"
 #include "StudioInstrumentIcons.h"
 #include "InstrumentDesigner.h"
+#include "UniversalInstrumentView.h"
 #include "InstrumentLearnInput.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -32,6 +33,7 @@ using namespace tracktion::literals;
 #include "ArticulationPalette.h"
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
+#include "SpatialState.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
@@ -532,6 +534,8 @@ public:
         for (auto* readout : { &bars, &position, &tempo, &meter })
             readout->onContextMenu = [this] { showTransportOptions(); };
         addChildComponent (performance);
+        addChildComponent (universalStrip);
+        configureUniversalSurface(universalStrip);
         addChildComponent (articulationStrip);
         performance.onOpenEditor = [this] (te::Plugin& plugin)
         {
@@ -986,6 +990,8 @@ public:
 
     ~StudioView() override
     {
+        releaseUniversalNote();
+        universalWindow.reset();
         designerWindow.reset();
         designerLearnInput.detach();
         if (monitorWindow != nullptr)
@@ -1632,6 +1638,8 @@ public:
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
         if (designerWindow) { studio::retintStudioComponent(*designerWindow, previous); designerWindow->appearanceChanged(); }
+        if (universalWindow) studio::retintStudioComponent(*universalWindow, previous);
+        universalStrip.repaint();
         dockedKeyboard.refreshTheme();
         keyboardDockSurround.repaint();
         if (midiKeyboardWindow)
@@ -1687,6 +1695,7 @@ public:
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
         if (designerWindow) designerWindow->appearanceChanged();
+        if (universalWindow) universalWindow->panel().resized();
         fitFloatingMonitor();
         if (edit != nullptr)
             for (auto* track : te::getAudioTracks (*edit))
@@ -1945,6 +1954,9 @@ public:
         });
         menu.addSubMenu ("Diagnostics", diagnostics);
         menu.addItem ("Instrument Designer...", [safe] { if (safe != nullptr) safe->showInstrumentDesigner(); });
+        menu.addItem ("Use Saved Instrument Profile...", [safe] { if (safe != nullptr) safe->chooseUniversalProfile(); });
+        menu.addItem ("Universal Instrument View...", universalAvailable, false, [safe] { if (safe != nullptr) safe->showUniversalInstrument(); });
+        menu.addItem ("Detach Instrument Profile", [safe] { if (safe != nullptr) safe->detachUniversalProfile(); });
         PopupMenu activities;
         populateActivityMenu (activities);
         menu.addSubMenu ("Musical Workspaces", activities);
@@ -1987,7 +1999,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile
     };
 
     PopupMenu applicationMenu (int index)
@@ -2108,6 +2120,9 @@ public:
             case 8: // Instruments
                 add (mBrowser, "Instrument Browser");
                 add (mInstrumentDesigner, "Instrument Designer...");
+                add (mUseInstrumentProfile, "Use Saved Instrument Profile...", workflowTrack()!=nullptr);
+                add (mUniversalInstrument, "Universal Instrument View...", universalAvailable);
+                add (mDetachInstrumentProfile, "Detach Instrument Profile", workflowTrack()!=nullptr && workflowTrack()->state.hasProperty("studioUniversalInstrument"));
                 add (mOpenSelectedInstrument, "Open Selected Instrument", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
                 add (mPluginManager, "Plug-in Manager...");
                 break;
@@ -2184,6 +2199,9 @@ public:
             case mPluginManager: invoke (plugins); break;
             case mSettings: showStudioSettings(); break;
             case mInstrumentDesigner: showInstrumentDesigner(); break;
+            case mUseInstrumentProfile: chooseUniversalProfile(); break;
+            case mUniversalInstrument: showUniversalInstrument(); break;
+            case mDetachInstrumentProfile: detachUniversalProfile(); break;
             case mAtelier:
                 if (auto* target = workflowTrack())
                     if (auto* inst = studio::findInstrument (*target))
@@ -2359,6 +2377,15 @@ private:
     studio::StudioEnvironmentWelcome environmentWelcome { engine.getPropertyStorage().getPropertiesFile() };
     ComboBox performanceMode;
     studio::InstrumentPerformance performance;
+    studio::designer::UniversalSurface universalStrip{true};
+    std::unique_ptr<studio::designer::UniversalWindow> universalWindow;
+    struct UniversalTrackState { String serialized; std::optional<studio::designer::Attachment> attachment; studio::designer::LiveValues values; };
+    std::map<String,UniversalTrackState> universalStates;
+    te::EditItemID universalTrack, universalPlugin;
+    String universalSnapshot;
+    bool universalAvailable=false;
+    std::function<void()> universalRelease;
+    unsigned universalPulse=0;
     studio::InstrumentWorkspace instrumentWorkspace { engine.getPropertyStorage().getPropertiesFile() };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -2636,6 +2663,7 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
+        universalStrip.setVisible(false);
         // Mixer, Picture and docked Cinematic Atelier need the dock height
         // for their own console. The right Inspector remains available.
         const bool dockedAtelier = workspace == Workspace::instrumentEditor
@@ -2649,6 +2677,13 @@ private:
         const auto& m = studio::appearance;
         const auto mode = (studio::PerformanceMode) performanceMode.getSelectedId();
         const bool visible = edit != nullptr && mode != studio::PerformanceMode::hidden;
+        if (visible && universalAvailable && workspace != Workspace::articulations)
+        {
+            universalStrip.setVisible(true);
+            universalStrip.setBounds(area.removeFromBottom(jmin(area.getHeight(),m.control(66))));
+            performance.setVisible(false);articulationStrip.setVisible(false);
+            return;
+        }
         // The full mapping editor already displays these same actions.
         const bool showStrip = visible && workspace != Workspace::articulations;
         articulationStrip.setVisible (showStrip);
@@ -4158,6 +4193,7 @@ private:
                 workspace == Workspace::instrumentEditor || instrumentWorkspace.isFloating());
             refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
             auto* context = workflowTrack();
+            refreshUniversalInstrument();
             if (performance.isVisible()) performance.refresh (context, transportReady);
             if (inspectorOpen)
             {
@@ -4687,6 +4723,10 @@ private:
             return;
         }
 
+        releaseUniversalNote();
+        universalStates.clear();universalTrack={};universalPlugin={};universalSnapshot.clear();universalAvailable=false;
+        universalStrip.setProfile({},{});
+        if(universalWindow) universalWindow->panel().setProfile({},{});
         if (designerWindow) designerWindow->designer().cancelLive();
         designerLearnInput.detach();
         if (edit != nullptr)
@@ -5840,8 +5880,12 @@ private:
             if (! busy)
                 if (auto* selected = trackById (id))
                     if (auto* instrument = studio::findInstrument (*selected))
+                    {
+                        if (selected->state.hasProperty("studioUniversalInstrument") && workflowTrack()==selected)
+                        { refreshUniversalInstrument(); if(universalAvailable){showUniversalInstrument();return;} }
                         if (! showFullAtelierInstrument (*instrument))
                             showNativeInstrument (*instrument);
+                    }
         };
         trackActions.openArticulations = [this] (te::EditItemID id)
         {
@@ -6437,6 +6481,157 @@ private:
         Logger::writeToLog ("Studio: repairing mono Tracktion default output group to stereo for "
                             + output->getName());
         devices.setDeviceNumChannels (*output, 2);
+    }
+
+    static te::ExternalPlugin* universalHosted(te::AudioTrack* track)
+    {
+        if(track==nullptr)return nullptr;
+        te::Plugin* found=nullptr;
+        for(auto* plugin:track->pluginList)
+            if(studio::isInstrumentPlugin(*plugin)){if(found!=nullptr)return nullptr;found=plugin;}
+        return dynamic_cast<te::ExternalPlugin*>(found);
+    }
+    void releaseUniversalNote()
+    {
+        ++universalPulse;
+        if(universalRelease){auto release=std::move(universalRelease);universalRelease={};release();}
+    }
+    bool universalContextValid(bool allowPlaying=true)
+    {
+        auto* t=workflowTrack();
+        auto* hosted=universalHosted(t);
+        return edit!=nullptr&&t!=nullptr&&t->itemID==universalTrack&&hosted!=nullptr&&hosted->itemID==universalPlugin
+            &&t->state.getProperty("studioUniversalInstrument").toString()==universalSnapshot
+            &&!busy&&!ariaReviewPending&&!pendingPlugin.has_value()&&!t->isFrozen(te::Track::anyFreeze)
+            &&hosted->isEnabled()&&hosted->getAudioPluginInstance()!=nullptr
+            &&!edit->getTransport().isRecording()&&(allowPlaying||!edit->getTransport().isPlaying())
+            &&edit->getCurrentPlaybackContext()!=nullptr;
+    }
+    void refreshUniversalInstrument()
+    {
+        auto* track=workflowTrack();auto* hosted=universalHosted(track);
+        const auto tid=track!=nullptr?track->itemID:te::EditItemID{};
+        const auto pid=hosted!=nullptr?hosted->itemID:te::EditItemID{};
+        const auto serialized=track!=nullptr?track->state.getProperty("studioUniversalInstrument").toString():String();
+        if(track!=nullptr&&serialized.isEmpty())universalStates.erase(tid.toString());
+        auto* state=track!=nullptr&&!serialized.isEmpty()?&universalStates[tid.toString()]:nullptr;
+        if(state&&state->serialized!=serialized){state->serialized=serialized;state->attachment=studio::designer::Attachment::parse(serialized);state->values={};}
+        const bool available=state&&state->attachment&&hosted&&state->attachment->matches(pid.toString(),hosted->desc.createIdentifierString(),hosted->desc.version);
+        const bool changed=tid!=universalTrack||pid!=universalPlugin||serialized!=universalSnapshot||available!=universalAvailable;
+        if(changed){releaseUniversalNote();universalTrack=tid;universalPlugin=pid;universalSnapshot=serialized;universalAvailable=available;}
+        const auto key=available?tid.toString()+":"+pid.toString():String();
+        const auto profile=available?std::optional<studio::designer::Profile>(state->attachment->profile):std::nullopt;
+        universalStrip.setProfile(key,profile,performanceMode.getSelectedId()==2);
+        if(universalWindow)universalWindow->panel().setProfile(key,profile);
+        const bool enabled=available&&universalContextValid();
+        const bool mixerEnabled=available&&track&&!track->isFrozen(te::Track::anyFreeze)&&!busy&&!ariaReviewPending&&edit&&!edit->getTransport().isRecording();
+        auto* vp=track!=nullptr?track->getVolumePlugin():nullptr;
+        const studio::designer::LiveValues empty;
+        const auto& values=available?state->values:empty;
+        const auto seat=track?track->state.getChildWithName(studio::spatial::seatType):ValueTree{};
+        const bool roomEnabled=mixerEnabled&&seat.isValid()&&studio::spatial::hasRoomSend(*track);
+        const auto trim=seat.isValid()?studio::spatial::readSeat(seat).sendTrim:-60.0f;
+        universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
+        if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
+        if(changed)resized();
+    }
+    void configureUniversalSurface(studio::designer::UniversalSurface& surface)
+    {
+        surface.openFull=[this]{showUniversalInstrument();};
+        surface.openDesigner=[this]{showInstrumentDesigner();};
+        surface.openMixer=[this]{showWorkspace(Workspace::mix);};
+        surface.openRooms=[this]{showWorkspace(Workspace::rooms);};
+        surface.openOriginal=[this]{if(auto* t=workflowTrack())if(auto* p=universalHosted(t))p->showWindowExplicitly();};
+        surface.mixerChange=[this](bool volume,double value){
+            auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin)return;
+            if(auto* p=t->getVolumePlugin()){if(volume)p->setVolumeDb((float)value);else p->setPan((float)value);}
+        };
+        surface.roomChange=[this](double value){
+            auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin||!studio::spatial::hasRoomSend(*t))return;
+            auto tree=t->state.getChildWithName(studio::spatial::seatType);if(!tree.isValid())return;
+            auto seat=studio::spatial::readSeat(tree);seat.sendTrim=juce::jlimit(-60.0f,0.0f,(float)value);
+            tree.setProperty("trim",seat.sendTrim,&edit->getUndoManager());
+            studio::spatial::updateRoomSend(*t,seat.position,seat.sendTrim);
+        };
+        surface.perform=[this](const String& id,int value){performUniversal(id,value);};
+    }
+    void performUniversal(const String& id,int value)
+    {
+        if(!universalAvailable||!universalContextValid())return;
+        auto found=universalStates.find(universalTrack.toString());if(found==universalStates.end()||!found->second.attachment)return;
+        auto& state=found->second;const auto& p=state.attachment->profile;
+        auto item=std::find_if(p.elements.begin(),p.elements.end(),[&](const auto& e){return e.id==id;});
+        if(item==p.elements.end())return;
+        auto b=item->binding;b.value=value;
+        auto midi=studio::designer::auditionMessage(b,p.channel);if(!midi)return;
+        auto* target=trackById(universalTrack);if(!target)return;
+        if(b.type=="note")
+        {
+            releaseUniversalNote();
+            const auto trackId=universalTrack,pluginId=universalPlugin;
+            const auto generation=projectGeneration;
+            const Component::SafePointer<StudioView> safe(this);
+            const auto off=studio::designer::releaseMessage(b,p.channel);
+            if(off)universalRelease=[safe,trackId,pluginId,generation,off=*off]{
+                if(safe!=nullptr&&safe->designerTarget(trackId,pluginId,generation,true)!=nullptr)
+                    if(auto* original=safe->trackById(trackId))original->injectLiveMidiMessage(off,{});
+            };
+            const auto pulse=universalPulse;
+            Timer::callAfterDelay(120,[safe,pulse]{if(safe!=nullptr&&safe->universalPulse==pulse)safe->releaseUniversalNote();});
+        }
+        target->injectLiveMidiMessage(*midi,{});
+        state.values.applied(*item,p.channel,value);
+        refreshUniversalInstrument();
+    }
+    void showUniversalInstrument()
+    {
+        refreshUniversalInstrument();
+        if(!universalAvailable)return;
+        if(!universalWindow){universalWindow=std::make_unique<studio::designer::UniversalWindow>();configureUniversalSurface(universalWindow->panel());}
+        refreshUniversalInstrument();universalWindow->setVisible(true);universalWindow->toFront(true);
+    }
+    void detachUniversalProfile()
+    {
+        auto* t=workflowTrack();if(!t||!canEditRegions()||t->isFrozen(te::Track::anyFreeze))return;
+        releaseUniversalNote();edit->getUndoManager().beginNewTransaction("Detach instrument profile");
+        t->state.removeProperty("studioUniversalInstrument",&edit->getUndoManager());
+        refreshUniversalInstrument();
+    }
+    void chooseUniversalProfile()
+    {
+        auto* t=workflowTrack();auto* hosted=universalHosted(t);
+        if(!t||!hosted||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isPlaying()){message.setText("Select a stopped hosted instrument track first.",dontSendNotification);return;}
+        const auto profiles=studio::designer::ProfileStore(studio::designer::ProfileStore::localDirectory()).list();
+        PopupMenu menu;int index=0;
+        for(const auto& p:profiles)
+        {
+            ++index;const bool matches=p.pluginId==hosted->desc.createIdentifierString()&&p.pluginVersion==hosted->desc.version&&p.patch.trim().isNotEmpty();
+            menu.addItem(index,p.name+" — "+p.patch,matches);
+        }
+        if(profiles.empty()){message.setText("Save an instrument profile in Instrument Designer first.",dontSendNotification);return;}
+        const auto trackId=t->itemID,pluginId=hosted->itemID;const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        menu.showMenuAsync(PopupMenu::Options(),[safe,profiles,trackId,pluginId,generation](int result){
+            if(safe==nullptr||result<=0||result>(int)profiles.size())return;
+            const auto p=profiles[(size_t)result-1];
+            if(safe->designerTarget(trackId,pluginId,generation)==nullptr)return;
+            AlertWindow::showOkCancelBox(MessageBoxIconType::QuestionIcon,"Use instrument profile",
+                "Confirm the original instrument contains "+p.patch+" on MIDI channel "+String(p.channel)+", slot "+String(p.slot)+". Studio will save a project-local copy of the profile. No patch is loaded or changed.",
+                "Use profile","Cancel",safe.getComponent(),ModalCallbackFunction::create([safe,p,trackId,pluginId,generation](int ok){
+                    if(!ok||safe==nullptr)return;
+                    auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+                    if(!hosted||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version)return;
+                    auto* target=safe->trackById(trackId);if(!target)return;
+                    const auto xml=studio::designer::Attachment{p,pluginId.toString()}.serialise();if(xml.isEmpty())return;
+                    safe->releaseUniversalNote();safe->edit->getUndoManager().beginNewTransaction("Use instrument profile");
+                    target->state.setProperty("studioUniversalInstrument",xml,&safe->edit->getUndoManager());
+                    safe->refreshUniversalInstrument();
+                }));
+        });
     }
 
     // Resolve the original single hosted instrument, not whichever track
@@ -7419,6 +7614,25 @@ int StudioView::runInterfaceReview (const File& output)
         const bool verified=designer.verifyDesigner();
         folder.deleteRecursively();
         if(!verified) return fail("instrument designer profile creation and recall");
+    }
+    {
+        using namespace studio::designer;
+        Profile p;p.instrument="flutes.concert-flute";p.name="Fixture flute";
+        Element a{Uuid().toString(),"wind.flutter-tongue","Flutter","articulation","button",true,true,Binding{"note",0,40,100}};
+        Element c{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        Element extra{Uuid().toString(),"release","Release","control","knob",false,true,Binding{}};
+        p.elements={a,c,extra};
+        UniversalSurface compact(true),full(false);compact.setSize(480,66);full.setSize(660,300);
+        compact.setProfile("fixture",p);full.setProfile("fixture",p);
+        if(compact.visibleElementCount()!=2||full.visibleElementCount()!=3)return fail("universal layout visibility");
+        LiveValues values;int messages=0;
+        compact.perform=[&](const String& id,int value){if(id==c.id){values.applied(c,p.channel,value);++messages;}};
+        compact.refresh(values,true,false,0,0);full.refresh(values,true,false,0,0);
+        if(messages!=0||!compact.exercise(c.id,91))return fail("universal control action");
+        full.refresh(values,true,false,0,0);
+        if(messages!=1||full.displayedValue(c.id)!=91||full.exercise(extra.id,0))return fail("universal shared state or unassigned guard");
+        compact.setProfile("fixture",p,true);
+        if(compact.visibleElementCount()!=1)return fail("universal articulation-only mode");
     }
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
