@@ -265,7 +265,7 @@ private:
                     if(step.enabled)
                     {
                         g.setColour(colours::text.withAlpha(.65f));auto bar=rect.reduced(2).removeFromBottom(3);
-                        bar.setWidth(int(bar.getWidth()*step.gate/1000.0));g.fillRect(bar);
+                        bar.setWidth(int(bar.getWidth()*std::min(1000,step.gate)/1000.0));g.fillRect(bar);
                     }
                     if(step.enabled&&(step.repeats>1||step.offset!=0||step.probability!=100||!step.articulation.empty()||step.gate>1000))
                     {g.setColour(colours::text.withAlpha(.8f));g.fillRect(rect.getRight()-5,rect.getY()+2,3,5);}
@@ -432,7 +432,7 @@ private:
                 auto& step=r.steps[index];int strikes=0,prob=0;
                 const auto* a=dialog->getTextEditor("strikes");const auto* b=dialog->getTextEditor("probability");
                 auto t=dialog->getTextEditorContents("offset");auto digits=t.startsWithChar('-')?t.substring(1):t;
-                if(!a||!b||!read(*a,1,8,strikes)||!read(*b,0,100,prob)||digits.isEmpty()||digits.length()>3||!digits.containsOnly("0123456789")||t.getIntValue()<-250||t.getIntValue()>250)
+                if(!a||!b||a->getText().length()>1||b->getText().length()>3||!read(*a,1,8,strikes)||!read(*b,0,100,prob)||digits.isEmpty()||digits.length()>3||!digits.containsOnly("0123456789")||t.getIntValue()<-250||t.getIntValue()>250)
                 {safe->say("Invalid advanced step settings.");return;}
                 const int choice=dialog->getComboBoxComponent("articulation")->getSelectedItemIndex();
                 if(choice<0||choice>(int)choices.size())return;
