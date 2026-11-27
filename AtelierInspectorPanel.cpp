@@ -55,6 +55,7 @@ void setLabel (Label& label, const String& caption, float size, Colour colour)
 void makeFader (Slider& slider, double low, double high, double step, const String& suffix)
 {
     slider.setSliderStyle (Slider::LinearVertical);
+    slider.getProperties().set ("studioHardwareFader", true);
     slider.setTextBoxStyle (Slider::TextBoxBelow, false, 76, 20);
     slider.setRange (low, high, step);
     slider.setTextValueSuffix (suffix);
@@ -145,6 +146,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
     for (auto& button : articulationPads)
     {
         addAndMakeVisible (button);
+        button.getProperties().set ("studioArticulationPad", true);
         button.setVisible (false);
         button.setColour (TextButton::buttonColourId, panel);
         button.setColour (TextButton::buttonOnColourId, colours::selected);
