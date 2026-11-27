@@ -21,9 +21,9 @@ bool isAria (const PluginDescription& plugin)
 
 void drawInstrument (Graphics& g, Rectangle<float> bounds, bool orchestra, bool effect, Colour colour)
 {
-    const auto box = bounds.withSizeKeepingCentre (jmin (bounds.getWidth(), bounds.getHeight() * 1.6f),
-                                                    bounds.getHeight());
-    const auto transform = AffineTransform::scale (box.getWidth() / 100.0f, box.getHeight() / 60.0f)
+    const auto scale = jmin (bounds.getWidth() / 100.0f, bounds.getHeight() / 60.0f);
+    const auto box = bounds.withSizeKeepingCentre (100.0f * scale, 60.0f * scale);
+    const auto transform = AffineTransform::scale (scale)
                                .translated (box.getX(), box.getY());
     Graphics::ScopedSaveState save (g);
     g.addTransform (transform);
@@ -88,7 +88,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
              &search, &compactFamily, &compactType, &libraryView, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter })
+             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter, &close })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
@@ -96,7 +96,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     search.setColour (TextEditor::outlineColourId, colours::divider);
     search.onTextChange = [this] { rebuildResults(); };
     libraryView.setTitle ("Apple sounds and effects");
-    libraryView.addItem ("Instruments", 1);
+    libraryView.addItem ("All Sounds", 1);
     libraryView.addItem ("Apple Sounds", 2);
     libraryView.addItem ("Apple Effects", 3);
     libraryView.addItem ("Sample Library Manager...", 4);
@@ -163,6 +163,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
             browseApplePrograms (entry->plugin, programs);
     };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
+    close.onClick = [this] { if (onClose) onClose(); };
     favourite.setTooltip ("Mark this instrument as a favorite or remove its favorite");
     favourite.onClick = [this]
     {
@@ -242,7 +243,7 @@ void InstrumentBrowser::rebuildCatalog()
         for (int index = 0; index < 128; ++index)
             entries.push_back ({ "apple-dls-gm-" + String (index),
                 String (gm::displayNumber (index)).paddedLeft ('0', 3) + "  " + gm::name (index),
-                "Apple GM Sounds", gm::family (index), "Apple DLSMusicDevice | General MIDI",
+                gm::family (index), gm::family (index), "Apple DLSMusicDevice | General MIDI",
                 "GM program " + String (gm::displayNumber (index))
                     + " on MIDI channel 1. Load through the installed Apple DLSMusicDevice.",
                 *dls, true, false, true, index });
@@ -269,7 +270,7 @@ void InstrumentBrowser::rebuildCatalog()
     for (const auto& entry : entries)
         if ((collection == Collection::appleEffects) == entry.effect
             && (collection != Collection::appleSounds || entry.apple)
-            && (collection != Collection::instruments || entry.gmProgram < 0))
+            )
             families.addIfNotAlreadyThere (entry.family);
     families.sortNatural();
     if (! families.contains (family) || family.isEmpty()) family = "All Instruments";
@@ -291,7 +292,6 @@ void InstrumentBrowser::rebuildTypes()
     for (const auto& entry : entries)
         if ((collection == Collection::appleEffects) == entry.effect
             && (collection != Collection::appleSounds || entry.apple)
-            && (collection != Collection::instruments || entry.gmProgram < 0)
             && (family == "All Instruments" || entry.family == family))
             types.addIfNotAlreadyThere (entry.type);
     types.sortNatural();
@@ -318,7 +318,6 @@ void InstrumentBrowser::rebuildResults()
         const auto& e = entries[i];
         if ((collection == Collection::appleEffects) != e.effect
             || (collection == Collection::appleSounds && ! e.apple)
-            || (collection == Collection::instruments && e.gmProgram >= 0)
             || (family != "All Instruments" && family != e.family)
             || (type != "All Types" && type != e.type)
             || (favouritesOnly && ! favouriteKeys.contains (e.key)))
@@ -378,8 +377,29 @@ void InstrumentBrowser::browseGeneralMidi()
 {
     collection = Collection::appleSounds;
     libraryView.setSelectedId (2, dontSendNotification);
-    family = "Apple GM Sounds";
+    family = "All Instruments";
     type = "All Types";
+    rebuildCatalog();
+}
+
+void InstrumentBrowser::browseAllSounds()
+{
+    if (collection == Collection::instruments) return;
+    collection = Collection::instruments;
+    libraryView.setSelectedId (1, dontSendNotification);
+    family = "All Instruments"; type = "All Types"; rebuildCatalog();
+}
+
+void InstrumentBrowser::syncLoadedSound (String key)
+{
+    if (key.isEmpty() || key == selectedKey || collection == Collection::appleEffects) return;
+    const auto found = std::find_if (entries.begin(), entries.end(), [&] (const Entry& e) { return e.key == key; });
+    if (found == entries.end()) return;
+    ScopedValueSetter<bool> guard (refreshing, true);
+    family = found->family; type = "All Types"; selectedKey = key;
+    search.setText ({}, false); favouritesOnly = false;
+    favouritesFilter.setToggleState (false, dontSendNotification);
+    if (collection != Collection::instruments) { collection = Collection::instruments; libraryView.setSelectedId (1, dontSendNotification); }
     rebuildCatalog();
 }
 
@@ -393,6 +413,7 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
+    if (! newTrack && ! entry->effect && (! canCreate || targetRestriction.isNotEmpty())) return;
     if (entry->gmProgram >= 0)
     {
         if (loadGeneralMidi) loadGeneralMidi (entry->plugin, entry->gmProgram, newTrack);
@@ -413,8 +434,7 @@ void InstrumentBrowser::loadSelected (bool newTrack)
     }
     else if (entry->key.startsWith ("studio-synth-"))
     {
-        if (! newTrack && synthOnTarget && openSynth) openSynth();
-        else if (loadSynth) loadSynth (entry->key.fromFirstOccurrenceOf ("studio-synth-", false, false), newTrack);
+        if (loadSynth) loadSynth (entry->key.fromFirstOccurrenceOf ("studio-synth-", false, false), newTrack);
     }
     else if (loadInstrument)
         loadInstrument (entry->plugin, newTrack);
@@ -527,18 +547,23 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
                       bounds, Justification::centredLeft, 1, 1.0f);
 }
 
-void InstrumentBrowser::Rows::listBoxItemDoubleClicked (int row, const MouseEvent&)
+void InstrumentBrowser::activateRow (int row)
 {
-    if (kind != results || ! isPositiveAndBelow (row, (int) browser.filtered.size()))
-        return;
-    const auto& entry = browser.entries[browser.filtered[(size_t) row]];
-    // Loading is explicit on double-click, not automatic as the user
-    // navigates categories or presses cursor keys in a large GM catalog.
-    if (entry.gmProgram >= 0)
-    {
-        browser.selectedKey = entry.key;
-        browser.loadSelected (false);
-    }
+    if (refreshing || ! isPositiveAndBelow (row, (int) filtered.size())) return;
+    selectedKey = entries[filtered[(size_t) row]].key;
+    updateDetails();
+    loadSelected (false);
+}
+
+void InstrumentBrowser::Rows::listBoxItemClicked (int row, const MouseEvent& event)
+{
+    if (kind == results && ! event.mods.isPopupMenu() && event.getNumberOfClicks() == 1)
+        browser.activateRow (row);
+}
+void InstrumentBrowser::Rows::listBoxItemDoubleClicked (int, const MouseEvent&) {}
+void InstrumentBrowser::Rows::returnKeyPressed (int row)
+{
+    if (kind == results) browser.activateRow (row);
 }
 
 void InstrumentBrowser::Rows::selectedRowsChanged (int row)
@@ -594,107 +619,67 @@ int InstrumentBrowser::minimumContentHeight (int width) const
 void InstrumentBrowser::resized()
 {
     const auto& m = appearance;
-    auto area = getLocalBounds().reduced (m.px (8), m.px (2));
-    auto toolbar = area.removeFromTop (m.control (30)).reduced (0, m.px (1));
-    manage.setBounds (toolbar.removeFromRight (m.span (95)));
-    favouritesFilter.setBounds (toolbar.removeFromRight (m.span (84)).reduced (m.px (2), 0));
-    libraryView.setBounds (toolbar.removeFromRight (m.span (157)).reduced (m.px (2), 0));
-    const bool compactFamilyFilter = m.browserFilterRow (getWidth());
-    compact = m.compactBrowser (getWidth());
-    const bool stackDetails = m.stackedBrowserDetails (getWidth());
-    compactFamily.setVisible (compactFamilyFilter);
-    familyList.setVisible (! compactFamilyFilter);
-    compactType.setVisible (compact);
-    typeList.setVisible (! compact);
-    count.setVisible (toolbar.getWidth() >= m.span (370));
-    if (count.isVisible()) count.setBounds (toolbar.removeFromRight (m.span (122)));
-    if (compactFamilyFilter)
-    {
-        auto filters = area.removeFromTop (m.control (30));
-        compactFamily.setBounds (filters.removeFromLeft (filters.getWidth() / 2).reduced (m.px (2), 0));
-        compactType.setBounds (filters.reduced (m.px (2), 0));
-    }
-    else if (compact)
-        compactType.setBounds (toolbar.removeFromRight (m.span (128)).reduced (m.px (2), 0));
-    search.setBounds (toolbar.reduced (m.px (2), 0));
-    status.setBounds (area.removeFromBottom (2 * m.line (13, 2)).reduced (m.px (4), 0));
-    if (stackDetails)
-    {
-        const int rows = 3 * resultList.getRowHeight();
-        const auto result = area.removeFromTop (rows);
-        resultList.setBounds (result);
-        detailPanel = area.withTrimmedTop (m.px (5));
-    }
-    else
-    {
-        const int maxWidth = jmax (m.span (180), jmin (m.span (420), area.getWidth() / 2));
-        detailPanel = area.removeFromRight (jlimit (m.span (180), maxWidth,
-                                                   m.px (preferredDetailsWidth)));
-        if (! compactFamilyFilter) familyList.setBounds (area.removeFromLeft (m.span (110)));
-        if (! compact) typeList.setBounds (area.removeFromLeft (m.span (120)));
-        resultList.setBounds (area);
-    }
-    // The selected entry owns the action label (instrument, AU editor or effect).
-    auto detail = detailPanel.reduced (m.px (8), m.px (2));
-    if (add.isVisible()) add.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
-    else add.setBounds ({});
-    favourite.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
-    if (programs.isVisible()) programs.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
-    else programs.setBounds ({});
-    load.setBounds (detail.removeFromBottom (m.control (25)).reduced (0, 1));
-    explanation.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
-    vendor.setBounds (detail.removeFromBottom (2 * m.line (13, 1)));
-    instrumentName.setBounds (detail.removeFromBottom (2 * m.line (14, 1)));
-    detailsTitle.setBounds (detail.removeFromTop (m.line (11)));
-    art = detail.reduced (m.px (2), m.px (1));
+    auto area = getLocalBounds().reduced (m.px (6), m.px (4));
+    area.removeFromRight (m.px (5)); // sidebar resize handle
+    auto header = area.removeFromTop (m.control (27));
+    close.setBounds (header.removeFromRight (jmin (header.getWidth(), m.span (55))));
+    detailsTitle.setText ("Instrument Library", dontSendNotification);
+    detailsTitle.setBounds (header);
+    auto artwork = area.removeFromTop (jmin (m.px (100), area.getHeight() / 5));
+    art = artwork.reduced (m.px (4));
+    instrumentName.setBounds (area.removeFromTop (m.line (14, 3)));
+    search.setBounds (area.removeFromTop (m.control (28)).reduced (0, 1));
+    auto filters = area.removeFromTop (m.control (27));
+    favouritesFilter.setBounds (filters.removeFromRight (jmin (filters.getWidth()/2, m.span (85))).reduced (1));
+    libraryView.setBounds (filters.reduced (1));
+    // Musical family is the primary filter; source/format is optional.
+    compact = true;
+    const bool twoColumns = area.getWidth() >= m.span (260);
+    compactFamily.setVisible (! twoColumns);
+    familyList.setVisible (twoColumns);
+    compactType.setVisible (false); typeList.setVisible (false);
+    count.setVisible (false); vendor.setVisible (false); explanation.setVisible (false);
+    manage.setVisible (false); add.setVisible (false);
+    load.setVisible (collection == Collection::appleEffects);
+    if (load.isVisible()) load.setBounds (area.removeFromBottom (m.control (26)));
+    status.setBounds (area.removeFromBottom (2 * m.line (12, 2)));
+    auto actions = area.removeFromBottom (m.control (26));
+    if (programs.isVisible()) programs.setBounds (actions.removeFromLeft (actions.getWidth()/2).reduced (1));
+    favourite.setBounds (actions.reduced (1));
+    if (twoColumns)
+        familyList.setBounds (area.removeFromLeft (area.getWidth() * 42 / 100).reduced (1));
+    else compactFamily.setBounds (area.removeFromTop (m.control (27)));
+    resultList.setBounds (area.reduced (1));
+    detailPanel = artwork;
 }
 
 MouseCursor InstrumentBrowser::getMouseCursor()
 {
-    if (! appearance.stackedBrowserDetails (getWidth())
-        && std::abs (getMouseXYRelative().x - detailPanel.getX()) <= appearance.px (8))
-        return MouseCursor (MouseCursor::LeftRightResizeCursor);
-    return MouseCursor (MouseCursor::NormalCursor);
+    return getMouseXYRelative().x >= getWidth() - appearance.px (10)
+        ? MouseCursor::LeftRightResizeCursor : MouseCursor::NormalCursor;
 }
-
-void InstrumentBrowser::mouseDown (const MouseEvent& event)
+void InstrumentBrowser::mouseDown (const MouseEvent& e)
 {
-    resizingDetails = ! appearance.stackedBrowserDetails (getWidth())
-                   && std::abs (event.x - detailPanel.getX()) <= appearance.px (8);
-    if (resizingDetails)
-    {
-        resizeStartX = event.getScreenX();
-        resizeStartWidth = preferredDetailsWidth;
-    }
+    resizingDetails = e.x >= getWidth() - appearance.px (10);
+    if (resizingDetails) { resizeStartX = e.getScreenPosition().x; resizeStartWidth = getWidth(); }
 }
-
-void InstrumentBrowser::mouseDrag (const MouseEvent& event)
+void InstrumentBrowser::mouseDrag (const MouseEvent& e)
 {
-    if (! resizingDetails) return;
-    preferredDetailsWidth = jlimit (180, 420, resizeStartWidth + resizeStartX - event.getScreenX());
-    resized();
-    repaint();
+    if (resizingDetails && onWidthChanged) onWidthChanged (resizeStartWidth + e.getScreenPosition().x - resizeStartX);
 }
-
-void InstrumentBrowser::mouseUp (const MouseEvent&)
-{
-    if (! resizingDetails) return;
-    resizingDetails = false;
-    if (preferences != nullptr)
-    {
-        preferences->setValue ("studio.browserDetailsWidth", preferredDetailsWidth);
-        preferences->saveIfNeeded();
-    }
-}
+void InstrumentBrowser::mouseUp (const MouseEvent&) { resizingDetails = false; }
 
 void InstrumentBrowser::paint (Graphics& g)
 {
     const auto detail = detailPanel.toFloat().reduced (0.5f);
+    g.fillAll (colours::panel);
+    g.setColour (colours::divider);
+    g.fillRect (getWidth() - appearance.px (5), 0, appearance.px (2), getHeight());
     g.setColour (colours::control);
     g.fillRoundedRectangle (detail, (float) appearance.px (5));
     g.setColour (colours::divider);
     g.drawRoundedRectangle (detail, (float) appearance.px (5), 0.75f);
-    if (! appearance.stackedBrowserDetails (getWidth()) && ! detailPanel.isEmpty())
+    if (false && ! detailPanel.isEmpty())
     {
         const float x = (float) detailPanel.getX() + 2.0f;
         const float mid = (float) detailPanel.getCentreY();
