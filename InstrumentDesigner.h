@@ -32,7 +32,7 @@ public:
         contextLabel.setFont(uiFont(12)); status.setFont(uiFont(12));
         status.setJustificationType(Justification::centredLeft);
         for (auto* e : {&name,&library,&patch,&variant,&channel,&slot})
-            e->onTextChange=[this]{ if(!refreshing) dirty=true; };
+            e->onTextChange=[this]{ if(!refreshing) {dirty=true;preview.repaint();} };
         setupField(name,"Profile name"); setupField(library,"Library"); setupField(patch,"Patch name or stable ID");
         setupField(variant,"Patch variant"); setupField(channel,"MIDI channel 1–16"); setupField(slot,"ARIA slot 1–16");
         setupField(instrumentSearch,"Search instruments"); setupField(artworkSearch,"Search vector artwork");
@@ -44,7 +44,7 @@ public:
         instrument.onChange=[this]{
             if(refreshing) return;
             if(auto id=choice(instrument,instrumentIds);id.isNotEmpty())
-            { profile.instrument=id; if(profile.artwork.isEmpty()) profile.artwork=id; dirty=true; refillCandidates(); preview.repaint(); }
+            { profile.instrument=id; if(profile.artwork.isEmpty()) {profile.artwork=id;refillInstruments(true);} dirty=true; refillCandidates(); preview.repaint(); }
         };
         artwork.onChange=[this]{ if(!refreshing) { profile.artwork=choice(artwork,artworkIds); dirty=true; preview.repaint(); }};
         kind.onChange=[this]{refillCandidates();}; candidateSearch.onTextChange=[this]{refillCandidates();};
@@ -56,7 +56,7 @@ public:
         save.onClick=[this]{saveCurrent();};
         newProfile.onClick=[this]{if(canSwitch()) startNew();};
         load.onClick=[this]{if(canSwitch()) loadSelected();};
-        duplicate.onClick=[this]{if(readFields()){profile=profile.duplicate();dirty=true;refresh();say("Copy created. Save to retain it.");}};
+        duplicate.onClick=[this]{if(readFields()){profile=profile.duplicate();saved.reset();dirty=true;refresh();say("Copy created. Save to retain it.");}};
         discard.onClick=[this]{
             // Explicit discard restores the last saved profile; for a new draft resets it.
             if(saved){profile=*saved;dirty=false;refresh();say("Restored saved profile.");}
@@ -72,11 +72,18 @@ public:
         contextLabel.setText(context.track.isEmpty() ? "Design a standalone profile" : "Selected track: "+context.track+" (reference only)",juce::dontSendNotification);
     }
     bool hasUnsavedChanges() const { return dirty; }
+    void appearanceChanged()
+    {
+        heading.setFont(uiFont(20,juce::Font::bold));
+        contextLabel.setFont(uiFont(12)); status.setFont(uiFont(12));
+        resized(); repaint();
+    }
+    ~DesignerPanel() override { viewport.setViewedComponent(nullptr,false); }
     void resized() override
     {
         viewport.setBounds(getLocalBounds());
         const int w=juce::jmax(640,getWidth()-22), line=juce::jmax(28,appearance.control(30));
-        const int h=juce::jmax(getHeight(), 18*line+188);
+        const int h=juce::jmax(getHeight(), 15*line+188);
         body.setSize(w,h);
         auto r=body.getLocalBounds().reduced(12);
         heading.setBounds(r.removeFromTop(line)); contextLabel.setBounds(r.removeFromTop(line));
@@ -315,12 +322,13 @@ public:
         setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(660,420,1800,1200);
         panel=new DesignerPanel(std::move(context));setContentOwned(panel,true);
         auto bounds=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-        const int w=bounds?juce::jmin(920,bounds->userArea.getWidth()-32):920;
-        const int h=bounds?juce::jmin(620,bounds->userArea.getHeight()-60):620;
+        const int w=bounds?juce::jmin(920,bounds->userBounds.toNearestInt().getWidth()-32):920;
+        const int h=bounds?juce::jmin(620,bounds->userBounds.toNearestInt().getHeight()-60):620;
         centreWithSize(w,h);
     }
     void closeButtonPressed() override {setVisible(false);} // preserve the unsaved draft while Studio is running
     void open(SourceContext context){panel->setContext(std::move(context));setVisible(true);toFront(true);}
+    void appearanceChanged(){setBackgroundColour(colours::canvas);panel->appearanceChanged();}
 private:
     DesignerPanel* panel=nullptr; // owned by DocumentWindow
 };
