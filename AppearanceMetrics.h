@@ -79,6 +79,8 @@ public:
 
     bool dropoutsFitHeader (int width) const { return resourcesFitHeader (width - span (resourceXRWidth)); }
 
+    int defaultWorkspaceHeight (int windowHeight) const { return std::max (0, windowHeight) * 37 / 100; }
+
     DockRoom dockRoom (int available, int preferred, DockMode mode) const
     {
         const int upperTools = control (32) + control (26) + px (9);

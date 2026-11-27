@@ -562,6 +562,8 @@ public:
         };
         cycleButton.onClick = [this] { music.toggleCycle(); timerCallback(); };
         clickButton.onClick = [this] { music.toggleClick(); timerCallback(); };
+        clickButton.onContextMenu = [this] { music.promptClickSettings(); };
+        clickButton.setTooltip ("Toggle metronome; right-click for sound settings");
         tempo.onClick = [this] { music.promptTempoAtPlayhead(); };
         meter.onClick = [this] { music.promptMeterAtPlayhead(); };
         tempo.setTooltip ("Edit the tempo event at the playhead while stopped");
@@ -572,7 +574,7 @@ public:
         addAndMakeVisible (keyboardButton);
         keyboardButton.setTooltip ("Show or hide the MIDI keyboard (Shift-Command-K); Dock/Float in View menu");
         keyboardButton.onClick = [this] { toggleAuditionKeyboard(); };
-        flashbackButton.setTooltip ("Capture MIDI — recover recent unrecorded MIDI on the selected track");
+        flashbackButton.setTooltip ("Capture MIDI - recover recent unrecorded MIDI on the selected track");
         flashbackButton.onClick = [this] { captureFlashbackMidi(); };
         transportOptions.setTooltip ("Customize the visible transport controls and LCD readouts");
         transportOptions.onClick = [this] { showTransportOptions(); };
@@ -642,8 +644,8 @@ public:
         addChildComponent (seatingWorkspace);
         spatialWorkspace.onOpenSeating = [this]
         {
-            setDockMode (DockMode::expanded);
             showWorkspace (Workspace::orchestraSeating);
+            setDockMode (DockMode::expanded);
         };
        #endif
         spatialWorkspace.onLayoutChange = [this] { resized(); };
@@ -782,9 +784,9 @@ public:
         };
         addAndMakeVisible (addTrackButton);
         addAndMakeVisible (removeTrackButton);
-        addTrackButton.setTooltip ("Add instrument track");
+        addTrackButton.setTooltip ("Add instrument, sampler, synth or audio track");
         removeTrackButton.setTooltip ("Track actions, including Delete (protected tracks cannot be removed)");
-        addTrackButton.onClick = [this] { if (canEditRegions()) addTrack ("Instrument"); };
+        addTrackButton.onClick = [this] { showAddTrackMenu(); };
         removeTrackButton.onClick = [this]
         {
             if (! canEditRegions()) return;
@@ -1108,10 +1110,10 @@ public:
         {
             return cycleLane.getX() + view.timeToX (time, cycleLane.getWidth());
         };
-        if (! range.isEmpty())
+        if (! range.isEmpty() && (transport.looping.get() || cycleAnchor.has_value()))
         {
             const int left = xAt (range.getStart()), right = xAt (range.getEnd());
-            graphics.setColour (action.withAlpha (transport.looping || cycleAnchor.has_value() ? 0.48f : 0.17f));
+            graphics.setColour (action.withAlpha (0.48f));
             graphics.fillRect (cycleLane.withLeft (left).withRight (right));
             graphics.setColour (action);
             graphics.drawVerticalLine (left, (float) cycleLane.getY(), (float) cycleLane.getBottom());
@@ -1234,13 +1236,13 @@ public:
             {
                 return std::abs (event.x - ruler.getX() - view.timeToX (time, ruler.getWidth())) <= studio::appearance.px (6);
             };
-            if (! range.isEmpty() && near (range.getStart()))
+            if (edit->getTransport().looping && ! range.isEmpty() && near (range.getStart()))
                 cycleAnchor = range.getEnd();
-            else if (! range.isEmpty() && near (range.getEnd()))
+            else if (edit->getTransport().looping && ! range.isEmpty() && near (range.getEnd()))
                 cycleAnchor = range.getStart();
             else
                 cycleAnchor = rulerTime (event.x, ! event.mods.isAltDown());
-            cyclePreview = range;
+            cyclePreview = edit->getTransport().looping ? range : te::TimeRange::between (*cycleAnchor, *cycleAnchor);
             return;
         }
         piano.silencePreview();
@@ -2007,7 +2009,7 @@ public:
                 add (mEnvironments, "Studio Environments...");
                 add (mSettings, "Studio Settings...");
                 add (mAtelier, "Cinematic Atelier Instrument...", project && workflowTrack() != nullptr);
-                add (mAuditionKeyboard, "Show On-Screen MIDI Keyboard  ⇧⌘K",
+                add (mAuditionKeyboard, "Show On-Screen MIDI Keyboard  Shift-Command-K",
                      true, keyboardDocked || midiKeyboardWindow != nullptr);
                 add (mDockAuditionKeyboard, "Dock Keyboard at Bottom", true, keyboardDocked);
                 add (mFloatAuditionKeyboard, "Float Keyboard", true,
@@ -2156,7 +2158,7 @@ public:
             case mResources: if (resources.onOpen) resources.onOpen(); break;
             case mAboutStudio:
                 AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon,
-                    "About Studio", "Studio 0.2 · Native macOS music production.\n"
+                    "About Studio", "Studio 0.2 - Native macOS music production.\n"
                     "Orchestral Stage, native instruments, MIDI sequencing and mixing.", "OK");
                 break;
             case mKeyboardHelp:
@@ -2405,7 +2407,7 @@ private:
                saveProject { "Save" }, saveAsProject { "Save As" },
                audioSettings { "Audio Settings" }, plugins { "Plugin Manager" },
                regionActions { "Edit Regions" }, trackOptions { "Track..." },
-               addTrackButton { "+" }, removeTrackButton { "−" },
+               addTrackButton { "+" }, removeTrackButton { "..." },
                addSynthTrack { "Add Synth" }, addSamplerTrack { "Add Sampler" },
                addMidi { "+ Instrument" }, addAudio { "+ Audio" }, importAudio { "Import Audio" },
                addMidiClip { "+ MIDI Clip" };
@@ -2506,16 +2508,12 @@ private:
             && instrumentWorkspace.getEditor() != nullptr;
         const int headerHeight = m.control (unifiedInstrumentHeader ? 42 : 34);
         const int dividerHeight = m.px (12);
-        const bool fixedInstrument = workspace == Workspace::instrumentEditor && ! instrumentWorkspace.isFloating();
         workspaceDivider.setResizeLocked (isWorkspaceDividerLocked());
-        // Revised MacBook screenshot: the fixed Instrument View is 425 points
-        // including its header. On shorter MacBooks, dockRoom clamps this to
-        // retain the arrangement; only the Instrument View is fixed.
+        // Match the accepted composer screenshot. The content viewport can
+        // scroll if a detailed editor needs more room; only Score is taller.
         int requestedHeight = workspaceHeight;
         if (workspace == Workspace::filmScoring)
             requestedHeight = m.px (438);
-        else if (fixedInstrument && dockMode == DockMode::split)
-            requestedHeight = jmax (m.px (425), instrumentWorkspace.minimumContentHeight() + headerHeight);
         const auto room = m.dockRoom (available, requestedHeight, dockMode);
         splitLimit = room.splitLimit;
         const int panelHeight = workspace == Workspace::closed ? 0 : room.panelHeight;
@@ -2708,13 +2706,8 @@ private:
         if (dockMode == mode) return;
         rememberWorkspaceScroll();
         dockMode = mode;
-        // Switching from Expanded to Split must not restore a short dock that
-        // clips the Mixer faders. Entering Mixer already enforces this minimum;
-        // apply it to subsequent dock-mode changes as well.
-        if (mode == DockMode::split && workspace == Workspace::mix)
-            workspaceHeight = jmax (workspaceHeight,
-                jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
-                       getHeight() * 57 / 100));
+        if (mode == DockMode::split)
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
         syncWorkspace();
         restoreWorkspaceScroll();
     }
@@ -2733,20 +2726,10 @@ private:
     {
         const bool changing = workspace != next;
         if (changing) rememberWorkspaceScroll();
-        if ((next == Workspace::piano || ((next == Workspace::instrumentEditor || next == Workspace::orchestraSeating) && changing))
-            && dockMode == DockMode::compact)
-            dockMode = DockMode::split;
-        if (next == Workspace::mix && changing)
+        if (changing && next != Workspace::closed)
         {
-            // A click on Mixer is a change of task, not an attempt to stack a
-            // third panel underneath the current instrument. Show an actual
-            // console with usable faders and some arrangement above it.
-            if (dockMode == DockMode::compact)
-                dockMode = DockMode::split;
-            if (dockMode == DockMode::split)
-                workspaceHeight = jmax (workspaceHeight,
-                    jmax (mixer.minimumContentHeight() + studio::appearance.control (34),
-                           getHeight() * 57 / 100));
+            dockMode = DockMode::split;
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
         }
         workspace = next;
         if (changing)
@@ -2866,7 +2849,6 @@ private:
         if (auto clip = track->insertMIDIClip ("MIDI Clip", { start, end }, &selection))
         {
             piano.setClip (clip);
-            workspaceHeight = studio::appearance.px (360);
             showWorkspace (Workspace::piano);
             message.setText ("Draw notes in the piano roll, then Save to keep your edits.", dontSendNotification);
         }
@@ -3447,7 +3429,7 @@ private:
         auto* group = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*edit, id));
         if (group == nullptr) return;
         PopupMenu menu;
-        menu.addSectionHeader (group->getName() + " · Submix Effects");
+        menu.addSectionHeader (group->getName() + " - Submix Effects");
         for (auto* p : group->pluginList.getPlugins())
         {
             if (dynamic_cast<te::VolumeAndPanPlugin*> (p) != nullptr
@@ -3578,7 +3560,7 @@ private:
                         safe->sizeEditor();
                     }
             });
-        if (nested) parent.addSubMenu ("Submix Group · " + group.getName(), folderMenu);
+        if (nested) parent.addSubMenu ("Submix Group - " + group.getName(), folderMenu);
     }
 
     void populateTrackEditMenu (PopupMenu& parent, te::AudioTrack& track, bool nested = true)
@@ -3610,7 +3592,7 @@ private:
                                      { "Tall", 84 }, { "Extra Tall", 132 }, { "Maximum", 240 } })
         {
             const int points = option.second;
-            heights.addItem (String (option.first) + " · " + String (points) + " pt",
+            heights.addItem (String (option.first) + " - " + String (points) + " pt",
                 true, currentHeight == points,
                 trackMenuAction (id, [points] (StudioView& studio, te::AudioTrack& target)
                 {
@@ -3716,7 +3698,7 @@ private:
             tracks.addSubMenu ("Track Header Controls", headerMenu);
         }
         if (nested)
-            parent.addSubMenu ("Track · " + track.getName(), subMenu);
+            parent.addSubMenu ("Track - " + track.getName(), subMenu);
     }
 
     void renameTrack (te::AudioTrack& track)
@@ -4546,6 +4528,7 @@ private:
             prepareAriaRecoveryOnLoad (backupAvailable);
         edit->editFileRetriever = [file] { return file; };
         edit->playInStopEnabled = true;
+        if (create) edit->clickTrackEmphasiseBars = true;
 
         auto& devices = engine.getDeviceManager();
         for (auto& midi : devices.getMidiInDevices())
@@ -4633,7 +4616,6 @@ private:
                 }
                 else if (showNativeInstrument (*savedPlugin))
                 {
-                    setDockMode (instrumentWorkspace.rememberedLayout());
                     if (restoreFloating) instrumentWorkspace.setFloating (true);
                 }
             }
@@ -4659,6 +4641,58 @@ private:
                              + " original AU state(s); Save remains locked until user confirmation.");
         }
         resized();
+    }
+
+    void createTrackFromMenu (int choice)
+    {
+        if (! canEditRegions()) return;
+        if (choice == 1)
+        {
+            if (addTrack ("Instrument") != nullptr)
+            {
+                dockMode = DockMode::split;
+                workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
+                showWorkspace (Workspace::instruments);
+            }
+        }
+        else if (choice == 2 && canInsertPlugin() && browser.loadSampler)
+        {
+            dockMode = DockMode::split;
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
+            browser.loadSampler (true);
+        }
+        else if (choice == 3 && canInsertPlugin() && browser.loadSynth)
+        {
+            dockMode = DockMode::split;
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
+            browser.loadSynth ("Analog", true);
+        }
+        else if (choice == 4)
+        {
+            if (addTrack ("Audio") != nullptr)
+            {
+                showWorkspace (Workspace::closed);
+                setInspectorOpen (true);
+            }
+        }
+    }
+
+    void showAddTrackMenu()
+    {
+        if (! canEditRegions()) return;
+        PopupMenu menu;
+        menu.addItem (1, "Instrument Track");
+        menu.addItem (2, "Studio Sampler Track", canInsertPlugin());
+        menu.addItem (3, "Studio Synth Track", canInsertPlugin());
+        menu.addItem (4, "Audio Track");
+        const SafePointer<StudioView> safe (this);
+        const auto generation = projectGeneration;
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&addTrackButton),
+            [safe, generation] (int choice)
+            {
+                if (safe != nullptr && safe->projectGeneration == generation)
+                    safe->createTrackFromMenu (choice);
+            });
     }
 
     te::AudioTrack* addTrack (const String& kind)
@@ -6073,8 +6107,8 @@ int StudioView::runUnifiedStageReview (const File& output)
         || unplaced->state.getChildWithName (seatType).isValid() || studio::seating::read (edit->state) != archived)
         return fail ("reopen legacy placements, routing and reference without automatic conversion");
 
-    setDockMode (DockMode::expanded);
     showWorkspace (Workspace::stage);
+    setDockMode (DockMode::expanded);
     const auto refresh = [&] (te::AudioTrack* selection)
     {
         spatialWorkspace.refresh (te::getAudioTracks (*edit), selection != nullptr ? Array<te::AudioTrack*> { selection } : Array<te::AudioTrack*>(), true, true);
@@ -6796,7 +6830,8 @@ int StudioView::runInterfaceReview (const File& output)
         return fail ("composer navigation contains redundant rail destinations");
     setDockMode (DockMode::split);
     showWorkspace (Workspace::stage);
-    if (! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
+    if (dockMode != DockMode::split || workspaceHeight != studio::appearance.defaultWorkspaceHeight (getHeight())
+        || ! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
         || contextLinks()[0].destination != Workspace::rooms
         || contextLinks()[1].destination != Workspace::microphones)
         return fail ("Stage exposes Rooms and Microphones");
@@ -6943,8 +6978,8 @@ int StudioView::runInterfaceReview (const File& output)
         }
     applyAppearance (100, 100, false);
     setSize (1280, 800);
-    setDockMode (DockMode::expanded);
     showWorkspace (Workspace::mix);
+    setDockMode (DockMode::expanded);
     trackActions.selectTrack (tracks[1]->itemID);
     if (selectedTrack() != tracks[1]) return fail ("Mixer and arrangement selection");
     mixer.refresh (tracks, selectedTrack(), true, true);
@@ -7031,9 +7066,14 @@ int StudioView::runInterfaceReview (const File& output)
     setDockMode (DockMode::split);
     mixer.refresh (tracks, selectedTrack(), true, true);
     if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
-    if (workspacePanel.getHeight() < mixer.minimumContentHeight()
+    // M39A explicitly adopts a shorter consistent dock. Require the complete
+    // console to remain reachable in its scrolling viewport, not an oversized dock.
+    if (workspaceHeight != studio::appearance.defaultWorkspaceHeight (getHeight())
+        || dockMode != DockMode::split || ! workspaceViewport.isVisible()
+        || mixer.getHeight() < mixer.minimumContentHeight()
+        || (mixer.getHeight() > workspaceViewport.getHeight() && ! workspaceViewport.getVerticalScrollBar().isVisible())
         || performance.isVisible() || articulationStrip.isVisible())
-        return fail ("Mixer-focused Split must leave the console fully usable");
+        return fail ("standard Split height and complete scrollable Mixer");
     if (! capture ("mixer-focused-1280x800.png"))
         return fail ("write Mixer-first arrangement screenshot");
     setDockMode (DockMode::expanded);
