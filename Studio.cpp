@@ -5285,6 +5285,7 @@ private:
                 }
                 safe->ariaCatalog = std::move (finished->catalog);
                 safe->browser.setAriaCatalog (safe->ariaCatalog);
+                if(safe->designerWindow)safe->designerWindow->designer().setInstalledCatalog(safe->ariaCatalog);
                 safe->pluginStatus (cancelled ? "Scan saved. Select Resume interrupted scan to continue."
                                               : "ARIA catalog updated.");
                 AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon, "ARIA discovery",
@@ -6674,6 +6675,8 @@ private:
         if(designerWindow==nullptr)designerWindow=std::make_unique<studio::designer::DesignerWindow>(context);
         auto& panel=designerWindow->designer();
         panel.cancelLive();
+        panel.setInstalledCatalog(ariaCatalog);
+        panel.openLibraryScanner=[this]{if(designerWindow)showAriaCatalogMenu(designerWindow->designer());};
         const Component::SafePointer<StudioView> safe(this);
         const auto generation=projectGeneration;
         panel.beginLearn=[safe,trackId,pluginId,generation]{
