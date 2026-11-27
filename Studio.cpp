@@ -33,6 +33,7 @@ using namespace tracktion::literals;
 #include "ArticulationPalette.h"
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
+#include "SpatialState.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
@@ -6527,8 +6528,11 @@ private:
         auto* vp=track!=nullptr?track->getVolumePlugin():nullptr;
         const studio::designer::LiveValues empty;
         const auto& values=available?state->values:empty;
-        universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0);
-        if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0);
+        const auto seat=track?track->state.getChildWithName(studio::spatial::seatType):ValueTree{};
+        const bool roomEnabled=mixerEnabled&&seat.isValid()&&studio::spatial::hasRoomSend(*track);
+        const auto trim=seat.isValid()?studio::spatial::readSeat(seat).sendTrim:-60.0f;
+        universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
+        if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
         if(changed)resized();
     }
     void configureUniversalSurface(studio::designer::UniversalSurface& surface)
@@ -6543,6 +6547,15 @@ private:
                 ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
                 ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin)return;
             if(auto* p=t->getVolumePlugin()){if(volume)p->setVolumeDb((float)value);else p->setPan((float)value);}
+        };
+        surface.roomChange=[this](double value){
+            auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin||!studio::spatial::hasRoomSend(*t))return;
+            auto tree=t->state.getChildWithName(studio::spatial::seatType);if(!tree.isValid())return;
+            auto seat=studio::spatial::readSeat(tree);seat.sendTrim=juce::jlimit(-60.0f,0.0f,(float)value);
+            tree.setProperty("trim",seat.sendTrim,&edit->getUndoManager());
+            studio::spatial::updateRoomSend(*t,seat.position,seat.sendTrim);
         };
         surface.perform=[this](const String& id,int value){performUniversal(id,value);};
     }
