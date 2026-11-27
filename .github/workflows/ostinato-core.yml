@@ -9,6 +9,7 @@ on:
       - OstinatoCore.h
       - OstinatoAudition.h
       - OstinatoLibrary.h
+      - OstinatoPrint.h
       - tests/OstinatoCoreTests.cpp
       - .github/workflows/ostinato-core.yml
   pull_request:
@@ -19,6 +20,7 @@ on:
       - OstinatoCore.h
       - OstinatoAudition.h
       - OstinatoLibrary.h
+      - OstinatoPrint.h
       - tests/OstinatoCoreTests.cpp
       - .github/workflows/ostinato-core.yml
 
