@@ -7498,6 +7498,54 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     if (sampler == nullptr || instrumentWorkspace.isFloating()) return fail ("Sampler must open docked");
     const auto samplerTrack = sampler->getOwnerTrack()->itemID;
     const auto samplerID = sampler->itemID;
+    {
+        // Exercise the production MIDI print path using two real native
+        // instruments in the isolated integration review project.
+        using namespace studio::ostinato;
+        Pattern source;source.name="Print review";
+        source.rows[0].trackId=synthTrack.toString().toStdString();
+        source.rows[0].steps[0].enabled=true;source.rows[0].steps[0].gate=500;
+        if(!source.addRow())return fail("print review second row");
+        source.rows[1].trackId=samplerTrack.toString().toStdString();
+        source.rows[1].channel=2;source.rows[1].pitch=72;source.rows[1].steps[1].enabled=true;
+        auto* a=trackById(synthTrack);auto* b=trackById(samplerTrack);
+        if(!a||!b)return fail("print review tracks");
+        const auto countA=a->getClips().size(),countB=b->getClips().size();
+        const auto saved=edit->state.getProperty("studioOstinatoPattern");
+        const bool hadPattern=edit->state.hasProperty("studioOstinatoPattern");
+        edit->state.setProperty("studioOstinatoPattern",String::fromUTF8(encode(source).c_str()),nullptr);
+        auto& transport=edit->getTransport();const auto oldPosition=transport.getPosition();
+        const auto at=edit->tempoSequence.toTime(te::BeatPosition::fromBeats(8));
+        transport.setPosition(at);
+        edit->dispatchPendingUpdatesSynchronously();
+        te::MidiClip::Ptr printed;int regions=0;
+        auto result=printOstinato(source,2,ConductingValues{},printed,regions);
+        if(result.failed()){std::fprintf(stderr,"Print review: %s\\n",result.getErrorMessage().toRawUTF8());return fail("production MIDI print");}
+        edit->dispatchPendingUpdatesSynchronously();
+        if(regions!=2||!printed||a->getClips().size()!=countA+1||b->getClips().size()!=countB+1)
+            return fail("print creates two destination regions");
+        const auto notes=printed->getSequence().getNotes();
+        if(printed->getPosition().getStart()!=at||notes.size()!=2||
+           notes[0]->getStartBeat()!=te::BeatPosition()||
+           notes[0]->getLengthBeats()!=te::BeatDuration::fromBeats(.125))
+            return fail("print exact beat timing");
+        te::MidiClip::Ptr rejected;int rejectedCount=0;
+        if(printOstinato(source,2,ConductingValues{},rejected,rejectedCount).wasOk()||rejectedCount!=0)
+            return fail("print must reject overlapping destination regions");
+        printed=nullptr;
+        auto& undo=edit->getUndoManager();
+        if(!undo.undo())return fail("print undo");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(a->getClips().size()!=countA||b->getClips().size()!=countB)return fail("print undo removes both regions");
+        if(!undo.redo())return fail("print redo");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(a->getClips().size()!=countA+1||b->getClips().size()!=countB+1)return fail("print redo restores both regions");
+        if(!undo.undo())return fail("clean print fixture");
+        edit->dispatchPendingUpdatesSynchronously();
+        if(hadPattern)edit->state.setProperty("studioOstinatoPattern",saved,nullptr);
+        else edit->state.removeProperty("studioOstinatoPattern",nullptr);
+        transport.setPosition(oldPosition);
+    }
     const auto makeSample = [&] (const char* name, float frequency)
     {
         const auto sample = folder.getChildFile (name);
