@@ -1,0 +1,45 @@
+name: Ostinato core tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feature/studio-ostinato-*'
+    paths:
+      - OstinatoCore.h
+      - tests/OstinatoCoreTests.cpp
+      - .github/workflows/ostinato-core.yml
+  pull_request:
+    branches:
+      - integration/studio-0.2-m44-consolidated
+      - 'feature/studio-ostinato-*'
+    paths:
+      - OstinatoCore.h
+      - tests/OstinatoCoreTests.cpp
+      - .github/workflows/ostinato-core.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  standalone:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run optimized dependency-free core tests
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror tests/OstinatoCoreTests.cpp -o "$RUNNER_TEMP/ostinato-core"
+          "$RUNNER_TEMP/ostinato-core"
+      - name: Compile and run address and undefined behavior sanitizers
+        run: |
+          clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/OstinatoCoreTests.cpp -o "$RUNNER_TEMP/ostinato-core-sanitized"
+          "$RUNNER_TEMP/ostinato-core-sanitized"
