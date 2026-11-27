@@ -91,6 +91,9 @@ public:
         return result;
     }
 
+    juce::StringArray allTechniques() const { return keys(techniques); }
+    juce::StringArray allControls() const { return keys(controls); }
+
     // Explicit instrument suggestions first. Family-level terms are only a
     // broad discovery list, never evidence of a playable articulation.
     juce::StringArray candidateTechniques(const juce::String& id) const
@@ -112,6 +115,12 @@ private:
     using Index = std::map<juce::String, juce::var>;
     juce::var root;
     Index instruments, techniques, controls, families;
+    static juce::StringArray keys(const Index& index)
+    {
+        juce::StringArray result;
+        for (const auto& entry : index) result.add(entry.first);
+        return result;
+    }
     static bool index(const juce::var& array, Index& out)
     {
         auto* rows = array.getArray();
