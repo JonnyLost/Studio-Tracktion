@@ -288,7 +288,7 @@ private:
 
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
-                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::fixed?String(j+1):int(row.pitchMode)>=5?String(int(j)+step.interval):String(step.interval);g.drawFittedText(label,rect,Justification::centred,1);}
+                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::fixed?String(j+1):int(row.pitchMode)>=5?String(int(j)+step.interval):String(step.interval);if(step.enabled&&step.variationMask!=15){label+="\n";for(int k=0;k<5;++k)if(step.variationMask&(1u<<k))label+=String::charToString("ABCDF"[k]);}g.drawFittedText(label,rect,Justification::centred,2);}
                 }
                 g.setColour(colours::text);
                 String detail=String(row.steps.size());
@@ -362,6 +362,7 @@ private:
             auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);set(gate,s.gate);set(interval,s.interval);set(densityThreshold,s.densityThreshold);
             accent.setToggleState(s.accent,dontSendNotification);enabled.setToggleState(s.enabled,dontSendNotification);
         }
+        variationButton.setTooltip("Sequence: "+String::fromUTF8(pattern.variations.sequence.c_str())+" — click to edit variations, fills and evolution.");
         if(!auditioning)reflectHarmony(pattern.harmony);
         updateTimingFields();
     }
