@@ -16,8 +16,9 @@ struct Binding
         return channel>=0 && channel<=16 && number>=0 && number<=127
             && ((type=="unassigned" && channel==0 && number==0 && value==100)
              || (type=="note" && value>=1 && value<=127)
-             || ((type=="cc" || type=="pressure") && value>=0 && value<=127)
-             || (type=="bend" && value>=0 && value<=16383));
+             || (type=="cc" && number<120 && value>=0 && value<=127)
+             || (type=="pressure" && number==0 && value>=0 && value<=127)
+             || (type=="bend" && number==0 && value>=0 && value<=16383));
     }
     int resolvedChannel(int profileChannel) const {return channel==0?profileChannel:channel;}
     bool operator==(const Binding&) const = default;
@@ -102,8 +103,14 @@ struct Profile
                 n->getStringAttribute("kind"),n->getStringAttribute("presentation"),n->getBoolAttribute("transport"),n->getBoolAttribute("full")});
             if(version=="2") {
                 auto& b=p.elements.back().binding;
-                b.type=n->getStringAttribute("binding"); b.channel=n->getIntAttribute("bindingChannel",-1);
-                b.number=n->getIntAttribute("bindingNumber",-1); b.value=n->getIntAttribute("bindingValue",-1);
+                b.type=n->getStringAttribute("binding");
+                auto readInt=[&](const char* field,int& value){
+                    const auto text=n->getStringAttribute(field);
+                    if(text.isEmpty()||text.length()>5||!text.containsOnly("0123456789"))return false;
+                    value=text.getIntValue();return true;
+                };
+                if(!readInt("bindingChannel",b.channel)||!readInt("bindingNumber",b.number)||!readInt("bindingValue",b.value))
+                    return juce::Result::fail("Invalid binding number.");
             }
         }
         if (auto r=p.validate(); r.failed()) return r;
