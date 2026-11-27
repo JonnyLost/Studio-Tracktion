@@ -2566,6 +2566,7 @@ private:
     studio::ostinato::ConductingInput ostinatoInput;
     String ostinatoDevice;
     int ostinatoChannel=1;
+    studio::ostinato::ConductingMapping ostinatoMapping;
     std::size_t ostinatoTempoHash=0;
 
     struct PendingPlugin
@@ -6503,6 +6504,28 @@ private:
             if(safe&&safe->projectGeneration==generation&&safe->canEditOstinato()&&safe->ostinatoWindow)
             {safe->ostinatoDevice.clear();safe->ostinatoWindow->editor().hardwareLabel("MIDI input: Off");}
         });
+        PopupMenu intensityMenu,densityMenu;
+        for(int cc=0;cc<120;++cc)
+        {
+            auto intensity=ostinatoMapping;intensity.intensityCC=cc;
+            auto density=ostinatoMapping;density.densityCC=cc;
+            if(intensity.valid())intensityMenu.addItem("CC "+String(cc),true,cc==ostinatoMapping.intensityCC,[safe,generation,cc]{
+                if(!safe||safe->projectGeneration!=generation||!safe->canEditOstinato()||!safe->ostinatoWindow)return;
+                auto m=safe->ostinatoMapping;m.intensityCC=cc;if(!m.valid())return;
+                safe->ostinatoMapping=m;safe->ostinatoWindow->editor().setConductingMapping(m);
+            });
+            if(density.valid())densityMenu.addItem("CC "+String(cc),true,cc==ostinatoMapping.densityCC,[safe,generation,cc]{
+                if(!safe||safe->projectGeneration!=generation||!safe->canEditOstinato()||!safe->ostinatoWindow)return;
+                auto m=safe->ostinatoMapping;m.densityCC=cc;if(!m.valid())return;
+                safe->ostinatoMapping=m;safe->ostinatoWindow->editor().setConductingMapping(m);
+            });
+        }
+        menu.addSubMenu("Intensity controller",intensityMenu);
+        menu.addSubMenu("Density controller",densityMenu);
+        menu.addItem("Restore CC1 / CC11 defaults",[safe,generation]{
+            if(!safe||safe->projectGeneration!=generation||!safe->canEditOstinato()||!safe->ostinatoWindow)return;
+            safe->ostinatoMapping={};safe->ostinatoWindow->editor().setConductingMapping(safe->ostinatoMapping);
+        });
         menu.addSectionHeader("Dedicated conducting input (no track routing)");
         if(followSelectedMidi)menu.addItem(9000,"Turn off MIDI Keyboard Follows Selected Track first",false);
         for(const auto& device:engine.getDeviceManager().getMidiInDevices())
@@ -6581,7 +6604,7 @@ private:
         ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoTempoHash=edit->tempoSequence.getInternalSequence().hash();ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
         ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
         ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
-        if(input)ostinatoInput.attach(std::move(input),ostinatoChannel);
+        if(input)ostinatoInput.attach(std::move(input),ostinatoChannel,ostinatoMapping);
         ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();
         ostinatoWindow->editor().auditionState(true,"Audition playing — avoid other MIDI input. Stop to edit.");
         refreshOstinato();
@@ -6630,6 +6653,7 @@ private:
         panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
         panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
         panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        panel.setConductingMapping(ostinatoMapping);
         panel.chooseHardware=[safe,generation](Component* c){if(safe&&safe->projectGeneration==generation)safe->chooseOstinatoHardware(c);};
         panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
         panel.stopAudition=[safe]{if(safe!=nullptr)safe->stopOstinato("Audition stopped.");};
