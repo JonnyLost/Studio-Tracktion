@@ -23,6 +23,8 @@ using namespace tracktion::literals;
 #include "StudioInstrumentIcons.h"
 #include "InstrumentDesigner.h"
 #include "UniversalInstrumentView.h"
+#include "InstrumentTranslationPlan.h"
+#include "InstrumentTranslationReview.h"
 #include "InstrumentLearnInput.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -2003,7 +2005,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile, mArmPerformanceWrite, mCancelPerformanceWrite
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile, mArmPerformanceWrite, mCancelPerformanceWrite, mTranslateInstrumentProfile
     };
 
     PopupMenu applicationMenu (int index)
@@ -2125,6 +2127,7 @@ public:
                 add (mBrowser, "Instrument Browser");
                 add (mInstrumentDesigner, "Instrument Designer...");
                 add (mUseInstrumentProfile, "Use Saved Instrument Profile...", workflowTrack()!=nullptr);
+                add (mTranslateInstrumentProfile, "Translate Instrument Performance...", canTranslateInstrument());
                 add (mUniversalInstrument, "Universal Instrument View...", universalAvailable);
                 add (mArmPerformanceWrite, "Arm Performance Write on Selected MIDI Clip", performanceWrite.has_value()||canArmPerformanceWrite(), performanceWrite.has_value());
                 add (mCancelPerformanceWrite, "Discard Pending Performance Write", performanceWrite.has_value());
@@ -2210,6 +2213,7 @@ public:
             case mDetachInstrumentProfile: detachUniversalProfile(); break;
             case mArmPerformanceWrite: togglePerformanceWrite(); break;
             case mCancelPerformanceWrite: discardPerformanceWrite(); break;
+            case mTranslateInstrumentProfile: chooseInstrumentTranslation(); break;
             case mAtelier:
                 if (auto* target = workflowTrack())
                     if (auto* inst = studio::findInstrument (*target))
@@ -6778,9 +6782,101 @@ private:
         if(!universalWindow){universalWindow=std::make_unique<studio::designer::UniversalWindow>();configureUniversalSurface(universalWindow->panel());}
         refreshUniversalInstrument();universalWindow->setVisible(true);universalWindow->toFront(true);
     }
+    static juce::Array<te::MidiClip*> translationClips(te::AudioTrack& track)
+    {
+        juce::Array<te::MidiClip*> clips;
+        for(auto* c:track.getClips())if(auto* midi=dynamic_cast<te::MidiClip*>(c))clips.add(midi);
+        return clips;
+    }
+    static bool hasNamedPerformance(te::AudioTrack& track)
+    {
+        for(auto* clip:translationClips(track))
+        {
+            if(!clip->hasValidSequence())continue;
+            for(auto* n:clip->getSequence().getNotes())if(studio::designer::isNamedEvent(n->state))return true;
+            for(auto* c:clip->getSequence().getControllerEvents())if(studio::designer::isNamedEvent(c->state))return true;
+        }
+        return false;
+    }
+    bool canTranslateInstrument()
+    {
+        auto* t=workflowTrack();
+        return t&&edit&&canEditRegions()&&!ariaReviewPending&&!pendingPlugin.has_value()&&!performanceWrite&&!chaseStarting
+            &&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!t->isFrozen(te::Track::anyFreeze)
+            &&universalHosted(t)!=nullptr&&t->state.hasProperty("studioUniversalInstrument");
+    }
+    void chooseInstrumentTranslation()
+    {
+        using namespace studio::designer;
+        if(!canTranslateInstrument())return;
+        auto* t=workflowTrack();auto* hosted=universalHosted(t);
+        const auto sourceXml=t->state.getProperty("studioUniversalInstrument").toString();
+        const auto source=Attachment::parse(sourceXml);
+        if(!source){message.setText("The source profile snapshot is missing or invalid.",dontSendNotification);return;}
+        auto profiles=ProfileStore(ProfileStore::localDirectory()).list();
+        PopupMenu menu;int count=0;
+        for(const auto& p:profiles)
+        {
+            ++count;
+            const bool compatible=p.instrument==source->profile.instrument&&p.pluginId==hosted->desc.createIdentifierString()
+                &&p.pluginVersion==hosted->desc.version&&p.patch.trim().isNotEmpty();
+            menu.addItem(count,p.name+" — "+p.library+" / "+p.patch,compatible);
+        }
+        if(profiles.empty()){message.setText("Create and save a destination profile first.",dontSendNotification);return;}
+        const auto trackId=t->itemID,pluginId=hosted->itemID;
+        const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        menu.showMenuAsync(PopupMenu::Options(),[safe,profiles,trackId,pluginId,generation,sourceXml](int chosen){
+            if(safe==nullptr||chosen<=0||chosen>(int)profiles.size()||!safe->canTranslateInstrument()
+                ||!safe->designerTarget(trackId,pluginId,generation))return;
+            auto* target=safe->trackById(trackId);
+            if(!target||target->state.getProperty("studioUniversalInstrument").toString()!=sourceXml)return;
+            const auto source=Attachment::parse(sourceXml);if(!source)return;
+            const auto p=profiles[(size_t)chosen-1];
+            auto plan=planTranslation(translationClips(*target),source->profile,p);
+            const auto expected=plan.fingerprint;
+            const auto expectedReport=plan.report();
+            String report="SOURCE: "+source->profile.name+" / "+source->profile.library+" / "+source->profile.patch+
+                "\nDESTINATION: "+p.name+" / "+p.library+" / "+p.patch+
+                "\nMIDI channel "+String(p.channel)+", slot "+String(p.slot)+"\n\n"+
+                "Review every mapping. Matching semantic IDs do not prove that muted, solo or other patch variants sound equivalent. "
+                "Confirm the destination patch is already loaded and auditioned. The original plug-in is not restored by Undo. "
+                "Ordinary notes and untagged controllers are not translated. Their meaning may differ in the new library. "
+                "Save a separate project copy before changing instruments.\n\n"+expectedReport;
+            DialogWindow::LaunchOptions options;
+            options.dialogTitle="Studio — Review instrument translation";
+            options.dialogBackgroundColour=studio::colours::canvas;
+            options.useNativeTitleBar=true;options.escapeKeyTriggersCloseButton=true;options.resizable=true;
+            options.content.setOwned(new TranslationReview(report,plan.ready(),
+                [safe,trackId,pluginId,generation,sourceXml,p,expected,expectedReport]{
+                    if(safe==nullptr||!safe->canTranslateInstrument())return;
+                    auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+                    auto* target=safe->trackById(trackId);
+                    if(!hosted||!target||target->state.getProperty("studioUniversalInstrument").toString()!=sourceXml
+                        ||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version)return;
+                    const auto source=Attachment::parse(sourceXml);if(!source)return;
+                    auto current=planTranslation(translationClips(*target),source->profile,p);
+                    if(!current.ready()||current.fingerprint!=expected||current.report()!=expectedReport)
+                    {safe->message.setText("Translation preview changed. Review again; no edits were made.",dontSendNotification);return;}
+                    const auto xml=Attachment{p,pluginId.toString()}.serialise();if(xml.isEmpty())return;
+                    safe->releaseUniversalNote();
+                    auto& undo=safe->edit->getUndoManager();
+                    if(auto result=applyTranslation(current,p,undo);result.failed())
+                    {safe->message.setText(result.getErrorMessage(),dontSendNotification);return;}
+                    target->state.setProperty("studioUniversalInstrument",xml,&undo);
+                    undo.beginNewTransaction();
+                    safe->universalStates.erase(trackId.toString());
+                    safe->refreshUniversalInstrument();safe->piano.refresh();
+                    safe->message.setText("Translated "+String((int)current.events.size())+" named events. Undo restores the original MIDI and profile, not the plug-in.",dontSendNotification);
+                }));
+            options.content->setSize(jmax(420,jmin(780,safe->getWidth()-40)),jmax(300,jmin(540,safe->getHeight()-70)));
+            options.launchAsync();
+        });
+    }
     void detachUniversalProfile()
     {
-        auto* t=workflowTrack();if(!t||!canEditRegions()||t->isFrozen(te::Track::anyFreeze))return;
+        auto* t=workflowTrack();if(!t||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||performanceWrite||chaseStarting)return;
+        if(hasNamedPerformance(*t)){message.setText("This track has named MIDI events. Keep the source profile or use Translate Instrument Performance.",dontSendNotification);return;}
         releaseUniversalNote();edit->getUndoManager().beginNewTransaction("Detach instrument profile");
         t->state.removeProperty("studioUniversalInstrument",&edit->getUndoManager());
         refreshUniversalInstrument();
@@ -6820,6 +6916,13 @@ private:
                     if(!hosted||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version)return;
                     auto* target=safe->trackById(trackId);if(!target)return;
                     const auto xml=studio::designer::Attachment{p,pluginId.toString()}.serialise();if(xml.isEmpty())return;
+                    if(safe->performanceWrite||safe->chaseStarting)return;
+                    if(hasNamedPerformance(*target))
+                    {
+                        auto old=studio::designer::Attachment::parse(target->state.getProperty("studioUniversalInstrument").toString());
+                        if(!old||old->profile!=p)
+                        {safe->message.setText("Named MIDI events exist. Use Translate Instrument Performance to change profiles.",dontSendNotification);return;}
+                    }
                     safe->releaseUniversalNote();safe->edit->getUndoManager().beginNewTransaction("Use instrument profile");
                     target->state.setProperty("studioUniversalInstrument",xml,&safe->edit->getUndoManager());
                     safe->refreshUniversalInstrument();
