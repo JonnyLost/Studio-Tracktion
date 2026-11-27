@@ -94,8 +94,13 @@ public:
     explicit ProfileStore(juce::File folder) : directory(std::move(folder)) {}
     static juce::File localDirectory()
     {
+       #if JUCE_MAC
+        return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+            .getChildFile("Library/Application Support/Studio/Instrument Profiles");
+       #else
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("Studio").getChildFile("Instrument Profiles");
+            .getChildFile("Studio/Instrument Profiles");
+       #endif
     }
     juce::Result save(const Profile& p) const
     {
