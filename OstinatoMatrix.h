@@ -201,6 +201,16 @@ public:
         if(matrix.cellAt(matrix.xFor(stored.rowBoundary(stored.rows[1],4))+1,1)!=4)return false;
         setContext(encode(stored),tracks,false);toggle(selected,4);if(stored!=before)return false;
         setContext(encode(stored),tracks,true);remove.onClick();if(stored.rows.size()!=1)return false;
+        const auto factory=factoryPatterns();
+        if(factory.empty()||!commit(factory.front().pattern))return false;
+        if(stored!=factory.front().pattern||!libraryButton.isEnabled())return false;
+        // Exercise real disk roundtrip in an isolated temporary file, never in
+        // the user's library. A malformed replacement must not mutate output.
+        juce::TemporaryFile fixture(".studioostinato");
+        if(!writePresetFile(fixture.getFile(),stored))return false;
+        Pattern loaded;
+        if(!readPresetFile(fixture.getFile(),loaded)||loaded!=stored)return false;
+        if(!fixture.getFile().replaceWithText("broken")||readPresetFile(fixture.getFile(),loaded)||loaded!=stored)return false;
         write={};return true;
     }
    #endif
@@ -498,19 +508,34 @@ private:
                     if(!r.trackId.empty()&&t.id==r.trackId&&Pattern::textValid(t.name,80))r.name=t.name;
         return portablePattern(std::move(p));
     }
-    void confirmLibraryLoad(Pattern next)
+    void confirmLibraryLoad(Pattern next,const juce::String& description={})
     {
         using namespace juce;
         if(!writable||auditioning||!next.valid())return;
         const auto snapshot=pattern;
         auto* w=new AlertWindow("Load pattern?", "Replace the current matrix with "+String::fromUTF8(next.name.c_str())
-            +"? Studio Undo can restore the current matrix. Loaded rows are unassigned; project-specific articulation mappings are cleared. Assign each role to a track before audition.",MessageBoxIconType::NoIcon,this);
+            +"? "+(description.isNotEmpty()?description+"\n\n":String{})+"Studio Undo can restore the current matrix. Loaded rows are unassigned; project-specific articulation mappings are cleared. Assign each role to a track before audition.",MessageBoxIconType::NoIcon,this);
         w->addButton("Load",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
         const Component::SafePointer<MatrixEditor> safe(this);
         w->enterModalState(true,ModalCallbackFunction::create([safe,snapshot,next=std::move(next)](int result){
             if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
             if(safe->commit(next)){safe->select(next.rows.front().id,0);safe->say("Pattern loaded — assign each role to a track.");}
         }),true);
+    }
+    static bool writePresetFile(const juce::File& file,const Pattern& p)
+    {
+        auto bytes=encodePreset(p);
+        if(bytes.empty()||!presetUtf8(bytes))return false;
+        juce::TemporaryFile temp(file);
+        return temp.getFile().replaceWithData(bytes.data(),bytes.size())&&temp.overwriteTargetFileWithTemporary();
+    }
+    static bool readPresetFile(const juce::File& file,Pattern& output)
+    {
+        juce::FileInputStream input(file);
+        const auto size=input.getTotalLength();
+        if(!input.openedOk()||size<=0||size>static_cast<juce::int64>(maxPresetBytes))return false;
+        std::string bytes(size_t(size),'\0');
+        return input.read(bytes.data(),int(size))==size&&input.isExhausted()&&decodePreset(bytes,output);
     }
     void choosePresetFile(bool save)
     {
@@ -537,24 +562,14 @@ private:
             {
                 if(!file.hasFileExtension(".studioostinato"))
                 {safe->say("Use the .studioostinato extension.");return;}
-                auto bytes=encodePreset(portable);
-                if(bytes.empty()){safe->say("Pattern cannot be saved.");return;}
-                TemporaryFile temp(file);
-                if(!temp.getFile().replaceWithData(bytes.data(),bytes.size())||!temp.overwriteTargetFileWithTemporary())
+                if(!writePresetFile(file,portable))
                 {safe->say("Could not save pattern; check folder permissions.");return;}
                 safe->say("Portable pattern saved — routing and keyswitch IDs omitted.");
             }
             else
             {
-                FileInputStream input(file);
-                const auto size=input.getTotalLength();
-                if(!input.openedOk()||size<=0||size>static_cast<juce::int64>(maxPresetBytes))
-                {safe->say("Cannot read pattern or file exceeds 4 MB.");return;}
-                std::string bytes(size_t(size),'\\0');
-                if(input.read(bytes.data(),int(size))!=size||!input.isExhausted())
-                {safe->say("Pattern read incomplete or changed during read.");return;}
                 Pattern next;
-                if(!decodePreset(bytes,next)){safe->say("Invalid or unsupported pattern; current matrix unchanged.");return;}
+                if(!readPresetFile(file,next)){safe->say("Invalid, oversized or unreadable pattern; current matrix unchanged.");return;}
                 safe->confirmLibraryLoad(std::move(next));
             }
         });
@@ -591,8 +606,8 @@ private:
             {
                 auto p=entries[i].pattern;
                 const auto label=String::fromUTF8(p.name.c_str())+" ("+String(int(p.rows.size()))+" rows)";
-                group.addItem(label,true,false,[safe,snapshot,p=std::move(p)]{
-                    if(safe&&safe->pattern==snapshot)safe->confirmLibraryLoad(p);
+                group.addItem(label,true,false,[safe,snapshot,p=std::move(p),description=String::fromUTF8(entries[i].description.c_str())]{
+                    if(safe&&safe->pattern==snapshot)safe->confirmLibraryLoad(p,description);
                 });
             }
             factory.addSubMenu(String::fromUTF8(category.c_str()),group);first=i;
