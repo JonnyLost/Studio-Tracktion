@@ -119,7 +119,7 @@ public:
 private:
     const TimedRender& render;
     size_t index=0,count=0;
-    std::array<Event,maxRows> held{};
+    std::array<Event,maxHeldNotes> held{};
     double previous=0;
     bool finished=false;
 };
