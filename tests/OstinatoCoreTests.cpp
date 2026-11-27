@@ -28,7 +28,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 8 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 9 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -349,5 +349,44 @@ int main()
     require(decode(encode(savedHarmony),restored)&&restored==savedHarmony,"schema 7 root rule round trip");
     const std::string v6="STUDIO_OSTINATO 6 \"Old\" 1 4 1 0 0 145\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 0 1 1 0 100 \"\"\n";
     require(decode(v6,restored)&&restored.harmony==cMajor,"schema 6 keeps bass-relative rule");
-    std::cout<<"O1–O7 ostinato core: "<<checks<<" checks passed\n";
+    Pattern variation;variation.rows[0].trackId="t";
+    auto& vs=variation.rows[0].steps;
+    vs[0].enabled=true;vs[0].variationMask=1;
+    vs[1].enabled=true;vs[1].variationMask=2;
+    vs[2].enabled=true;vs[2].variationMask=4;
+    vs[3].enabled=true;vs[3].variationMask=8;
+    vs[4].enabled=true;vs[4].variationMask=16;
+    vs[5].enabled=true;vs[5].densityThreshold=100;
+    variation.variations.sequence="ABCD";variation.variations.fillEvery=2;
+    variation.variations.densityStart=0;variation.variations.densityEnd=127;
+    Render vr;
+    require(compile(variation,{"t"},4,vr,error)&&vr.notes.size()==7,"A–D sequence, additive fills and density ramp");
+    const auto span=variation.duration(),cellTicks=variation.stepTicks();
+    const std::vector<Tick> starts{0,span+cellTicks,span+4*cellTicks,2*span+2*cellTicks,3*span+3*cellTicks,3*span+4*cellTicks,3*span+5*cellTicks};
+    for(size_t i=0;i<starts.size();++i)require(vr.notes[i].start==starts[i],"exact master-cycle switch");
+    require(decode(encode(variation),restored)&&restored==variation,"schema 8 roundtrip");
+    const std::string v7="STUDIO_OSTINATO 7 \"Old\" 1 4 1 0 0 145 0\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1 0\n1 0 90 750 0 0 1 1 0 100 \"\"\n";
+    require(decode(v7,restored)&&restored.variations==VariationPlan{}&&restored.rows[0].steps[0].variationMask==15,"schema 7 preserves notes in all variations");
+    auto invalidVariation=variation;invalidVariation.variations.sequence="AE";
+    require(!invalidVariation.valid(),"reject unknown variation");
+    invalidVariation=variation;invalidVariation.rows[0].steps[0].variationMask=32;
+    require(!invalidVariation.valid(),"reject invalid membership");
+    variation.variations.timing=200;variation.variations.velocity=30;variation.variations.seed=42;
+    Render humanA,humanB;
+    require(compile(variation,{"t"},4,humanA,error)&&compile(variation,{"t"},4,humanB,error)&&humanA.events==humanB.events,"seeded humanization reproducible");
+    require(humanA.notes.size()==vr.notes.size(),"humanization preserves these attacks");
+    for(size_t i=0;i<humanA.notes.size();++i)
+    {
+        const auto& n=humanA.notes[i];const auto& original=vr.notes[i];
+        require(std::abs(n.start-original.start)<=cellTicks/5&&n.start/span==original.start/span,"timing bounded and master transitions intact");
+        require(std::abs(n.velocity-original.velocity)<=30&&n.start<n.end&&n.end<=humanA.duration,"bounded velocity and duration");
+    }
+    variation.variations.seed=43;
+    require(compile(variation,{"t"},4,humanB,error)&&humanA.events!=humanB.events,"different seeds vary playback");
+    Pattern poly;poly.rows[0].trackId="t";poly.variations.sequence="AB";
+    require(poly.setRowTiming(1,TimingMode::independentCycle,3,3,4,1),"independent 3/4 row");
+    for(auto& step:poly.rows[0].steps){step.enabled=true;step.variationMask=2;}
+    require(compile(poly,{"t"},2,vr,error)&&vr.notes.size()==4,"independent cycle retains phase at master switch");
+    require(vr.notes.front().start==4*ticksPerQuarter&&vr.notes.back().start==7*ticksPerQuarter,"master switch does not restart polyrhythm");
+    std::cout<<"O1–O8 ostinato core: "<<checks<<" checks passed\n";
 }
