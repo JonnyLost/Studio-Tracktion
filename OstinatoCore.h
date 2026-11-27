@@ -37,7 +37,7 @@ struct Row
     // For independent cycles: one cycle = bars * numerator / denominator
     // whole notes. Shared-span rows ignore these canonical default fields.
     int numerator=4,denominator=4,bars=1;
-    Tick cycleTicks() const {return Tick(bars)*numerator*(ticksPerQuarter*4)/denominator;}
+    Tick cycleTicks() const {return meterValid(numerator,denominator,bars)?Tick(bars)*numerator*(ticksPerQuarter*4)/denominator:0;}
     static bool meterValid(int n,int d,int b)
     {
         return n>=1&&n<=32&&b>=1&&b<=16&&(d==1||d==2||d==4||d==8||d==16||d==32);
@@ -120,6 +120,13 @@ struct Pattern
     Tick rowCycle(const Row& r) const
     {
         return r.timing==TimingMode::independentCycle?r.cycleTicks():duration();
+    }
+    // Shared geometry for the future matrix UI and the compiler; cell may
+    // equal the count to obtain the exact right edge of the cycle.
+    Tick rowBoundary(const Row& r,size_t cell) const
+    {
+        if(r.steps.empty()||r.steps.size()>maxSteps||cell>r.steps.size())return 0;
+        return rowCycle(r)*static_cast<Tick>(cell)/static_cast<Tick>(r.steps.size());
     }
 };
 
@@ -208,7 +215,6 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         int route=int(it-next.routes.begin());
         if(it==next.routes.end())next.routes.push_back(row.trackId);
         const Tick span=p.rowCycle(row);
-        const Tick cells=static_cast<Tick>(row.steps.size());
         // Absolute rational boundaries: round down only once per boundary,
         // never add a rounded subdivision repeatedly. Every cycle ends exactly.
         // Precollect active indices so long silent/mostly silent cycles are cheap.
@@ -219,8 +225,8 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
             for(size_t index:activeSteps)
             {
                 const auto& s=row.steps[index];
-                const Tick offset=span*static_cast<Tick>(index)/cells;
-                const Tick nextOffset=span*static_cast<Tick>(index+1)/cells;
+                const Tick offset=p.rowBoundary(row,index);
+                const Tick nextOffset=p.rowBoundary(row,index+1);
                 const Tick start=origin+offset;
                 if(start>=next.duration)break;
                 if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
