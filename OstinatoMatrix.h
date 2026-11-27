@@ -58,6 +58,7 @@ public:
         remove.setTooltip("Remove the selected pattern row (Studio Undo can restore it). Does not delete an arrangement track.");
         applyRow.onClick=[this]{applyRowEdit();};
         mode.onChange=[this]{updateTimingFields();};
+        pitchMode.onChange=[this]{updatePitchCaption();};
         applyCell.onClick=[this]{applyCellEdit();};
         advanced.onClick=[this]{editAdvanced();};
         cell.onReturnKey=[this]{
@@ -351,6 +352,7 @@ private:
         if(auto* r=row())
         {
             pitchMode.setSelectedId(int(r->pitchMode)+1,dontSendNotification);
+            updatePitchCaption();
             set(pitch,r->pitch);set(channel,r->channel);set(division,(int)r->steps.size());
             mode.setSelectedId(int(r->timing)+1,dontSendNotification);set(numerator,r->numerator);
             denominator.setSelectedId(r->denominator,dontSendNotification);set(bars,r->bars);
@@ -360,6 +362,12 @@ private:
         }
         if(!auditioning)reflectHarmony(pattern.harmony);
         updateTimingFields();
+    }
+    void updatePitchCaption()
+    {
+        const int m=pitchMode.getSelectedId();
+        intervalLabel.setText(m>=6?"Arp phase":m==4||m==5?"Degree":"Semitones",juce::dontSendNotification);
+        interval.setTooltip(m>=6?"Signed offset to the cell-index arpeggio phase":m==4||m==5?"Signed zero-based scale or chord degree (0 = root)":"Signed semitones relative to the row or played root");
     }
     void updateTimingFields()
     {
@@ -444,6 +452,8 @@ private:
         StringArray chords{"Major","Minor","Diminished","Augmented","Sus2","Sus4","Dominant 7","Major 7","Minor 7","Root only","Keep current chord"};
         const std::array<unsigned,10> masks{0x091,0x089,0x049,0x111,0x085,0x0a1,0x491,0x891,0x489,1};
         w->addComboBox("root",roots,"Root");w->addComboBox("scale",scales,"Scale");w->addComboBox("chord",chords,"Chord");
+        w->addComboBox("rootRule",StringArray{"Lowest played note","Recognize chord root"},"Keyboard root rule");
+        w->getComboBoxComponent("rootRule")->setSelectedItemIndex(pattern.harmony.recognizeInversions?1:0,dontSendNotification);
         w->getComboBoxComponent("root")->setSelectedItemIndex(pattern.harmony.root,dontSendNotification);
         w->getComboBoxComponent("scale")->setSelectedItemIndex(int(pattern.harmony.scale),dontSendNotification);
         const auto found=std::find(masks.begin(),masks.end(),pattern.harmony.chord);
@@ -454,6 +464,7 @@ private:
             if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
             auto p=snapshot;
             p.harmony.root=w->getComboBoxComponent("root")->getSelectedItemIndex();
+            p.harmony.recognizeInversions=w->getComboBoxComponent("rootRule")->getSelectedItemIndex()==1;
             p.harmony.scale=static_cast<Scale>(w->getComboBoxComponent("scale")->getSelectedItemIndex());
             const int chord=w->getComboBoxComponent("chord")->getSelectedItemIndex();
             if(chord>=0&&chord<int(masks.size()))p.harmony.chord=masks[size_t(chord)];
