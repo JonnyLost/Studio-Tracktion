@@ -64,6 +64,18 @@ The approved `Studio_Icon_MinimalPro_Refined.png`, `Studio_Icon_MinimalPro_Refin
 
 Build and test details are tracked in the [M44 Actions runs](https://github.com/JonnyLost/Studio-Tracktion/actions?query=branch%3Aintegration%2Fstudio-0.2-m44-consolidated). The Intel Release job builds and exercises the executable through the repository's CTest suite. It verifies and launches a copy extracted outside the checkout before uploading the ZIP. A package without the approved icon is a preview. This workspace runs Linux and cannot install to the Intel Mac.
 
+### Linux Release results
+
+- Commit `e98693f` passed all 43 CTest cases locally under Xvfb and on GitHub's Linux push and draft PR runs. The revised hosted recording fixture in `2589191` also passed the full 43-case local suite and five consecutive standalone repetitions. Results include the SFZ, SoundFont/DLS and EXS fixtures, synthetic Garritan and universal conversion cases, ARIA catalog fixtures, sampler and synth audio integration, cue and stem delivery, and window-size and theme checks. [Linux push run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45939514066)
+- The M43 baseline adaptive test expected an earlier fixed 425-point Atelier dock. The updated fixture exercises the approved default Split height, divider lock, reachable viewport content and floating editor. Appearance checks also compile on the Intel SDK after qualifying the theme's `signal` role.
+- A copy of the Linux executable started from `/tmp` in Xvfb. In one smoke run, its first window appeared in 118 ms, with 45.8 MiB RSS and 22% of one core averaged over the next three seconds. The local sampler benchmark had zero misses across six configurations. An isolated synth matrix run recorded 11 individual block deadline misses across 60 configurations. These measurements describe the shared Linux environment. Startup and sustained performance on the Intel Mac remain manual checks.
+
+### Intel macOS results
+
+The Intel Release for `e98693f` built with the expected x86_64 architecture and passed 44 of 45 CTest cases. The Apple DLS test rendered different patches and checked independent tuning in two AU instances. The transport fixture failed to retain its synthetic MIDI take after Stop. Commit `2589191` keeps the hosted audio device processing through Stop and sends the test notes after the count-in transition. Its Intel verification and archive smoke test are tracked in the linked run. [Initial Intel results](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45939514039) · [Updated Intel run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941426971)
+
+### Manual Mac acceptance
+
 For manual acceptance, use both 1280×800 and 1024×640, including the largest global text size.
 
 - [ ] Launch the installed app from Finder, Spotlight and the Dock. Check the icon and startup time. Open an extracted copy from outside the source tree.
