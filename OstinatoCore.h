@@ -28,6 +28,7 @@ struct Step
     int densityThreshold=0; // 0 always plays, 1–127 optional at corresponding density
     int sustainCells=1,strikes=1,offset=0,chance=100; // offset in thousandths of the first cell
     std::string articulation{}; // exact saved mapping ID; no inferred vendor mapping
+    unsigned variationMask=15; // A/B/C/D bits 0–3; additive fill bit 4
     bool operator==(const Step&) const=default;
 };
 enum class PitchMode { fixed=0, intervals=1, followRoot=2, scaleDegree=3, chordDegree=4, arpUp=5, arpDown=6, arpBounce=7 };
@@ -130,12 +131,35 @@ struct Row
     std::vector<Step> steps=std::vector<Step>(16);
     bool operator==(const Row&) const=default;
 };
+struct VariationPlan
+{
+    std::string sequence="A"; // one letter per master cycle, repeats cyclically
+    int fillEvery=0,timing=0,velocity=0,seed=0; // timing /1000 cell; velocity MIDI units
+    int densityStart=127,densityEnd=127; // authored optional-step ceiling across finite render
+    bool valid()const
+    {
+        return !sequence.empty()&&sequence.size()<=64&&sequence.find_first_not_of("ABCD")==std::string::npos
+            &&fillEvery>=0&&fillEvery<=256&&timing>=0&&timing<=200&&velocity>=0&&velocity<=30
+            &&seed>=0&&seed<=999999&&densityStart>=0&&densityStart<=127&&densityEnd>=0&&densityEnd<=127;
+    }
+    unsigned mask(Tick cycle)const
+    {
+        return (1u<<unsigned(sequence[size_t(cycle%Tick(sequence.size()))]-'A'))
+            |(fillEvery>0&&(cycle+1)%fillEvery==0?16u:0u);
+    }
+    int ceiling(Tick cycle,int repeats)const
+    {
+        return repeats<=1?densityStart:densityStart+int((densityEnd-densityStart)*cycle/(repeats-1));
+    }
+    bool operator==(const VariationPlan&)const=default;
+};
 struct Pattern
 {
     std::string name="New ostinato";
     int stepCount=16,stepsPerQuarter=4;
     std::vector<Row> rows{Row{}};
     Harmony harmony;
+    VariationPlan variations;
     bool operator==(const Pattern&) const=default;
     Tick stepTicks() const {return stepsPerQuarter>0?ticksPerQuarter/stepsPerQuarter:0;}
     Tick duration() const {return stepTicks()*stepCount;}
@@ -145,7 +169,7 @@ struct Pattern
     }
     bool valid() const
     {
-        if(!harmony.valid()||!textValid(name,160)||stepCount<1||stepCount>maxSteps||stepsPerQuarter<1||stepsPerQuarter>32
+        if(!harmony.valid()||!variations.valid()||!textValid(name,160)||stepCount<1||stepCount>maxSteps||stepsPerQuarter<1||stepsPerQuarter>32
             ||ticksPerQuarter%stepsPerQuarter||rows.empty()||rows.size()>maxRows)return false;
         std::set<std::uint32_t> ids;
         for(const auto& r:rows)
@@ -160,7 +184,7 @@ struct Pattern
             for(size_t i=0;i<r.steps.size();++i)
             {
                 const auto& s=r.steps[i];
-                if(s.sustainCells<1||s.sustainCells>16||s.strikes<1||s.strikes>8||s.offset<-450||s.offset>450
+                if(s.variationMask<1||s.variationMask>31||s.sustainCells<1||s.sustainCells>16||s.strikes<1||s.strikes>8||s.offset<-450||s.offset>450
                     ||s.chance<0||s.chance>100||!textValid(s.articulation,128,true))return false;
                 if(s.enabled&&s.sustainCells>1)
                 {
@@ -235,11 +259,11 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 7 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<' '<<p.harmony.root<<' '<<int(p.harmony.scale)<<' '<<p.harmony.chord<<' '<<int(p.harmony.recognizeInversions)<<'\n';
+    out<<"STUDIO_OSTINATO 8 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<' '<<p.harmony.root<<' '<<int(p.harmony.scale)<<' '<<p.harmony.chord<<' '<<int(p.harmony.recognizeInversions)<<' '<<std::quoted(p.variations.sequence)<<' '<<p.variations.fillEvery<<' '<<p.variations.timing<<' '<<p.variations.velocity<<' '<<p.variations.seed<<' '<<p.variations.densityStart<<' '<<p.variations.densityEnd<<'\n';
     for(const auto& r:p.rows)
     {
         out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
-        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<' '<<s.sustainCells<<' '<<s.strikes<<' '<<s.offset<<' '<<s.chance<<' '<<std::quoted(s.articulation)<<'\n';
+        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<' '<<s.sustainCells<<' '<<s.strikes<<' '<<s.offset<<' '<<s.chance<<' '<<std::quoted(s.articulation)<<' '<<s.variationMask<<'\n';
     }
     return out.str();
 }
@@ -250,9 +274,14 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version<1||version>7)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>8)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     if(version>=6){int scale=-1;if(!(in>>p.harmony.root>>scale>>p.harmony.chord)||scale<0||scale>6)return false;p.harmony.scale=static_cast<Scale>(scale);if(!p.harmony.valid())return false;}
     if(version>=7){int recognize=-1;if(!(in>>recognize)||recognize<0||recognize>1)return false;p.harmony.recognizeInversions=recognize==1;}
+    if(version>=8)
+    {
+        auto& v=p.variations;
+        if(!(in>>std::quoted(v.sequence)>>v.fillEvery>>v.timing>>v.velocity>>v.seed>>v.densityStart>>v.densityEnd)||!v.valid())return false;
+    }
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -271,7 +300,7 @@ inline bool decode(const std::string& text,Pattern& output)
             if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>(version>=6?7:1))return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
         }
         r.steps.resize(size_t(cells));
-        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold))||(version>=5&&!(in>>s.sustainCells>>s.strikes>>s.offset>>s.chance>>std::quoted(s.articulation))))return false;
+        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold))||(version>=5&&!(in>>s.sustainCells>>s.strikes>>s.offset>>s.chance>>std::quoted(s.articulation)))||(version>=8&&!(in>>s.variationMask)))return false;
         p.rows.push_back(std::move(r));
     }
     in>>std::ws;if(!in.eof()||!p.valid())return false;
@@ -317,6 +346,16 @@ inline unsigned chanceRoll(std::uint32_t row,Tick cycle,size_t step)
     x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;x^=x>>31;
     return unsigned(x%100);
 }
+// Independent salted integer streams; no platform RNG or per-note allocations.
+inline int humanOffset(std::uint32_t row,Tick cycle,size_t step,int seed,unsigned salt,int extent)
+{
+    if(extent==0)return 0;
+    std::uint64_t x=(std::uint64_t(row)<<32)^std::uint64_t(cycle)
+        ^((std::uint64_t(step)+1)*0x9e3779b97f4a7c15ULL)
+        ^(std::uint64_t(seed)*0xd6e8feb86659fd93ULL)^salt;
+    x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;x^=x>>31;
+    return int(x%unsigned(2*extent+1))-extent;
+}
 inline bool compile(const Pattern& p,const std::vector<std::string>& existingTracks,int repeats,Render& output,std::string& error)
 {
     auto fail=[&](const char* why){error=why;return false;};
@@ -347,8 +386,15 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 if(s.chance==0||(s.chance<100&&chanceRoll(row.id,origin/span,index)>=unsigned(s.chance)))continue;
                 const Tick cellWidth=nextOffset-offset;
                 const Tick shift=cellWidth*s.offset/1000;
-                const Tick start=origin+std::clamp<Tick>(offset+shift,0,span-1);
-                if(start>=next.duration)continue;
+                const Tick authored=origin+std::clamp<Tick>(offset+shift,0,span-1);
+                if(authored>=next.duration)continue;
+                const Tick master=authored/p.duration();
+                const auto& v=p.variations;
+                if(!(s.variationMask&v.mask(master))||s.densityThreshold>v.ceiling(master,repeats))continue;
+                const Tick jitter=cellWidth*humanOffset(row.id,origin/span,index,v.seed,0x1a31u,v.timing)/1000;
+                const Tick start=std::clamp(authored+jitter,std::max(origin,master*p.duration()),
+                    std::min(origin+span,(master+1)*p.duration())-1);
+                const int velocityDelta=humanOffset(row.id,origin/span,index,v.seed,0x6b23u,v.velocity);
                 int art=0;
                 if(!s.articulation.empty())
                 {
@@ -374,7 +420,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                     const int pitch=resolvePitch(recipe,p.harmony);
                     if(pitch<0||pitch>127)return fail("Harmonic pitch is out of MIDI range.");
                     if(int(row.pitchMode)<2)recipe={}; // legacy events retain default recipe
-                    next.notes.push_back({hitStart,std::min({hitStart+length,next.duration,origin+span}),route,row.channel,pitch,std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold,art,recipe});
+                    next.notes.push_back({hitStart,std::min({hitStart+length,next.duration,origin+span}),route,row.channel,pitch,std::clamp(s.velocity+(s.accent?20:0)+velocityDelta,1,127),s.densityThreshold,art,recipe});
                 }
             }
     }
