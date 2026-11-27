@@ -26,12 +26,22 @@ struct Step
     int velocity=90,gate=750; // gate in thousandths of a step
     bool operator==(const Step&) const=default;
 };
+enum class TimingMode { followGrid=0, sharedSpan=1, independentCycle=2 };
 struct Row
 {
     std::uint32_t id=1;
     std::string name="Row 1",trackId; // opaque, stable project track identity
     int channel=1,pitch=60;
     bool mute=false,solo=false;
+    TimingMode timing=TimingMode::followGrid;
+    // For independent cycles: one cycle = bars * numerator / denominator
+    // whole notes. Shared-span rows ignore these canonical default fields.
+    int numerator=4,denominator=4,bars=1;
+    Tick cycleTicks() const {return Tick(bars)*numerator*(ticksPerQuarter*4)/denominator;}
+    static bool meterValid(int n,int d,int b)
+    {
+        return n>=1&&n<=32&&b>=1&&b<=16&&(d==1||d==2||d==4||d==8||d==16||d==32);
+    }
     std::vector<Step> steps=std::vector<Step>(16);
     bool operator==(const Row&) const=default;
 };
@@ -55,7 +65,11 @@ struct Pattern
         for(const auto& r:rows)
         {
             if(!r.id||!ids.insert(r.id).second||!textValid(r.name,80)||!textValid(r.trackId,256,true)
-               ||r.channel<1||r.channel>16||r.pitch<0||r.pitch>127||r.steps.size()!=size_t(stepCount))return false;
+               ||r.channel<1||r.channel>16||r.pitch<0||r.pitch>127||r.steps.empty()||r.steps.size()>maxSteps
+               ||!Row::meterValid(r.numerator,r.denominator,r.bars))return false;
+            if(r.timing==TimingMode::followGrid&&r.steps.size()!=size_t(stepCount))return false;
+            if(r.timing!=TimingMode::followGrid&&r.timing!=TimingMode::sharedSpan&&r.timing!=TimingMode::independentCycle)return false;
+            if(r.timing!=TimingMode::independentCycle&&(r.numerator!=4||r.denominator!=4||r.bars!=1))return false;
             for(const auto& s:r.steps)if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>1000)return false;
         }
         return true;
@@ -79,9 +93,33 @@ struct Pattern
     {
         if(!valid()||count<1||count>maxSteps||division<1||division>32||ticksPerQuarter%division)return false;
         // Explicitly refuse shortening over active notes rather than silently erase them.
-        for(const auto& r:rows)for(size_t i=size_t(count);i<r.steps.size();++i)if(r.steps[i].enabled)return false;
-        for(auto& r:rows)r.steps.resize(size_t(count));
+        for(const auto& r:rows)if(r.timing==TimingMode::followGrid)
+            for(size_t i=size_t(count);i<r.steps.size();++i)if(r.steps[i].enabled)return false;
+        for(auto& r:rows)if(r.timing==TimingMode::followGrid)r.steps.resize(size_t(count));
         stepCount=count;stepsPerQuarter=division;return true;
+    }
+    // Row resizing preserves the existing cell order and rejects data loss.
+    bool setRowTiming(std::uint32_t id,TimingMode mode,int count,int n=4,int d=4,int b=1)
+    {
+        if(!valid()||count<1||count>maxSteps||!Row::meterValid(n,d,b))return false;
+        if(mode!=TimingMode::followGrid&&mode!=TimingMode::sharedSpan&&mode!=TimingMode::independentCycle)return false;
+        if(mode==TimingMode::followGrid&&count!=stepCount)return false;
+        if(mode!=TimingMode::independentCycle&&(n!=4||d!=4||b!=1))return false;
+        auto it=std::find_if(rows.begin(),rows.end(),[&](const auto& r){return r.id==id;});
+        if(it==rows.end())return false;
+        for(size_t i=size_t(count);i<it->steps.size();++i)if(it->steps[i].enabled)return false;
+        it->steps.resize(size_t(count));it->timing=mode;it->numerator=n;it->denominator=d;it->bars=b;return true;
+    }
+    // Explicit master meter convenience. Master grid retains exact O1 divisions.
+    bool setMasterMeter(int n,int d,int bars,int subdivision)
+    {
+        if(!Row::meterValid(n,d,bars)||subdivision<1||subdivision>32)return false;
+        const int cells=bars*n*4*subdivision;
+        return cells%d==0&&setGrid(cells/d,subdivision);
+    }
+    Tick rowCycle(const Row& r) const
+    {
+        return r.timing==TimingMode::independentCycle?r.cycleTicks():duration();
     }
 };
 
@@ -91,10 +129,10 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 1 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
+    out<<"STUDIO_OSTINATO 2 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
     for(const auto& r:p.rows)
     {
-        out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<'\n';
+        out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<'\n';
         for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<'\n';
     }
     return out.str();
@@ -106,7 +144,7 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||version!=1||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version!=1&&version!=2)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -115,7 +153,15 @@ inline bool decode(const std::string& text,Pattern& output)
         std::int64_t id=0;
         if(!(in>>id>>std::quoted(r.name)>>std::quoted(r.trackId)>>r.channel>>r.pitch)
             ||id<1||id>UINT32_MAX||!flag(r.mute)||!flag(r.solo))return false;
-        r.id=static_cast<std::uint32_t>(id);r.steps.resize(size_t(p.stepCount));
+        r.id=static_cast<std::uint32_t>(id);
+        int cells=p.stepCount;
+        if(version==2)
+        {
+            int mode=-1;
+            if(!(in>>mode>>r.numerator>>r.denominator>>r.bars>>cells)||mode<0||mode>2||cells<1||cells>maxSteps)return false;
+            r.timing=static_cast<TimingMode>(mode);
+        }
+        r.steps.resize(size_t(cells));
         for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate))return false;
         p.rows.push_back(std::move(r));
     }
@@ -161,14 +207,24 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         auto it=std::find(next.routes.begin(),next.routes.end(),row.trackId);
         int route=int(it-next.routes.begin());
         if(it==next.routes.end())next.routes.push_back(row.trackId);
-        for(int cycle=0;cycle<repeats;++cycle)
-            for(int step=0;step<p.stepCount;++step)
+        const Tick span=p.rowCycle(row);
+        const Tick cells=static_cast<Tick>(row.steps.size());
+        // Absolute rational boundaries: round down only once per boundary,
+        // never add a rounded subdivision repeatedly. Every cycle ends exactly.
+        // Precollect active indices so long silent/mostly silent cycles are cheap.
+        std::vector<size_t> activeSteps;
+        for(size_t i=0;i<row.steps.size();++i)if(row.steps[i].enabled)activeSteps.push_back(i);
+        if(activeSteps.empty())continue;
+        for(Tick origin=0;origin<next.duration;origin+=span)
+            for(size_t index:activeSteps)
             {
-                const auto& s=row.steps[size_t(step)];
-                if(!s.enabled)continue;
+                const auto& s=row.steps[index];
+                const Tick offset=span*static_cast<Tick>(index)/cells;
+                const Tick nextOffset=span*static_cast<Tick>(index+1)/cells;
+                const Tick start=origin+offset;
+                if(start>=next.duration)break;
                 if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
-                const Tick start=cycle*p.duration()+step*p.stepTicks();
-                const Tick length=std::max<Tick>(1,p.stepTicks()*s.gate/1000);
+                const Tick length=std::max<Tick>(1,(nextOffset-offset)*s.gate/1000);
                 next.notes.push_back({start,std::min(start+length,next.duration),route,row.channel,row.pitch,std::min(127,s.velocity+(s.accent?20:0))});
             }
     }
