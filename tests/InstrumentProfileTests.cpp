@@ -2,6 +2,7 @@
 #include "InstrumentProfile.h"
 #include "InstrumentMidiBinding.h"
 #include "UniversalInstrumentState.h"
+#include "InstrumentSemanticTranslation.h"
 #include <iostream>
 int main()
 {
@@ -73,6 +74,34 @@ int main()
     if(!first.selected(other,p.channel)||!first.selected(p.elements[0],p.channel))return 32;
     auto same=other;same.id=juce::Uuid().toString();first.applied(same,p.channel,80);
     if(first.selected(other,p.channel)||!first.selected(same,p.channel))return 33;
+    auto destination=p.duplicate();
+    destination.library="Other library";destination.patch="Other flute";
+    destination.elements[0].id=juce::Uuid().toString();
+    destination.elements[0].binding={"cc",0,32,5};
+    destination.elements[1].id=juce::Uuid().toString();
+    destination.elements[1].binding={"cc",0,11,80};
+    auto decision=translateBinding(p,p.elements[0],destination,3,100);
+    if(decision.result.failed()||decision.destination.id!=destination.elements[0].id||decision.value!=5)return 34;
+    decision=translateBinding(p,p.elements[1],destination,3,47);
+    if(decision.result.failed()||decision.value!=47||decision.destination.binding.number!=11)return 35;
+    if(translateBinding(p,p.elements[0],destination,2,100).result.wasOk())return 36;
+    auto missing=destination;missing.elements.erase(missing.elements.begin());
+    if(translateBinding(p,p.elements[0],missing,3,100).result.wasOk())return 37;
+    auto ambiguous=destination;auto variant=ambiguous.elements[0];variant.id=juce::Uuid().toString();variant.label="Muted";ambiguous.elements.push_back(variant);
+    if(translateBinding(p,p.elements[0],ambiguous,3,100).result.wasOk())return 38;
+    auto sourceAmbiguous=p;sourceAmbiguous.elements.push_back(p.elements[0]);sourceAmbiguous.elements.back().id=juce::Uuid().toString();
+    if(translateBinding(sourceAmbiguous,sourceAmbiguous.elements[0],destination,3,100).result.wasOk())return 39;
+    auto wrong=destination;wrong.instrument="flutes.piccolo";
+    if(translateBinding(p,p.elements[0],wrong,3,100).result.wasOk())return 40;
+    wrong=destination;wrong.elements[1].binding={"bend",0,0,8192};
+    if(translateBinding(p,p.elements[1],wrong,3,47).result.wasOk())return 41;
+    wrong=destination;wrong.elements[1].binding={"cc",0,64,127};
+    if(translateBinding(p,p.elements[1],wrong,3,47).result.wasOk())return 42;
+    wrong=destination;wrong.elements[0].binding={};
+    if(translateBinding(p,p.elements[0],wrong,3,100).result.wasOk())return 43;
+    auto raw=p;raw.elements[0].semantic="aria.label.123";
+    wrong=destination;wrong.elements[0].semantic=raw.elements[0].semantic;
+    if(translateBinding(raw,raw.elements[0],wrong,3,100).result.wasOk())return 44;
     std::swap(p.elements[0],p.elements[1]);p.name="Updated flute";
     if(store.save(p).failed())return 11;
     auto dest=folder.getChildFile(p.id+".studioinstrument");
