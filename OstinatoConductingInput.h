@@ -12,9 +12,10 @@ class ConductingInput final:private tracktion::PhysicalMidiInputDevice::Listener
 {
 public:
     ~ConductingInput() override{detach();}
-    void attach(std::shared_ptr<tracktion::PhysicalMidiInputDevice> d,int ch)
+    void attach(std::shared_ptr<tracktion::PhysicalMidiInputDevice> d,int ch,ConductingMapping mapping={})
     {
-        detach();channel.store(ch,std::memory_order_relaxed);device=std::move(d);
+        detach();if(!mapping.valid()||ch<1||ch>16)return;
+        channel.store(ch,std::memory_order_relaxed);intensityCC.store(mapping.intensityCC,std::memory_order_relaxed);densityCC.store(mapping.densityCC,std::memory_order_relaxed);device=std::move(d);
         if(device)device->addListener(this);
     }
     void detach()
@@ -29,10 +30,13 @@ private:
     void handleIncomingMidiMessage(const juce::MidiMessage& m)override
     {
         if(m.isController()&&m.getChannel()==channel.load(std::memory_order_relaxed))
-            mailbox.receive(m.getControllerNumber(),m.getControllerValue());
+        {
+            const ConductingMapping mapping{intensityCC.load(std::memory_order_relaxed),densityCC.load(std::memory_order_relaxed)};
+            mailbox.receive(mapping.role(m.getControllerNumber()),m.getControllerValue());
+        }
     }
     std::shared_ptr<tracktion::PhysicalMidiInputDevice> device;
     ConductingMailbox mailbox;
-    std::atomic<int> channel{1};
+    std::atomic<int> channel{1},intensityCC{1},densityCC{11};
 };
 }
