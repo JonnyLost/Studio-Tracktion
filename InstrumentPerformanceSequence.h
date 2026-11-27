@@ -98,7 +98,7 @@ inline std::vector<NamedPoint> namedPoints(tracktion::MidiClip& clip)
             const auto type=c->getType();
             result.push_back({c->getBeatPosition().inBeats(),c->state,type<120?type:0,
                 type==tracktion::MidiControllerEvent::pitchWheelType?c->getControllerValue():c->getControllerValue()>>7,
-                type==tracktion::MidiControllerEvent::pitchWheelType?"bend":type==tracktion::MidiControllerEvent::channelPressureType?"pressure":"cc"});
+                type==tracktion::MidiControllerEvent::pitchWheelType?"bend":type==tracktion::MidiControllerEvent::channelPressureType?"pressure":type>=0&&type<120?"cc":"unsupported"});
         }
     std::stable_sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.beat<b.beat;});
     return result;
