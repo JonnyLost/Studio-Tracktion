@@ -5,15 +5,29 @@
 #include "UniversalInstrumentCatalog.h"
 #include "StudioInstrumentCatalogData.h"
 #include "InstrumentProfile.h"
+#include "InstrumentMidiBinding.h"
+#include <functional>
 #include <optional>
 #include <algorithm>
 
 namespace studio::designer
 {
 struct SourceContext { String track, pluginId, pluginVersion; };
-class DesignerPanel final : public juce::Component
+class DesignerPanel final : public juce::Component, private juce::Timer
 {
 public:
+    // Callbacks run on the message thread. Studio owns routing and device listeners.
+    std::function<bool()> beginLearn;
+    std::function<std::optional<Binding>()> pollLearn;
+    std::function<void()> endLearn;
+    std::function<juce::Result(const Profile&,const Binding&,std::function<void()>&)> sendAudition;
+    void cancelLive()
+    {
+        stopTimer();
+        if(learning && endLearn)endLearn();
+        learning=false;learnId.clear();
+        if(release){auto action=std::move(release);release={};action();}
+    }
     explicit DesignerPanel(SourceContext source, juce::File folder=ProfileStore::localDirectory())
         : context(std::move(source)), store(std::move(folder))
     {
@@ -26,7 +40,7 @@ public:
         for (auto* c : std::initializer_list<Component*>{&heading,&contextLabel,&collection,&load,&newProfile,&duplicate,&save,&discard,
              &name,&library,&patch,&variant,&channel,&slot,&instrumentSearch,&instrument,&artworkSearch,&artwork,
              &kind,&candidateSearch,&candidates,&allTechniques,&add,&elements,&label,&style,&transport,&full,
-             &apply,&up,&down,&remove,&channelInfo,&status,&preview})
+             &apply,&up,&down,&remove,&channelInfo,&status,&preview,&bindingKind,&bindingChannel,&bindingNumber,&bindingValue,&assign,&learn,&audition,&bindingStatus})
             body.addAndMakeVisible(*c);
         heading.setText("Instrument Designer",dontSendNotification);
         heading.setFont(uiFont(20,Font::bold));
@@ -39,6 +53,12 @@ public:
         setupField(instrumentSearch,"Search instruments"); setupField(artworkSearch,"Search vector artwork");
         setupField(candidateSearch,"Search available techniques or controls"); setupField(label,"Custom button or control label");
         kind.addItem("Articulations",1); kind.addItem("Performance controls",2); kind.setSelectedId(1,dontSendNotification);
+        bindingKind.addItem("Unassigned",1);bindingKind.addItem("Keyswitch",2);bindingKind.addItem("MIDI CC",3);
+        bindingKind.addItem("Channel pressure",4);bindingKind.addItem("Pitch bend",5);
+        setupField(bindingChannel,"Channel (0 = profile)");setupField(bindingNumber,"Note / CC (0–127)");
+        setupField(bindingValue,"Value / velocity");
+        assign.onClick=[this]{applyBinding();};learn.onClick=[this]{startLearn();};audition.onClick=[this]{auditionSelected();};
+        bindingKind.onChange=[this]{updateBindingFields();};
         style.addItem("Button",1); style.addItem("Knob",2); style.addItem("Fader",3);
         instrumentSearch.onTextChange=[this]{ refillInstruments(false); };
         artworkSearch.onTextChange=[this]{ refillInstruments(true); };
@@ -73,6 +93,7 @@ public:
     }
     void setContext(SourceContext source)
     {
+        cancelLive();
         context=std::move(source);
         contextLabel.setText(context.track.isEmpty() ? "Design a standalone profile" : "Selected track: "+context.track+" (reference only)",juce::dontSendNotification);
     }
@@ -117,12 +138,12 @@ public:
         contextLabel.setFont(uiFont(12)); status.setFont(uiFont(12));
         resized(); repaint();
     }
-    ~DesignerPanel() override { viewport.setViewedComponent(nullptr,false); }
+    ~DesignerPanel() override { cancelLive();viewport.setViewedComponent(nullptr,false); }
     void resized() override
     {
         viewport.setBounds(getLocalBounds());
         const int w=juce::jmax(640,getWidth()-22), line=juce::jmax(28,appearance.control(30));
-        const int h=juce::jmax(getHeight(), 15*line+188);
+        const int h=juce::jmax(getHeight(), 18*line+205);
         body.setSize(w,h);
         auto r=body.getLocalBounds().reduced(12);
         heading.setBounds(r.removeFromTop(line)); contextLabel.setBounds(r.removeFromTop(line));
@@ -144,6 +165,14 @@ public:
         auto reorder=right.removeFromTop(line);
         up.setBounds(reorder.removeFromLeft(reorder.getWidth()/3).reduced(2));
         down.setBounds(reorder.removeFromLeft(reorder.getWidth()/2).reduced(2)); remove.setBounds(reorder.reduced(2));
+        auto bind=r.removeFromTop(line);
+        bindingKind.setBounds(bind.removeFromLeft(bind.getWidth()/3).reduced(2));
+        bindingChannel.setBounds(bind.removeFromLeft(bind.getWidth()/3).reduced(2));
+        bindingNumber.setBounds(bind.removeFromLeft(bind.getWidth()/2).reduced(2));bindingValue.setBounds(bind.reduced(2));
+        auto actions=r.removeFromTop(line);
+        assign.setBounds(actions.removeFromLeft(actions.getWidth()/3).reduced(2));
+        learn.setBounds(actions.removeFromLeft(actions.getWidth()/2).reduced(2));audition.setBounds(actions.reduced(2));
+        bindingStatus.setBounds(r.removeFromTop(line).reduced(2));
         auto footer=r.removeFromBottom(line);
         save.setBounds(footer.removeFromRight(juce::jmin(180,footer.getWidth()/3)).reduced(2)); status.setBounds(footer.reduced(2));
         preview.setBounds(r.reduced(4));
@@ -163,6 +192,14 @@ private:
     std::vector<Profile> profiles;
     bool dirty=false, refreshing=false, ready=false;
     int editingIndex=-1;
+    bool learning=false;
+    String learnId;
+    double learnDeadline=0;
+    std::function<void()> release;
+    ComboBox bindingKind;
+    TextEditor bindingChannel,bindingNumber,bindingValue;
+    TextButton assign{"Save assignment"},learn{"MIDI Learn"},audition{"Audition (confirm patch)"};
+    Label bindingStatus;
     juce::Viewport viewport;
     Component body;
     Label heading,contextLabel,status;
@@ -176,13 +213,20 @@ private:
     {
         explicit Preview(DesignerPanel& p):owner(p){}
         DesignerPanel& owner;
+        std::vector<std::pair<juce::Rectangle<int>,String>> hits;
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if(!event.mods.isPopupMenu())return;
+            for(const auto& hit:hits)if(hit.first.contains(event.getPosition())){owner.assignmentMenu(hit.second);return;}
+        }
         void paint(Graphics& g) override
         {
+            hits.clear();
             using namespace juce;
             g.fillAll(colours::panel);
             auto area=getLocalBounds().reduced(8);
             g.setColour(colours::text);g.setFont(uiFont(13,Font::bold));
-            g.drawText("Layout preview — unassigned controls (no MIDI)",area.removeFromTop(24),Justification::centredLeft);
+            g.drawText("Layout preview — right-click a control to assign",area.removeFromTop(24),Justification::centredLeft);
             auto strip=area.removeFromTop(38);
             g.setColour(colours::well);g.fillRoundedRectangle(strip.toFloat(),4);
             g.setColour(colours::secondary);g.setFont(uiFont(10));
@@ -221,6 +265,7 @@ private:
                 if(!e.full||(e.kind=="articulation")!=articulations)continue;
                 if(index>=capacity)break;
                 auto cell=Rectangle<int>(a.getX()+(index%cols)*cellWidth,a.getY()+(index/cols)*rowHeight,cellWidth,rowHeight).reduced(2);
+                hits.emplace_back(cell,e.id);
                 g.setColour(colours::control);g.fillRoundedRectangle(cell.toFloat(),3);
                 g.setColour(colours::secondary);
                 if(!articulations&&e.presentation!="button")
@@ -243,6 +288,7 @@ private:
                 const int w=compact?75:92;
                 if(a.getWidth()<w || a.getHeight()<12){++hidden;continue;}
                 auto cell=a.removeFromLeft(w).reduced(2);
+                hits.emplace_back(cell,e.id);
                 g.setColour(colours::control);g.fillRoundedRectangle(cell.toFloat(),3);
                 g.setColour(colours::secondary);g.setFont(uiFont(10));
                 if(!compact && e.presentation!="button")
@@ -261,7 +307,7 @@ private:
     void say(const String& s){status.setText(s,juce::dontSendNotification);}
     static String choice(const ComboBox& c,const StringArray& ids){int i=c.getSelectedItemIndex();return juce::isPositiveAndBelow(i,ids.size())?ids[i]:String();}
     bool validIndex(int i)const{return juce::isPositiveAndBelow(i,(int)profile.elements.size());}
-    bool canSwitch(){if(!commitElementDraft())return false;if(!dirty)return true;say("Save or discard changes before opening another profile.");return false;}
+    bool canSwitch(){cancelLive();if(!commitElementDraft())return false;if(!dirty)return true;say("Save or discard changes before opening another profile.");return false;}
     void refillInstruments(bool art)
     {
         using namespace juce;
@@ -304,12 +350,100 @@ private:
     {
         using namespace juce;
         const int i=elements.getSelectedItemIndex();editingIndex=i;const bool valid=validIndex(i);
+        cancelLive();
         for(auto* c:std::initializer_list<Component*>{&label,&style,&transport,&full,&apply,&up,&down,&remove})c->setEnabled(valid);
-        if(!valid){label.clear();return;}
+        for(auto* c:std::initializer_list<Component*>{&bindingKind,&bindingChannel,&bindingNumber,&bindingValue,&assign,&learn,&audition})c->setEnabled(valid);
+        if(!valid){label.clear();bindingStatus.setText("Select a control to assign",dontSendNotification);return;}
         const auto& e=profile.elements[(size_t)i];
         label.setText(e.label,false);style.setSelectedId(e.presentation=="button"?1:e.presentation=="knob"?2:3,dontSendNotification);
         style.setEnabled(e.kind=="control");transport.setToggleState(e.transport,dontSendNotification);full.setToggleState(e.full,dontSendNotification);
         up.setEnabled(i>0);down.setEnabled(i+1<(int)profile.elements.size());
+        showBinding(e.binding);
+    }
+    void showBinding(const Binding& b)
+    {
+        using namespace juce;
+        bindingKind.setSelectedId(b.type=="note"?2:b.type=="cc"?3:b.type=="pressure"?4:b.type=="bend"?5:1,dontSendNotification);
+        bindingChannel.setText(String(b.channel),false);bindingNumber.setText(String(b.number),false);bindingValue.setText(String(b.value),false);
+        updateBindingFields();
+        bindingStatus.setText(b.type=="unassigned"?"Unassigned — no MIDI":"Assigned: "+b.type+" / "+String(b.number)+" / channel "+String(b.channel),dontSendNotification);
+    }
+    void updateBindingFields()
+    {
+        const auto k=bindingKind.getSelectedId();
+        bindingChannel.setEnabled(k>1);bindingNumber.setEnabled(k==2||k==3);bindingValue.setEnabled(k>1);
+    }
+    std::optional<Binding> bindingDraft()
+    {
+        Binding b;const auto k=bindingKind.getSelectedId();
+        if(k<=1)return b;
+        auto parse=[](const TextEditor& e,int& out){auto t=e.getText().trim();if(t.isEmpty()||t.length()>5||!t.containsOnly("0123456789"))return false;out=t.getIntValue();return true;};
+        b.type=k==2?"note":k==3?"cc":k==4?"pressure":"bend";
+        if(!parse(bindingChannel,b.channel)||!parse(bindingValue,b.value)||((k==2||k==3)&&!parse(bindingNumber,b.number))
+           ||!b.valid()||(b.type=="cc"&&b.number>=120)){say("Invalid MIDI assignment; CC 120–127 are reserved.");return {};}
+        return b;
+    }
+    void applyBinding()
+    {
+        cancelLive();
+        if(!validIndex(editingIndex))return;
+        if(auto b=bindingDraft()){profile.elements[(size_t)editingIndex].binding=*b;dirty=true;showBinding(*b);preview.repaint();say("Assignment saved in draft. Save profile to keep it.");}
+    }
+    void startLearn()
+    {
+        cancelLive();
+        if(!validIndex(editingIndex)||!beginLearn||!beginLearn()){say("Select a stopped instrument track with an assigned enabled MIDI input.");return;}
+        learnId=profile.elements[(size_t)editingIndex].id;learning=true;learnDeadline=juce::Time::getMillisecondCounterHiRes()+15000;
+        bindingStatus.setText("Play one key or move a controller (15 seconds).",juce::dontSendNotification);startTimer(30);
+    }
+    void timerCallback() override
+    {
+        if(release){cancelLive();return;}
+        if(!learning){stopTimer();return;}
+        if(!validIndex(editingIndex)||profile.elements[(size_t)editingIndex].id!=learnId){cancelLive();return;}
+        if(pollLearn)
+            if(auto b=pollLearn())
+            {
+                cancelLive();showBinding(*b);say("MIDI captured. Review channel and value, then Save assignment.");return;
+            }
+        if(juce::Time::getMillisecondCounterHiRes()>=learnDeadline){cancelLive();say("MIDI Learn timed out.");}
+    }
+    void auditionSelected()
+    {
+        cancelLive();
+        if(!validIndex(editingIndex)||!readFields()||!validIndex(editingIndex))return;
+        const auto b=profile.elements[(size_t)editingIndex].binding;
+        if(b.type=="unassigned"||!sendAudition){say("Save an assignment and select the matching loaded instrument.");return;}
+        auto safe=juce::Component::SafePointer<DesignerPanel>(this);
+        const auto profileId=profile.id, elementId=profile.elements[(size_t)editingIndex].id;
+        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon,"Audition MIDI assignment",
+            "Confirm the selected instrument contains this exact patch and slot. This sends MIDI to the existing instrument, not a new instance.",
+            "Audition","Cancel",this,juce::ModalCallbackFunction::create([safe,profileId,elementId,b](int ok){
+                if(!ok||safe==nullptr||!safe->isShowing()||safe->profile.id!=profileId||!safe->validIndex(safe->editingIndex)
+                    ||safe->profile.elements[(size_t)safe->editingIndex].id!=elementId
+                    ||!(safe->profile.elements[(size_t)safe->editingIndex].binding==b))return;
+                auto r=safe->sendAudition(safe->profile,b,safe->release);
+                safe->say(r.wasOk()?"MIDI sent — verify the sound in the instrument.":r.getErrorMessage());
+                if(safe->release)safe->startTimer(120);
+            }));
+    }
+    void assignmentMenu(const String& id)
+    {
+        if(!commitElementDraft())return;
+        const auto found=std::find_if(profile.elements.begin(),profile.elements.end(),[&](const auto& e){return e.id==id;});
+        if(found==profile.elements.end())return;
+        refreshElements(int(found-profile.elements.begin()));
+        juce::PopupMenu menu;menu.addItem(1,"Edit assignment");menu.addItem(2,"MIDI Learn");menu.addItem(3,"Audition saved assignment");
+        menu.addItem(4,"Clear assignment");
+        const auto safe=juce::Component::SafePointer<DesignerPanel>(this);const auto pid=profile.id;
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&preview),[safe,pid,id](int result){
+            if(safe==nullptr||safe->profile.id!=pid||!safe->validIndex(safe->editingIndex)
+               ||safe->profile.elements[(size_t)safe->editingIndex].id!=id)return;
+            if(result==1){safe->viewport.setViewPosition(0,safe->bindingKind.getY());safe->bindingKind.grabKeyboardFocus();}
+            if(result==2)safe->startLearn();
+            if(result==3)safe->auditionSelected();
+            if(result==4){safe->cancelLive();safe->profile.elements[(size_t)safe->editingIndex].binding={};safe->dirty=true;safe->showBinding({});safe->preview.repaint();}
+        });
     }
     void addElement()
     {
@@ -404,8 +538,9 @@ public:
         const int h=bounds?juce::jmin(620,bounds->userBounds.toNearestInt().getHeight()-60):620;
         centreWithSize(w,h);
     }
-    void closeButtonPressed() override {setVisible(false);} // preserve the unsaved draft while Studio is running
+    void closeButtonPressed() override {panel->cancelLive();setVisible(false);} // preserve the unsaved draft while Studio is running
     void open(SourceContext context){panel->setContext(std::move(context));setVisible(true);toFront(true);}
+    DesignerPanel& designer(){return *panel;}
     void appearanceChanged(){setBackgroundColour(colours::canvas);panel->appearanceChanged();}
 private:
     DesignerPanel* panel=nullptr; // owned by DocumentWindow
