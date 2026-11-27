@@ -3,6 +3,7 @@
 #include "OstinatoCore.h"
 #include <cmath>
 #include <functional>
+#include <atomic>
 
 namespace studio::ostinato
 {
@@ -30,6 +31,38 @@ bool prepareAudition(Render midi,ToSeconds&& seconds,TimedRender& output)
     }
     output=std::move(next);return true;
 }
+struct ConductingValues
+{
+    int intensity=127,density=127;
+    bool operator==(const ConductingValues&) const=default;
+};
+inline int conductedVelocity(int velocity,int intensity)
+{
+    // 25–100% of the authored velocity. Zero is soft, not note-off.
+    return std::clamp((velocity*(127+3*std::clamp(intensity,0,127))+254)/508,1,127);
+}
+// MIDI callback writes only an atomic packed mailbox; UI consumes latest values.
+class ConductingMailbox
+{
+public:
+    void reset(){packed.store(0,std::memory_order_relaxed);}
+    void receive(int cc,int value) noexcept
+    {
+        if((cc!=1&&cc!=11)||value<0||value>127)return;
+        const unsigned shift=cc==1?0:8;
+        const unsigned mask=255u<<shift, bits=unsigned(value+1)<<shift;
+        auto old=packed.load(std::memory_order_relaxed);
+        while(!packed.compare_exchange_weak(old,(old&~mask)|bits,std::memory_order_relaxed)){}
+    }
+    ConductingValues consume(ConductingValues current) noexcept
+    {
+        auto v=packed.exchange(0,std::memory_order_relaxed);
+        if(v&255u)current.intensity=int(v&255u)-1;
+        if((v>>8)&255u)current.density=int((v>>8)&255u)-1;
+        return current;
+    }
+private:std::atomic<unsigned> packed{0};
+};
 class AuditionCursor
 {
 public:
@@ -44,6 +77,10 @@ public:
     // No catch-up burst after a blocked UI. Fail closed and release owned notes.
     template<class Sink> bool advance(double now,Sink&& send)
     {
+        return advance(now,ConductingValues{},std::forward<Sink>(send));
+    }
+    template<class Sink> bool advance(double now,ConductingValues controls,Sink&& send)
+    {
         if(finished)return false;
         if(!std::isfinite(now)||now<previous){stop(send);return false;}
         previous=now;
@@ -52,10 +89,12 @@ public:
         while(index<render.deadlines.size()&&render.deadlines[index]<=now)
         {
             if(++dispatched>512){stop(send);return false;}
-            const auto e=render.midi.events[index++];
+            auto e=render.midi.events[index++];
             auto it=std::find_if(held.begin(),held.begin()+count,[&](const auto& a){return a.route==e.route&&a.channel==e.channel&&a.pitch==e.pitch;});
             if(e.on)
             {
+                if(e.densityThreshold>std::clamp(controls.density,0,127))continue;
+                e.velocity=conductedVelocity(e.velocity,controls.intensity);
                 if(it!=held.begin()+count||count>=held.size()){stop(send);return false;}
                 held[count++]=e;send(e);
             }
