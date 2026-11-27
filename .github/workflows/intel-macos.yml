@@ -174,7 +174,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
+          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioOstinatoCoreTests StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/$STUDIO_CONFIG/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
