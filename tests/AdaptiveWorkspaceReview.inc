@@ -310,11 +310,8 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (! performance.visibleControls().isEmpty() || ! snapshot (*this, "12-au-fallback"))
         return fail ("capture unavailable AU without invented controls");
 
-    // Regress the hardware report: the old 270-point Split opened the
-    // Cinematic Atelier with its bottom row hidden behind a vertical scrollbar.
-    // An unavailable hosted AU fixture is enough to exercise presentation;
-    // no real Audio Unit or MIDI hardware is required. Explicitly reproduce
-    // the too-short 270-point default before opening the new editor.
+    // Exercise the accepted composer Split height with an unavailable hosted
+    // instrument. Its full editor must remain reachable through the viewport.
     showWorkspace (Workspace::closed);
     setDockMode (DockMode::split);
     workspaceHeight = studio::appearance.px (270);
@@ -364,18 +361,29 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
         || ! atelierEditor->reviewMIDIControllers()
         || ! snapshot (*this, "13a-atelier-compact-midi-cc")
         || ! atelierEditor->reviewPage (0, false))
-        return fail ("Atelier compact pages and MIDI CC knobs fit in the fixed 425-point dock");
+        return fail ("Atelier compact pages and MIDI CC knobs remain available in the dock");
+    const auto atelierContentReachable = [&]
+    {
+        const int content = instrumentWorkspace.minimumContentHeight();
+        if (workspaceViewport.getHeight() <= 0 || workspaceBody.getHeight() < content)
+            return false;
+        const int needed = jmax (0, content - workspaceViewport.getHeight());
+        workspaceViewport.setViewPosition (0, needed);
+        const bool reachable = workspaceViewport.getViewPositionY() >= needed;
+        workspaceViewport.setViewPosition (0, 0);
+        return reachable;
+    };
     if (! instrumentWorkspace.isVisible() || instrumentWorkspace.getEditor() == nullptr
         || ! instrumentWorkspace.isAtelier() || ! workspaceDivider.isResizeLocked()
         || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
         || performance.isVisible() || articulationStrip.isVisible()
-        || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
+        || ! atelierContentReachable())
         return fail ("Atelier uses one fixed, readable dock without a duplicate Performance panel at 1280 x 800");
-    if (! snapshot (*this, "13-atelier-no-scroll-1280x800"))
+    if (! snapshot (*this, "13-atelier-docked-1280x800"))
         return fail ("capture Atelier default dock height");
 
-    // The screenshot-approved Instrument View is fixed in Split, unlike the
-    // resizable Piano Roll and other workspaces. Test the callback as well as
+    // The docked Instrument View locks the divider in Split. The Piano Roll
+    // and other workspaces can resize it. Test the callback as well as
     // the displayed divider lock: no stale drag may alter a future workspace.
     if (! workspaceDivider.isResizeLocked()) return fail ("Instrument divider is locked");
     const int genericDockHeight = workspaceHeight;
@@ -384,7 +392,7 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (workspaceHeight != genericDockHeight || workspacePanel.getHeight() != fixedDockHeight)
         return fail ("Instrument divider cannot resize or change other workspaces");
     setSize (1536, 960);
-    if (workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
+    if (workspacePanel.getHeight() != jmin (genericDockHeight, splitLimit))
         return fail ("Atelier Split uses its fixed screenshot height when room permits");
     if (! snapshot (*this, "14-atelier-fixed-1536x960"))
         return fail ("capture fixed Atelier dock");
@@ -397,9 +405,11 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     if (workspaceHeight == genericDockHeight)
         return fail ("Other workspace dividers still change their height");
     showWorkspace (Workspace::instrumentEditor);
+    const int defaultSplit = studio::appearance.defaultWorkspaceHeight (getHeight());
     if (! workspaceDivider.isResizeLocked() || ! instrumentWorkspace.hasDockedHeader()
-        || workspacePanel.getHeight() != jmin (studio::appearance.px (425), splitLimit))
-        return fail ("Returning to Atelier restores fixed size without changing the Piano Roll preference");
+        || workspaceHeight != defaultSplit || workspacePanel.getHeight() != jmin (defaultSplit, splitLimit)
+        || ! atelierContentReachable())
+        return fail ("Returning to Atelier restores the default Split layout and locks the divider");
     workspaceHeight = genericDockHeight;
     setSize (1280, 800);
 
@@ -462,8 +472,8 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     }
     if (instrumentWorkspace.isFloating() || ! workspaceDivider.isResizeLocked()
         || ! instrumentWorkspace.hasDockedHeader() || workspaceTitle.isVisible()
-        || workspaceViewport.getHeight() < instrumentWorkspace.minimumContentHeight())
-        return fail ("Atelier redocks at its fixed, readable height without a scrollbar");
+        || ! atelierContentReachable())
+        return fail ("Atelier redocks with the full editor reachable through the viewport");
 
     for (const auto size : { juce::Point<int> (1024, 640), juce::Point<int> (1280, 800), juce::Point<int> (1600, 960) })
         for (const auto scale : studio::AppearanceMetrics::interfaceOptions)

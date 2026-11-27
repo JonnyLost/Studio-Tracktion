@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <thread>
 using namespace juce;
 using namespace tracktion::literals;
 
@@ -2386,6 +2387,24 @@ private:
     };
     std::vector<OriginalAriaState> originalAriaStates;
 
+    struct ImportedPresetLoad
+    {
+        std::thread worker;
+        std::atomic<bool> cancelled { false }, done { false };
+        studio::sampler::Instrument instrument;
+        String error;
+        te::EditItemID target;
+        uint64_t generation = 0;
+        bool newTrack = false;
+
+        ~ImportedPresetLoad()
+        {
+            cancelled.store (true);
+            if (worker.joinable()) worker.join();
+        }
+    };
+    std::unique_ptr<ImportedPresetLoad> importedPresetLoad;
+
     struct RegionClipboardItem
     {
         te::ClipCopy copy;
@@ -2425,6 +2444,84 @@ private:
     studio::MidiPerformanceFocus midiFocus;
     bool followSelectedMidi = true;
     juce::String midiFocusStatus;
+    studio::aria::Catalog ariaCatalog { studio::aria::Catalog::localDirectory() };
+    std::unique_ptr<FileChooser> ariaRootChooser;
+    struct AriaScan final : Thread, private Timer
+    {
+        AriaScan (studio::aria::Catalog previous, Array<File> roots, Component& owner)
+            : Thread ("ARIA library discovery"), catalog (std::move (previous)),
+              selectedRoots (std::move (roots)),
+              window ("Discover Garritan/ARIA instruments", "Preparing scan...", MessageBoxIconType::NoIcon, &owner)
+        {
+            window.addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+            window.addProgressBarComponent (indeterminate);
+        }
+
+        ~AriaScan() override
+        {
+            stopTimer();
+            stopThread (-1);
+        }
+
+        void launch()
+        {
+            if (! startThread (Priority::low))
+            {
+                finished (false);
+                return;
+            }
+            window.enterModalState (true, ModalCallbackFunction::create (
+                [safe = Component::SafePointer<AlertWindow> (&window), this] (int)
+                {
+                    if (safe != nullptr && isThreadRunning()) signalThreadShouldExit();
+                }));
+            startTimer (150);
+        }
+
+        void run() override
+        {
+            uint32 lastUpdate = 0;
+            catalog.scan (selectedRoots, [this, &lastUpdate] (const studio::aria::Progress& progress)
+            {
+                const auto now = Time::getMillisecondCounter();
+                if (now - lastUpdate >= 150)
+                {
+                    lastUpdate = now;
+                    const ScopedLock lock (progressLock);
+                    status = progress.root.getFullPathName() + "\nFiles examined: "
+                           + String (progress.examined) + " | Candidates: " + String (progress.discovered)
+                           + " | Missing samples: " + String (progress.missing)
+                           + " | Root errors: " + String (progress.errors);
+                }
+                return threadShouldExit();
+            });
+            result = catalog.save();
+        }
+
+        void timerCallback() override
+        {
+            if (! isThreadRunning())
+            {
+                stopTimer();
+                window.exitModalState (1);
+                window.setVisible (false);
+                finished (threadShouldExit());
+                return;
+            }
+            const ScopedLock lock (progressLock);
+            if (status.isNotEmpty() && window.isVisible()) window.setMessage (status);
+        }
+
+        studio::aria::Catalog catalog;
+        Array<File> selectedRoots;
+        Result result = Result::fail ("Scan did not finish writing its checkpoint.");
+        std::function<void(bool)> finished;
+        double indeterminate = -1.0;
+        AlertWindow window;
+        CriticalSection progressLock;
+        String status;
+    };
+    std::unique_ptr<AriaScan> ariaScan;
     studio::InstrumentBrowser browser { engine.getPluginManager().knownPluginList,
                                         &engine.getPropertyStorage().getPropertiesFile() };
     studio::ChannelInspector channelInspector { trackActions };
@@ -2447,6 +2544,8 @@ private:
         bool addTrack = false, instrument = false;
         uint32 startedAt = 0;
         int gmProgram = -1; // deferred Apple DLS Program Change, not a generic AU preset
+        String ariaPatch;
+        studio::aria::Preset ariaPreset;
     };
 
     std::optional<PendingPlugin> pendingPlugin;
@@ -3911,6 +4010,7 @@ private:
         maybeAutoRestoreAria();
         completePendingPlugin();
         restoreDlsPrograms();
+        completeImportedPreset();
         updateWavExport();
         filmWorkspace.tick();
         // AVKit is embedded as a native view. Track its screen bounds for tooltips.
@@ -4557,6 +4657,7 @@ private:
         }
 
         pendingPlugin.reset();
+        if (importedPresetLoad) importedPresetLoad->cancelled.store (true);
         auto next = [&]
         {
             const ScopedValueSetter<bool> loading (busy, true);
@@ -5108,6 +5209,111 @@ private:
         return true;
     }
 
+    void scanAriaRoots (Array<File> roots)
+    {
+        if (ariaScan != nullptr || roots.isEmpty()) return;
+        ariaScan = std::make_unique<AriaScan> (ariaCatalog, std::move (roots), *this);
+        ariaScan->finished = [safe = Component::SafePointer<StudioView> (this)] (bool cancelled)
+        {
+            // Keep the progress window alive until its completion callback returns.
+            MessageManager::callAsync ([safe, cancelled]
+            {
+                if (safe == nullptr || safe->ariaScan == nullptr) return;
+                auto finished = std::move (safe->ariaScan);
+                if (finished->result.failed())
+                {
+                    safe->pluginStatus (finished->result.getErrorMessage());
+                    return;
+                }
+                safe->ariaCatalog = std::move (finished->catalog);
+                safe->browser.setAriaCatalog (safe->ariaCatalog);
+                safe->pluginStatus (cancelled ? "Scan saved. Select Resume interrupted scan to continue."
+                                              : "ARIA catalog updated.");
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon, "ARIA discovery",
+                                                  safe->ariaCatalog.report(), "OK", safe.getComponent());
+            });
+        };
+        ariaScan->launch();
+    }
+
+    void showAriaCatalogMenu (Component& anchor)
+    {
+        PopupMenu menu;
+        const auto guard = [safe = Component::SafePointer<StudioView> (this)] (auto action)
+        {
+            return [safe, action = std::move (action)] { if (safe != nullptr) action (*safe); };
+        };
+        auto defaults = studio::aria::Catalog::defaultRoots();
+        menu.addItem ("Discover Garritan/ARIA instruments in standard locations", ! defaults.isEmpty(), false,
+                      guard ([defaults] (StudioView& view) { view.scanAriaRoots (defaults); }));
+        menu.addItem ("Scan a library folder...", guard ([] (StudioView& view)
+        {
+            view.ariaRootChooser = std::make_unique<FileChooser> ("Choose a Garritan/ARIA library folder");
+            view.ariaRootChooser->launchAsync (FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories,
+                [safe = Component::SafePointer<StudioView> (&view)] (const FileChooser& chooser)
+                {
+                    if (safe != nullptr && chooser.getResult().isDirectory())
+                        safe->scanAriaRoots ({ chooser.getResult() });
+                });
+        }));
+        menu.addItem ("Rescan all known roots", ! ariaCatalog.scannedRoots().isEmpty(), false,
+                      guard ([] (StudioView& view) { view.scanAriaRoots (view.ariaCatalog.scannedRoots()); }));
+        menu.addItem ("Resume interrupted scan", ! ariaCatalog.pendingRoots().isEmpty(), false,
+                      guard ([] (StudioView& view) { view.scanAriaRoots (view.ariaCatalog.pendingRoots()); }));
+        menu.addSeparator();
+        const auto patch = browser.selectedAriaPatch();
+        menu.addItem ("Register auditioned patch from selected track...", patch.has_value(), false,
+                      guard ([patch] (StudioView& view) { if (patch) view.confirmAriaCapture (*patch); }));
+        menu.addItem ("Show local catalog and reports", []
+        {
+            studio::aria::Catalog::localDirectory().revealToUser();
+        });
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
+    }
+
+    void confirmAriaCapture (const studio::aria::Patch& patch)
+    {
+        auto* track = workflowTrack();
+        auto* external = track != nullptr
+            ? dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*track)) : nullptr;
+        if (external == nullptr || ! isAriaPlugin (*external) || ! canInsertPlugin()
+            || edit->getTransport().isPlaying() || external->getAudioPluginInstance() == nullptr)
+        {
+            pluginStatus ("Select a track with an initialized ARIA Player and stop the transport.");
+            return;
+        }
+        const auto trackId = track->itemID;
+        const auto pluginId = external->itemID;
+        AlertWindow::showOkCancelBox (MessageBoxIconType::QuestionIcon, "Register ARIA preset",
+            "Confirm that " + patch.name + " is the only loaded instrument in this ARIA instance, "
+            "in slot 1 on MIDI channel 1, and that you heard it play without missing sample warnings.",
+            "Register", "Cancel", this,
+            ModalCallbackFunction::create ([safe = Component::SafePointer<StudioView> (this),
+                                            generation = projectGeneration, trackId, pluginId, patch] (int answer)
+            {
+                if (safe == nullptr || answer == 0 || safe->projectGeneration != generation
+                    || safe->ariaScan != nullptr || ! safe->canInsertPlugin()
+                    || safe->edit->getTransport().isPlaying()) return;
+                auto* current = safe->trackById (trackId);
+                if (current == nullptr) return;
+                auto* plugin = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*current));
+                if (plugin == nullptr || plugin->itemID != pluginId || ! isAriaPlugin (*plugin)) return;
+                if (auto* unit = plugin->getAudioPluginInstance())
+                {
+                    PluginDescription description;
+                    unit->fillInPluginDescription (description);
+                    if (description.pluginFormatName != "AudioUnit") return;
+                    plugin->flushPluginStateToValueTree();
+                    const studio::aria::Preset preset { description.createIdentifierString(), description.version,
+                        plugin->state.getProperty ("state").toString(), int (plugin->state.getProperty ("programNum", 0)) };
+                    auto result = safe->ariaCatalog.registerPreset (patch, preset);
+                    if (result.wasOk()) result = safe->ariaCatalog.save();
+                    safe->browser.setAriaCatalog (safe->ariaCatalog);
+                    safe->pluginStatus (result.wasOk() ? "Registered " + patch.name + ". Verify it on a fresh track."
+                                                      : result.getErrorMessage());
+                }
+            }));
+    }
 
     // DLS patch selection must travel through the same Tracktion/JUCE MIDI
     // render path as notes. Direct MusicDeviceMIDIEvent on the UI thread can
@@ -5306,8 +5512,90 @@ private:
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
     }
 
+    void startImportedPreset (const File& file, bool newTrack)
+    {
+        if (! canInsertPlugin() || importedPresetLoad) return;
+        auto* track = workflowTrack();
+        if (! newTrack)
+            if (const auto reason = instrumentTrackRestriction (track); reason.isNotEmpty())
+            {
+                pluginStatus (reason);
+                return;
+            }
+        importedPresetLoad = std::make_unique<ImportedPresetLoad>();
+        auto* load = importedPresetLoad.get();
+        load->target = track != nullptr ? track->itemID : te::EditItemID {};
+        load->generation = projectGeneration;
+        load->newTrack = newTrack;
+        load->worker = std::thread ([load, file]
+        {
+            try
+            {
+                load->error = studio::sampler::Plugin::preparePreset (file, {}, load->instrument, &load->cancelled).getErrorMessage();
+                for (const auto& zone : load->instrument.zones)
+                    if (load->error.isEmpty() && (! zone.mapping.sample || zone.problem.isNotEmpty()))
+                        load->error = "Sample unavailable: " + zone.file.getFileName() + ". " + zone.problem;
+            }
+            catch (const std::exception& e) { load->error = String::fromUTF8 (e.what()); }
+            load->done.store (true, std::memory_order_release);
+        });
+        pluginStatus ("Loading " + file.getFileNameWithoutExtension() + "...");
+    }
+
+    void completeImportedPreset()
+    {
+        if (! importedPresetLoad || ! importedPresetLoad->done.load (std::memory_order_acquire)) return;
+        auto load = std::move (importedPresetLoad);
+        if (load->cancelled.load() || load->generation != projectGeneration) return;
+        if (! canInsertPlugin())
+        {
+            pluginStatus ("Studio is busy. Load the instrument again when ready.");
+            return;
+        }
+        if (load->error.isNotEmpty())
+        {
+            pluginStatus (load->error);
+            return;
+        }
+        auto plugin = edit->getPluginCache().createNewPlugin (studio::sampler::Plugin::xmlTypeName, {});
+        auto* sampler = dynamic_cast<studio::sampler::Plugin*> (plugin.get());
+        if (sampler == nullptr)
+        {
+            pluginStatus ("Could not create Studio Sampler.");
+            return;
+        }
+        sampler->commitImport (std::move (load->instrument), false);
+        commitPlugin (plugin, load->target, load->newTrack, true);
+    }
+
     void configureInstrumentWorkflow()
     {
+        ariaCatalog.read();
+        browser.setAriaCatalog (ariaCatalog);
+        browser.openAriaCatalog = [this] (Component& anchor) { showAriaCatalogMenu (anchor); };
+        browser.loadAriaPatch = [this] (const studio::aria::Patch& patch, const PluginDescription& plugin, bool addNew)
+        {
+            if (! patch.source.existsAsFile())
+            {
+                pluginStatus ("The source is unavailable. Reconnect the library and rescan.");
+                return;
+            }
+            auto preset = ariaCatalog.preset (patch);
+            if (patch.kind == "snapshot" && preset.state.isEmpty())
+            {
+                pluginStatus ("This snapshot needs a current single-slot ARIA capture.");
+                return;
+            }
+            if (preset.state.isNotEmpty()
+                && (preset.pluginId != plugin.createIdentifierString() || preset.pluginVersion != plugin.version))
+            {
+                pluginStatus ("The captured ARIA Audio Unit is unavailable. Scan for plug-ins again.");
+                return;
+            }
+            auto* target = workflowTrack();
+            startExternalPlugin (plugin, target != nullptr ? target->itemID : te::EditItemID {}, addNew, true,
+                                 -1, patch.name, std::move (preset));
+        };
         browser.openPluginManager = [this] { if (! busy && (edit == nullptr || canEditRegions())) showPlugins(); };
         browser.loadGeneralMidi = [this] (const PluginDescription& description, int gmProgram, bool newTrack)
         {
@@ -5376,6 +5664,10 @@ private:
                 if (auto* track = workflowTrack())
                     if (auto* synth = dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*track)))
                         showNativeInstrument (*synth);
+        };
+        browser.loadImportedSampler = [this] (const File& file, bool newTrack)
+        {
+            startImportedPreset (file, newTrack);
         };
         browser.loadSampler = [this] (bool addNew)
         {
@@ -5683,7 +5975,8 @@ private:
     }
 
     void startExternalPlugin (PluginDescription description, te::EditItemID target, bool addNew,
-                              bool instrument, int gmProgram = -1)
+                              bool instrument, int gmProgram = -1,
+                              String ariaPatch = {}, studio::aria::Preset ariaPreset = {})
     {
         if (! canInsertPlugin())
         {
@@ -5718,7 +6011,8 @@ private:
                 pluginStatus ("Could not create " + description.name + ".");
                 return;
             }
-            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter(), gmProgram };
+            pendingPlugin = PendingPlugin { plugin, target, addNew, instrument, Time::getMillisecondCounter(), gmProgram,
+                                           std::move (ariaPatch), std::move (ariaPreset) };
             plugin->initialiseFully();
         }
         completePendingPlugin();
@@ -5749,12 +6043,29 @@ private:
             pluginStatus (plugin.getName() + " could not be loaded. " + plugin.getLoadError());
             return;
         }
-        commitPlugin (requested.plugin, requested.destination, requested.addTrack,
-                      requested.instrument, requested.gmProgram);
+        if (requested.ariaPreset.state.isNotEmpty())
+        {
+            PluginDescription description;
+            plugin.getAudioPluginInstance()->fillInPluginDescription (description);
+            if (description.createIdentifierString() != requested.ariaPreset.pluginId
+                || description.version != requested.ariaPreset.pluginVersion)
+            {
+                pluginStatus ("The instantiated Audio Unit does not match the preset.");
+                return;
+            }
+            ValueTree capture ("PLUGIN");
+            capture.setProperty ("state", requested.ariaPreset.state, nullptr);
+            capture.setProperty ("programNum", requested.ariaPreset.program, nullptr);
+            plugin.restorePluginStateFromValueTree (capture);
+            plugin.state.setProperty ("state", requested.ariaPreset.state, nullptr);
+            plugin.state.setProperty ("programNum", requested.ariaPreset.program, nullptr);
+        }
+        commitPlugin (requested.plugin, requested.destination, requested.addTrack, requested.instrument,
+                      requested.gmProgram, requested.ariaPatch, requested.ariaPreset.state.isNotEmpty());
     }
 
-    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew,
-                       bool instrument, int gmProgram = -1)
+    void commitPlugin (const te::Plugin::Ptr& plugin, te::EditItemID target, bool addNew, bool instrument,
+                       int gmProgram = -1, const String& ariaPatch = {}, bool appliedAriaCapture = false)
     {
         if (! canInsertPlugin() || plugin == nullptr) return;
         auto* track = trackById (target);
@@ -5776,8 +6087,6 @@ private:
                 return;
             }
             track = newTrack.get();
-            track->setName (studio::gm::valid (gmProgram)
-                ? String (studio::gm::name (gmProgram)) : plugin->getName());
         }
 
         auto* previous = instrument && ! addNew ? studio::findInstrument (*track) : nullptr;
@@ -5803,7 +6112,14 @@ private:
         }
         if (instrument)
         {
-            auto name = studio::gm::valid (gmProgram) ? String (studio::gm::name (gmProgram)) : plugin->getName();
+            auto name = plugin->getName();
+            if (appliedAriaCapture)
+                name = ariaPatch;
+            else if (studio::gm::valid (gmProgram))
+                name = studio::gm::name (gmProgram);
+            else if (const auto* sampler = dynamic_cast<const studio::sampler::Plugin*> (plugin.get());
+                     sampler != nullptr && sampler->instrument().preset.isNotEmpty())
+                name = sampler->instrument().name;
             if (auto* native = dynamic_cast<studio::synth::Plugin*> (plugin.get()); native != nullptr && native->presetName().isNotEmpty())
                 name = native->presetName();
             track->setName (name);
@@ -5837,7 +6153,15 @@ private:
             return;
         }
         auto status = "Loaded " + plugin->getName() + " on " + track->getName() + ".";
-        if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
+        if (ariaPatch.isNotEmpty())
+        {
+            // Opening the vendor Cocoa editor can crash inside ARIA. Keep
+            // track insertion and state recall independent of opening its UI.
+            status = appliedAriaCapture ? "Recalled " + ariaPatch + ". Audition the restored patch."
+                                        : "ARIA Player loaded. Use Channel > Open Instrument to choose "
+                                            + ariaPatch + " in slot 1.";
+        }
+        else if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
         if (instrument && (! libraryOpen || workspace == Workspace::instrumentEditor || addNew)
@@ -7430,6 +7754,7 @@ int StudioView::runInterfaceReview (const File& output)
     return 0;
 }
 
+namespace studio::instrumentimport { int runLibraryTest(); int runUniversalImportTest(); }
 namespace studio::spatial { int runSpatialRoutingTest(); }
 namespace studio { int runComposerTransportTest(); int runComposerMidiTest(); int runComposerBounceTest (const File&); }
 #endif
@@ -7491,6 +7816,18 @@ public:
             return;
         }
         #endif
+        if (commandLine == "--studio-test-universal-import")
+        {
+            setApplicationReturnValue (studio::instrumentimport::runUniversalImportTest());
+            quit();
+            return;
+        }
+        if (commandLine == "--studio-test-garritan-library")
+        {
+            setApplicationReturnValue (studio::instrumentimport::runLibraryTest());
+            quit();
+            return;
+        }
         if (commandLine == "--studio-test-film-scoring-workspace")
         {
             StudioView view;

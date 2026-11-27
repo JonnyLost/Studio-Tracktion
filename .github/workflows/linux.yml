@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - integration/studio-0.2-m44-consolidated
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
