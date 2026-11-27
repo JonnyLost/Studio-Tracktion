@@ -38,6 +38,7 @@ using namespace tracktion::literals;
 #include "AtelierInstrumentEditor.h"
 #include "InstrumentPerformance.h"
 #include "StudioAuditionKeyboard.h"
+#include "SharedInstrumentControls.h"
 #include "StudioKeyboardActivity.h"
 #include "Seating/SeatingWorkspace.h"
 #include "FilmScoringWorkspace.h"
@@ -2309,6 +2310,9 @@ private:
     bool keyboardPreferredDocked = true;
     te::EditItemID dockedKeyboardTarget;
     te::EditItemID displayedKeyboardTrack;
+    String displayedSharedCC;
+    int displayedPreviewChannel = 0;
+    studio::KeyboardPerformanceValues observedInspectorValues;
     studio::KeyboardInputActivity keyboardInputActivity;
     std::optional<te::TimePosition> lastKeyboardPlaybackPosition;
     te::EditItemID keyboardTarget;
@@ -2930,7 +2934,7 @@ private:
     // Reading note activity never sends MIDI or modifies the audio graph.
     void refreshKeyboardActivity()
     {
-        if ((! keyboardDocked && midiKeyboardWindow == nullptr) || edit == nullptr || busy)
+        if ((! keyboardDocked && midiKeyboardWindow == nullptr && ! inspectorOpen) || edit == nullptr || busy)
         {
             keyboardInputActivity.detach();
             displayedKeyboardTrack = {};
@@ -2954,6 +2958,8 @@ private:
                 midiKeyboardWindow->panel.releaseNotes();
             keyboardInputActivity.detach();
             displayedKeyboardTrack = nextId;
+            displayedSharedCC.clear(); displayedPreviewChannel = 0;
+            observedInspectorValues = {};
             lastKeyboardPlaybackPosition.reset();
             dockedKeyboard.resetPerformance();
             if (midiKeyboardWindow != nullptr)
@@ -2972,7 +2978,18 @@ private:
         studio::KeyboardPerformanceValues playbackControls;
         if (selected != nullptr)
         {
-            keyboardInputActivity.watch (*edit, nextId, engine.getDeviceManager());
+            const int channel = jlimit (1,16,(int) selected->state.getProperty ("studioAtelierPreviewChannel",1));
+            const auto saved = selected->state.getProperty ("studioAtelierCCState").toString();
+            if (saved != displayedSharedCC || channel != displayedPreviewChannel)
+            {
+                if (channel != displayedPreviewChannel) { dockedKeyboard.resetPerformance(); if (midiKeyboardWindow) midiKeyboardWindow->panel.resetPerformance(); }
+                displayedSharedCC = saved; displayedPreviewChannel = channel;
+                const auto shared = studio::sharedKeyboardValues (selected->state);
+                dockedKeyboard.reflectChannel(channel); dockedKeyboard.reflectPerformance(shared);
+                if (midiKeyboardWindow) { midiKeyboardWindow->panel.reflectChannel(channel); midiKeyboardWindow->panel.reflectPerformance(shared); }
+                observedInspectorValues = shared;
+            }
+            keyboardInputActivity.watch (*edit, nextId, engine.getDeviceManager(), channel);
             activity = keyboardInputActivity.snapshot();
             liveControls = keyboardInputActivity.consumePerformance();
 
@@ -2982,7 +2999,7 @@ private:
                 const auto position = transport.getPosition();
                 activity |= studio::keyboardPlaybackNotes (*selected, position,
                                                             lastKeyboardPlaybackPosition);
-                playbackControls = studio::keyboardPlaybackPerformance (*selected, position);
+                playbackControls = studio::keyboardPlaybackPerformance (*selected, position, displayedPreviewChannel);
                 lastKeyboardPlaybackPosition = position;
             }
             else
@@ -2995,6 +3012,19 @@ private:
         }
 
         // Displaying input and playback controllers must never echo MIDI.
+        const auto merge = [this] (const studio::KeyboardPerformanceValues& v)
+        {
+            using V=studio::KeyboardPerformanceValues;
+            auto& o=observedInspectorValues;
+            if(v.changed & V::bit(V::modulation)) o.mod=v.mod;
+            if(v.changed & V::bit(V::expression)) o.expr=v.expr;
+            if(v.changed & V::bit(V::volume)) o.vol=v.vol;
+            if(v.changed & V::bit(V::brightness)) o.tone=v.tone;
+            if(v.changed & V::bit(V::room)) o.reverb=v.reverb;
+            o.changed |= v.changed;
+        };
+        merge(playbackControls); merge(liveControls);
+        if (inspectorOpen && nextId.isValid()) inspectorDrawer.reflectPerformance(nextId, observedInspectorValues);
         if (keyboardDocked)
         {
             dockedKeyboard.displayActivity (activity);
@@ -3052,13 +3082,17 @@ private:
             }
             else dockedKeyboardTarget = {};
             const SafePointer<StudioView> safe (this);
+            dockedKeyboard.onChannelChanged = [safe](int ch) { if (safe) if(auto* t=safe->workflowTrack()) t->state.setProperty("studioAtelierPreviewChannel",ch,nullptr); };
             dockedKeyboard.send = [safe] (const MidiMessage& note)
             {
                 if (safe == nullptr || safe->edit == nullptr || safe->busy || ! safe->dockedKeyboardTarget.isValid()) return;
                 if (auto* track = te::findAudioTrackForID (*safe->edit, safe->dockedKeyboardTarget))
                     if (studio::findInstrument (*track) != nullptr
                         && safe->edit->getTransport().getCurrentPlaybackContext() != nullptr)
+                    {
+                        if (note.isController()) studio::writeSharedCC(track->state,note.getControllerNumber(),note.getControllerValue());
                         track->injectLiveMidiMessage (note, {});
+                    }
             };
         }
         else
@@ -3123,6 +3157,8 @@ private:
         midiKeyboardWindow->panel.setSelectedInstrument (
             keyboardTarget.isValid() && active != nullptr ? active->getName() : String());
         const SafePointer<StudioView> safe (this);
+        midiKeyboardWindow->panel.onChannelChanged = [safe](int ch) { if (safe) if(auto* t=safe->workflowTrack()) t->state.setProperty("studioAtelierPreviewChannel",ch,nullptr); };
+        displayedPreviewChannel=0;
         midiKeyboardWindow->panel.send = [safe] (const MidiMessage& note)
         {
             if (safe == nullptr || safe->edit == nullptr || safe->busy
@@ -3130,7 +3166,10 @@ private:
             if (auto* track = te::findAudioTrackForID (*safe->edit, safe->keyboardTarget))
                 if (studio::findInstrument (*track) != nullptr
                     && safe->edit->getTransport().getCurrentPlaybackContext() != nullptr)
+                {
+                    if (note.isController()) studio::writeSharedCC(track->state,note.getControllerNumber(),note.getControllerValue());
                     track->injectLiveMidiMessage (note, {});
+                }
         };
         midiKeyboardWindow->onClose = [safe]
         {
@@ -5972,31 +6011,21 @@ private:
                 if (! studio.canInsertPlugin()) return;
                 studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
             }));
-        PopupMenu appleEffects;
+        PopupMenu units;
         for (const auto& description : engine.getPluginManager().knownPluginList.getTypes())
-            if (description.pluginFormatName == "AudioUnit" && ! description.isInstrument
-                && ! description.name.containsIgnoreCase ("ARIA Player"))
+            if (description.pluginFormatName == "AudioUnit")
             {
-                auto& destination = description.manufacturerName.containsIgnoreCase ("Apple")
-                    ? appleEffects : effects;
-                destination.addItem (description.name, trackMenuAction (id,
-                    [description] (StudioView& studio, te::AudioTrack& target)
+                const bool instrument = description.isInstrument || description.name.containsIgnoreCase ("ARIA Player");
+                units.addItem (description.manufacturerName + " | " + description.name,
+                    !instrument || instrumentTrackRestriction (&track).isEmpty(), false,
+                    trackMenuAction (id, [description,instrument] (StudioView& studio, te::AudioTrack& target)
                     {
-                        studio.startExternalPlugin (description, target.itemID, false, false);
+                        studio.startExternalPlugin (description, target.itemID, false, instrument);
                     }));
             }
-        if (appleEffects.getNumItems() > 0)
-            effects.addSubMenu ("Apple Audio Unit Effects", appleEffects);
+        if (units.getNumItems() == 0) units.addItem (1, "No scanned Audio Units", false);
+        menu.addSubMenu ("Add Audio Unit", units, canInsertPlugin());
         menu.addSubMenu ("Add Effect", effects, canInsertPlugin());
-        menu.addItem ("Browse Apple Effects...", canInsertPlugin(), false,
-            trackMenuAction (id, [] (StudioView& studio, te::AudioTrack& chosen)
-            {
-                studio.selection.selectOnly (&chosen);
-                if (studio.dockMode == DockMode::compact)
-                    studio.setDockMode (DockMode::split);
-                studio.showWorkspace (Workspace::instruments);
-                studio.browser.browseAppleEffects();
-            }));
     }
 
     // JUCE can have both physical output channels active while Tracktion's

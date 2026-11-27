@@ -24,7 +24,7 @@ class KeyboardInputActivity final : private te::PhysicalMidiInputDevice::Listene
 public:
     ~KeyboardInputActivity() override { detach(); }
 
-    void watch (te::Edit& edit, te::EditItemID trackId, te::DeviceManager& manager)
+    void watch (te::Edit& edit, te::EditItemID trackId, te::DeviceManager& manager, int channel = 1)
     {
         std::vector<std::shared_ptr<te::PhysicalMidiInputDevice>> wanted;
         if (trackId.isValid())
@@ -42,10 +42,11 @@ public:
                                 wanted.push_back (std::move (physical));
             }
 
-        if (wanted == attached && trackId == currentTrack)
+        if (wanted == attached && trackId == currentTrack && channel == observedChannel.load())
             return;
         detach();
         currentTrack = trackId;
+        observedChannel.store(channel);
         attached = std::move (wanted);
         for (const auto& device : attached)
             device->addListener (this);
@@ -72,11 +73,11 @@ private:
             notes.noteOn (ch, midi.getNoteNumber());
         else if (midi.isNoteOff())
             notes.noteOff (ch, midi.getNoteNumber());
-        else if (midi.isPitchWheel())
+        else if (midi.isPitchWheel() && ch == observedChannel.load())
             performance.receivePitchBend (midi.getPitchWheelValue());
         else if (midi.isController())
         {
-            performance.receiveController (midi.getControllerNumber(), midi.getControllerValue());
+            if (ch == observedChannel.load()) performance.receiveController (midi.getControllerNumber(), midi.getControllerValue());
             if (midi.getControllerNumber() == 64)
                 notes.sustain (ch, midi.getControllerValue() >= 64);
             else if (midi.getControllerNumber() == 120
@@ -88,6 +89,7 @@ private:
 
     KeyboardNoteState notes;
     KeyboardPerformanceState performance;
+    std::atomic<int> observedChannel { 1 };
     te::EditItemID currentTrack;
     std::vector<std::shared_ptr<te::PhysicalMidiInputDevice>> attached;
 };
@@ -179,7 +181,7 @@ inline std::bitset<128> keyboardPlaybackNotes (te::AudioTrack& track,
 // MIDI regions. This is for UI feedback only; plug-ins receive their normal
 // MIDI through Tracktion's established playback engine.
 inline KeyboardPerformanceValues keyboardPlaybackPerformance (te::AudioTrack& track,
-                                                              te::TimePosition current)
+                                                              te::TimePosition current, int channel = 1)
 {
     KeyboardPerformanceValues values;
     if (track.isMuted (true)) return values;
@@ -187,7 +189,7 @@ inline KeyboardPerformanceValues keyboardPlaybackPerformance (te::AudioTrack& tr
     for (auto* clipBase : track.getClips())
     {
         auto* clip = dynamic_cast<te::MidiClip*> (clipBase);
-        if (clip == nullptr || clip->isMuted() || ! clip->hasValidSequence())
+        if (clip == nullptr || clip->isMuted() || ! clip->hasValidSequence() || clip->getMidiChannel().getChannelNumber() != channel)
             continue;
         const auto bounds = clip->getPosition();
         if (current < bounds.getStart() || current >= bounds.getEnd())

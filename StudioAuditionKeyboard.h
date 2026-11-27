@@ -230,6 +230,7 @@ public:
             releaseNotes();
             activeChannel = channel.getSelectedId();
             keys.setMidiChannel (activeChannel);
+            if (onChannelChanged) onChannelChanged(activeChannel);
         };
         channel.setColour (juce::ComboBox::backgroundColourId, studioKeyboardColours::panel);
         channel.setColour (juce::ComboBox::textColourId, studioKeyboardColours::white);
@@ -266,7 +267,7 @@ public:
         expression.setTooltip ("Expression - MIDI CC11");
         volume.setTooltip ("MIDI Channel Volume - CC7");
         brightness.setTooltip ("Timbre / Brightness - MIDI CC74");
-        room.setTooltip ("Reverb Send - MIDI CC91");
+        room.setTooltip ("MIDI reverb depth - CC91 (not Stage send)");
         for (auto* knob : { &expression, &volume, &brightness, &room })
             knob->setRange (0, 127, 1);
 
@@ -305,6 +306,13 @@ public:
     std::function<void (const juce::MidiMessage&)> send;
     std::function<void()> onToggleDock;
     std::function<void()> onHide;
+    std::function<void(int)> onChannelChanged;
+    void reflectChannel (int ch)
+    {
+        if (ch == activeChannel) return;
+        releaseNotes(); activeChannel=juce::jlimit(1,16,ch);
+        channel.setSelectedId(activeChannel,juce::dontSendNotification); keys.setMidiChannel(activeChannel);
+    }
 
     // The same instrument console is used for both modes. Only its parent
     // and header action change; note monitoring and MIDI routing stay intact.
@@ -423,7 +431,7 @@ public:
                      captionArea (volume));
         drawCaption ("TONE " + juce::String (juce::roundToInt (brightness.getValue())),
                      captionArea (brightness));
-        drawCaption ("ROOM " + juce::String (juce::roundToInt (room.getValue())),
+        drawCaption ("REV " + juce::String (juce::roundToInt (room.getValue())),
                      captionArea (room));
     }
 

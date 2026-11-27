@@ -667,6 +667,11 @@ void InspectorDrawer::appearanceChanged()
     repaint();
 }
 
+void InspectorDrawer::reflectPerformance (te::EditItemID id, const KeyboardPerformanceValues& values)
+{
+    if (atelierMode && selectedTrackId == id) atelier->reflectPerformance (id, values);
+}
+
 void InspectorDrawer::suspendAtelier()
 {
     if (atelier != nullptr) atelier->suspend();

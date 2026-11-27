@@ -37,8 +37,10 @@ on:
       - feature/studio-reliability-performance-m38
       - feature/studio-composer-refinement-m39a
       - feature/studio-instrument-library-m39b
+      - feature/studio-inspector-controls-m39c
   pull_request:
     branches:
+      - feature/studio-inspector-controls-m39c
       - feature/studio-instrument-library-m39b
       - feature/studio-composer-refinement-m39a
       - feature/studio-reliability-performance-m38
