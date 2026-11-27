@@ -48,6 +48,16 @@ bool designContrast()
 int main()
 {
     if (!designContrast()) return 1;
+    using namespace studio::themes;
+    const auto& console = palettes[(size_t)hardwareConsoleIndex];
+    if (!hardwareConsole (1) || hardwareConsole (0) || console.light
+        || contrast (hardwareIvory, hardwareInk) < 4.5
+        || contrast (console.argb[text], hardwareRecord) < 4.5
+        || contrast (hardwareScale, console.argb[control]) < 3.0
+        || contrast (console.argb[signal], console.argb[raised]) < 3.0) return 1;
+    for (auto surface : {rail, canvas, timeline, panel, control, raised, selected, well})
+        for (auto foreground : {text, secondary, action, focus, atelierAccent})
+            if (contrast (console.argb[foreground], console.argb[surface]) < 4.5) return 1;
     for (const auto& theme : studio::themes::palettes)
         for (auto surface : {studio::themes::canvas,studio::themes::panel,studio::themes::selected})
             for (auto ink : {studio::themes::text,studio::themes::secondary,studio::themes::action})
