@@ -42,6 +42,18 @@ inline int conductedVelocity(int velocity,int intensity)
     return std::clamp((velocity*(127+3*std::clamp(intensity,0,127))+254)/508,1,127);
 }
 // MIDI callback writes only an atomic packed mailbox; UI consumes latest values.
+struct ConductingMapping
+{
+    int intensityCC=1,densityCC=11;
+    bool valid()const noexcept
+    {
+        // Exclude channel-mode messages and pedals. This is a dedicated input,
+        // but these messages have special MIDI meaning and are poor choices.
+        auto allowed=[](int n){return n>=0&&n<120&&!(n>=64&&n<=69);};
+        return allowed(intensityCC)&&allowed(densityCC)&&intensityCC!=densityCC;
+    }
+    int role(int cc)const noexcept{return cc==intensityCC?1:cc==densityCC?11:-1;}
+};
 class ConductingMailbox
 {
 public:
