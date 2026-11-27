@@ -6949,7 +6949,14 @@ int StudioView::runInterfaceReview (const File& output)
         || studio::instrumentIcon("Hammered Dulcimer")!=Icon::hammeredDulcimer
         || studio::instrumentIcon("Viola da Gamba")!=Icon::violaDaGamba
         || studio::instrumentIcon("Female Choir")!=Icon::femaleChoir
-        || studio::instrumentIcon("Bell Tree")!=Icon::bellTree)
+        || studio::instrumentIcon("Bell Tree")!=Icon::bellTree
+        || studio::instrumentIcon("Thunder Sheet")!=Icon::thunderSheet
+        || studio::instrumentIcon("Contrabass Tuba")!=Icon::contrabassTuba
+        || studio::instrumentIcon("Cornett")!=Icon::cornett
+        || studio::instrumentIcon("Soprano Recorder")!=Icon::sopranoRecorder
+        || studio::instrumentIcon("Woodwind Quintet")!=Icon::woodwindQuintet
+        || studio::instrumentIcon("Prepared Piano")!=Icon::preparedPiano
+        || (int)Icon::count!=242)
         { std::fprintf(stderr,"Instrument icon identity failed\n"); return 1; }
     stopTimer();
     environmentWelcome.dismiss();
