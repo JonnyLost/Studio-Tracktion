@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 #include "StudioKeyboardPerformanceState.h"
+#include "StudioUI.h"
 #include <algorithm>
 #include <array>
 #include <bitset>
@@ -13,18 +14,17 @@
 
 namespace studio
 {
-// Share the established Studio blue/slate visual language, not the dark
-// walnut/amber Instrument Inspector treatment. This palette is intentionally
-// local so users can evaluate the two directions independently.
+// Keep the legacy slate keyboard outside the two hardware console themes.
 namespace studioKeyboardColours
 {
-inline const juce::Colour base       { 0xff19212d }; // Studio timeline
-inline const juce::Colour raised     { 0xff293443 }; // Studio control
-inline const juce::Colour panel      { 0xff131923 }; // Studio well
-inline const juce::Colour accent     { 0xff91c8ff }; // Studio focus
-inline const juce::Colour outline    { 0xff414d5e }; // Studio divider
-inline const juce::Colour white      { 0xfff3f5f7 }; // Studio text/white keys
-inline const juce::Colour secondary  { 0xffb9c0ca };
+inline bool hardware() { return themes::hardwareConsole (activeTheme); }
+inline juce::Colour base()      { return hardware() ? colours::canvas : juce::Colour (0xff19212d); }
+inline juce::Colour raised()    { return hardware() ? colours::control : juce::Colour (0xff293443); }
+inline juce::Colour panel()     { return hardware() ? colours::well : juce::Colour (0xff131923); }
+inline juce::Colour accent()    { return hardware() ? colours::action : juce::Colour (0xff91c8ff); }
+inline juce::Colour outline()   { return hardware() ? colours::divider : juce::Colour (0xff414d5e); }
+inline juce::Colour white()     { return hardware() ? juce::Colour (themes::hardwareIvory) : juce::Colour (0xfff3f5f7); }
+inline juce::Colour secondary() { return hardware() ? colours::secondary : juce::Colour (0xffb9c0ca); }
 }
 
 
@@ -51,15 +51,23 @@ public:
     {
         const auto bounds = getLocalBounds().toFloat();
         if (bounds.isEmpty()) return;
-        juce::ColourGradient gradient (juce::Colour (0xff202834),
-                                       bounds.getTopLeft(), juce::Colour (0xff19212d),
-                                       bounds.getBottomLeft(), false);
-        gradient.addColour (0.68, juce::Colour (0xff1e2733));
-        g.setGradientFill (gradient);
-        g.fillRect (bounds);
+        if (studioKeyboardColours::hardware())
+        {
+            g.setColour (colours::canvas);
+            g.fillRect (bounds);
+        }
+        else
+        {
+            juce::ColourGradient gradient (juce::Colour (0xff202834),
+                                           bounds.getTopLeft(), juce::Colour (0xff19212d),
+                                           bounds.getBottomLeft(), false);
+            gradient.addColour (0.68, juce::Colour (0xff1e2733));
+            g.setGradientFill (gradient);
+            g.fillRect (bounds);
+        }
 
         // A single hairline links the keyboard to the rest of the editor.
-        g.setColour (studioKeyboardColours::outline.withAlpha (0.7f));
+        g.setColour (studioKeyboardColours::outline().withAlpha (0.7f));
         g.drawLine (bounds.getX(), bounds.getY() + 0.5f,
                     bounds.getRight(), bounds.getY() + 0.5f, 1.0f);
 
@@ -92,32 +100,44 @@ public:
                                              minPos, maxPos, style, slider);
             return;
         }
+        if (studioKeyboardColours::hardware())
+        {
+            // Same fader renderer as the mixer and Instrument Inspector.
+            hardwareStyle.drawLinearSlider (g, x, y, w, h, position, minPos, maxPos, style, slider);
+            return;
+        }
         const float cx = x + w * 0.5f;
         const auto slot = juce::Rectangle<float> (cx - 5.0f, (float) y + 4.0f,
                                                    10.0f, (float) h - 8.0f);
         g.setColour (juce::Colour (0xff0d1420));
         g.fillRoundedRectangle (slot, 4.0f);
-        g.setColour (studioKeyboardColours::outline.withAlpha (0.65f));
+        g.setColour (studioKeyboardColours::outline().withAlpha (0.65f));
         g.drawRoundedRectangle (slot, 4.0f, 1.0f);
         if (slider.getName() == "Pitch Bend")
         {
-            g.setColour (studioKeyboardColours::secondary.withAlpha (0.55f));
+            g.setColour (studioKeyboardColours::secondary().withAlpha (0.55f));
             g.drawLine (cx - 14.0f, y + h * 0.5f, cx + 14.0f, y + h * 0.5f, 1.0f);
         }
         const auto thumb = juce::Rectangle<float> (cx - 14.0f, position - 9.0f, 28.0f, 18.0f);
-        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::accent.brighter (0.12f),
-                                                thumb.getTopLeft(), studioKeyboardColours::outline,
+        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::accent().brighter (0.12f),
+                                                thumb.getTopLeft(), studioKeyboardColours::outline(),
                                                 thumb.getBottomLeft(), false));
         g.fillRoundedRectangle (thumb, 3.0f);
-        g.setColour (studioKeyboardColours::white.withAlpha (0.65f));
+        g.setColour (studioKeyboardColours::white().withAlpha (0.65f));
         g.drawLine (thumb.getX() + 5.0f, thumb.getCentreY(),
                     thumb.getRight() - 5.0f, thumb.getCentreY(), 1.0f);
     }
 
     void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h,
                            float proportion, float startAngle, float endAngle,
-                           juce::Slider&) override
+                           juce::Slider& slider) override
     {
+        if (studioKeyboardColours::hardware())
+        {
+            drawStudioRotary (g, x, y, w, h, proportion, startAngle, endAngle, slider,
+                              juce::Colour (themes::hardwareScale));
+            return;
+        }
         const float radius = std::min (w, h) * 0.37f;
         const float cx = x + w * 0.5f;
         const float cy = y + h * 0.49f;
@@ -127,28 +147,30 @@ public:
         juce::Path rail;
         rail.addCentredArc (cx, cy, radius + 4.0f, radius + 4.0f, 0.0f,
                             startAngle, endAngle, true);
-        g.setColour (studioKeyboardColours::outline);
+        g.setColour (studioKeyboardColours::outline());
         g.strokePath (rail, juce::PathStrokeType (2.3f, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
         juce::Path active;
         const float angle = startAngle + proportion * (endAngle - startAngle);
         active.addCentredArc (cx, cy, radius + 4.0f, radius + 4.0f,
                               0.0f, startAngle, angle, true);
-        g.setColour (studioKeyboardColours::accent);
+        g.setColour (studioKeyboardColours::accent());
         g.strokePath (active, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff53667a),
                                                 cx - radius, cy - radius,
-                                                studioKeyboardColours::base,
+                                                studioKeyboardColours::base(),
                                                 cx + radius, cy + radius, false));
         g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
-        g.setColour (studioKeyboardColours::accent.withAlpha (0.6f));
+        g.setColour (studioKeyboardColours::accent().withAlpha (0.6f));
         g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 0.8f);
         const float dx = std::sin (angle), dy = -std::cos (angle);
-        g.setColour (studioKeyboardColours::white);
+        g.setColour (studioKeyboardColours::white());
         g.drawLine (cx + dx * radius * 0.27f, cy + dy * radius * 0.27f,
                     cx + dx * radius * 0.78f, cy + dy * radius * 0.78f, 2.2f);
     }
+private:
+    StudioLookAndFeel hardwareStyle;
 };
 
 // Activity colours are drawn without changing MidiKeyboardState. The state
@@ -159,12 +181,19 @@ public:
     explicit ActivityMidiKeyboard (juce::MidiKeyboardState& state)
         : juce::MidiKeyboardComponent (state, juce::MidiKeyboardComponent::horizontalKeyboard)
     {
-        setColour (keyDownOverlayColourId, juce::Colour (0xff76c8e6).withAlpha (0.88f));
-        setColour (mouseOverKeyOverlayColourId, studioKeyboardColours::accent.withAlpha (0.23f));
-        setColour (whiteNoteColourId, studioKeyboardColours::white);
-        setColour (blackNoteColourId, juce::Colour (0xff151d29));
-        setColour (keySeparatorLineColourId, juce::Colour (0xff7b8898));
-        setColour (textLabelColourId, juce::Colour (0xff506175));
+        refreshTheme();
+    }
+
+    void refreshTheme()
+    {
+        const bool hardware = studioKeyboardColours::hardware();
+        setColour (keyDownOverlayColourId, (hardware ? colours::signal : juce::Colour (0xff76c8e6)).withAlpha (0.88f));
+        setColour (mouseOverKeyOverlayColourId, (hardware ? juce::Colour (themes::hardwareScale) : studioKeyboardColours::accent()).withAlpha (0.23f));
+        setColour (whiteNoteColourId, studioKeyboardColours::white());
+        setColour (blackNoteColourId, juce::Colour (hardware ? 0xff111111u : 0xff151d29u));
+        setColour (keySeparatorLineColourId, juce::Colour (hardware ? 0xff696969u : 0xff7b8898u));
+        setColour (textLabelColourId, juce::Colour (hardware ? 0xff494949u : 0xff506175u));
+        repaint();
     }
 
     void showActivity (const std::bitset<128>& notes)
@@ -208,17 +237,17 @@ public:
         for (auto* button : { &dockModeButton, &hideButton })
         {
             addAndMakeVisible (*button);
-            button->setColour (juce::TextButton::buttonColourId, studioKeyboardColours::panel);
-            button->setColour (juce::TextButton::buttonOnColourId, studioKeyboardColours::raised);
-            button->setColour (juce::TextButton::textColourOffId, studioKeyboardColours::accent);
-            button->setColour (juce::TextButton::textColourOnId, studioKeyboardColours::white);
+            button->setColour (juce::TextButton::buttonColourId, studioKeyboardColours::panel());
+            button->setColour (juce::TextButton::buttonOnColourId, studioKeyboardColours::raised());
+            button->setColour (juce::TextButton::textColourOffId, studioKeyboardColours::accent());
+            button->setColour (juce::TextButton::textColourOnId, studioKeyboardColours::white());
         }
         dockModeButton.onClick = [this] { if (onToggleDock) onToggleDock(); };
         hideButton.onClick = [this] { if (onHide) onHide(); };
         hideButton.setTooltip ("Hide the docked performance keyboard");
         setDocked (false);
         status.setJustificationType (juce::Justification::centredLeft);
-        status.setColour (juce::Label::textColourId, studioKeyboardColours::white);
+        status.setColour (juce::Label::textColourId, studioKeyboardColours::white());
         status.setFont (juce::FontOptions (13.5f, juce::Font::bold));
         status.setText ("Select an instrument track to audition", juce::dontSendNotification);
         for (int n = 1; n <= 16; ++n)
@@ -232,9 +261,9 @@ public:
             keys.setMidiChannel (activeChannel);
             if (onChannelChanged) onChannelChanged(activeChannel);
         };
-        channel.setColour (juce::ComboBox::backgroundColourId, studioKeyboardColours::panel);
-        channel.setColour (juce::ComboBox::textColourId, studioKeyboardColours::white);
-        channel.setColour (juce::ComboBox::outlineColourId, studioKeyboardColours::outline);
+        channel.setColour (juce::ComboBox::backgroundColourId, studioKeyboardColours::panel());
+        channel.setColour (juce::ComboBox::textColourId, studioKeyboardColours::white());
+        channel.setColour (juce::ComboBox::outlineColourId, studioKeyboardColours::outline());
         keys.setMidiChannel (1);
         keys.setAvailableRange (21, 108);
         keys.setLowestVisibleKey (48);
@@ -249,7 +278,10 @@ public:
         }
 
         for (auto* wheel : { &bend, &mod })
+        {
             wheel->setSliderStyle (juce::Slider::LinearVertical);
+            wheel->getProperties().set ("studioHardwareFader", true);
+        }
         for (auto* knob : { &expression, &volume, &brightness, &room })
         {
             knob->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -291,6 +323,24 @@ public:
                 repaint();
             };
         }
+    }
+
+    void refreshTheme()
+    {
+        keys.refreshTheme();
+        for (auto* button : { &dockModeButton, &hideButton })
+        {
+            button->setColour (juce::TextButton::buttonColourId, studioKeyboardColours::panel());
+            button->setColour (juce::TextButton::buttonOnColourId, studioKeyboardColours::raised());
+            button->setColour (juce::TextButton::textColourOffId, studioKeyboardColours::accent());
+            button->setColour (juce::TextButton::textColourOnId, studioKeyboardColours::white());
+        }
+        status.setColour (juce::Label::textColourId, studioKeyboardColours::white());
+        channel.setColour (juce::ComboBox::backgroundColourId, studioKeyboardColours::panel());
+        channel.setColour (juce::ComboBox::textColourId, studioKeyboardColours::white());
+        channel.setColour (juce::ComboBox::outlineColourId, studioKeyboardColours::outline());
+        for (auto* control : controls()) control->repaint();
+        repaint();
     }
 
     ~AuditionKeyboardPanel() override
@@ -389,37 +439,40 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto outer = getLocalBounds().toFloat().reduced (1.0f);
-        g.setGradientFill (juce::ColourGradient (studioKeyboardColours::raised,
-                                                outer.getTopLeft(), studioKeyboardColours::base,
-                                                outer.getBottomRight(), false));
+        if (studioKeyboardColours::hardware())
+            g.setColour (studioKeyboardColours::base());
+        else
+            g.setGradientFill (juce::ColourGradient (studioKeyboardColours::raised(),
+                                                    outer.getTopLeft(), studioKeyboardColours::base(),
+                                                    outer.getBottomRight(), false));
         g.fillRoundedRectangle (outer, 9.0f);
 
         // Clean steel/slate casing with a single low-contrast border.
         // Avoid decorative pinstripes across the keybed.
-        g.setColour (studioKeyboardColours::outline.withAlpha (0.9f));
+        g.setColour (studioKeyboardColours::outline().withAlpha (0.9f));
         g.drawRoundedRectangle (outer.reduced (0.5f), 8.0f, 1.0f);
         if (! dockedMode)
         {
-            g.setColour (studioKeyboardColours::outline);
+            g.setColour (studioKeyboardColours::outline());
             g.drawLine (13.0f, (float) topEdge, (float) getWidth() - 13.0f,
                         (float) topEdge, 1.0f);
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.setColour (studioKeyboardColours::accent);
+            g.setColour (studioKeyboardColours::accent());
             g.drawFittedText ("CINEMATIC ATELIER", juce::Rectangle<int> (19, 11, 196, 23),
                               juce::Justification::centredLeft, 1);
         }
 
         for (const auto plate : { leftPlate, keyPlate, rightPlate })
         {
-            g.setColour (studioKeyboardColours::panel.withAlpha (0.92f));
+            g.setColour (studioKeyboardColours::panel().withAlpha (0.92f));
             g.fillRoundedRectangle (plate.toFloat(), 6.0f);
-            g.setColour (studioKeyboardColours::outline.withAlpha (0.67f));
+            g.setColour (studioKeyboardColours::outline().withAlpha (0.67f));
             g.drawRoundedRectangle (plate.toFloat().reduced (0.5f), 6.0f, 0.85f);
         }
 
         const auto drawCaption = [&g] (juce::String label, juce::Rectangle<int> r)
         {
-            g.setColour (studioKeyboardColours::secondary);
+            g.setColour (studioKeyboardColours::secondary());
             g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
             g.drawFittedText (label, r, juce::Justification::centred, 1);
         };
@@ -529,7 +582,7 @@ class AuditionKeyboardWindow final : public juce::DocumentWindow
 public:
     AuditionKeyboardWindow()
         : juce::DocumentWindow ("Studio - Cinematic Atelier Keyboard",
-              studioKeyboardColours::base, juce::DocumentWindow::closeButton)
+              studioKeyboardColours::base(), juce::DocumentWindow::closeButton)
     {
         setUsingNativeTitleBar (true);
         setResizable (true, false);

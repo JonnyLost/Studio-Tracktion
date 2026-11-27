@@ -1619,6 +1619,13 @@ public:
         if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
+        dockedKeyboard.refreshTheme();
+        keyboardDockSurround.repaint();
+        if (midiKeyboardWindow)
+        {
+            midiKeyboardWindow->setBackgroundColour (studio::studioKeyboardColours::base());
+            midiKeyboardWindow->panel.refreshTheme();
+        }
         if (persist)
         {
             auto& prefs = engine.getPropertyStorage().getPropertiesFile();

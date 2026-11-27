@@ -40,8 +40,12 @@ on:
       - feature/studio-inspector-controls-m39c
       - feature/studio-themes-icons-m39d
       - feature/studio-composer-acceptance-m39e
+      - feature/studio-hardware-console-m40
+      - feature/studio-deep-black-m41
   pull_request:
     branches:
+      - feature/studio-deep-black-m41
+      - feature/studio-hardware-console-m40
       - feature/studio-composer-acceptance-m39e
       - feature/studio-themes-icons-m39d
       - feature/studio-inspector-controls-m39c
