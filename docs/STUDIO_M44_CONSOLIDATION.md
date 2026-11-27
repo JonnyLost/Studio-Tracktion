@@ -37,6 +37,10 @@ The installer builds Release with two jobs by default. It stages the app, signs 
 
 Once installed, open **Finder → Applications → Studio**. For a per-user installation, press **Shift–Command–G** in Finder and enter `~/Applications`. Double-click **Studio**. You can search for **Studio** in Spotlight, open it from Launchpad where available, or drag the installed app to the Dock. When Studio is running, its Dock menu also offers **Options → Keep in Dock**.
 
+### Install the verified preview from Finder
+
+Download the GitHub Actions artifact and open the outer ZIP, then open the enclosed `Studio-M44-Intel-preview.zip`. In Finder, move `Studio.app` to Applications or to your own `~/Applications` folder. If Finder finds an existing Studio.app, first move the existing bundle to a separate folder so it can be restored. Double-click the installed Studio. If macOS requests approval for this locally signed build, use **System Settings → Privacy & Security → Open Anyway**. [Intel preview artifact](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941426971/artifacts/15173577847)
+
 ### Restore a previous version
 
 Quit Studio first. In Finder, open the installation directory printed by the installer and move the current Studio.app to a separate folder for safekeeping. Use **Shift–Command–G** to open the exact hidden backup directory printed by the installer, for example `/Applications/.studio-backup.A1B2C3D4`. Move its Studio.app back into the original Applications folder and open it there. A bundle rollback restores the application executable and resources. Projects, preferences, and sample folders stay in their usual locations. Use a copy of any project saved by the newer version when checking older-version compatibility.
@@ -62,17 +66,19 @@ The approved `Studio_Icon_MinimalPro_Refined.png`, `Studio_Icon_MinimalPro_Refin
 
 ## Automated and manual verification
 
-Build and test details are tracked in the [M44 Actions runs](https://github.com/JonnyLost/Studio-Tracktion/actions?query=branch%3Aintegration%2Fstudio-0.2-m44-consolidated). The Intel Release job builds and exercises the executable through the repository's CTest suite. It verifies and launches a copy extracted outside the checkout before uploading the ZIP. A package without the approved icon is a preview. This workspace runs Linux and cannot install to the Intel Mac.
+Build and test details are tracked in the [M44 Actions runs](https://github.com/JonnyLost/Studio-Tracktion/actions?query=branch%3Aintegration%2Fstudio-0.2-m44-consolidated). The Intel Release job exercises the executable through the repository's CTest suite. It also verifies and launches a copy extracted outside the checkout before uploading the ZIP. A package without the approved icon is a preview. This workspace runs Linux and cannot install to the Intel Mac.
 
 ### Linux Release results
 
-- Commit `e98693f` passed all 43 CTest cases locally under Xvfb and on GitHub's Linux push and draft PR runs. The revised hosted recording fixture in `2589191` also passed the full 43-case local suite and five consecutive standalone repetitions. Results include the SFZ, SoundFont/DLS and EXS fixtures, synthetic Garritan and universal conversion cases, ARIA catalog fixtures, sampler and synth audio integration, cue and stem delivery, and window-size and theme checks. [Linux push run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45939514066)
+- Commit `2589191` passed all 43 CTest cases locally under Xvfb and on GitHub's Linux push and draft PR runs. The revised hosted recording fixture also passed five consecutive local repetitions. Results include the SFZ, SoundFont/DLS and EXS fixtures, synthetic Garritan and universal conversion cases, ARIA catalog fixtures, sampler and synth audio integration, cue and stem delivery, and window-size and theme checks. [Linux push run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941426992)
 - The M43 baseline adaptive test expected an earlier fixed 425-point Atelier dock. The updated fixture exercises the approved default Split height, divider lock, reachable viewport content and floating editor. Appearance checks also compile on the Intel SDK after qualifying the theme's `signal` role.
 - A copy of the Linux executable started from `/tmp` in Xvfb. In one smoke run, its first window appeared in 118 ms, with 45.8 MiB RSS and 22% of one core averaged over the next three seconds. The local sampler benchmark had zero misses across six configurations. An isolated synth matrix run recorded 11 individual block deadline misses across 60 configurations. These measurements describe the shared Linux environment. Startup and sustained performance on the Intel Mac remain manual checks.
 
 ### Intel macOS results
 
-The Intel Release for `e98693f` built with the expected x86_64 architecture and passed 44 of 45 CTest cases. The Apple DLS test rendered different patches and checked independent tuning in two AU instances. The transport fixture failed to retain its synthetic MIDI take after Stop. Commit `2589191` keeps the hosted audio device processing through Stop and sends the test notes after the count-in transition. Its Intel verification and archive smoke test are tracked in the linked run. [Initial Intel results](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45939514039) · [Updated Intel run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941426971)
+The Intel Release for `2589191` passed all 45 CTest cases and the native Swift seating check. The Apple DLS test rendered different patches and checked independent tuning in two AU instances. The updated transport fixture retained the synthetic MIDI take after Stop. The package step checked the x86_64 Mach-O, macOS 14 deployment target, bundle identifier, executable, microphone usage string and signature. Launch Services opened the extracted app outside the source tree. [Intel Release run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941426971)
+
+The draft PR's Intel Debug build compiled successfully and passed 44 of 45 CTest cases. That runner still failed the hosted MIDI take retention assertion after Stop. Physical MIDI and audio recording, personal project and library acceptance, and installation on the owner's Mac remain manual checks. [Intel Debug run](https://github.com/JonnyLost/Studio-Tracktion/actions/runs/45941431792)
 
 ### Manual Mac acceptance
 
