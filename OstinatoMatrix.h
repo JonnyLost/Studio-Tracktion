@@ -21,11 +21,11 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&intervalLabel,&repeatLabel})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
-        for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})
+        for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel})
         {addAndMakeVisible(*l);l->setFont(uiFont(10));l->setJustificationType(Justification::centredLeft);}
         name.setTextToShowWhenEmpty("Pattern name",colours::secondary);
         name.setInputRestrictions(160);name.setReturnKeyStartsNewLine(false);
@@ -94,7 +94,7 @@ public:
     {
         viewport.setScrollBarThickness(appearance.scrollbar());
         status.setFont(uiFont(12));
-        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})l->setFont(uiFont(10));
+        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel})l->setFont(uiFont(10));
         resized();repaint();matrix.repaint();
     }
     void paint(juce::Graphics& g) override {g.fillAll(colours::canvas);}
@@ -151,6 +151,9 @@ public:
         select(selected,4);velocity.setText("111",false);gate.setText("500",false);accent.setToggleState(true,juce::dontSendNotification);
         enabled.setToggleState(true,juce::dontSendNotification);applyCell.onClick();
         if(!stored.rows[1].steps[4].enabled||!stored.rows[1].steps[4].accent||stored.rows[1].steps[4].velocity!=111)return false;
+        pitchMode.setSelectedId(2,juce::dontSendNotification);applyRow.onClick();
+        interval.setText("-5",false);applyCell.onClick();
+        if(stored.rows[1].pitchMode!=PitchMode::intervals||stored.rows[1].steps[4].interval!=-5)return false;
         const auto before=stored;division.setText("4",false);applyRow.onClick();if(stored!=before)return false;
         setContext(encode(stored),tracks,true);
         if(matrix.cellAt(matrix.xFor(stored.rowBoundary(stored.rows[1],4))+1,1)!=4)return false;
