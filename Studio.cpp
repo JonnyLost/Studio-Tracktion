@@ -8313,7 +8313,28 @@ int StudioView::runInterfaceReview (const File& output)
         if(points.size()!=2||points[0].number!=24||points[1].value!=95||!matchingElement(p,points[0],1))return fail("named MIDI metadata and chase match");
         auto other=art;other.id=Uuid().toString();
         if(writePerformance(*clip,p,other,beat,100,undo).wasOk())return fail("reject overlapping keyswitch");
-        if(!removeNamed(*clip,points[0].state,undo)||!removeNamed(*clip,points[1].state,undo)||!namedPoints(*clip).empty())return fail("remove named events");
+        if(undo)undo->beginNewTransaction();
+        auto destination=p.duplicate();destination.elements[0].id=Uuid().toString();
+        destination.elements[0].binding={"note",0,27,90};
+        destination.elements[1].id=Uuid().toString();destination.elements[1].binding={"cc",0,11,80};
+        juce::Array<te::MidiClip*> candidates{clip};
+        const auto before=clip->state.toXmlString();
+        auto plan=planTranslation(candidates,p,destination);
+        if(!plan.ready()||plan.events.size()!=2||clip->state.toXmlString()!=before)return fail("dry-run translation is non-mutating");
+        auto invalid=destination;invalid.elements[0].binding.number=60; // fixture includes middle C
+        if(planTranslation(candidates,p,invalid).ready())return fail("reject ordinary note at destination switch");
+        if(!undo||applyTranslation(plan,destination,*undo).failed())return fail("apply native translation");
+        undo->beginNewTransaction();
+        auto translated=namedPoints(*clip);
+        if(translated.size()!=2||translated[0].number!=27||translated[0].value!=90||translated[1].number!=11||translated[1].value!=95
+           ||!matchingElement(destination,translated[0],1)||!matchingElement(destination,translated[1],1))return fail("translated note and expression values");
+        if(!undo->undo())return fail("undo native translation");
+        auto restored=namedPoints(*clip);
+        if(restored.size()!=2||restored[0].number!=24||restored[1].number!=1||!matchingElement(p,restored[0],1))return fail("restore original named MIDI");
+        if(!undo->redo())return fail("redo native translation");
+        translated=namedPoints(*clip);
+        if(translated.size()!=2||translated[0].number!=27)return fail("redo translated MIDI");
+        if(!removeNamed(*clip,translated[0].state,undo)||!removeNamed(*clip,translated[1].state,undo)||!namedPoints(*clip).empty())return fail("remove named events");
         if(undo)undo->beginNewTransaction();
     }
     selection.selectOnly (clip);
