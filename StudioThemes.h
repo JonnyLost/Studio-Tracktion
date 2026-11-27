@@ -17,7 +17,7 @@ inline constexpr std::array<Palette,8> palettes {{
     { "Deep Black", { 0xff080808u, 0xff050505u, 0xff101010u, 0xff0c0c0cu, 0xff1b1b1bu, 0xff292929u, 0xff525252u, 0xff363636u, 0xff000000u, 0xff262626u, 0xfff7f6f2u, 0xffbdbdbdu, 0xffe8e6dfu, 0xffdeded9u, 0xfff2efe4u, 0xffffcf86u, 0xfff47770u, 0xff91d1a1u, 0xffe1b9a9u, 0xff424242u, 0xff4a4a4au }, false }
 }};
 // Preserve the persisted Graphite Red index and all other palettes.
-inline constexpr int hardwareConsoleIndex = 1;
+inline constexpr int graphiteIndex = 1;
 // Append rather than reorder: saved theme indices remain stable.
 inline constexpr int deepBlackIndex = 7;
 inline constexpr std::uint32_t hardwareScale = 0xffc65b45u;
@@ -25,7 +25,10 @@ inline constexpr std::uint32_t hardwareCap = 0xff858585u;
 inline constexpr std::uint32_t hardwareIvory = 0xffe8e6dfu;
 inline constexpr std::uint32_t hardwareInk = 0xff191919u;
 inline constexpr std::uint32_t hardwareRecord = 0xffb9232du;
-inline constexpr bool hardwareConsole(int index) { return index == hardwareConsoleIndex || index == deepBlackIndex; }
+// Only Deep Black uses Oxygen-style control geometry.
+inline constexpr bool hardwareConsole(int index) { return index == deepBlackIndex; }
+// Both neutral themes use a coordinated keyboard palette, independently of control geometry.
+inline constexpr bool neutralKeyboard(int index) { return index == graphiteIndex || hardwareConsole(index); }
 // The ruler is separate from the timeline role, which is also the dark editor canvas.
 inline constexpr bool creamRuler(int index) { return index == deepBlackIndex; }
 inline constexpr std::uint32_t rulerCream = 0xffeee4cdu;
