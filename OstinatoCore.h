@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstddef>
+#include <utility>
 #include <iomanip>
 #include <locale>
 #include <map>
@@ -207,6 +209,7 @@ class Cursor
 {
 public:
     explicit Cursor(const Render& source):render(source){}
+    Cursor(Render&&)=delete;Cursor(const Render&&)=delete;
     Cursor(const Cursor&)=delete;Cursor& operator=(const Cursor&)=delete;
     template<class Sink> void stop(Tick at,Sink&& sink)
     {
