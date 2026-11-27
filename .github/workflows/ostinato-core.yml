@@ -7,6 +7,7 @@ on:
       - 'feature/studio-ostinato-*'
     paths:
       - OstinatoCore.h
+      - OstinatoAudition.h
       - tests/OstinatoCoreTests.cpp
       - .github/workflows/ostinato-core.yml
   pull_request:
@@ -15,6 +16,7 @@ on:
       - 'feature/studio-ostinato-*'
     paths:
       - OstinatoCore.h
+      - OstinatoAudition.h
       - tests/OstinatoCoreTests.cpp
       - .github/workflows/ostinato-core.yml
 
