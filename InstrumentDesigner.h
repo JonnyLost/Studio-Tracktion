@@ -121,6 +121,8 @@ public:
         transport.setToggleState(false,dontSendNotification);full.setToggleState(true,dontSendNotification);
         move(-1);
         if(profile.elements.size()!=2||profile.elements[0].presentation!="fader"||profile.elements[0].transport)return false;
+        bindingKind.setSelectedId(3,dontSendNotification);bindingChannel.setText("0",false);bindingNumber.setText("1",false);bindingValue.setText("96",false);applyBinding();
+        if(profile.elements[0].binding!=Binding{"cc",0,1,96})return false;
         name.setText("Flute fixture",false);saveCurrent();
         if(dirty||store.list().size()!=1)return false;
         const auto original=profile;
@@ -267,7 +269,7 @@ private:
                 if(!e.full||(e.kind=="articulation")!=articulations)continue;
                 if(index>=capacity)break;
                 auto cell=Rectangle<int>(a.getX()+(index%cols)*cellWidth,a.getY()+(index/cols)*rowHeight,cellWidth,rowHeight).reduced(2);
-                hits.emplace_back(cell,e.id);
+                if(index!=capacity-1||count<=capacity)hits.emplace_back(cell,e.id);
                 g.setColour(colours::control);g.fillRoundedRectangle(cell.toFloat(),3);
                 g.setColour(colours::secondary);
                 if(!articulations&&e.presentation!="button")
@@ -390,7 +392,7 @@ private:
     void applyBinding()
     {
         cancelLive();
-        if(!validIndex(editingIndex))return;
+        if(!validIndex(editingIndex)||!commitElementDraft())return;
         if(auto b=bindingDraft()){profile.elements[(size_t)editingIndex].binding=*b;dirty=true;refreshElements(editingIndex);say("Assignment saved in draft. Save profile to keep it.");}
     }
     void startLearn()
@@ -408,7 +410,7 @@ private:
         if(pollLearn)
             if(auto b=pollLearn())
             {
-                cancelLive();showBinding(*b);say("MIDI captured. Review channel and value, then Save assignment.");return;
+                cancelLive();showBinding(*b);bindingStatus.setText("Captured — not saved yet",juce::dontSendNotification);say("MIDI captured. Review channel and value, then Save assignment.");return;
             }
         if(juce::Time::getMillisecondCounterHiRes()>=learnDeadline){cancelLive();say("MIDI Learn timed out.");}
     }
