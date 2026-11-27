@@ -15,8 +15,9 @@ public:
         addAndMakeVisible(report);addAndMakeVisible(confirm);addAndMakeVisible(cancel);
         confirm.setEnabled(ready);
         confirm.onClick=[this,apply=std::move(apply)]{
+            auto callback=apply;
             if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(1);
-            juce::MessageManager::callAsync(apply);
+            if(callback)juce::MessageManager::callAsync(std::move(callback));
         };
         cancel.onClick=[this]{if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(0);};
     }
