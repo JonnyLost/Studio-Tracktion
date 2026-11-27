@@ -6,6 +6,7 @@
 #include "StudioInstrumentCatalogData.h"
 #include "InstrumentProfile.h"
 #include "InstrumentMidiBinding.h"
+#include "InstrumentLibraryReconciliation.h"
 #include <functional>
 #include <optional>
 #include <algorithm>
@@ -29,6 +30,13 @@ public:
         learning=false;learnId.clear();
         if(release){auto action=std::move(release);release={};action();}
     }
+    std::function<void()> openLibraryScanner;
+    void setInstalledCatalog(const aria::Catalog& source)
+    {
+        installedChoice.setSelectedId(0,juce::dontSendNotification);visibleInstalled.clear();installed.clear();
+        for(const auto& row:source.patches())installed.push_back(row.second);
+        refillInstalled();
+    }
     explicit DesignerPanel(SourceContext source, juce::File folder=ProfileStore::localDirectory())
         : context(std::move(source)), store(std::move(folder))
     {
@@ -41,14 +49,24 @@ public:
         for (auto* c : std::initializer_list<Component*>{&heading,&contextLabel,&collection,&load,&newProfile,&duplicate,&save,&discard,
              &name,&library,&patch,&variant,&channel,&slot,&instrumentSearch,&instrument,&artworkSearch,&artwork,
              &kind,&candidateSearch,&candidates,&allTechniques,&add,&elements,&label,&style,&transport,&full,
-             &apply,&up,&down,&remove,&channelInfo,&status,&preview,&bindingKind,&bindingChannel,&bindingNumber,&bindingValue,&assign,&learn,&audition,&bindingStatus})
+             &apply,&up,&down,&remove,&channelInfo,&status,&preview,&bindingKind,&bindingChannel,&bindingNumber,&bindingValue,&assign,&learn,&audition,&bindingStatus,&installedSearch,&installedChoice,&linkInstalled,&scanInstalled,&discoveryChoice,&addDiscovered,&addAllDiscovered,&reviewDiscovered,&discoveryStatus})
             body.addAndMakeVisible(*c);
         heading.setText("Instrument Designer",dontSendNotification);
         heading.setFont(uiFont(20,Font::bold));
         contextLabel.setFont(uiFont(12)); status.setFont(uiFont(12));
         status.setJustificationType(Justification::centredLeft);
         for (auto* e : {&name,&library,&patch,&variant,&channel,&slot})
-            e->onTextChange=[this]{ if(!refreshing) {dirty=true;preview.repaint();} };
+            e->onTextChange=[this]{ if(!refreshing) {dirty=true;preview.repaint();describeDiscovery();} };
+        setupField(installedSearch,"Search installed library / patch");
+        installedSearch.onTextChange=[this]{refillInstalled();};
+        installedChoice.onChange=[this]{refillDiscovery();};
+        discoveryChoice.onChange=[this]{describeDiscovery();};
+        linkInstalled.onClick=[this]{linkSelectedPatch();};
+        scanInstalled.onClick=[this]{if(openLibraryScanner)openLibraryScanner();};
+        addDiscovered.onClick=[this]{importDiscovered(false,false);};
+        addAllDiscovered.onClick=[this]{importDiscovered(true,false);};
+        reviewDiscovered.onClick=[this]{importDiscovered(false,true);};
+        discoveryStatus.setFont(uiFont(11));discoveryStatus.setJustificationType(Justification::centredLeft);
         setupField(name,"Profile name"); setupField(library,"Library"); setupField(patch,"Patch name or stable ID");
         setupField(variant,"Patch variant"); setupField(channel,"MIDI channel 1–16"); setupField(slot,"ARIA slot 1–16");
         setupField(instrumentSearch,"Search instruments"); setupField(artworkSearch,"Search vector artwork");
@@ -146,7 +164,7 @@ public:
     {
         viewport.setBounds(getLocalBounds());
         const int w=juce::jmax(640,getWidth()-22), line=juce::jmax(28,appearance.control(30));
-        const int h=juce::jmax(getHeight(), 18*line+205);
+        const int h=juce::jmax(getHeight(), 22*line+205);
         body.setSize(w,h);
         auto r=body.getLocalBounds().reduced(12);
         heading.setBounds(r.removeFromTop(line)); contextLabel.setBounds(r.removeFromTop(line));
@@ -155,6 +173,18 @@ public:
         load.setBounds(row.removeFromLeft(row.getWidth()/4).reduced(2));
         newProfile.setBounds(row.removeFromLeft(row.getWidth()/3).reduced(2));
         duplicate.setBounds(row.removeFromLeft(row.getWidth()/2).reduced(2)); discard.setBounds(row.reduced(2));
+        auto installedRow=r.removeFromTop(line);
+        installedSearch.setBounds(installedRow.removeFromLeft(installedRow.getWidth()/3).reduced(2));
+        installedChoice.setBounds(installedRow.removeFromLeft(installedRow.getWidth()*2/3).reduced(2));
+        scanInstalled.setBounds(installedRow.reduced(2));
+        auto suggestionRow=r.removeFromTop(line);
+        linkInstalled.setBounds(suggestionRow.removeFromLeft(suggestionRow.getWidth()/4).reduced(2));
+        discoveryChoice.setBounds(suggestionRow.reduced(2));
+        auto discoveryActions=r.removeFromTop(line);
+        addDiscovered.setBounds(discoveryActions.removeFromLeft(discoveryActions.getWidth()/3).reduced(2));
+        addAllDiscovered.setBounds(discoveryActions.removeFromLeft(discoveryActions.getWidth()/2).reduced(2));
+        reviewDiscovered.setBounds(discoveryActions.reduced(2));
+        discoveryStatus.setBounds(r.removeFromTop(line).reduced(2));
         auto columns=r.removeFromTop(11*line);
         auto left=columns.removeFromLeft(columns.getWidth()/2).reduced(4);
         auto right=columns.reduced(4);
@@ -189,6 +219,13 @@ private:
     using ToggleButton=juce::ToggleButton;
     using Label=juce::Label;
     using Graphics=juce::Graphics;
+    std::vector<aria::Patch> installed;
+    std::vector<int> visibleInstalled;
+    std::vector<PatchSuggestion> suggestions;
+    TextEditor installedSearch;
+    ComboBox installedChoice,discoveryChoice;
+    TextButton linkInstalled{"Link selected patch"},scanInstalled{"Scan libraries..."},addDiscovered{"Add articulation"},addAllDiscovered{"Add all unassigned"},reviewDiscovered{"Review literal note"};
+    Label discoveryStatus;
     SourceContext context;
     Catalog catalog; ProfileStore store; Profile profile;
     std::optional<Profile> saved;
@@ -452,6 +489,111 @@ private:
             if(result==4){safe->cancelLive();safe->profile.elements[(size_t)safe->editingIndex].binding={};safe->dirty=true;safe->refreshElements(safe->editingIndex);}
         });
     }
+    const aria::Patch* selectedPatch() const
+    {
+        int i=installedChoice.getSelectedItemIndex();
+        return juce::isPositiveAndBelow(i,(int)visibleInstalled.size())?&installed[(size_t)visibleInstalled[(size_t)i]]:nullptr;
+    }
+    void refillInstalled()
+    {
+        using namespace juce;
+        const auto current=selectedPatch()?selectedPatch()->id:profile.catalogPatchId;
+        installedChoice.clear(dontSendNotification);visibleInstalled.clear();
+        const auto query=installedSearch.getText().trim();
+        int choiceId=0;
+        for(int i=0;i<(int)installed.size();++i)
+        {
+            const auto& p=installed[(size_t)i];
+            if(query.isNotEmpty()&&!p.name.containsIgnoreCase(query)&&!p.library.containsIgnoreCase(query)&&!p.source.getFullPathName().containsIgnoreCase(query))continue;
+            visibleInstalled.push_back(i);
+            const int item=(int)visibleInstalled.size();
+            installedChoice.addItem(p.library+" / "+p.name+" — "+p.source.getParentDirectory().getFileName()+(p.present?"":" (missing)"),item);
+            if(p.id==current)choiceId=item;
+        }
+        installedChoice.setTextWhenNothingSelected("Choose a scanned patch ("+String(installed.size())+")");
+        installedChoice.setSelectedId(choiceId,dontSendNotification);refillDiscovery();
+    }
+    void refillDiscovery()
+    {
+        using namespace juce;
+        suggestions.clear();discoveryChoice.clear(dontSendNotification);
+        if(auto* p=selectedPatch())suggestions=reconcilePatch(*p,catalog);
+        for(int i=0;i<(int)suggestions.size();++i)
+        {
+            const auto& h=suggestions[(size_t)i];
+            discoveryChoice.addItem(h.label+" — "+(h.note>=0?"MIDI "+String(h.note):h.printedNote.isNotEmpty()?"manual "+h.printedNote:"unassigned"),i+1);
+        }
+        discoveryChoice.setTextWhenNothingSelected("Discovered articulations");
+        if(!suggestions.empty())discoveryChoice.setSelectedId(1,dontSendNotification);
+        describeDiscovery();
+    }
+    void describeDiscovery()
+    {
+        const auto* p=selectedPatch();const int i=discoveryChoice.getSelectedItemIndex();
+        bool linked=p&&profile.catalogPatchId==p->id&&profile.catalogStamp==patchStamp(*p)&&profile.library==p->library&&profile.patch==p->name
+                    &&library.getText().trim()==p->library&&patch.getText().trim()==p->name;
+        const bool fresh=p&&p->sourceCurrent()&&p->kind=="sfz";
+        linkInstalled.setEnabled(fresh);addDiscovered.setEnabled(linked&&fresh&&!suggestions.empty());
+        addAllDiscovered.setEnabled(linked&&fresh&&!suggestions.empty());
+        const bool valid=juce::isPositiveAndBelow(i,(int)suggestions.size());
+        reviewDiscovered.setEnabled(linked&&fresh&&valid&&suggestions[(size_t)i].note>=0);
+        String message;
+        if(!p)message=installed.empty()?"No local catalog yet — scan libraries first.":"Choose the exact installed patch and link it.";
+        else if(!p->present||!fresh)message="Unavailable, stale or original-player-only patch. Rescan or map manually.";
+        else if(!linked)message="Link this exact patch to the profile first. Existing mappings will be preserved.";
+        else if(valid)
+        {
+            const auto& h=suggestions[(size_t)i];message=String(suggestions.size())+" suggestions · "+h.evidence+(h.printedNote.isNotEmpty()?" · printed "+h.printedNote:"");
+        }
+        else message=p->mappingInspected?"No readable articulation labels — use manual assignment.":"Older inventory — rescan to discover switches.";
+        discoveryStatus.setText(message,juce::dontSendNotification);
+        discoveryStatus.setTooltip(message);
+    }
+    void linkSelectedPatch()
+    {
+        const auto* p=selectedPatch();if(!p||!commitElementDraft())return;
+        auto next=profile;next.library=library.getText().trim();next.patch=patch.getText().trim();
+        if(auto result=linkPatch(next,*p);result.failed()){say(result.getErrorMessage());return;}
+        cancelLive();profile=std::move(next);dirty=true;
+        library.setText(profile.library,false);patch.setText(profile.patch,false);
+        if(profile.name=="Untitled instrument"){profile.name=p->name;name.setText(profile.name,false);}
+        refillDiscovery();say("Patch linked. Choose the physical instrument, then add suggested controls.");
+    }
+    void importDiscovered(bool all,bool review)
+    {
+        const auto* p=selectedPatch();
+        if(!p||!commitElementDraft()||profile.instrument.isEmpty()){say("Choose a physical instrument and link a local patch first.");return;}
+        if(!p->sourceCurrent()||profile.catalogPatchId!=p->id||profile.catalogStamp!=patchStamp(*p)
+            ||library.getText().trim()!=p->library||patch.getText().trim()!=p->name){say("Link the current patch before importing; rescan if changed.");return;}
+        const int selected=discoveryChoice.getSelectedItemIndex();
+        if(!all&&!juce::isPositiveAndBelow(selected,(int)suggestions.size()))return;
+        // Re-evaluate stamps and collisions immediately before using evidence.
+        const auto fresh=reconcilePatch(*p,catalog);
+        int last=-1,added=0;
+        for(int i=0;i<(int)fresh.size();++i)
+        {
+            if(!all&&i!=selected)continue;
+            const auto& h=fresh[(size_t)i];
+            if(!all&&!h.label.equalsIgnoreCase(suggestions[(size_t)selected].label)){refillDiscovery();say("Discovery changed. Review again.");return;}
+            const auto count=profile.elements.size();last=addSuggestion(profile,h);
+            if(profile.elements.size()!=count){++added;dirty=true;}
+        }
+        if(last<0){say("No element added; check the 128-control profile limit.");return;}
+        refreshElements(last);
+        if(review)
+        {
+            const auto& h=fresh[(size_t)selected];
+            const auto& e=profile.elements[(size_t)last];
+            if(e.binding.type!="unassigned"){say("Existing assignment preserved. Edit manually if you want to replace it.");return;}
+            if(h.note<0){say("No current unambiguous literal note. Use manual mapping.");return;}
+            showBinding(Binding{"note",0,h.note,100});
+            bindingStatus.setText("Proposed SFZ note — not saved; review and audition",juce::dontSendNotification);
+            viewport.setViewPosition(0,bindingKind.getY());
+            say("Review note, channel and velocity. Save assignment only after checking the patch.");
+        }
+        else say(String(added)+" new unassigned controls added. Existing assignments preserved.");
+        describeDiscovery();
+    }
     void addElement()
     {
         if(!commitElementDraft())return;
@@ -489,6 +631,7 @@ private:
         auto p=profile;p.name=name.getText().trim();p.library=library.getText().trim();p.patch=patch.getText().trim();p.variant=variant.getText().trim();
         if(!channel.getText().containsOnly("0123456789")||!slot.getText().containsOnly("0123456789")){say("Channel and slot must be integers 1–16.");return false;}
         p.channel=channel.getText().getIntValue();p.slot=slot.getText().getIntValue();
+        if(p.library!=profile.library||p.patch!=profile.patch){p.catalogPatchId.clear();p.catalogLibraryVersion.clear();p.catalogStamp.clear();}
         if(auto r=p.validate();r.failed()){say(r.getErrorMessage());return false;}
         profile=std::move(p);return true;
     }
@@ -502,6 +645,7 @@ private:
         instrumentSearch.setText({},false);artworkSearch.setText({},false);
         channelInfo.setToggleState(profile.channelInfo,dontSendNotification);
         refillInstruments(false);refillInstruments(true);refillCandidates();refreshElements(-1);setContext(context);
+        installedChoice.setSelectedId(0,dontSendNotification);refillInstalled();
     }
     void startNew()
     {
