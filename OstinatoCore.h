@@ -20,12 +20,15 @@ using Tick=std::int64_t;
 constexpr Tick ticksPerQuarter=9600;
 constexpr int maxRows=64,maxSteps=256,maxRepeats=256;
 constexpr size_t maxNotes=65536;
+constexpr size_t maxHeldNotes=512;
 struct Step
 {
     bool enabled=false,accent=false;
     int velocity=90,gate=750; // gate in thousandths of a step
     int interval=0; // semitones from the row's configured root
     int densityThreshold=0; // 0 always plays, 1–127 optional at corresponding density
+    int repeats=1,offset=0,probability=100; // offset in thousandths of cell, +/-250
+    std::string articulation{}; // stable instrument mapping ID
     bool operator==(const Step&) const=default;
 };
 enum class PitchMode { fixed=0, intervals=1 };
@@ -76,7 +79,7 @@ struct Pattern
             if(r.timing!=TimingMode::independentCycle&&(r.numerator!=4||r.denominator!=4||r.bars!=1))return false;
             if(r.pitchMode!=PitchMode::fixed&&r.pitchMode!=PitchMode::intervals)return false;
             for(const auto& s:r.steps)
-                if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>1000||s.interval<-127||s.interval>127||s.densityThreshold<0||s.densityThreshold>127
+                if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>4000||s.interval<-127||s.interval>127||s.densityThreshold<0||s.densityThreshold>127||s.repeats<1||s.repeats>8||s.offset<-250||s.offset>250||s.probability<0||s.probability>100||!textValid(s.articulation,80,true)||(s.repeats>1&&s.gate>1000)
                    ||(r.pitchMode==PitchMode::intervals&&s.enabled&&(r.pitch+s.interval<0||r.pitch+s.interval>127)))return false;
         }
         return true;
@@ -143,22 +146,22 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 4 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
+    out<<"STUDIO_OSTINATO 5 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
     for(const auto& r:p.rows)
     {
         out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
-        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<'\n';
+        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<' '<<s.repeats<<' '<<s.offset<<' '<<s.probability<<' '<<std::quoted(s.articulation)<<'\n';
     }
     return out.str();
 }
 inline bool decode(const std::string& text,Pattern& output)
 {
-    if(text.empty()||text.size()>1024*1024)return false;
+    if(text.empty()||text.size()>4*1024*1024)return false;
     std::istringstream in(text);in.imbue(std::locale::classic());
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version<1||version>4)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>5)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -177,7 +180,7 @@ inline bool decode(const std::string& text,Pattern& output)
             if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>1)return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
         }
         r.steps.resize(size_t(cells));
-        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold)))return false;
+        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold))||(version>=5&&!(in>>s.repeats>>s.offset>>s.probability>>std::quoted(s.articulation))))return false;
         p.rows.push_back(std::move(r));
     }
     in>>std::ws;if(!in.eof()||!p.valid())return false;
@@ -188,6 +191,7 @@ struct Note
     Tick start=0,end=0;
     int route=0,channel=1,pitch=60,velocity=90;
     int densityThreshold=0;
+    int articulation=-1;
     bool operator==(const Note&) const=default;
 };
 struct Event
@@ -196,14 +200,17 @@ struct Event
     int route=0,channel=1,pitch=60,velocity=0;
     bool on=false;
     int densityThreshold=0;
+    int articulation=-1;
     bool operator==(const Event&) const=default;
 };
+struct ArticulationRequest{int route=0,channel=1;std::string id;bool operator==(const ArticulationRequest&) const=default;};
 struct Render
 {
     Tick duration=0;
     std::vector<std::string> routes;
     std::vector<Note> notes;
     std::vector<Event> events;
+    std::vector<ArticulationRequest> articulations;
     int unassignedRows=0;
 };
 // Compile off the audio thread. No routing fallback: absent destinations fail
@@ -239,9 +246,29 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 const Tick nextOffset=p.rowBoundary(row,index+1);
                 const Tick start=origin+offset;
                 if(start>=next.duration)break;
-                if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
-                const Tick length=std::max<Tick>(1,(nextOffset-offset)*s.gate/1000);
-                next.notes.push_back({start,std::min(start+length,next.duration),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold});
+                // Stable per-cycle/row/cell draw; no runtime random state.
+                auto hash=std::uint64_t(row.id)*0x9e3779b97f4a7c15ULL ^ std::uint64_t(origin)*0xbf58476d1ce4e5b9ULL ^ std::uint64_t(index);
+                hash^=hash>>30;hash*=0xbf58476d1ce4e5b9ULL;hash^=hash>>27;hash*=0x94d049bb133111ebULL;hash^=hash>>31;
+                if(int(hash%100)>=s.probability)continue;
+                const Tick width=nextOffset-offset;
+                if(width<s.repeats)return fail("Too many strikes for the available timing ticks.");
+                int art=-1;
+                if(!s.articulation.empty())
+                {
+                    ArticulationRequest req{route,row.channel,s.articulation};
+                    auto found=std::find(next.articulations.begin(),next.articulations.end(),req);
+                    art=int(found-next.articulations.begin());
+                    if(found==next.articulations.end())next.articulations.push_back(std::move(req));
+                }
+                for(int strike=0;strike<s.repeats;++strike)
+                {
+                    const Tick begin=width*strike/s.repeats,end=width*(strike+1)/s.repeats;
+                    const Tick at=std::max<Tick>(0,start+begin+width*s.offset/1000);
+                    if(at>=next.duration)continue;
+                    if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
+                    const Tick length=std::max<Tick>(1,(end-begin)*s.gate/1000);
+                    next.notes.push_back({at,std::min(at+length,next.duration),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold,art});
+                }
             }
     }
     auto address=[](const Note& n){return std::tuple(n.route,n.channel,n.pitch);};
@@ -267,6 +294,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         if(!normalized.empty()&&address(normalized.back())==address(n))
         {
             auto& prior=normalized.back();
+            if(prior.end>n.start&&prior.articulation!=n.articulation)return fail("Overlapping notes have incompatible articulation selections.");
             if(prior.start==n.start){prior.end=std::max(prior.end,n.end);prior.velocity=std::max(prior.velocity,n.velocity);continue;}
             prior.end=std::min(prior.end,n.start);
         }
@@ -277,12 +305,14 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
     next.events.reserve(next.notes.size()*2);
     for(const auto& n:next.notes)
     {
-        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold});
-        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold});
+        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold,n.articulation});
+        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold,n.articulation});
     }
     std::sort(next.events.begin(),next.events.end(),[](const auto& a,const auto& b){
         return std::tie(a.tick,a.on,a.route,a.channel,a.pitch)<std::tie(b.tick,b.on,b.route,b.channel,b.pitch);
     });
+    size_t held=0;
+    for(const auto& e:next.events){if(e.on){if(++held>maxHeldNotes)return fail("Generated polyphony exceeds 512 held notes.");}else if(held>0)--held;}
     output=std::move(next);error.clear();return true;
 }
 
@@ -333,7 +363,7 @@ public:
     size_t held()const noexcept{return activeCount;}
 private:
     const Render& render;
-    std::array<Event,maxRows> active{};
+    std::array<Event,maxHeldNotes> active{};
     size_t activeCount=0,index=0;
     Tick expected=0;bool started=false;
 };
