@@ -23,6 +23,7 @@ using namespace tracktion::literals;
 #include "OstinatoMatrix.h"
 #include "OstinatoAudition.h"
 #include "OstinatoConductingInput.h"
+#include "OstinatoArticulations.h"
 #include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -2556,6 +2557,8 @@ private:
     OstinatoTimer ostinatoTimer;
     struct OstinatoRoute{te::EditItemID track,plugin;};
     std::vector<OstinatoRoute> ostinatoRoutes;
+    std::vector<studio::ostinato::ArticulationBinding> ostinatoBindings;
+    std::vector<String> ostinatoMappingSnapshots;
     studio::ostinato::TimedRender ostinatoRender;
     std::unique_ptr<studio::ostinato::AuditionCursor> ostinatoCursor;
     double ostinatoStartMs=0;
@@ -6478,10 +6481,41 @@ private:
         }
         return track;
     }
+    std::vector<studio::ArticulationMapping> ostinatoMappings(te::AudioTrack& track,int channel)
+    {
+        te::Plugin* instrument=nullptr;
+        for(auto* p:track.pluginList)if(studio::isInstrumentPlugin(*p))
+        {if(instrument)return {};instrument=p;}
+        if(!instrument)return {};
+        // Native sampler group rules have their own trigger semantics; do not
+        // treat stale external palette XML as a native sampler assignment.
+        if(dynamic_cast<studio::sampler::Plugin*>(instrument))return {};
+        const auto data=track.state.getProperty("studioArticulationMappings").toString();
+        if(data.length()>1024*1024)return {};
+        auto root=parseXML(data);
+        if(!root||!root->hasTagName("StudioArticulations"))return {};
+        std::vector<studio::ArticulationMapping> result;
+        int profiles=0;
+        for(auto* profile:root->getChildWithTagNameIterator("Instrument"))
+            if(profile->getStringAttribute("instance")==instrument->itemID.toString())
+            {++profiles;result=studio::readArticulations(*profile);}
+        if(profiles!=1||result.size()>256)return {};
+        result.erase(std::remove_if(result.begin(),result.end(),[&](const auto& m){
+            return m.channel!=channel||m.id.toStdString().size()>80||
+                (m.message==studio::ArticulationMessage::controller&&(m.number>=120||(m.number>=64&&m.number<=69)));
+        }),result.end());
+        return result;
+    }
     void sendOstinato(const studio::ostinato::Event& e)
     {
         if(auto* track=ostinatoRoute(size_t(e.route),!e.on))
+        {
+            const auto* b=e.articulation>=0&&size_t(e.articulation)<ostinatoBindings.size()?&ostinatoBindings[size_t(e.articulation)]:nullptr;
+            if(e.on&&b)
+                track->injectLiveMidiMessage(b->controller?MidiMessage::controllerEvent(e.channel,b->number,b->value):MidiMessage::noteOn(e.channel,b->number,(uint8)b->value),{});
             track->injectLiveMidiMessage(e.on?MidiMessage::noteOn(e.channel,e.pitch,(uint8)e.velocity):MidiMessage::noteOff(e.channel,e.pitch),{});
+            if(!e.on&&b&&!b->controller)track->injectLiveMidiMessage(MidiMessage::noteOff(e.channel,b->number),{});
+        }
         else if(e.on)ostinatoDispatchFailed=true;
     }
     std::shared_ptr<te::PhysicalMidiInputDevice> isolatedOstinatoDevice(const String& id)
@@ -6549,7 +6583,7 @@ private:
         ostinatoTimer.stopTimer();ostinatoInput.detach();
         if(!ostinatoCursor)return;
         ostinatoCursor->stop([this](const auto& e){sendOstinato(e);});
-        ostinatoCursor.reset();ostinatoRoutes.clear();ostinatoRender={};ostinatoContext=nullptr;
+        ostinatoCursor.reset();ostinatoRoutes.clear();ostinatoBindings.clear();ostinatoMappingSnapshots.clear();ostinatoRender={};ostinatoContext=nullptr;
         if(ostinatoWindow){ostinatoWindow->editor().auditionState(false,reason);refreshOstinato();}
     }
     void tickOstinato()
@@ -6559,7 +6593,7 @@ private:
             ||edit->getTransport().isPlaying()||edit->getTransport().isRecording()
             ||edit->getTransport().getPosition()!=ostinatoPosition||edit->tempoSequence.getInternalSequence().hash()!=ostinatoTempoHash)
         {stopOstinato("Audition stopped — playback context changed.");return;}
-        for(size_t i=0;i<ostinatoRoutes.size();++i)if(!ostinatoRoute(i,false)){stopOstinato("Audition stopped — instrument changed.");return;}
+        for(size_t i=0;i<ostinatoRoutes.size();++i){auto* t=ostinatoRoute(i,false);if(!t||t->state.getProperty("studioArticulationMappings").toString()!=ostinatoMappingSnapshots[i]){stopOstinato("Audition stopped — instrument or articulation mappings changed.");return;}}
         if(ostinatoInput.attached()&&!ostinatoInput.matches(isolatedOstinatoDevice(ostinatoDevice)))
         {stopOstinato("Audition stopped — conducting input was disconnected or routed.");return;}
         auto& panel=ostinatoWindow->editor();
@@ -6595,6 +6629,21 @@ private:
             {fail("An assigned Audio Unit is still loading.");return;}
             routes.push_back({target->itemID,instrument->itemID});
         }
+        std::vector<ArticulationBinding> bindings;
+        std::vector<String> mappingSnapshots;
+        for(const auto& route:routes){auto* t=trackById(route.track);mappingSnapshots.push_back(t?t->state.getProperty("studioArticulationMappings").toString():String());}
+        for(const auto& request:generated.articulations)
+        {
+            auto* track=trackById(routes[size_t(request.route)].track);
+            if(!track){fail("Articulation destination disappeared.");return;}
+            const auto maps=ostinatoMappings(*track,request.channel);
+            const auto id=String::fromUTF8(request.id.c_str());
+            const auto found=std::find_if(maps.begin(),maps.end(),[&](const auto& m){return m.id==id;});
+            if(found==maps.end()||std::count_if(maps.begin(),maps.end(),[&](const auto& m){return m.id==id;})!=1)
+            {fail("A named articulation is missing or ambiguous. Review the step mapping.");return;}
+            bindings.push_back({request,found->message==studio::ArticulationMessage::controller,found->number,found->value});
+        }
+        if(!validateArticulations(generated,bindings,error)){fail(String::fromUTF8(error.c_str()));return;}
         const auto origin=edit->getTransport().getPosition();
         const auto beat=edit->tempoSequence.toBeats(origin);
         TimedRender timed;
@@ -6602,7 +6651,7 @@ private:
         {fail("Audition duration or tempo mapping is invalid (maximum ten minutes).");return;}
         piano.silencePreview();dockedKeyboard.releaseNotes();if(midiKeyboardWindow)midiKeyboardWindow->panel.releaseNotes();
         ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoTempoHash=edit->tempoSequence.getInternalSequence().hash();ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
-        ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
+        ostinatoRoutes=std::move(routes);ostinatoBindings=std::move(bindings);ostinatoMappingSnapshots=std::move(mappingSnapshots);ostinatoRender=std::move(timed);
         ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
         if(input)ostinatoInput.attach(std::move(input),ostinatoChannel,ostinatoMapping);
         ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();
@@ -6653,6 +6702,13 @@ private:
         panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
         panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
         panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        panel.articulationChoices=[safe,generation](const std::string& id,int channel){
+            std::vector<std::pair<std::string,std::string>> result;
+            if(!safe||safe->projectGeneration!=generation||!safe->edit)return result;
+            for(auto* t:te::getAudioTracks(*safe->edit))if(t->itemID.toString().toStdString()==id)
+            {auto maps=safe->ostinatoMappings(*t,channel);for(const auto& m:maps)if(std::count_if(maps.begin(),maps.end(),[&](const auto& x){return x.id==m.id;})==1)result.emplace_back(m.id.toStdString(),(m.name+(m.message==studio::ArticulationMessage::controller?" · CC ":" · note ")+String(m.number)).toStdString());break;}
+            return result;
+        };
         panel.setConductingMapping(ostinatoMapping);
         panel.chooseHardware=[safe,generation](Component* c){if(safe&&safe->projectGeneration==generation)safe->chooseOstinatoHardware(c);};
         panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
