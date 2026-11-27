@@ -23,6 +23,7 @@ public:
     std::function<juce::Result(const Profile&,const Binding&,std::function<void()>&)> sendAudition;
     void cancelLive()
     {
+        ++liveRevision;
         stopTimer();
         if(learning && endLearn)endLearn();
         learning=false;learnId.clear();
@@ -55,8 +56,8 @@ public:
         kind.addItem("Articulations",1); kind.addItem("Performance controls",2); kind.setSelectedId(1,dontSendNotification);
         bindingKind.addItem("Unassigned",1);bindingKind.addItem("Keyswitch",2);bindingKind.addItem("MIDI CC",3);
         bindingKind.addItem("Channel pressure",4);bindingKind.addItem("Pitch bend",5);
-        setupField(bindingChannel,"Channel (0 = profile)");setupField(bindingNumber,"Note / CC (0–127)");
-        setupField(bindingValue,"Value / velocity");
+        setupField(bindingChannel,"Channel (0 = profile)");setupField(bindingNumber,"Note / CC (0–127; C4 = 60)");
+        setupField(bindingValue,"Value / velocity (bend: 0–16383)");
         assign.onClick=[this]{applyBinding();};learn.onClick=[this]{startLearn();};audition.onClick=[this]{auditionSelected();};
         bindingKind.onChange=[this]{updateBindingFields();};
         style.addItem("Button",1); style.addItem("Knob",2); style.addItem("Fader",3);
@@ -192,6 +193,7 @@ private:
     std::vector<Profile> profiles;
     bool dirty=false, refreshing=false, ready=false;
     int editingIndex=-1;
+    unsigned liveRevision=0;
     bool learning=false;
     String learnId;
     double learnDeadline=0;
@@ -341,7 +343,7 @@ private:
         for(int i=0;i<(int)profile.elements.size();++i)
         {
             const auto& e=profile.elements[(size_t)i];
-            elements.addItem(String(i+1)+". "+e.label+" ["+(e.transport?"T":"")+(e.full?"F":"")+"]",i+1);
+            elements.addItem(String(i+1)+". "+e.label+" ["+(e.transport?"T":"")+(e.full?"F":"")+"]"+(e.binding.type=="unassigned"?" · unassigned":" · "+e.binding.type),i+1);
         }
         elements.setSelectedId(validIndex(selected)?selected+1:0,dontSendNotification);
         refreshElement();preview.repaint();
@@ -366,7 +368,9 @@ private:
         bindingKind.setSelectedId(b.type=="note"?2:b.type=="cc"?3:b.type=="pressure"?4:b.type=="bend"?5:1,dontSendNotification);
         bindingChannel.setText(String(b.channel),false);bindingNumber.setText(String(b.number),false);bindingValue.setText(String(b.value),false);
         updateBindingFields();
-        bindingStatus.setText(b.type=="unassigned"?"Unassigned — no MIDI":"Assigned: "+b.type+" / "+String(b.number)+" / channel "+String(b.channel),dontSendNotification);
+        bindingStatus.setText(b.type=="unassigned"?"Unassigned — no MIDI":
+            "Assigned: "+b.type+(b.type=="note"?" "+MidiMessage::getMidiNoteName(b.number,true,true,4)+" ("+String(b.number)+")":
+            b.type=="cc"?" "+String(b.number):String())+" / channel "+(b.channel==0?"profile":String(b.channel)),dontSendNotification);
     }
     void updateBindingFields()
     {
@@ -387,7 +391,7 @@ private:
     {
         cancelLive();
         if(!validIndex(editingIndex))return;
-        if(auto b=bindingDraft()){profile.elements[(size_t)editingIndex].binding=*b;dirty=true;showBinding(*b);preview.repaint();say("Assignment saved in draft. Save profile to keep it.");}
+        if(auto b=bindingDraft()){profile.elements[(size_t)editingIndex].binding=*b;dirty=true;refreshElements(editingIndex);say("Assignment saved in draft. Save profile to keep it.");}
     }
     void startLearn()
     {
@@ -416,10 +420,11 @@ private:
         if(b.type=="unassigned"||!sendAudition){say("Save an assignment and select the matching loaded instrument.");return;}
         auto safe=juce::Component::SafePointer<DesignerPanel>(this);
         const auto profileId=profile.id, elementId=profile.elements[(size_t)editingIndex].id;
+        const auto revision=liveRevision;
         juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon,"Audition MIDI assignment",
             "Confirm the selected instrument contains this exact patch and slot. This sends MIDI to the existing instrument, not a new instance.",
-            "Audition","Cancel",this,juce::ModalCallbackFunction::create([safe,profileId,elementId,b](int ok){
-                if(!ok||safe==nullptr||!safe->isShowing()||safe->profile.id!=profileId||!safe->validIndex(safe->editingIndex)
+            "Audition","Cancel",this,juce::ModalCallbackFunction::create([safe,profileId,elementId,b,revision](int ok){
+                if(!ok||safe==nullptr||!safe->isShowing()||safe->liveRevision!=revision||safe->profile.id!=profileId||!safe->validIndex(safe->editingIndex)
                     ||safe->profile.elements[(size_t)safe->editingIndex].id!=elementId
                     ||!(safe->profile.elements[(size_t)safe->editingIndex].binding==b))return;
                 auto r=safe->sendAudition(safe->profile,b,safe->release);
@@ -442,7 +447,7 @@ private:
             if(result==1){safe->viewport.setViewPosition(0,safe->bindingKind.getY());safe->bindingKind.grabKeyboardFocus();}
             if(result==2)safe->startLearn();
             if(result==3)safe->auditionSelected();
-            if(result==4){safe->cancelLive();safe->profile.elements[(size_t)safe->editingIndex].binding={};safe->dirty=true;safe->showBinding({});safe->preview.repaint();}
+            if(result==4){safe->cancelLive();safe->profile.elements[(size_t)safe->editingIndex].binding={};safe->dirty=true;safe->refreshElements(safe->editingIndex);}
         });
     }
     void addElement()
