@@ -6,6 +6,7 @@
 namespace studio
 {
 bool transportSettled (tracktion::Edit&);
+bool writeMetronomeWave (const juce::File&, int frequency, int milliseconds, float gain);
 bool setCycle (tracktion::Edit&, tracktion::TimeRange);
 bool setTempoEvent (tracktion::Edit&, tracktion::BeatPosition, double bpm);
 bool setMeterEvent (tracktion::Edit&, tracktion::BeatPosition, int numerator, int denominator);
@@ -20,6 +21,7 @@ public:
     void showTimelineMenu (tracktion::TimePosition);
     void toggleCycle();
     void toggleClick();
+    void promptClickSettings();
     void promptTempoAtPlayhead();
     void promptMeterAtPlayhead();
     std::function<void()> onTimelineChanged;

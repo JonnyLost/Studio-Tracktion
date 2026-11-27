@@ -7,6 +7,29 @@ namespace studio
 namespace te = tracktion;
 using namespace juce;
 
+// Small mono PCM WAV, generated entirely on the message thread. Smooth
+// onset and decay prevent unwanted discontinuities while allowing 1 ms clicks.
+bool writeMetronomeWave (const File& file, int frequency, int milliseconds, float gain)
+{
+    constexpr int rate = 48000;
+    if (frequency < 200 || frequency > 3000 || milliseconds < 1 || milliseconds > 150
+        || ! std::isfinite (gain) || gain < 0.0f || gain > 1.0f) return false;
+    const int n = rate * milliseconds / 1000;
+    MemoryOutputStream wave;
+    wave.write ("RIFF", 4); wave.writeInt (36 + n * 2);
+    wave.write ("WAVEfmt ", 8); wave.writeInt (16); wave.writeShort (1); wave.writeShort (1);
+    wave.writeInt (rate); wave.writeInt (rate * 2); wave.writeShort (2); wave.writeShort (16);
+    wave.write ("data", 4); wave.writeInt (n * 2);
+    for (int i = 0; i < n; ++i)
+    {
+        const double x = (double) i / (n - 1);
+        const double env = std::min (1.0, x * 12.0) * std::pow (1.0 - x, 2.0);
+        const double phase = MathConstants<double>::twoPi * frequency * i / rate;
+        wave.writeShort ((short) std::lround (32767.0 * gain * env * std::sin (phase)));
+    }
+    return file.replaceWithData (wave.getData(), wave.getDataSize());
+}
+
 bool transportSettled (te::Edit& edit)
 {
     const auto& transport = edit.getTransport();
@@ -136,6 +159,79 @@ void MusicalTransport::toggleClick()
         edit->clickTrackEnabled = ! edit->clickTrackEnabled.get();
 }
 
+void MusicalTransport::promptClickSettings()
+{
+    if (! isEnabled() || edit == nullptr || ! transportSettled (*edit) || edit->getTransport().isPlaying())
+    {
+        AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon, "Metronome", "Stop playback before changing the metronome sound.");
+        return;
+    }
+    auto& prefs = edit->engine.getPropertyStorage().getPropertiesFile();
+    auto* window = new AlertWindow ("Metronome Sound", "Shorter durations produce a click; longer durations produce a tone.",
+                                    MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("pitch", String (prefs.getIntValue ("studio.clickPitch", 1000)), "Beat pitch (200-3000 Hz)");
+    window->addTextEditor ("duration", String (prefs.getIntValue ("studio.clickDuration", 5)), "Duration (1-150 ms)");
+    window->addTextEditor ("accentPitch", String (prefs.getIntValue ("studio.clickAccentPitch", 1500)), "Downbeat pitch (200-3000 Hz)");
+    window->addTextEditor ("accentGain", String (prefs.getIntValue ("studio.clickAccentGain", 65)), "Downbeat boost (0-100%)");
+    window->addComboBox ("accent", { "Accent downbeat", "No accent" }, "Bar accent");
+    window->getComboBoxComponent ("accent")->setSelectedId (edit->clickTrackEmphasiseBars ? 1 : 2, dontSendNotification);
+    window->addButton ("Apply", 1, KeyPress (KeyPress::returnKey));
+    window->addButton ("Factory sound", 2);
+    window->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+    SafePointer<MusicalTransport> safe (this);
+    const auto generation = session;
+    window->enterModalState (true, ModalCallbackFunction::create ([safe, generation, window] (int result)
+    {
+        if (result == 0 || safe == nullptr || safe->session != generation || ! safe->isEnabled()
+            || safe->edit == nullptr || ! transportSettled (*safe->edit) || safe->edit->getTransport().isPlaying()) return;
+        auto& project = *safe->edit;
+        auto& storage = project.engine.getPropertyStorage();
+        auto& prefs = storage.getPropertiesFile();
+        String big, small;
+        if (result == 1)
+        {
+            const auto read = [window] (const char* key, int low, int high)
+            {
+                const auto value = window->getTextEditorContents (key).trim();
+                return value.isNotEmpty() && value.length() <= 4 && value.containsOnly ("0123456789")
+                    && value.getIntValue() >= low && value.getIntValue() <= high ? value.getIntValue() : -1;
+            };
+            const int pitch = read ("pitch", 200, 3000), duration = read ("duration", 1, 150);
+            const int accentPitch = read ("accentPitch", 200, 3000), boost = read ("accentGain", 0, 100);
+            if (pitch < 0 || duration < 0 || accentPitch < 0 || boost < 0)
+            {
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Metronome", "Enter whole numbers within the displayed ranges.");
+                return;
+            }
+            const auto folder = prefs.getFile().getSiblingFile ("Studio Metronome");
+            if (folder.createDirectory().failed())
+            {
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Metronome", "Could not create the metronome sound folder.");
+                return;
+            }
+            const auto suffix = String (pitch) + "-" + String (duration) + "-" + String (accentPitch) + "-" + String (boost) + ".wav";
+            const auto beat = folder.getChildFile ("beat-" + suffix), downbeat = folder.getChildFile ("accent-" + suffix);
+            if (! writeMetronomeWave (beat, pitch, duration, 0.45f)
+                || ! writeMetronomeWave (downbeat, accentPitch, duration, 0.45f * (1.0f + boost / 100.0f)))
+            {
+                AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Metronome", "Could not write metronome sounds. Existing sound retained.");
+                return;
+            }
+            small = beat.getFullPathName(); big = downbeat.getFullPathName();
+            prefs.setValue ("studio.clickPitch", pitch); prefs.setValue ("studio.clickDuration", duration);
+            prefs.setValue ("studio.clickAccentPitch", accentPitch); prefs.setValue ("studio.clickAccentGain", boost);
+        }
+        // These are the pinned Tracktion ClickGenerator's existing sample
+        // settings. Update both before rebuilding playback once.
+        storage.setProperty (te::SettingID::clickTrackSampleBig, big);
+        storage.setProperty (te::SettingID::clickTrackSampleSmall, small);
+        project.clickTrackEmphasiseBars = window->getComboBoxComponent ("accent")->getSelectedId() == 1;
+        prefs.saveIfNeeded();
+        te::TransportControl::restartAllTransports (project.engine, false);
+        if (safe->onTimelineChanged) safe->onTimelineChanged();
+    }), true);
+}
+
 void MusicalTransport::promptTempoAtPlayhead()
 {
     if (isEnabled() && edit != nullptr && ! edit->getTransport().isPlaying() && transportSettled (*edit))
@@ -202,6 +298,7 @@ void MusicalTransport::showMenu (te::TimePosition time, bool includeTransport)
                  { "One bar", CountIn::oneBar }, { "Two bars", CountIn::twoBar } })
             counts.addItem (label, stopped, edit->getCountInMode() == count,
                             withEdit ([count] (auto&, auto& project) { project.setCountInMode (count); }));
+        menu.addItem ("Metronome sound...", stopped, false, withEdit ([] (auto& self, auto&) { self.promptClickSettings(); }));
         menu.addSubMenu ("Metronome level", levels);
         menu.addSubMenu ("Recording count-in", counts);
         menu.addSeparator();
@@ -282,7 +379,7 @@ void MusicalTransport::prompt (const String& title, const String& label, const S
 void MusicalTransport::editTempo (te::BeatPosition beat, bool existing)
 {
     auto& sequence = edit->tempoSequence;
-    prompt ("Tempo event", "BPM (20–300)", String (sequence.getTempoAt (beat).getBpm(), 2),
+    prompt ("Tempo event", "BPM (20-300)", String (sequence.getTempoAt (beat).getBpm(), 2),
             existing && beat > te::BeatPosition(), [this, beat] (const String& value, bool remove)
     {
         if (edit->getTransport().isPlaying())
@@ -322,7 +419,7 @@ void MusicalTransport::editMeter (te::BeatPosition beat, bool existing)
             if (! numerator.containsOnly ("0123456789") || ! denominator.containsOnly ("0123456789")
                 || ! setMeterEvent (*edit, beat, numerator.getIntValue(), denominator.getIntValue()))
                 AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Invalid meter",
-                                                   "Enter 1–32 beats over 2, 4, 8 or 16.");
+                                                   "Enter 1-32 beats over 2, 4, 8 or 16.");
         }
     });
 }

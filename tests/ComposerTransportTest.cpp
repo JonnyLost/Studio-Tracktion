@@ -17,6 +17,15 @@ int runComposerTransportTest()
         std::fprintf (stderr, "Composer transport: %s\n", reason);
         return 1;
     };
+    TemporaryFile clickFixture (".wav");
+    if (! writeMetronomeWave (clickFixture.getFile(), 1000, 5, 0.45f)
+        || writeMetronomeWave (clickFixture.getFile(), 1000, 0, 0.45f))
+        return fail ("write short click and reject invalid settings");
+    WavAudioFormat wav;
+    std::unique_ptr<AudioFormatReader> reader (wav.createReaderFor (clickFixture.getFile().createInputStream().release(), true));
+    if (reader == nullptr || reader->sampleRate != 48000 || reader->lengthInSamples != 240 || reader->numChannels != 1)
+        return fail ("generated click duration and format");
+    reader.reset();
     TemporaryFile fixture (".tracktionedit");
     te::Engine engine ("Studio Composer Transport Test");
     synth::registerPlugin (engine);
@@ -61,6 +70,14 @@ int runComposerTransportTest()
     if (addCueMarker (*edit, 2_tp, "Middle") == nullptr || ! setCycle (*edit, { 0_tp, 1_tp }))
         return fail ("create cue and cycle");
     if (setCycle (*edit, { 0_tp, 0_tp })) return fail ("reject an empty cycle");
+    MusicalTransport controls;
+    controls.setEdit (edit.get());
+    controls.toggleCycle();
+    if (edit->getTransport().looping || edit->getTransport().getLoopRange() != te::TimeRange (0_tp, 1_tp))
+        return fail ("cycle off preserves range");
+    controls.toggleCycle();
+    if (! edit->getTransport().looping) return fail ("cycle restores previous range");
+    controls.setEdit (nullptr);
 
     auto& transport = edit->getTransport();
     edit->dispatchPendingUpdatesSynchronously();

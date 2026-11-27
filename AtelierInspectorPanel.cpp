@@ -170,7 +170,7 @@ AtelierInspectorPanel::AtelierInspectorPanel (TrackActions& callbacks) : actions
         auto& label = ccLabels[i];
         addAndMakeVisible (knob);
         addAndMakeVisible (label);
-        setLabel (label, String (controllers[i].name) + " · CC" + String (controllers[i].cc), 10.0f, primary);
+        setLabel (label, String (controllers[i].name) + " - CC" + String (controllers[i].cc), 10.0f, primary);
         label.setJustificationType (Justification::centred);
         knob.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
         knob.setTextBoxStyle (Slider::TextBoxBelow, false, 52, 17);
@@ -637,8 +637,8 @@ void AtelierInspectorPanel::refresh (te::AudioTrack* chosen, bool ready)
     }
     if (layoutChanged) resized();
     originalInstrument.setEnabled (ready && hosted() != nullptr);
-    const String summary = live ? (nativeMode?"Live native expression":"Live CC · instrument response depends on patch")
-        : "Live controls unavailable · active playback context required";
+    const String summary = live ? (nativeMode?"Live native expression":"Live CC - instrument response depends on patch")
+        : "Live controls unavailable - active playback context required";
     if (midiStatus.getText() != summary)
         midiStatus.setText (summary, dontSendNotification);
 }

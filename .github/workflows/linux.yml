@@ -35,8 +35,10 @@ on:
       - feature/studio-environments-m36
       - feature/studio-workflow-refinement-m37
       - feature/studio-reliability-performance-m38
+      - feature/studio-composer-refinement-m39a
   pull_request:
     branches:
+      - feature/studio-composer-refinement-m39a
       - feature/studio-reliability-performance-m38
       - feature/studio-workflow-refinement-m37
       - feature/studio-environments-m36

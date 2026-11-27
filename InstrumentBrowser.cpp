@@ -427,7 +427,7 @@ void InstrumentBrowser::updateDetails()
     instrumentName.setText (e != nullptr ? e->name : "No results", dontSendNotification);
     favourite.setEnabled (e != nullptr);
     favourite.setButtonText (e != nullptr && favouriteKeys.contains (e->key)
-                             ? "★ Favorited" : "☆ Favorite");
+                             ? "Favorited" : "Favorite");
     vendor.setText (e != nullptr ? e->vendor : String(), dontSendNotification);
     vendor.setTooltip (vendor.getText());
     instrumentName.setTooltip (instrumentName.getText());
