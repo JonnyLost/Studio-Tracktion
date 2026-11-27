@@ -6,6 +6,7 @@
 #include "StudioInstrumentCatalogData.h"
 #include "InstrumentProfile.h"
 #include <optional>
+#include <algorithm>
 
 namespace studio::designer
 {
@@ -13,8 +14,8 @@ struct SourceContext { String track, pluginId, pluginVersion; };
 class DesignerPanel final : public juce::Component
 {
 public:
-    explicit DesignerPanel(SourceContext source)
-        : context(std::move(source)), store(ProfileStore::localDirectory())
+    explicit DesignerPanel(SourceContext source, juce::File folder=ProfileStore::localDirectory())
+        : context(std::move(source)), store(std::move(folder))
     {
         using namespace juce;
         addAndMakeVisible(viewport); viewport.setViewedComponent(&body,false);
@@ -76,6 +77,40 @@ public:
         contextLabel.setText(context.track.isEmpty() ? "Design a standalone profile" : "Selected track: "+context.track+" (reference only)",juce::dontSendNotification);
     }
     bool hasUnsavedChanges() const { return dirty; }
+   #if STUDIO_SPATIAL_TESTS
+    bool verifyDesigner()
+    {
+        using namespace juce;
+        if(!ready)return false;
+        instrumentSearch.setText("Concert flute",false);refillInstruments(false);
+        const int index=instrumentIds.indexOf("flutes.concert-flute");
+        if(index<0)return false;
+        instrument.setSelectedId(index+1,dontSendNotification);instrument.onChange();
+        if(profile.instrument!="flutes.concert-flute")return false;
+        candidateSearch.setText("flutter",false);refillCandidates();
+        if(candidateIds.indexOf("wind.flutter-tongue")<0)return false;
+        candidates.setSelectedId(candidateIds.indexOf("wind.flutter-tongue")+1,dontSendNotification);
+        addElement();
+        kind.setSelectedId(2,dontSendNotification);candidateSearch.setText("dynamics",false);refillCandidates();
+        const int ci=candidateIds.indexOf("dynamics");
+        if(ci<0)return false;
+        candidates.setSelectedId(ci+1,dontSendNotification);addElement();
+        label.setText("Dynamics fader",false);style.setSelectedId(3,dontSendNotification);
+        transport.setToggleState(false,dontSendNotification);full.setToggleState(true,dontSendNotification);
+        move(-1);
+        if(profile.elements.size()!=2||profile.elements[0].presentation!="fader"||profile.elements[0].transport)return false;
+        name.setText("Flute fixture",false);saveCurrent();
+        if(dirty||store.list().size()!=1)return false;
+        const auto original=profile;
+        duplicate.onClick();saveCurrent();
+        if(dirty||profile.id==original.id||store.list().size()!=2)return false;
+        const auto found=std::find_if(profiles.begin(),profiles.end(),[&](const auto& p){return p.id==original.id;});
+        if(found==profiles.end())return false;
+        collection.setSelectedId(int(found-profiles.begin())+1,dontSendNotification);loadSelected();
+        setSize(660,420);resized();
+        return !dirty&&profile==original&&viewport.getViewedComponent()==&body&&preview.getHeight()>0;
+    }
+   #endif
     void appearanceChanged()
     {
         heading.setFont(uiFont(20,juce::Font::bold));
