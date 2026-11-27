@@ -1684,6 +1684,7 @@ public:
         articulation.appearanceChanged();
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
+        if (designerWindow) designerWindow->appearanceChanged();
         fitFloatingMonitor();
         if (edit != nullptr)
             for (auto* track : te::getAudioTracks (*edit))
@@ -7350,6 +7351,13 @@ int StudioView::runInterfaceReview (const File& output)
     for (int category = 0; category < 10; ++category)
         if (applicationMenu (category).getNumItems() == 0)
             return fail ("native application menu has no commands");
+    {
+        auto folder=File::getSpecialLocation(File::tempDirectory).getNonexistentChildFile("StudioDesignerReview","",false);
+        studio::designer::DesignerPanel designer({},folder);
+        const bool verified=designer.verifyDesigner();
+        folder.deleteRecursively();
+        if(!verified) return fail("instrument designer profile creation and recall");
+    }
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
