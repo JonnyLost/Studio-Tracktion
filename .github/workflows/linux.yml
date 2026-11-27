@@ -43,8 +43,10 @@ on:
       - feature/studio-hardware-console-m40
       - feature/studio-deep-black-m41
       - feature/studio-cream-ruler-m42
+      - feature/studio-theme-isolation-m43
   pull_request:
     branches:
+      - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
       - feature/studio-hardware-console-m40
