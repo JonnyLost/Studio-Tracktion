@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../OstinatoCore.h"
 #include <iostream>
+#include <cstdlib>
 
 using namespace studio::ostinato;
 static int checks=0;
