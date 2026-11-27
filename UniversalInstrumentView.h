@@ -12,12 +12,11 @@ namespace studio::designer
 class UniversalSurface final : public juce::Component
 {
 public:
-    using juce::Component::setBounds;
     explicit UniversalSurface(bool compactView):compact(compactView)
     {
         using namespace juce;
         addAndMakeVisible(title);addAndMakeVisible(viewport);viewport.setViewedComponent(&body,false);
-        for(auto* c:std::initializer_list<Component*>{&full,&design,&mix,&rooms,&original,&info,&volume,&pan,&volumeLabel,&panLabel})
+        for(auto* c:std::initializer_list<Component*>{&full,&design,&mix,&rooms,&original,&info,&volume,&pan,&room,&volumeLabel,&panLabel,&roomLabel})
             addChildComponent(*c);
         full.onClick=[this]{if(openFull)openFull();};
         design.onClick=[this]{if(openDesigner)openDesigner();};
@@ -26,13 +25,15 @@ public:
         original.onClick=[this]{if(openOriginal)openOriginal();};
         info.onClick=[this]{infoVisible=!infoVisible;resized();repaint();};
         title.setJustificationType(Justification::centredLeft);
-        volumeLabel.setText("Volume",dontSendNotification);panLabel.setText("Pan",dontSendNotification);
+        volumeLabel.setText("Volume",dontSendNotification);panLabel.setText("Pan",dontSendNotification);roomLabel.setText("Room",dontSendNotification);roomLabel.setJustificationType(Justification::centred);
         volumeLabel.setJustificationType(Justification::centred);panLabel.setJustificationType(Justification::centred);
         volume.setSliderStyle(Slider::LinearVertical);volume.setRange(-60,6,0.1);volume.setTextValueSuffix(" dB");
         pan.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);pan.setRange(-1,1,0.01);
-        for(auto* s:{&volume,&pan})s->setTextBoxStyle(Slider::TextBoxBelow,false,66,20);
+        room.setSliderStyle(Slider::LinearVertical);room.setRange(-60,0,0.1);room.setTextValueSuffix(" dB");
+        for(auto* s:{&volume,&pan,&room})s->setTextBoxStyle(Slider::TextBoxBelow,false,66,20);
         volume.onValueChange=[this]{if(mixerChange)mixerChange(true,volume.getValue());};
         pan.onValueChange=[this]{if(mixerChange)mixerChange(false,pan.getValue());};
+        room.onValueChange=[this]{if(roomChange)roomChange(room.getValue());};
         if(!compact)
         {
             int bytes=0;auto* data=StudioInstrumentCatalogData::getNamedResource(StudioInstrumentCatalogData::namedResourceList[0],bytes);
@@ -43,6 +44,7 @@ public:
     std::function<void(const String&,int)> perform;
     std::function<void()> openFull,openDesigner,openMixer,openRooms,openOriginal;
     std::function<void(bool,double)> mixerChange;
+    std::function<void(double)> roomChange;
     void setProfile(const String& key,const std::optional<Profile>& next,bool articulationsOnly=false)
     {
         if(key==contextKey&&onlyArts==articulationsOnly&&profile==next)return;
@@ -62,7 +64,7 @@ public:
                     c->slider.setSliderStyle(compact?juce::Slider::LinearHorizontal:e.presentation=="fader"?juce::Slider::LinearVertical:juce::Slider::RotaryHorizontalVerticalDrag);
                     c->slider.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
                     c->slider.setRange(0,e.binding.type=="bend"?16383:127,1);c->slider.setValue(e.binding.value,juce::dontSendNotification);
-                    c->slider.setTooltip(e.label+" — assigned MIDI "+e.binding.type);
+                    c->slider.setTooltip(e.label+" — MIDI "+e.binding.type+"; shows last value sent here, not plug-in feedback");
                     c->slider.onValueChange=[this,p=c.get()]{if(perform)perform(p->element.id,(int)p->slider.getValue());};
                     body.addAndMakeVisible(c->label);body.addAndMakeVisible(c->slider);
                 }
@@ -78,7 +80,7 @@ public:
         title.setText(profile?profile->name:"Select a track with an assigned instrument profile",juce::dontSendNotification);
         viewport.setViewPosition(0,0);resized();repaint();
     }
-    void refresh(const LiveValues& values,bool enabled,bool mixerEnabled,double db,double p)
+    void refresh(const LiveValues& values,bool enabled,bool mixerEnabled,double db,double p,bool roomEnabled=false,double roomDb=-60)
     {
         using namespace juce;
         for(auto& c:controls)
@@ -97,7 +99,8 @@ public:
                 c->button.setToggleState(profile&&values.selected(e,profile->channel),dontSendNotification);
             }
         }
-        volume.setEnabled(mixerEnabled);pan.setEnabled(mixerEnabled);
+        volume.setEnabled(mixerEnabled);pan.setEnabled(mixerEnabled);room.setEnabled(roomEnabled);
+        if(!room.isMouseButtonDown())room.setValue(roomDb,dontSendNotification);
         if(!volume.isMouseButtonDown())volume.setValue(db,dontSendNotification);
         if(!pan.isMouseButtonDown())pan.setValue(p,dontSendNotification);
     }
@@ -112,7 +115,7 @@ public:
             full.setVisible(true);full.setBounds(top.removeFromBottom(jmin(line,top.getHeight()/2)));
             title.setBounds(top);
             design.setVisible(false);mix.setVisible(false);rooms.setVisible(false);original.setVisible(false);info.setVisible(false);
-            volume.setVisible(false);pan.setVisible(false);volumeLabel.setVisible(false);panLabel.setVisible(false);
+            volume.setVisible(false);pan.setVisible(false);volumeLabel.setVisible(false);panLabel.setVisible(false);room.setVisible(false);roomLabel.setVisible(false);
             viewport.setBounds(a);
             const int w=appearance.span(104),h=jmax(1,a.getHeight()-viewport.getScrollBarThickness());
             body.setSize(jmax(a.getWidth(),w*(int)controls.size()),h);
@@ -132,11 +135,11 @@ public:
         for(auto* b:{&design,&mix,&rooms,&original,&info})
         {b->setVisible(true);b->setBounds(utility.removeFromTop(line+4).reduced(2));}
         infoBounds=infoVisible?utility:Rectangle<int>{};
-        auto audio=a.removeFromRight(jmin(appearance.span(130),a.getWidth()/4));
-        auto left=audio.removeFromLeft(audio.getWidth()/2);
-        volumeLabel.setVisible(true);panLabel.setVisible(true);volume.setVisible(true);pan.setVisible(true);
-        volumeLabel.setBounds(left.removeFromTop(line));panLabel.setBounds(audio.removeFromTop(line));
-        volume.setBounds(left.reduced(2));pan.setBounds(audio.reduced(2));
+        auto audio=a.removeFromRight(jmin(appearance.span(186),a.getWidth()/3));
+        auto left=audio.removeFromLeft(audio.getWidth()/3);auto middle=audio.removeFromLeft(audio.getWidth()/2);
+        volumeLabel.setVisible(true);panLabel.setVisible(true);volume.setVisible(true);pan.setVisible(true);room.setVisible(true);roomLabel.setVisible(true);
+        volumeLabel.setBounds(left.removeFromTop(line));panLabel.setBounds(middle.removeFromTop(line));roomLabel.setBounds(audio.removeFromTop(line));
+        volume.setBounds(left.reduced(2));pan.setBounds(middle.reduced(2));room.setBounds(audio.reduced(2));
         viewport.setBounds(a);
         int arts=0,other=0;
         for(const auto& c:controls)if(c->element.kind=="articulation")++arts;else ++other;
@@ -179,9 +182,9 @@ private:
     Catalog catalog;
     juce::Component body;
     juce::Viewport viewport;
-    juce::Label title,volumeLabel,panLabel;
+    juce::Label title,volumeLabel,panLabel,roomLabel;
     juce::TextButton full{"Full Instrument"},design{"Designer"},mix{"Mixer"},rooms{"Rooms"},original{"Original AU"},info{"Channel info"};
-    juce::Slider volume,pan;
+    juce::Slider volume,pan,room;
     juce::Rectangle<int> artworkBounds,infoBounds;
     std::vector<std::unique_ptr<Control>> controls;
 };
