@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "InstrumentBrowser.h"
+#include "InstrumentImportWindow.h"
 #include "StudioSynth.h"
 #include "StudioGeneralMidi.h"
 #include "StudioUI.h"
@@ -31,6 +32,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
 {
     if (preferences != nullptr)
     {
+        importedDirectory = preferences->getFile().getSiblingFile ("Imported Instruments");
         preferredDetailsWidth = jlimit (180, 420, preferences->getIntValue ("studio.browserDetailsWidth", 258));
         const auto parsed = JSON::parse (preferences->getValue ("studio.browserFavourites", "[]"));
         if (auto* array = parsed.getArray())
@@ -51,7 +53,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
              &search, &compactFamily, &compactType, &libraryView, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter, &close })
+             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter, &importLibrary, &close })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
@@ -124,6 +126,18 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
         if (const auto* entry = selected(); entry != nullptr && entry->apple && ! entry->effect
             && entry->plugin.createIdentifierString() == hostedAppleIdentifier && browseApplePrograms)
             browseApplePrograms (entry->plugin, programs);
+    };
+
+    importLibrary.setEnabled (importedDirectory != File());
+    importLibrary.onClick = [this]
+    {
+        if (! importer)
+        {
+            importer = std::make_unique<instrumentimport::ImportWindow> (importedDirectory);
+            importer->onCatalogChanged = [this] { rebuildCatalog(); };
+        }
+        importer->setVisible (true);
+        importer->toFront (true);
     };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
     close.onClick = [this] { if (onClose) onClose(); };
@@ -227,6 +241,19 @@ void InstrumentBrowser::rebuildCatalog()
                              sound.summary, {}, true });
     entries.push_back ({ "studio-sampler", "Studio Sampler", "Studio", "Sampler", "Studio | Native instrument",
                          "Play WAV and AIFF samples, edit the sound, and build multisample instruments.", {}, true });
+    if (importedDirectory.isDirectory())
+        for (const auto& item : RangedDirectoryIterator (importedDirectory, false, "*.studiosampler",
+                 File::findFiles, File::FollowSymlinks::no))
+        {
+            const auto file = item.getFile();
+            const auto stem = file.getFileNameWithoutExtension();
+            const auto suffix = stem.fromLastOccurrenceOf ("-", false, false);
+            const auto display = suffix.length() == 16 && suffix.containsOnly ("0123456789abcdef")
+                ? stem.upToLastOccurrenceOf ("-", false, false) : stem;
+            entries.push_back ({ "imported:" + file.getFileName(), display,
+                "Imported Libraries", "Studio Sampler", "Studio | Imported instrument",
+                "Native preset using samples in the original library folder.", {}, true, file });
+        }
     std::stable_sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
     {
         if (a.available != b.available) return a.available;
@@ -380,8 +407,11 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
-    if (! newTrack && ! entry->effect && (! canCreate || targetRestriction.isNotEmpty())) return;
-    if (entry->gmProgram >= 0)
+    if (entry->preset != File())
+    {
+        if (loadImportedSampler) loadImportedSampler (entry->preset, newTrack);
+    }
+    else if (entry->gmProgram >= 0)
     {
         if (loadGeneralMidi) loadGeneralMidi (entry->plugin, entry->gmProgram, newTrack);
     }
@@ -583,7 +613,7 @@ int InstrumentBrowser::minimumContentHeight (int width) const
     const int list = 3 * (m.line (12, 2) + m.line (11, 2));
     const bool stacked = m.stackedBrowserDetails (width);
     const bool stackedFilters = m.browserFilterRow (width);
-    return m.control (30) * (stackedFilters ? 2 : 1) + 2 * m.line (13, 2) + m.px (6)
+    return m.control (30) * (stackedFilters ? 3 : 2) + 2 * m.line (13, 2) + m.px (6)
         + (stacked ? details + list + m.px (5) : jmax (details, list));
 }
 
@@ -613,6 +643,7 @@ void InstrumentBrowser::resized()
     manage.setVisible (false); add.setVisible (false);
     load.setVisible (collection == Collection::appleEffects);
     if (load.isVisible()) load.setBounds (area.removeFromBottom (m.control (26)));
+    importLibrary.setBounds (area.removeFromBottom (m.control (26)));
     status.setBounds (area.removeFromBottom (2 * m.line (12, 2)));
     auto actions = area.removeFromBottom (m.control (26));
     if (programs.isVisible()) programs.setBounds (actions.removeFromLeft (actions.getWidth()/2).reduced (1));

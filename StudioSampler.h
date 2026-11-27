@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 #include "SamplerEngine.h"
+#include "SampleSources.h"
 #include "StudioResources.h"
 #include "ArticulationMappings.h"
 
@@ -14,6 +15,7 @@ struct SampleZone
     Zone mapping;
     juce::String problem;
     int folder = 0; // Organizational group, independent of legacy round-robin IDs.
+    std::optional<SoundFontSample> soundFont;
 };
 
 struct InstrumentGroup
@@ -42,6 +44,7 @@ struct Instrument
 {
     juce::String name { "Studio Sampler" }, preset;
     bool dirty = false;
+    juce::String sourceLibrary, sourceInstrument;
     Settings settings;
     std::vector<SampleZone> zones;
     std::vector<InstrumentGroup> groups { {} };
@@ -161,5 +164,8 @@ private:
     std::atomic<bool> previewOverflow { false };
 };
 
+juce::String instrumentDocument (const Instrument&, const juce::File& base);
+juce::Result readInstrumentDocument (const juce::String&, const juce::File& base, Instrument&);
+juce::Result writeImportedPreset (Instrument, const juce::File&, std::atomic<bool>& cancelled);
 void registerPlugin (tracktion::Engine&);
 }

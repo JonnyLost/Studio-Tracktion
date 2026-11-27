@@ -9,6 +9,8 @@
 
 namespace studio
 {
+namespace instrumentimport { class ImportWindow; }
+
 class InstrumentBrowser final : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -19,6 +21,7 @@ public:
     std::function<void(sampler::Instrument,library::Presentation)> loadLibraryInstrument;
     std::function<void(bool newTrack)> loadSampler;
     std::function<void(juce::String family, bool newTrack)> loadSynth;
+    std::function<void(const juce::File&, bool newTrack)> loadImportedSampler;
     std::function<void()> openSampler, openSynth;
     std::function<void(const juce::PluginDescription&, bool newTrack)> loadInstrument;
     std::function<void(const juce::PluginDescription&)> insertAppleEffect;
@@ -54,6 +57,7 @@ private:
         juce::PluginDescription plugin;
         bool available = false, effect = false, apple = false;
         int gmProgram = -1; // MIDI 0-127, -1 means native AU entry rather than a GM sound
+        juce::File preset;
     };
 
     struct Rows final : juce::ListBoxModel
@@ -97,6 +101,11 @@ private:
     juce::TextButton close { "Hide" }, manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      programs { "Apple Sound Bank..." },
                      favourite { "Favorite" }, favouritesFilter { "Favorites" };
+    juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
+                     favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
+    juce::TextButton importLibrary { "Import Instruments..." };
+    juce::File importedDirectory;
+    std::unique_ptr<instrumentimport::ImportWindow> importer;
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
     void rebuildCatalog();

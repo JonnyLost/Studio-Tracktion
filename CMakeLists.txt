@@ -732,6 +732,8 @@ juce_add_binary_data(StudioEnvironmentsAssets
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
+    InstrumentReaders.cpp InstrumentReaders.h SampleSources.h
+    InstrumentLibrary.cpp InstrumentLibrary.h InstrumentImportWindow.cpp InstrumentImportWindow.h
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
@@ -908,7 +910,7 @@ if(BUILD_TESTING)
     set_tests_properties(StudioExsParser PROPERTIES TIMEOUT 30)
 
 
-    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp)
+    target_sources(Studio PRIVATE tests/SpatialRoutingTest.cpp tests/SamplerIntegrationTest.cpp tests/SynthIntegrationTest.cpp tests/ComposerTransportTest.cpp tests/ComposerMidiTest.cpp tests/ComposerBounceTest.cpp tests/GarritanLibraryTest.cpp tests/UniversalInstrumentImportTest.cpp)
     add_test(NAME StudioComposerMidi COMMAND $<TARGET_FILE:Studio> --studio-test-composer-midi)
     set_tests_properties(StudioComposerMidi PROPERTIES TIMEOUT 90)
     add_test(NAME StudioComposerBounce COMMAND $<TARGET_FILE:Studio> --studio-test-composer-bounce)
@@ -917,6 +919,10 @@ if(BUILD_TESTING)
     set_tests_properties(StudioComposerTransport PROPERTIES TIMEOUT 90)
     add_test(NAME StudioSynthIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-synth)
     set_tests_properties(StudioSynthIntegration PROPERTIES TIMEOUT 120)
+    add_test(NAME StudioGarritanLibrary COMMAND $<TARGET_FILE:Studio> --studio-test-garritan-library)
+    set_tests_properties(StudioGarritanLibrary PROPERTIES TIMEOUT 60)
+    add_test(NAME StudioUniversalImport COMMAND $<TARGET_FILE:Studio> --studio-test-universal-import)
+    set_tests_properties(StudioUniversalImport PROPERTIES TIMEOUT 90)
     add_test(NAME StudioSamplerIntegration COMMAND $<TARGET_FILE:Studio> --studio-test-sampler)
     set_tests_properties(StudioSamplerIntegration PROPERTIES TIMEOUT 180)
     target_compile_definitions(Studio PRIVATE STUDIO_SPATIAL_TESTS=1)
