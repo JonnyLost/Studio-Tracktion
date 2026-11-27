@@ -6620,8 +6620,17 @@ private:
             if(safe==nullptr||result<=0||result>(int)profiles.size())return;
             const auto p=profiles[(size_t)result-1];
             if(safe->designerTarget(trackId,pluginId,generation)==nullptr)return;
+            String warning;
+            if(p.catalogPatchId.isNotEmpty())
+            {
+                const auto& patches=safe->ariaCatalog.patches();const auto found=patches.find(p.catalogPatchId);
+                if(found==patches.end()||!found->second.sourceCurrent()||p.catalogStamp!=studio::designer::patchStamp(found->second))
+                    warning="\n\nThe linked local definition is missing or changed. Existing user mappings have not been modified; verify them before use.";
+                else if(std::any_of(found->second.switchHints.begin(),found->second.switchHints.end(),[](const auto& h){return !h.current();}))
+                    warning="\n\nAn included definition has changed. Re-scan and verify your mappings before use.";
+            }
             AlertWindow::showOkCancelBox(MessageBoxIconType::QuestionIcon,"Use instrument profile",
-                "Confirm the original instrument contains "+p.patch+" on MIDI channel "+String(p.channel)+", slot "+String(p.slot)+". Studio will save a project-local copy of the profile. No patch is loaded or changed.",
+                "Confirm the original instrument contains "+p.patch+" on MIDI channel "+String(p.channel)+", slot "+String(p.slot)+". Studio will save a project-local copy of the profile. No patch is loaded or changed."+warning,
                 "Use profile","Cancel",safe.getComponent(),ModalCallbackFunction::create([safe,p,trackId,pluginId,generation](int ok){
                     if(!ok||safe==nullptr)return;
                     auto* hosted=safe->designerTarget(trackId,pluginId,generation);
