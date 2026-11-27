@@ -49,6 +49,17 @@ int main()
 {
     if (!designContrast()) return 1;
     using namespace studio::themes;
+    if (palettes.size() != 8 || !hardwareConsole (deepBlackIndex)
+        || validIndex (deepBlackIndex) != deepBlackIndex || hardwareConsole (2)) return 1;
+    const auto& deep = palettes[(size_t)deepBlackIndex];
+    if (deep.light || deep.argb[well] != 0xff000000u
+        || luminance (deep.argb[canvas]) >= luminance (palettes[(size_t)hardwareConsoleIndex].argb[canvas])
+        || luminance (deep.argb[panel]) >= luminance (palettes[(size_t)hardwareConsoleIndex].argb[panel])) return 1;
+    for (auto surface : {rail, canvas, timeline, panel, control, raised, selected, well})
+        for (auto foreground : {text, secondary, action, focus, atelierAccent})
+            if (contrast (deep.argb[foreground], deep.argb[surface]) < 4.5) return 1;
+    if (contrast (hardwareScale, deep.argb[control]) < 3.0
+        || contrast (deep.argb[text], hardwareRecord) < 4.5) return 1;
     const auto& console = palettes[(size_t)hardwareConsoleIndex];
     if (!hardwareConsole (1) || hardwareConsole (0) || console.light
         || contrast (hardwareIvory, hardwareInk) < 4.5
