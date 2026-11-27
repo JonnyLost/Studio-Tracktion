@@ -20,6 +20,7 @@ using namespace tracktion::literals;
 #include "ComposerTracks.h"
 #include "ComposerBounceUI.h"
 #include "StudioUI.h"
+#include "OstinatoMatrix.h"
 #include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -984,6 +985,8 @@ public:
 
     ~StudioView() override
     {
+        if(ostinatoWindow)ostinatoWindow->setLookAndFeel(nullptr);
+        ostinatoWindow.reset();
         if (monitorWindow != nullptr)
         {
             monitorWindow->clearContentComponent();
@@ -1627,6 +1630,7 @@ public:
         if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
+        if(ostinatoWindow){studio::retintStudioComponent(*ostinatoWindow,previous);ostinatoWindow->setBackgroundColour(studio::colours::canvas);ostinatoWindow->editor().appearanceChanged();}
         dockedKeyboard.refreshTheme();
         keyboardDockSurround.repaint();
         if (midiKeyboardWindow)
@@ -1681,6 +1685,7 @@ public:
         articulation.appearanceChanged();
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
+        if(ostinatoWindow)ostinatoWindow->editor().appearanceChanged();
         fitFloatingMonitor();
         if (edit != nullptr)
             for (auto* track : te::getAudioTracks (*edit))
@@ -1908,6 +1913,7 @@ public:
                 [safe, percent] { if (safe != nullptr) safe->applyAppearance (studio::appearance.interfacePercent(), percent, true); });
         }
         PopupMenu menu;
+        menu.addItem ("Ostinato Engine...", edit!=nullptr, false, [safe]{if(safe!=nullptr)safe->showOstinato();});
         menu.addItem ("Studio Environments...", [safe]
         {
             if (safe != nullptr) safe->environmentWelcome.open (false);
@@ -1980,7 +1986,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mOstinato
     };
 
     PopupMenu applicationMenu (int index)
@@ -2029,6 +2035,7 @@ public:
                 add (mBrowser, "Instrument Browser  (Command-5)");
                 add (mOpenSelectedInstrument, "Open Selected Instrument  (Command-6)", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
                 add (mPiano, "Piano Roll  (Command-1)");
+                add (mOstinato, "Ostinato Engine...", project);
                 add (mStage, "Stage  (Command-3)");
                 add (mRooms, "Rooms");
                 add (mVirtualMics, "Virtual Microphones");
@@ -2194,6 +2201,7 @@ public:
             case mClick: invoke (clickButton); break;
             case mBrowser: runWorkflowCommand (studio::WorkflowCommand::browser); break;
             case mOpenSelectedInstrument: runWorkflowCommand (studio::WorkflowCommand::instrument); break;
+            case mOstinato: showOstinato(); break;
             case mRooms: runWorkflowCommand (studio::WorkflowCommand::rooms); break;
             case mVirtualMics: runWorkflowCommand (studio::WorkflowCommand::microphones); break;
             case mPiano: showWorkspace (Workspace::piano); break;
@@ -2536,6 +2544,8 @@ private:
     studio::ArticulationPalette articulation { engine.getPropertyStorage().getPropertiesFile() };
     studio::ArticulationStrip articulationStrip { articulation };
     std::unique_ptr<ArticulationWindow> articulationWindow;
+    std::unique_ptr<studio::ostinato::MatrixWindow> ostinatoWindow;
+    unsigned ostinatoRefreshTicks=0;
 
     struct PendingPlugin
     {
@@ -3989,6 +3999,7 @@ private:
 
     void timerCallback() override
     {
+        if(ostinatoWindow&&ostinatoWindow->isVisible()&&++ostinatoRefreshTicks>=6){ostinatoRefreshTicks=0;refreshOstinato();}
         // Picking another sound device can recreate Tracktion output groups.
         // Correct a newly selected mono group only while stopped, never in an audio callback.
         if (++stereoScanTicks >= 24)
@@ -4711,6 +4722,7 @@ private:
        #if JUCE_MAC
         seatingWorkspace.setEdit (nullptr);
        #endif
+        if(ostinatoWindow){ostinatoWindow->setVisible(false);ostinatoWindow->setLookAndFeel(nullptr);ostinatoWindow.reset();}
         ++projectGeneration;
         appliedDlsPrograms.clear();
         settlingDlsPrograms.clear();
@@ -6421,6 +6433,56 @@ private:
         devices.setDeviceNumChannels (*output, 2);
     }
 
+    bool canEditOstinato() const
+    {
+        return edit&&canEditRegions()&&!ariaReviewPending&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording();
+    }
+    void refreshOstinato()
+    {
+        if(!ostinatoWindow||!edit)return;
+        std::vector<studio::ostinato::TrackChoice> tracks;
+        for(auto* t:te::getAudioTracks(*edit))
+            if(studio::findInstrument(*t)!=nullptr)
+                tracks.push_back({t->itemID.toString().toStdString(),t->getName().toStdString()});
+        ostinatoWindow->editor().setContext(edit->state.getProperty("studioOstinatoPattern").toString().toStdString(),std::move(tracks),canEditOstinato());
+    }
+    void showOstinato()
+    {
+        using namespace studio::ostinato;
+        if(!edit||busy)return;
+        if(!ostinatoWindow){ostinatoWindow=std::make_unique<MatrixWindow>();ostinatoWindow->setLookAndFeel(&style);}
+        auto& panel=ostinatoWindow->editor();
+        const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        panel.write=[safe,generation](const Pattern& before,const Pattern& after){
+            if(safe==nullptr||safe->projectGeneration!=generation||!safe->canEditOstinato()||!after.valid())return false;
+            Pattern current;
+            const auto old=safe->edit->state.getProperty("studioOstinatoPattern").toString().toStdString();
+            if((!old.empty()&&!decode(old,current))||current!=before)return false;
+            // A newly selected route must still exist. Preserve an existing
+            // missing destination for explicit repair instead of redirecting it.
+            for(const auto& row:after.rows)
+            {
+                if(row.trackId.empty())continue;
+                const auto prior=std::find_if(before.rows.begin(),before.rows.end(),[&](const auto& r){return r.id==row.id;});
+                if(prior!=before.rows.end()&&prior->trackId==row.trackId)continue;
+                bool found=false;
+                for(auto* t:te::getAudioTracks(*safe->edit))
+                    if(t->itemID.toString().toStdString()==row.trackId&&studio::findInstrument(*t)!=nullptr)found=true;
+                if(!found)return false;
+            }
+            auto& undo=safe->edit->getUndoManager();
+            undo.beginNewTransaction("Edit ostinato pattern");
+            safe->edit->state.setProperty("studioOstinatoPattern",String::fromUTF8(encode(after).c_str()),&undo);
+            undo.beginNewTransaction();
+            return true;
+        };
+        panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
+        panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
+        panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        refreshOstinato();ostinatoWindow->setVisible(true);ostinatoWindow->toFront(true);
+    }
+
     void showStudioSettings()
     {
         DialogWindow::LaunchOptions options;
@@ -7317,6 +7379,19 @@ int StudioView::runInterfaceReview (const File& output)
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
     if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
+    {
+        studio::ostinato::MatrixEditor probe;probe.setSize(920,510);
+        if(!probe.verifyEditor())return fail("ostinato matrix editor and row timing");
+        showOstinato();
+        if(!ostinatoWindow||!ostinatoWindow->editor().reviewToggleFirstStep())return fail("ostinato project write");
+        const auto payload=edit->state.getProperty("studioOstinatoPattern").toString();
+        studio::ostinato::Pattern p;
+        if(!studio::ostinato::decode(payload.toStdString(),p)||!p.rows[0].steps[0].enabled)return fail("ostinato persisted step");
+        auto& undo=edit->getUndoManager();
+        if(!undo.undo()||edit->state.hasProperty("studioOstinatoPattern"))return fail("ostinato project undo");
+        if(!undo.redo()||edit->state.getProperty("studioOstinatoPattern").toString()!=payload)return fail("ostinato project redo");
+        refreshOstinato();ostinatoWindow->setVisible(false);
+    }
     // Each macOS menu category must expose at least one real command; keep
     // menu generation platform-neutral so Linux CI can verify its structure.
     for (int category = 0; category < 9; ++category)
@@ -7717,6 +7792,9 @@ int StudioView::runInterfaceReview (const File& output)
     if (projectGeneration != beforeReopen + 1 || tracks.size() < 2 || tracks[0]->getClips().isEmpty()
         || studio::spatial::readSeat (tracks[1]->state.getChildWithName (studio::spatial::seatType)) != original)
         return fail ("restore project with MIDI and Stage positions");
+    studio::ostinato::Pattern reopenedOstinato;
+    if(!studio::ostinato::decode(edit->state.getProperty("studioOstinatoPattern").toString().toStdString(),reopenedOstinato)
+        ||!reopenedOstinato.rows[0].steps[0].enabled||ostinatoWindow)return fail("restore saved ostinato without stale editor");
     // Exercise the real new-project template path and reload saved metadata.
     applyAppearance (100, 100, false);
     for (const auto& p : studio::environments::templates)

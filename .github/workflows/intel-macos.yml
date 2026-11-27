@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - integration/studio-0.2-m44-consolidated
+      - feature/studio-ostinato-matrix-o3
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -47,6 +48,8 @@ on:
       - feature/studio-theme-isolation-m43
   pull_request:
     branches:
+      - feature/studio-ostinato-polyrhythm-o2
+      - feature/studio-ostinato-matrix-o3
       - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
@@ -174,7 +177,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioOstinatoCoreTests StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
+          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioOstinatoCoreTests StudioAriaCatalogTests StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/$STUDIO_CONFIG/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
