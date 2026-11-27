@@ -136,6 +136,39 @@ inline void drawStudioRotary (juce::Graphics& g, int x, int y, int width, int he
     const float angle = startAngle + jlimit (0.0f, 1.0f, position) * (endAngle - startAngle);
     const float stroke = jlimit (1.0f, (float) appearance.px (3), radius * .18f);
     const float opacity = slider.isEnabled() ? 1.0f : .45f;
+    if (themes::hardwareConsole (activeTheme))
+    {
+        const auto ink = Colour (themes::hardwareScale);
+        const auto point = [&] (float a, float r) { return Point<float> (centre.x + std::sin (a) * r, centre.y - std::cos (a) * r); };
+        constexpr int ticks = 24;
+        for (int i = 0; i <= ticks; ++i)
+        {
+            const auto a = startAngle + (endAngle - startAngle) * (float) i / ticks;
+            const auto p = point (a, radius * (i % 6 == 0 ? .78f : .87f));
+            const auto q = point (a, radius);
+            g.setColour ((a <= angle ? ink : colours::divider).withMultipliedAlpha (opacity));
+            g.drawLine (p.x, p.y, q.x, q.y, jlimit (1.0f, 2.0f, radius * .075f));
+        }
+        auto face = Rectangle<float> (diameter * .69f, diameter * .69f).withCentre (centre);
+        g.setColour (colours::well.withMultipliedAlpha (opacity));
+        g.fillEllipse (face.expanded (1.0f));
+        g.setColour (colours::control.withMultipliedAlpha (opacity));
+        g.fillEllipse (face);
+        g.setColour (colours::divider.withMultipliedAlpha (opacity));
+        g.drawEllipse (face, 1.0f);
+        auto cap = face.reduced (face.getWidth() * .16f);
+        g.setColour (Colour (themes::hardwareCap).interpolatedWith (colours::control, .42f).withMultipliedAlpha (opacity));
+        g.fillEllipse (cap);
+        const auto p = point (angle, radius * .14f), q = point (angle, radius * .59f);
+        g.setColour (Colour (themes::hardwareIvory).withMultipliedAlpha (opacity));
+        g.drawLine (p.x, p.y, q.x, q.y, stroke);
+        if (slider.hasKeyboardFocus (true))
+        {
+            g.setColour (colours::focus);
+            g.drawEllipse (face.expanded (1.5f), 1.5f);
+        }
+        return;
+    }
     Path track;
     track.addCentredArc (centre.x, centre.y, radius, radius, 0, startAngle, endAngle, true);
     g.setColour (colours::divider.withMultipliedAlpha (opacity));
@@ -228,7 +261,9 @@ public:
     void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float position,
                            float minimum, float maximum, juce::Slider::SliderStyle style, juce::Slider& slider) override
     {
-        if (style != juce::Slider::LinearVertical || ! slider.getProperties().contains ("studioFader"))
+        const bool hardware = themes::hardwareConsole (activeTheme);
+        if (style != juce::Slider::LinearVertical || (! slider.getProperties().contains ("studioFader")
+            && ! (hardware && slider.getProperties().contains ("studioHardwareFader"))))
         {
             LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, position, minimum, maximum, style, slider);
             return;
@@ -236,6 +271,35 @@ public:
         const auto centre = (float) x + (float) width * 0.5f;
         const auto groove = juce::Rectangle<float> (centre - (float) appearance.px (2), (float) y,
                                                      (float) appearance.px (4), (float) height);
+        if (hardware && width >= 12 && height > 0)
+        {
+            using namespace juce;
+            const float opacity = slider.isEnabled() ? 1.0f : .45f;
+            const float halfWidth = (float) width * .5f;
+            const float halfThumb = jmin (halfWidth - 1.0f, (float) appearance.px (13));
+            const float tickOuter = jmin (halfWidth - 1.0f, (float) appearance.px (17));
+            const float tickInner = jmin (tickOuter, (float) appearance.px (6));
+            g.setColour (colours::well.withMultipliedAlpha (opacity));
+            g.fillRoundedRectangle (groove.expanded (1.0f, 0.0f), 2.0f);
+            for (int i = 0; i <= 10; ++i)
+            {
+                const float yy = (float) y + (float) height * i / 10.0f;
+                g.setColour ((i % 5 == 0 ? Colour (themes::hardwareScale) : colours::secondary).withMultipliedAlpha (opacity));
+                g.drawLine (centre - tickOuter, yy, centre - tickInner, yy, 1.0f);
+                g.drawLine (centre + tickInner, yy, centre + tickOuter, yy, 1.0f);
+            }
+            const float halfHeight = (float) appearance.px (8);
+            const auto thumb = Rectangle<float> (2.0f * halfThumb, 2.0f * halfHeight).withCentre ({ centre, position });
+            g.setColour (colours::well.withMultipliedAlpha (opacity));
+            g.fillRoundedRectangle (thumb.translated (0.0f, 1.0f), 2.0f);
+            g.setColour (Colour (themes::hardwareCap).withMultipliedAlpha (opacity));
+            g.fillRoundedRectangle (thumb, 2.0f);
+            g.setColour ((slider.hasKeyboardFocus (true) ? colours::focus : colours::divider).withMultipliedAlpha (opacity));
+            g.drawRoundedRectangle (thumb, 2.0f, 1.0f);
+            g.setColour (colours::well.withMultipliedAlpha (opacity));
+            g.drawLine (thumb.getX() + 2.0f, position, thumb.getRight() - 2.0f, position, 1.5f);
+            return;
+        }
         const auto tint = slider.isEnabled() ? colours::action : colours::secondary.withAlpha (0.5f);
         g.setColour (colours::well);
         g.fillRoundedRectangle (groove, 2.0f);
@@ -256,9 +320,11 @@ public:
     void drawButtonText (juce::Graphics& g, juce::TextButton& button, bool, bool) override
     {
         g.setFont (getTextButtonFont (button, button.getHeight()));
-        g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
-                                                               : juce::TextButton::textColourOffId)
-                          .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
+        const bool ivoryPad = themes::hardwareConsole (activeTheme) && button.getToggleState()
+            && button.getProperties().contains ("studioArticulationPad");
+        const auto ink = ivoryPad ? juce::Colour (themes::hardwareInk)
+            : button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId);
+        g.setColour (ink.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
         g.drawFittedText (button.getButtonText(), button.getLocalBounds().reduced (appearance.px (3), 0),
                           juce::Justification::centred, 1, 1.0f);
     }
@@ -336,11 +402,20 @@ public:
                                const juce::Colour& colour, bool hover, bool down) override
     {
         auto bounds = button.getLocalBounds().toFloat().reduced (0.75f);
-        const auto fill = down ? colour.brighter (0.2f) : hover ? colour.brighter (0.1f) : colour;
+        const bool hardware = themes::hardwareConsole (activeTheme);
+        const bool pad = hardware && button.getToggleState() && button.getProperties().contains ("studioArticulationPad");
+        const auto base = pad ? juce::Colour (themes::hardwareIvory) : colour;
+        const auto fill = pad ? (down ? base.darker (.12f) : base)
+            : down ? base.brighter (0.2f) : hover ? base.brighter (0.1f) : base;
         g.setColour (fill.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
-        g.fillRoundedRectangle (bounds, (float) appearance.px (design::corner));
+        const float radius = (float) appearance.px (hardware ? 3 : design::corner);
+        g.fillRoundedRectangle (bounds, radius);
+        if (hardware && !pad && bounds.getHeight() > 5.0f && bounds.getWidth() > 6.0f)
+        {
+            g.setColour (fill.brighter (.20f).withAlpha (button.isEnabled() ? .65f : .25f));
+            g.drawHorizontalLine (juce::roundToInt (bounds.getY() + 1.0f), bounds.getX() + 3.0f, bounds.getRight() - 3.0f);
+        }
         const bool active = button.getToggleState() && button.isEnabled();
-        const float radius = (float) appearance.px (design::corner);
         g.setColour (active ? colours::action : colours::divider.withAlpha (button.isEnabled() ? .85f : .35f));
         g.drawRoundedRectangle (bounds, radius, active ? 1.5f : 1.0f);
         if (button.hasKeyboardFocus (false))
@@ -389,9 +464,20 @@ public:
     void paintButton (juce::Graphics& g, bool hovered, bool down) override
     {
         const bool recording = icon == TransportIcon::record || icon == TransportIcon::captureMidi;
-        const auto tint = recording ? colours::record : getToggleState() ? colours::signal : colours::action;
-        const auto colour = getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
+        const bool hardware = themes::hardwareConsole (activeTheme);
+        const bool redKey = hardware && icon == TransportIcon::record;
+        const auto tint = hardware ? (icon == TransportIcon::captureMidi ? colours::record : colours::text)
+            : recording ? colours::record : getToggleState() ? colours::signal : colours::action;
+        const auto colour = redKey ? juce::Colour (themes::hardwareRecord)
+            : hardware ? (getToggleState() ? colours::raised : colours::control)
+            : getToggleState() ? colours::control.interpolatedWith (tint, 0.17f) : colours::well;
         getLookAndFeel().drawButtonBackground (g, *this, colour, hovered, down);
+        if (hardware && getToggleState() && isEnabled())
+        {
+            const float led = (float) appearance.px (4);
+            g.setColour (redKey ? colours::text : colours::signal);
+            g.fillEllipse ((float) getWidth() - led - 3.0f, 3.0f, led, led);
+        }
         const auto side = juce::jlimit ((float) appearance.px (17), (float) appearance.px (29),
                                         (float) getHeight() * 0.57f);
         const auto area = getLocalBounds().toFloat().withSizeKeepingCentre (side, side);
