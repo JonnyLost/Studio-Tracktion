@@ -384,10 +384,10 @@ int main()
     }
     variation.variations.seed=43;
     require(compile(variation,{"t"},4,humanB,error)&&humanA.events!=humanB.events,"different seeds vary playback");
-    Pattern poly;poly.rows[0].trackId="t";poly.variations.sequence="AB";
-    require(poly.setRowTiming(1,TimingMode::independentCycle,3,3,4,1),"independent 3/4 row");
-    for(auto& step:poly.rows[0].steps){step.enabled=true;step.variationMask=2;}
-    require(compile(poly,{"t"},2,vr,error)&&vr.notes.size()==4,"independent cycle retains phase at master switch");
+    Pattern variationPoly;variationPoly.rows[0].trackId="t";variationPoly.variations.sequence="AB";
+    require(variationPoly.setRowTiming(1,TimingMode::independentCycle,3,3,4,1),"independent 3/4 row");
+    for(auto& step:variationPoly.rows[0].steps){step.enabled=true;step.variationMask=2;}
+    require(compile(variationPoly,{"t"},2,vr,error)&&vr.notes.size()==4,"independent cycle retains phase at master switch");
     require(vr.notes.front().start==4*ticksPerQuarter&&vr.notes.back().start==7*ticksPerQuarter,"master switch does not restart polyrhythm");
     auto portableSource=variation;
     portableSource.rows[0].trackId="project-123";
