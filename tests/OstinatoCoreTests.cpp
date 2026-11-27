@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../OstinatoCore.h"
+#include "../OstinatoAudition.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -27,7 +28,7 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 3 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 4 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
@@ -187,5 +188,31 @@ int main()
                 &&second.notes[size_t(i)].end==origin+sweep.rowBoundary(row,size_t(i%cells+1)),"matrix geometry matches engine");
         }
     }
-    std::cout<<"O1/O2 ostinato core: "<<checks<<" checks passed\n";
+    Pattern melody;melody.rows[0].trackId="t";melody.rows[0].pitchMode=PitchMode::intervals;
+    melody.rows[0].steps[0]={true,false,90,500,0};
+    melody.rows[0].steps[1]={true,false,90,500,7};
+    melody.rows[0].steps[2]={true,false,90,500,-5};
+    Render melodic;
+    require(compile(melody,{"t"},1,melodic,error)&&melodic.notes.size()==3,"interval melody render");
+    require(melodic.notes[0].pitch==60&&melodic.notes[1].pitch==67&&melodic.notes[2].pitch==55,"ascending and descending intervals");
+    require(decode(encode(melody),restored)&&restored==melody,"v3 melody round trip");
+    const std::string v2="STUDIO_OSTINATO 2 \"Old\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 1 4 4 1 1\n1 0 90 750\n";
+    require(decode(v2,restored)&&restored.rows[0].pitchMode==PitchMode::fixed&&restored.rows[0].steps[0].interval==0,"v2 migration");
+    auto invalid=melody;invalid.rows[0].pitch=127;
+    require(!invalid.valid()&&!compile(invalid,{"t"},1,melodic,error),"reject out-of-range melody transactionally");
+    TimedRender timed;
+    auto clock=[](Tick t){return 10.0+double(t)/ticksPerQuarter*0.5;};
+    require(prepareAudition(melodic,clock,timed)&&timed.duration==2.0&&timed.deadlines[0]==0,"tempo-mapped deadlines with origin");
+    std::vector<Event> sent;
+    auto output=[&](const Event& e){sent.push_back(e);};
+    AuditionCursor audition(timed);
+    for(int ms=0;ms<=2000;++ms)audition.advance(ms/1000.0,output);
+    require(audition.completed()&&sent==melodic.events,"audition normal dispatch");
+    sent.clear();AuditionCursor late(timed);
+    require(late.advance(0,output)&&!late.advance(.5,output)&&sent.size()==2&&sent[0].on&&!sent[1].on,"late callback stops rather than bursting");
+    sent.clear();AuditionCursor stopped(timed);
+    require(stopped.advance(0,output),"start finite audition");stopped.stop(output);stopped.stop(output);
+    require(sent.size()==2&&!sent.back().on,"stop releases once");
+    require(!prepareAudition(melodic,[](Tick){return 0.0;},timed),"reject invalid tempo map");
+    std::cout<<"O1–O4 ostinato core: "<<checks<<" checks passed\n";
 }
