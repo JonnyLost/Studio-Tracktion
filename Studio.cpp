@@ -4648,12 +4648,25 @@ private:
         if (! canEditRegions()) return;
         if (choice == 1)
         {
-            if (addTrack ("Instrument") != nullptr) showWorkspace (Workspace::instruments);
+            if (addTrack ("Instrument") != nullptr)
+            {
+                dockMode = DockMode::split;
+                workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
+                showWorkspace (Workspace::instruments);
+            }
         }
         else if (choice == 2 && canInsertPlugin() && browser.loadSampler)
+        {
+            dockMode = DockMode::split;
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
             browser.loadSampler (true);
+        }
         else if (choice == 3 && canInsertPlugin() && browser.loadSynth)
+        {
+            dockMode = DockMode::split;
+            workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
             browser.loadSynth ("Analog", true);
+        }
         else if (choice == 4)
         {
             if (addTrack ("Audio") != nullptr)
@@ -6817,7 +6830,8 @@ int StudioView::runInterfaceReview (const File& output)
         return fail ("composer navigation contains redundant rail destinations");
     setDockMode (DockMode::split);
     showWorkspace (Workspace::stage);
-    if (! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
+    if (dockMode != DockMode::split || workspaceHeight != studio::appearance.defaultWorkspaceHeight (getHeight())
+        || ! stageButton.getToggleState() || ! spatialWorkspace.isVisible()
         || contextLinks()[0].destination != Workspace::rooms
         || contextLinks()[1].destination != Workspace::microphones)
         return fail ("Stage exposes Rooms and Microphones");
@@ -7052,9 +7066,14 @@ int StudioView::runInterfaceReview (const File& output)
     setDockMode (DockMode::split);
     mixer.refresh (tracks, selectedTrack(), true, true);
     if (! capture ("mixer-split-1280x800.png")) return fail ("write compact Mixer screenshot");
-    if (workspacePanel.getHeight() < mixer.minimumContentHeight()
+    // M39A explicitly adopts a shorter consistent dock. Require the complete
+    // console to remain reachable in its scrolling viewport, not an oversized dock.
+    if (workspaceHeight != studio::appearance.defaultWorkspaceHeight (getHeight())
+        || dockMode != DockMode::split || ! workspaceViewport.isVisible()
+        || mixer.getHeight() < mixer.minimumContentHeight()
+        || (mixer.getHeight() > workspaceViewport.getHeight() && ! workspaceViewport.getVerticalScrollBar().isVisible())
         || performance.isVisible() || articulationStrip.isVisible())
-        return fail ("Mixer-focused Split must leave the console fully usable");
+        return fail ("standard Split height and complete scrollable Mixer");
     if (! capture ("mixer-focused-1280x800.png"))
         return fail ("write Mixer-first arrangement screenshot");
     setDockMode (DockMode::expanded);
