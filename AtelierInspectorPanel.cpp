@@ -736,7 +736,7 @@ void AtelierInspectorPanel::resized()
         for (auto* component : std::initializer_list<Component*> { &ccHeading, &moreControls, &midiChannel, &sendValues, &midiStatus })
             component->setBounds ({});
     area.removeFromTop (m.px (3));
-    mixerBounds = area.removeFromTop (m.control (20) + m.px (92));
+    mixerBounds = area.removeFromTop (m.control (20) + m.px (80));
     auto mixArea = mixerBounds;
     mixHeading.setBounds (mixArea.removeFromTop (m.control (20)));
     const int stripW = mixArea.getWidth() / 3;
@@ -815,11 +815,17 @@ bool AtelierInspectorPanel::verifyInspectorBindings()
     }
     writeCCState();
     const bool saved = t->state.getProperty (ccProperty).toString().startsWith ("76,");
+    writeSharedCC (t->state, 11, 93);
+    const auto shared = sharedKeyboardValues (t->state);
+    const bool linked = shared.mod == 76 && shared.expr == 93;
+    auto observation = shared; observation.mod = 47;
+    reflectPerformance (t->itemID, observation);
+    const bool silent = roundToInt (ccKnobs[0].getValue()) == 47 && readSharedCC (t->state)[0] == 76;
     t->state.setProperty (ccProperty, before, nullptr);
     ccStateLoaded = false;
     cachedCCState.clear();
     refresh (t, editing);
-    return saved;
+    return saved && linked && silent;
 }
 #endif
 }

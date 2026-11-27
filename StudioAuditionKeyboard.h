@@ -351,12 +351,12 @@ public:
     {
         const auto changed = values.changed;
         using V = KeyboardPerformanceValues;
-        if (changed & V::bit (V::pitch)) bend.setValue (values.bend, juce::dontSendNotification);
-        if (changed & V::bit (V::modulation)) mod.setValue (values.mod, juce::dontSendNotification);
-        if (changed & V::bit (V::expression)) expression.setValue (values.expr, juce::dontSendNotification);
-        if (changed & V::bit (V::volume)) volume.setValue (values.vol, juce::dontSendNotification);
-        if (changed & V::bit (V::brightness)) brightness.setValue (values.tone, juce::dontSendNotification);
-        if (changed & V::bit (V::room)) room.setValue (values.reverb, juce::dontSendNotification);
+        if ((changed & V::bit (V::pitch)) && ! bend.isMouseButtonDown()) bend.setValue (values.bend, juce::dontSendNotification);
+        if ((changed & V::bit (V::modulation)) && ! mod.isMouseButtonDown()) mod.setValue (values.mod, juce::dontSendNotification);
+        if ((changed & V::bit (V::expression)) && ! expression.isMouseButtonDown()) expression.setValue (values.expr, juce::dontSendNotification);
+        if ((changed & V::bit (V::volume)) && ! volume.isMouseButtonDown()) volume.setValue (values.vol, juce::dontSendNotification);
+        if ((changed & V::bit (V::brightness)) && ! brightness.isMouseButtonDown()) brightness.setValue (values.tone, juce::dontSendNotification);
+        if ((changed & V::bit (V::room)) && ! room.isMouseButtonDown()) room.setValue (values.reverb, juce::dontSendNotification);
         if (changed != 0) repaint();
     }
 

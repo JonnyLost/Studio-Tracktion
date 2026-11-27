@@ -3021,13 +3021,14 @@ private:
             if(v.changed & V::bit(V::volume)) o.vol=v.vol;
             if(v.changed & V::bit(V::brightness)) o.tone=v.tone;
             if(v.changed & V::bit(V::room)) o.reverb=v.reverb;
-            o.changed |= v.changed;
+            o.changed |= v.changed & ~V::bit(V::pitch);
         };
         merge(playbackControls); merge(liveControls);
         if (inspectorOpen && nextId.isValid()) inspectorDrawer.reflectPerformance(nextId, observedInspectorValues);
         if (keyboardDocked)
         {
             dockedKeyboard.displayActivity (activity);
+            dockedKeyboard.reflectPerformance (observedInspectorValues);
             dockedKeyboard.reflectPerformance (playbackControls);
             dockedKeyboard.reflectPerformance (liveControls);
         }
@@ -3035,6 +3036,7 @@ private:
         if (midiKeyboardWindow != nullptr)
         {
             midiKeyboardWindow->panel.displayActivity (activity);
+            midiKeyboardWindow->panel.reflectPerformance (observedInspectorValues);
             midiKeyboardWindow->panel.reflectPerformance (playbackControls);
             midiKeyboardWindow->panel.reflectPerformance (liveControls);
         }
@@ -3066,6 +3068,7 @@ private:
         if (dock && keyboardDocked && midiKeyboardWindow == nullptr) return;
         if (! dock && ! keyboardDocked && midiKeyboardWindow != nullptr) return;
 
+        displayedPreviewChannel = 0;
         const auto positions = dock && midiKeyboardWindow != nullptr
             ? midiKeyboardWindow->panel.performanceSnapshot()
             : dockedKeyboard.performanceSnapshot();
