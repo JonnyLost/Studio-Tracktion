@@ -851,6 +851,13 @@ if(BUILD_TESTING)
     target_link_libraries(StudioSpatialTests PRIVATE juce::juce_data_structures)
     add_test(NAME StudioSpatialModel COMMAND StudioSpatialTests)
 
+    add_executable(StudioSeatingAtlasTests tests/SeatingAtlasTests.cpp Seating/SeatingAtlas.h)
+    target_compile_features(StudioSeatingAtlasTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioSeatingAtlasTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioSeatingAtlasTests PRIVATE juce::juce_core)
+    add_dependencies(Studio StudioSeatingAtlasTests)
+    add_test(NAME StudioSeatingAtlas COMMAND StudioSeatingAtlasTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/seating/Studio_Atlas_Master_I-XL.json")
+
     add_executable(StudioAcousticComparison tools/AcousticComparison.cpp SpatialReverb.cpp)
     target_include_directories(StudioAcousticComparison PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_features(StudioAcousticComparison PRIVATE cxx_std_20)
