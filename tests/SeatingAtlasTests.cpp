@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../Seating/SeatingAtlas.h"
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -53,7 +54,7 @@ int main(int argc,char** argv)
     require(interstellar&&interstellar->markers.size()==134&&!interstellar->singleStage()&&!interstellar->chairCount,"multi-venue map is not one stage");
     const auto* psycho=catalog.find("plate-28");
     require(psycho&&psycho->markers.size()==34,"original Psycho layout");
-    require(catalog.find("plate-09")->markers.empty(),"artwork-only plate remains coordinate-free");
+    require(catalog.find("plate-09")&&catalog.find("plate-09")->markers.empty(),"artwork-only plate remains coordinate-free");
     require(catalog.find("not-a-layout")==nullptr,"unknown layout");
     require(catalog.load("{\"schema\":\"wrong\"}").failed()&&catalog.layouts().size()==40,"failed schema load is transactional");
     require(catalog.load(juce::String::repeatedString("x",int(Catalog::maxBytes+1))).failed(),"oversize rejected");
