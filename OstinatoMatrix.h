@@ -44,7 +44,7 @@ public:
         division.setTooltip("Number of cells in the selected row");
         numerator.setTooltip("Independent meter numerator");bars.setTooltip("Independent cycle bars");
         cell.setTooltip("Selected cell number (1-based)");velocity.setTooltip("MIDI velocity 1–127");
-        gate.setTooltip("Gate in thousandths (750 = 75%)");
+        gate.setTooltip("Gate in thousandths (750 = 75%, 4000 = four cells). Right-click a cell for advanced properties.");
         mode.addItem("Follow grid",1);mode.addItem("Shared span",2);mode.addItem("Independent cycle",3);
         for(int d=1;d<=32;++d)if(ticksPerQuarter%d==0)masterDivision.addItem(String(d)+" / beat",d);
         for(int d:{1,2,4,8,16,32})denominator.addItem("/ "+String(d),d);
@@ -74,6 +74,7 @@ public:
     std::function<void()> openMixer,openStage,openEffects,stopAudition;
     std::function<void(const Pattern&,int)> startAudition;
     std::function<void(juce::Component*)> chooseHardware;
+    std::function<std::vector<std::pair<std::string,std::string>>(const std::string&,int)> articulationChoices;
     ConductingValues conducting()const{return {int(intensity.getValue()),int(density.getValue())};}
     void setConducting(ConductingValues v){if(int(intensity.getValue())!=v.intensity)intensity.setValue(v.intensity,juce::dontSendNotification);if(int(density.getValue())!=v.density)density.setValue(v.density,juce::dontSendNotification);}
     void setConductingMapping(ConductingMapping m)
@@ -266,6 +267,8 @@ private:
                         g.setColour(colours::text.withAlpha(.65f));auto bar=rect.reduced(2).removeFromBottom(3);
                         bar.setWidth(int(bar.getWidth()*step.gate/1000.0));g.fillRect(bar);
                     }
+                    if(step.enabled&&(step.repeats>1||step.offset!=0||step.probability!=100||!step.articulation.empty()||step.gate>1000))
+                    {g.setColour(colours::text.withAlpha(.8f));g.fillRect(rect.getRight()-5,rect.getY()+2,3,5);}
                     if(step.enabled&&step.densityThreshold>0){g.setColour(colours::text.withAlpha(.8f));g.fillEllipse(float(rect.getX()+2),float(rect.getY()+2),4.f,4.f);}
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
@@ -286,7 +289,7 @@ private:
             const auto index=size_t(y/rowHeight());if(index>=owner.pattern.rows.size())return;
             const auto id=owner.pattern.rows[index].id;const int hit=cellAt(e.x,index);
             grabKeyboardFocus();owner.select(id,hit>=0?size_t(hit):0);
-            if(hit>=0&&!e.mods.isPopupMenu())owner.toggle(id,size_t(hit));
+            if(hit>=0){if(e.mods.isPopupMenu())owner.advancedStep();else owner.toggle(id,size_t(hit));}
         }
         bool keyPressed(const juce::KeyPress& k)override
         {
@@ -402,16 +405,52 @@ private:
         }
         commit(std::move(p));
     }
+    void advancedStep()
+    {
+        using namespace juce;
+        if(!writable||auditioning||!row())return;
+        const auto id=selected;const auto index=selectedCell;const auto before=pattern;
+        const auto& step=row()->steps[index];
+        auto choices=articulationChoices?articulationChoices(row()->trackId,row()->channel):std::vector<std::pair<std::string,std::string>>{};
+        StringArray labels;labels.add("No articulation change");int selectedChoice=0;
+        for(const auto& choice:choices){labels.add(String::fromUTF8(choice.second.c_str()));if(choice.first==step.articulation)selectedChoice=labels.size()-1;}
+        if(!step.articulation.empty()&&selectedChoice==0){choices.push_back({step.articulation,"Missing mapping (retained)"});labels.add("Missing mapping (retained)");selectedChoice=labels.size()-1;}
+        auto* dialog=new AlertWindow("Advanced step "+String((int)index+1),"Changes apply to this cell only. Extended gate holds a note across cells; repeated strikes require gate ≤ 1000.",MessageBoxIconType::NoIcon);
+        dialog->addTextEditor("strikes",String(step.repeats),"Strikes (1–8)");
+        dialog->addTextEditor("offset",String(step.offset),"Timing offset (−250…250 / 1000)");
+        dialog->addTextEditor("probability",String(step.probability),"Probability (0–100%)");
+        dialog->addComboBox("articulation",labels,"Articulation / mapped expression");
+        dialog->getComboBoxComponent("articulation")->setSelectedItemIndex(selectedChoice,dontSendNotification);
+        dialog->addButton("Apply",1,KeyPress(KeyPress::returnKey));
+        dialog->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        Component::SafePointer<MatrixEditor> safe(this);
+        dialog->enterModalState(true,ModalCallbackFunction::create([safe,dialog,before,id,index,choices](int result){
+            if(result!=1||!safe||safe->pattern!=before||!safe->writable||safe->auditioning)return;
+            auto p=before;
+            for(auto& r:p.rows)if(r.id==id&&index<r.steps.size())
+            {
+                auto& step=r.steps[index];int strikes=0,prob=0;
+                const auto* a=dialog->getTextEditor("strikes");const auto* b=dialog->getTextEditor("probability");
+                auto t=dialog->getTextEditorContents("offset");auto digits=t.startsWithChar('-')?t.substring(1):t;
+                if(!a||!b||!read(*a,1,8,strikes)||!read(*b,0,100,prob)||digits.isEmpty()||digits.length()>3||!digits.containsOnly("0123456789")||t.getIntValue()<-250||t.getIntValue()>250)
+                {safe->say("Invalid advanced step settings.");return;}
+                const int choice=dialog->getComboBoxComponent("articulation")->getSelectedItemIndex();
+                if(choice<0||choice>(int)choices.size())return;
+                step.repeats=strikes;step.offset=t.getIntValue();step.probability=prob;step.articulation=choice==0?std::string{}:choices[size_t(choice-1)].first;
+                safe->commit(std::move(p));return;
+            }
+        }),true);
+    }
     void applyCellEdit()
     {
         auto p=pattern;int c=0,v=0,g=0;
         for(auto& r:p.rows)if(r.id==selected)
         {
-            if(!read(cell,1,(int)r.steps.size(),c)||!read(velocity,1,127,v)||!read(gate,1,1000,g)){say("Invalid cell, velocity or gate.");return;}
+            if(!read(cell,1,(int)r.steps.size(),c)||!read(velocity,1,127,v)||!read(gate,1,4000,g)){say("Invalid cell, velocity or gate.");return;}
             auto text=interval.getText();auto digits=text.startsWithChar('-')?text.substring(1):text;
             if(digits.isEmpty()||!digits.containsOnly("0123456789")||text.getIntValue()<-127||text.getIntValue()>127){say("Invalid semitone interval.");return;}
             int tier=0;if(!read(densityThreshold,0,127,tier)){say("Density tier must be 0–127.");return;}
-            r.steps[size_t(c-1)]={enabled.getToggleState(),accent.getToggleState(),v,g,text.getIntValue(),tier};
+            auto& step=r.steps[size_t(c-1)];step.enabled=enabled.getToggleState();step.accent=accent.getToggleState();step.velocity=v;step.gate=g;step.interval=text.getIntValue();step.densityThreshold=tier;
             if(commit(std::move(p)))select(selected,size_t(c-1));return;
         }
     }
