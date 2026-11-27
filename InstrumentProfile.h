@@ -26,7 +26,7 @@ struct Profile
 
     juce::Result validate() const
     {
-        const auto bounded = [](const String& s, int max) { return s.length() <= max && !s.containsChar(0); };
+        const auto bounded = [](const String& s, int max) { return s.length() <= max; };
         if (id.length() != 32 || !id.containsOnly("0123456789abcdefABCDEF")
             || name.trim().isEmpty() || !bounded(name, 160) || instrument.isEmpty()
             || !bounded(instrument, 180) || !bounded(library, 250) || !bounded(patch, 250)
@@ -77,7 +77,7 @@ struct Profile
         p.pluginId=x.getStringAttribute("pluginId"); p.pluginVersion=x.getStringAttribute("pluginVersion");
         p.artwork=x.getStringAttribute("artwork"); p.variant=x.getStringAttribute("variant");
         p.channel=x.getIntAttribute("channel",0); p.slot=x.getIntAttribute("slot",0); p.channelInfo=x.getBoolAttribute("channelInfo",true);
-        for (auto* n : x.getChildIterator())
+        for (auto* n = x.getFirstChildElement(); n != nullptr; n = n->getNextElement())
         {
             if (!n->hasTagName("Element") || n->getStringAttribute("binding") != "unassigned" || p.elements.size() >= 128)
                 return juce::Result::fail("Unsupported or oversized element list.");
