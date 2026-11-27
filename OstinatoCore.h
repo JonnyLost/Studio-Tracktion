@@ -24,14 +24,17 @@ struct Step
 {
     bool enabled=false,accent=false;
     int velocity=90,gate=750; // gate in thousandths of a step
+    int interval=0; // semitones from the row's configured root
     bool operator==(const Step&) const=default;
 };
+enum class PitchMode { fixed=0, intervals=1 };
 enum class TimingMode { followGrid=0, sharedSpan=1, independentCycle=2 };
 struct Row
 {
     std::uint32_t id=1;
     std::string name="Row 1",trackId; // opaque, stable project track identity
     int channel=1,pitch=60;
+    PitchMode pitchMode=PitchMode::fixed;
     bool mute=false,solo=false;
     TimingMode timing=TimingMode::followGrid;
     // For independent cycles: one cycle = bars * numerator / denominator
@@ -70,7 +73,10 @@ struct Pattern
             if(r.timing==TimingMode::followGrid&&r.steps.size()!=size_t(stepCount))return false;
             if(r.timing!=TimingMode::followGrid&&r.timing!=TimingMode::sharedSpan&&r.timing!=TimingMode::independentCycle)return false;
             if(r.timing!=TimingMode::independentCycle&&(r.numerator!=4||r.denominator!=4||r.bars!=1))return false;
-            for(const auto& s:r.steps)if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>1000)return false;
+            if(r.pitchMode!=PitchMode::fixed&&r.pitchMode!=PitchMode::intervals)return false;
+            for(const auto& s:r.steps)
+                if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>1000||s.interval<-127||s.interval>127
+                   ||(r.pitchMode==PitchMode::intervals&&s.enabled&&(r.pitch+s.interval<0||r.pitch+s.interval>127)))return false;
         }
         return true;
     }
@@ -136,11 +142,11 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 2 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
+    out<<"STUDIO_OSTINATO 3 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
     for(const auto& r:p.rows)
     {
-        out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<'\n';
-        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<'\n';
+        out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
+        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<'\n';
     }
     return out.str();
 }
@@ -151,7 +157,7 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version!=1&&version!=2)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>3)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -162,14 +168,15 @@ inline bool decode(const std::string& text,Pattern& output)
             ||id<1||id>UINT32_MAX||!flag(r.mute)||!flag(r.solo))return false;
         r.id=static_cast<std::uint32_t>(id);
         int cells=p.stepCount;
-        if(version==2)
+        if(version>=2)
         {
             int mode=-1;
             if(!(in>>mode>>r.numerator>>r.denominator>>r.bars>>cells)||mode<0||mode>2||cells<1||cells>maxSteps)return false;
             r.timing=static_cast<TimingMode>(mode);
+            if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>1)return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
         }
         r.steps.resize(size_t(cells));
-        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate))return false;
+        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval)))return false;
         p.rows.push_back(std::move(r));
     }
     in>>std::ws;if(!in.eof()||!p.valid())return false;
@@ -231,7 +238,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 if(start>=next.duration)break;
                 if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
                 const Tick length=std::max<Tick>(1,(nextOffset-offset)*s.gate/1000);
-                next.notes.push_back({start,std::min(start+length,next.duration),route,row.channel,row.pitch,std::min(127,s.velocity+(s.accent?20:0))});
+                next.notes.push_back({start,std::min(start+length,next.duration),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0))});
             }
     }
     auto address=[](const Note& n){return std::tuple(n.route,n.channel,n.pitch);};

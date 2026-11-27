@@ -21,16 +21,19 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
-        for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})
+        for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel})
         {addAndMakeVisible(*l);l->setFont(uiFont(10));l->setJustificationType(Justification::centredLeft);}
         name.setTextToShowWhenEmpty("Pattern name",colours::secondary);
         name.setInputRestrictions(160);name.setReturnKeyStartsNewLine(false);
         for(auto* e:{&masterSteps,&pitch,&channel,&division,&numerator,&bars,&cell,&velocity,&gate})
             e->setInputRestrictions(5,"0123456789");
+        interval.setInputRestrictions(4,"-0123456789");repeatCount.setInputRestrictions(3,"0123456789");repeatCount.setText("4",false);
+        pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);
+        interval.setTooltip("Signed semitones relative to row root");repeatCount.setTooltip("Finite audition master repeats (1–256)");
         masterSteps.setTooltip("Master step count 1–256");
         pitch.setTooltip("MIDI note 0–127 (C4 = 60)");channel.setTooltip("MIDI channel 1–16");
         division.setTooltip("Number of cells in the selected row");
@@ -55,14 +58,17 @@ public:
         preview.onClick=[this]{previewRender();};
         mixer.onClick=[this]{if(openMixer)openMixer();};stage.onClick=[this]{if(openStage)openStage();};
         effects.onClick=[this]{if(openEffects)openEffects();};
-        power.setEnabled(false);power.setTooltip("Live engine switching arrives with transport routing.");
+        power.onClick=[this]{if(auditioning){if(stopAudition)stopAudition();}else{int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}if(startAudition)startAudition(pattern,repeats);}};
+        power.setTooltip("Audition with main transport stopped. Do not play other MIDI notes on destination instruments during audition.");
         print.setEnabled(false);print.setTooltip("Print to individual MIDI regions arrives in O10.");
         appearanceChanged();
         refreshFields();
     }
     ~MatrixEditor() override {viewport.setViewedComponent(nullptr,false);}
     std::function<bool(const Pattern&,const Pattern&)> write;
-    std::function<void()> openMixer,openStage,openEffects;
+    std::function<void()> openMixer,openStage,openEffects,stopAudition;
+    std::function<void(const Pattern&,int)> startAudition;
+    void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");updateEnabled();say(statusText);}
 
     void setContext(const std::string& serialized,std::vector<TrackChoice> choices,bool editable)
     {
@@ -88,7 +94,7 @@ public:
     {
         viewport.setScrollBarThickness(appearance.scrollbar());
         status.setFont(uiFont(12));
-        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel})l->setFont(uiFont(10));
+        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel})l->setFont(uiFont(10));
         resized();repaint();matrix.repaint();
     }
     void paint(juce::Graphics& g) override {g.fillAll(colours::canvas);}
@@ -106,7 +112,7 @@ public:
         line=a.removeFromTop(h);
         add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
         status.setBounds(line.reduced(gap));
-        auto bottom=a.removeFromBottom((h+caption)*3);
+        auto bottom=a.removeFromBottom((h+caption)*4);
         line=bottom.removeFromTop(h+caption);
         track.setBounds(line.removeFromLeft(line.getWidth()*2/7).reduced(gap));
         field(pitch,pitchLabel,line.removeFromLeft(line.getWidth()/7));field(channel,channelLabel,line.removeFromLeft(line.getWidth()/6));
@@ -116,6 +122,9 @@ public:
         field(division,divisionLabel,line.removeFromLeft(line.getWidth()/6));field(numerator,numeratorLabel,line.removeFromLeft(line.getWidth()/5));
         denominator.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));field(bars,barsLabel,line.removeFromLeft(line.getWidth()/3));
         applyRow.setBounds(line.reduced(gap));
+        line=bottom.removeFromTop(h+caption);
+        pitchMode.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));
+        field(interval,intervalLabel,line.removeFromLeft(line.getWidth()/2));field(repeatCount,repeatLabel,line);
         line=bottom.removeFromTop(h+caption);
         field(cell,cellLabel,line.removeFromLeft(line.getWidth()/6));field(velocity,velocityLabel,line.removeFromLeft(line.getWidth()/5));
         field(gate,gateLabel,line.removeFromLeft(line.getWidth()/4));accent.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
@@ -142,6 +151,9 @@ public:
         select(selected,4);velocity.setText("111",false);gate.setText("500",false);accent.setToggleState(true,juce::dontSendNotification);
         enabled.setToggleState(true,juce::dontSendNotification);applyCell.onClick();
         if(!stored.rows[1].steps[4].enabled||!stored.rows[1].steps[4].accent||stored.rows[1].steps[4].velocity!=111)return false;
+        pitchMode.setSelectedId(2,juce::dontSendNotification);applyRow.onClick();
+        interval.setText("-5",false);applyCell.onClick();
+        if(stored.rows[1].pitchMode!=PitchMode::intervals||stored.rows[1].steps[4].interval!=-5)return false;
         const auto before=stored;division.setText("4",false);applyRow.onClick();if(stored!=before)return false;
         setContext(encode(stored),tracks,true);
         if(matrix.cellAt(matrix.xFor(stored.rowBoundary(stored.rows[1],4))+1,1)!=4)return false;
@@ -154,13 +166,15 @@ private:
     Pattern pattern;
     std::vector<TrackChoice> tracks;
     std::string payload;
-    bool healthy=true,writable=false,hasContext=false;
+    bool healthy=true,writable=false,hasContext=false,auditioning=false;
     std::uint32_t selected=1;
     size_t selectedCell=0;
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
-    juce::ComboBox masterDivision,track,mode,denominator;
+    juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
+    juce::TextEditor interval,repeatCount;
+    juce::Label intervalLabel{"","Semitones"},repeatLabel{"","Repeats"};
     juce::TextButton applyMaster{"Set grid"},add{"+ Row"},remove{"− Row"},applyRow{"Apply row"},applyCell{"Apply step"},
-        preview{"Check pattern"},mixer{"Mixer"},stage{"Stage"},effects{"Effects"},print{"Print MIDI"},power{"Engine off"};
+        preview{"Check pattern"},mixer{"Mixer"},stage{"Stage"},effects{"Effects"},print{"Print MIDI"},power{"Audition"};
     juce::ToggleButton mute{"Mute"},solo{"Solo"},accent{"Accent"},enabled{"Active"};
     juce::Label status,masterCountLabel{"","Grid steps"},pitchLabel{"","MIDI note"},channelLabel{"","Channel"},divisionLabel{"","Divisions"},numeratorLabel{"","Meter"},barsLabel{"","Bars"},cellLabel{"","Step"},velocityLabel{"","Velocity"},gateLabel{"","Gate / 1000"};
     juce::Viewport viewport;
@@ -230,7 +244,7 @@ private:
                     }
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
-                    {g.setColour(colours::text);g.drawFittedText(String(j+1),rect,Justification::centred,1);}
+                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::intervals?String(step.interval):String(j+1);g.drawFittedText(label,rect,Justification::centred,1);}
                 }
                 g.setColour(colours::text);
                 String detail=String(row.steps.size());
@@ -295,11 +309,12 @@ private:
         refillTracks();
         if(auto* r=row())
         {
+            pitchMode.setSelectedId(int(r->pitchMode)+1,dontSendNotification);
             set(pitch,r->pitch);set(channel,r->channel);set(division,(int)r->steps.size());
             mode.setSelectedId(int(r->timing)+1,dontSendNotification);set(numerator,r->numerator);
             denominator.setSelectedId(r->denominator,dontSendNotification);set(bars,r->bars);
             mute.setToggleState(r->mute,dontSendNotification);solo.setToggleState(r->solo,dontSendNotification);
-            auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);set(gate,s.gate);
+            auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);set(gate,s.gate);set(interval,s.interval);
             accent.setToggleState(s.accent,dontSendNotification);enabled.setToggleState(s.enabled,dontSendNotification);
         }
         updateTimingFields();
@@ -314,7 +329,9 @@ private:
     {
         for(auto* c:std::initializer_list<juce::Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&track,&pitch,&channel,&mode,&applyRow,&mute,&solo,&cell,&velocity,&gate,&accent,&enabled,&applyCell})c->setEnabled(writable);
         remove.setEnabled(writable&&pattern.rows.size()>1);add.setEnabled(writable&&pattern.rows.size()<maxRows);
-        preview.setEnabled(healthy);updateTimingFields();
+        pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
+        power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
+        preview.setEnabled(healthy&&!auditioning);updateTimingFields();
     }
     void select(std::uint32_t id,size_t index)
     {
@@ -323,7 +340,7 @@ private:
     }
     bool commit(Pattern p)
     {
-        if(!writable||!p.valid()||!write||!write(pattern,p)){say("Pattern edit refused — project changed, locked, or invalid.");return false;}
+        if(auditioning||!writable||!p.valid()||!write||!write(pattern,p)){say("Pattern edit refused — project changed, locked, or invalid.");return false;}
         pattern=std::move(p);payload=encode(pattern);
         if(!row())selected=pattern.rows.front().id;
         selectedCell=std::min(selectedCell,row()->steps.size()-1);
@@ -355,7 +372,7 @@ private:
         {
             const int id=track.getSelectedId();
             if(id==1)r.trackId.clear();else if(id>=2&&id-2<(int)tracks.size())r.trackId=tracks[size_t(id-2)].id;
-            r.pitch=pitchValue;r.channel=ch;r.mute=mute.getToggleState();r.solo=solo.getToggleState();
+            r.pitch=pitchValue;r.channel=ch;r.pitchMode=static_cast<PitchMode>(pitchMode.getSelectedId()-1);r.mute=mute.getToggleState();r.solo=solo.getToggleState();
         }
         commit(std::move(p));
     }
@@ -365,7 +382,9 @@ private:
         for(auto& r:p.rows)if(r.id==selected)
         {
             if(!read(cell,1,(int)r.steps.size(),c)||!read(velocity,1,127,v)||!read(gate,1,1000,g)){say("Invalid cell, velocity or gate.");return;}
-            r.steps[size_t(c-1)]={enabled.getToggleState(),accent.getToggleState(),v,g};
+            auto text=interval.getText();auto digits=text.startsWithChar('-')?text.substring(1):text;
+            if(digits.isEmpty()||!digits.containsOnly("0123456789")||text.getIntValue()<-127||text.getIntValue()>127){say("Invalid semitone interval.");return;}
+            r.steps[size_t(c-1)]={enabled.getToggleState(),accent.getToggleState(),v,g,text.getIntValue()};
             if(commit(std::move(p)))select(selected,size_t(c-1));return;
         }
     }
@@ -383,7 +402,7 @@ class MatrixWindow final : public juce::DocumentWindow
 public:
     MatrixWindow():DocumentWindow("Studio — Ostinato Engine",colours::canvas,closeButton)
     {
-        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(640,420,1800,1100);
+        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(640,470,1800,1100);
         panel=new MatrixEditor;setContentOwned(panel,true);
         if(auto* display=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         {
@@ -392,7 +411,8 @@ public:
         }
         else centreWithSize(980,560);
     }
-    void closeButtonPressed()override{setVisible(false);}
+    std::function<void()> onClose;
+    void closeButtonPressed()override{if(onClose)onClose();setVisible(false);}
     MatrixEditor& editor(){return *panel;}
 private:MatrixEditor* panel=nullptr;
 };
