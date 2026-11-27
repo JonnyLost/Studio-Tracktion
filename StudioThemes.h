@@ -26,5 +26,14 @@ inline constexpr std::uint32_t hardwareIvory = 0xffe8e6dfu;
 inline constexpr std::uint32_t hardwareInk = 0xff191919u;
 inline constexpr std::uint32_t hardwareRecord = 0xffb9232du;
 inline constexpr bool hardwareConsole(int index) { return index == hardwareConsoleIndex || index == deepBlackIndex; }
+// The ruler is separate from the timeline role, which is also the dark editor canvas.
+inline constexpr bool creamRuler(int index) { return index == deepBlackIndex; }
+inline constexpr std::uint32_t rulerCream = 0xffeee4cdu;
+inline constexpr std::uint32_t rulerCycleCream = 0xffe0d3b7u;
+inline constexpr std::uint32_t rulerInk = 0xff292622u;
+inline constexpr std::uint32_t rulerTick = 0xff756b5au;
+inline constexpr std::uint32_t rulerMarker = 0xff60301cu;
+inline constexpr std::uint32_t rulerLoopFill = 0xffc7ad94u;
+inline constexpr std::uint32_t rulerRed = 0xff982c28u;
 inline constexpr int validIndex(int value) { return value >= 0 && value < (int) palettes.size() ? value : 0; }
 }

@@ -51,6 +51,14 @@ int main()
     using namespace studio::themes;
     if (palettes.size() != 8 || !hardwareConsole (deepBlackIndex)
         || validIndex (deepBlackIndex) != deepBlackIndex || hardwareConsole (2)) return 1;
+    for (int i = 0; i < (int) palettes.size(); ++i)
+        if (creamRuler (i) != (i == deepBlackIndex)) return 1;
+    if (contrast (rulerInk, rulerCream) < 4.5
+        || contrast (rulerTick, rulerCream) < 3.0
+        || contrast (rulerMarker, rulerCycleCream) < 4.5
+        || contrast (rulerMarker, rulerLoopFill) < 4.5
+        || contrast (rulerRed, rulerCream) < 3.0
+        || contrast (rulerRed, rulerLoopFill) < 3.0) return 1;
     const auto& deep = palettes[(size_t)deepBlackIndex];
     if (deep.light || deep.argb[well] != 0xff000000u
         || luminance (deep.argb[canvas]) >= luminance (palettes[(size_t)hardwareConsoleIndex].argb[canvas])

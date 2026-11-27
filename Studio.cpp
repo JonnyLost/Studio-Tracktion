@@ -1080,6 +1080,12 @@ public:
         graphics.fillRect (timeline.getBounds());
         graphics.setColour (control);
         graphics.fillRect (rulerRow);
+        const bool creamRuler = studio::themes::creamRuler (studio::activeTheme);
+        if (creamRuler)
+        {
+            graphics.setColour (Colour (studio::themes::rulerCream));
+            graphics.fillRect (ruler);
+        }
         if (ariaReviewPending)
         {
             graphics.setColour (Colour (0xff332b20));
@@ -1105,7 +1111,7 @@ public:
 
         auto& view = editor->getEditViewState();
         auto cycleLane = area.removeFromTop (m.control (18));
-        graphics.setColour (studio::colours::panel);
+        graphics.setColour (creamRuler ? Colour (studio::themes::rulerCycleCream) : studio::colours::panel);
         graphics.fillRect (cycleLane);
         graphics.saveState();
         graphics.reduceClipRegion (cycleLane);
@@ -1118,9 +1124,9 @@ public:
         if (! range.isEmpty() && (transport.looping.get() || cycleAnchor.has_value()))
         {
             const int left = xAt (range.getStart()), right = xAt (range.getEnd());
-            graphics.setColour (action.withAlpha (0.48f));
+            graphics.setColour (creamRuler ? Colour (studio::themes::rulerLoopFill) : action.withAlpha (0.48f));
             graphics.fillRect (cycleLane.withLeft (left).withRight (right));
-            graphics.setColour (action);
+            graphics.setColour (creamRuler ? Colour (studio::themes::rulerRed) : action);
             graphics.drawVerticalLine (left, (float) cycleLane.getY(), (float) cycleLane.getBottom());
             graphics.drawVerticalLine (right, (float) cycleLane.getY(), (float) cycleLane.getBottom());
         }
@@ -1130,7 +1136,7 @@ public:
             const int x = xAt (cue->getPosition().getStart());
             if (x < cycleLane.getX() || x >= cycleLane.getRight())
                 continue;
-            graphics.setColour (warning);
+            graphics.setColour (creamRuler ? Colour (studio::themes::rulerMarker) : warning);
             graphics.fillRect (x, cycleLane.getY(), m.px (2), cycleLane.getHeight());
             if (x >= markerLabelRight)
             {
@@ -1150,7 +1156,8 @@ public:
                 if (x < area.getX() || x >= area.getRight())
                     return;
                 const bool bar = tick.beatIndex == 0;
-                graphics.setColour (bar ? action : secondary.withAlpha (0.5f));
+                graphics.setColour (creamRuler ? Colour (bar ? studio::themes::rulerInk : studio::themes::rulerTick)
+                                                : bar ? action : secondary.withAlpha (0.5f));
                 graphics.drawVerticalLine (x, (float) (area.getBottom() - m.px (bar ? 13 : 7)),
                                             (float) area.getBottom());
                 if (bar && x >= lastLabelRight)
@@ -1162,7 +1169,7 @@ public:
             });
         graphics.saveState();
         graphics.reduceClipRegion (area);
-        graphics.setColour (secondary);
+        graphics.setColour (creamRuler ? Colour (studio::themes::rulerInk) : secondary);
         for (const auto* event : edit->tempoSequence.getTempos())
         {
             const auto time = event->getStartTime();

@@ -618,7 +618,8 @@ void StudioPianoRoll::paintGrid (Graphics& g)
 
 void StudioPianoRoll::paintRuler (Graphics& g)
 {
-    g.setColour (studio::colours::control);
+    const bool creamRuler = studio::themes::creamRuler (studio::activeTheme);
+    g.setColour (creamRuler ? Colour (studio::themes::rulerCream) : studio::colours::control);
     g.fillRect (rulerArea);
     if (clip == nullptr || rulerArea.isEmpty())
         return;
@@ -636,7 +637,7 @@ void StudioPianoRoll::paintRuler (Graphics& g)
     g.reduceClipRegion (rulerArea);
     if (const auto subdivision = gridBeats(); subdivision > 0.0 && subdivision * pixelsPerBeat >= 11.0)
     {
-        g.setColour (studio::colours::grid);
+        g.setColour (creamRuler ? Colour (studio::themes::rulerTick) : studio::colours::grid);
         studio::forEachMusicalSubdivision (sequence, from, to, subdivision,
             [&] (double editBeat)
             {
@@ -654,7 +655,8 @@ void StudioPianoRoll::paintRuler (Graphics& g)
         const bool bar = tick.beatIndex == 0;
         if (! bar && x - lastBeatTickX < 14)
             return;
-        g.setColour (bar ? studio::colours::action : studio::colours::secondary);
+        g.setColour (creamRuler ? Colour (bar ? studio::themes::rulerInk : studio::themes::rulerTick)
+                               : bar ? studio::colours::action : studio::colours::secondary);
         g.drawVerticalLine (x, (float) (rulerArea.getBottom() - (bar ? 13 : 7)),
                             (float) rulerArea.getBottom());
         lastBeatTickX = x;
@@ -676,8 +678,15 @@ void StudioPianoRoll::paintPlayhead (Graphics& g)
     const int x = xAt (transportSourceBeat);
     if (x < notesArea.getX() || x >= notesArea.getRight())
         return;
+    const bool creamRuler = studio::themes::creamRuler (studio::activeTheme);
     g.setColour (studio::colours::playhead);
-    g.drawVerticalLine (x, (float) rulerArea.getY(), (float) velocityArea.getBottom());
+    g.drawVerticalLine (x, (float) (creamRuler ? rulerArea.getBottom() : rulerArea.getY()),
+                        (float) velocityArea.getBottom());
+    if (creamRuler)
+    {
+        g.setColour (Colour (studio::themes::rulerRed));
+        g.drawVerticalLine (x, (float) rulerArea.getY(), (float) rulerArea.getBottom());
+    }
     g.fillEllipse ((float) x - 3.0f, (float) rulerArea.getY() + 1.0f, 6.0f, 6.0f);
 }
 
