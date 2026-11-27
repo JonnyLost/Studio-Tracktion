@@ -773,6 +773,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(StudioOstinatoCoreTests tests/OstinatoCoreTests.cpp)
+    target_compile_features(StudioOstinatoCoreTests PRIVATE cxx_std_20)
+    add_test(NAME StudioOstinatoCore COMMAND StudioOstinatoCoreTests)
+
     add_executable(StudioEnvironmentTests tests/EnvironmentSelectionTests.cpp)
     target_compile_features(StudioEnvironmentTests PRIVATE cxx_std_20)
     add_test(NAME StudioEnvironmentSelection COMMAND StudioEnvironmentTests)
