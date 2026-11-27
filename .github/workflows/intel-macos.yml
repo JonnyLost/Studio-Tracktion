@@ -168,6 +168,7 @@ jobs:
           git -C "$RUNNER_TEMP/tracktion-engine" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/tracktion-engine" -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --depth 1
       - name: Configure and build Studio
+        id: studio-build
         run: |
           cmake -S . -B build -G Xcode \
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
@@ -272,19 +273,20 @@ jobs:
           path: ${{ runner.temp }}/${{ steps.integrated-app.outputs.archive }}.zip
           if-no-files-found: error
       - name: Verify and package M44 Intel Release
-        if: github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated'
+        id: m44-package
+        if: ${{ !cancelled() && steps.studio-build.outcome == 'success' && github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated' }}
         run: |
           if [[ -f assets/Studio.png ]]; then
             export STUDIO_ICON_FILE=assets/Studio.png
           else
             echo "::warning::Approved Studio icon is pending. This is an M44 preview bundle."
           fi
-          tools/package-intel-studio.sh build/Studio_artefacts/Release/Studio.app "$RUNNER_TEMP/Studio-M44-Intel.zip"
+          tools/package-intel-studio.sh build/Studio_artefacts/Release/Studio.app "$RUNNER_TEMP/Studio-M44-Intel-preview.zip"
       - uses: actions/upload-artifact@v4
-        if: github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated'
+        if: ${{ !cancelled() && steps.m44-package.outcome == 'success' }}
         with:
-          name: Studio-M44-Intel-app
-          path: ${{ runner.temp }}/Studio-M44-Intel.zip
+          name: Studio-M44-Intel-preview
+          path: ${{ runner.temp }}/Studio-M44-Intel-preview.zip
           if-no-files-found: error
       - name: Package Intel Studio application
         if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated'

@@ -112,6 +112,8 @@ int runComposerTransportTest()
         return fail ("reopen project with transport settings and tempo map");
     auto markers = edit->getMarkerManager().getMarkers();
     if (markers.size() != 1 || markers.getFirst()->getName() != "Middle") return fail ("reopen cue marker");
+    devices.dispatchPendingUpdates();
+    edit->dispatchPendingUpdatesSynchronously();
     auto& record = edit->getTransport();
     record.looping = false;
     record.ensureContextAllocated (true);
@@ -173,15 +175,19 @@ int runComposerTransportTest()
         };
         if (! waitFor (5.05_tp) || clickPeak.load() < 0.001f)
             return fail ("audible count-in with the regular metronome disabled");
+        // Send the note after the count-in transition has reached the audio
+        // graph, and give the hosted input complete blocks before stopping.
+        if (! waitFor (5.25_tp)) return fail ("advance beyond the count-in");
         pending = 1;
-        if (! waitFor (5.25_tp)) return fail ("advance MIDI recording");
+        if (! waitFor (5.60_tp) || pending.load() != 0) return fail ("deliver recorded note-on");
         pending = 2;
-        if (! waitFor (5.45_tp)) return fail ("release recorded note");
+        if (! waitFor (5.90_tp) || pending.load() != 0) return fail ("deliver recorded note-off");
         record.stop (false, false);
+        const auto deadline = Time::getMillisecondCounterHiRes() + 5000;
+        while (! transportSettled (*edit) && Time::getMillisecondCounterHiRes() < deadline)
+            MessageManager::getInstance()->runDispatchLoopUntil (10);
+        if (! transportSettled (*edit)) return fail ("Stop must settle while the hosted device is processing");
     }
-    const auto deadline = Time::getMillisecondCounterHiRes() + 5000;
-    while (! transportSettled (*edit) && Time::getMillisecondCounterHiRes() < deadline)
-        MessageManager::getInstance()->runDispatchLoopUntil (10);
     edit->dispatchPendingUpdatesSynchronously();
     edit->setCountInMode (te::Edit::CountIn::none);
     const auto clips = target->getClips();
@@ -193,7 +199,7 @@ int runComposerTransportTest()
                     return true;
         return false;
     });
-    if (! transportSettled (*edit) || ! recorded) return fail ("Stop must finalize and retain the MIDI take");
+    if (! recorded) return fail ("Stop must finalize and retain the MIDI take");
     std::puts ("Composer musical transport, cycle, undo and persistence passed.");
     return 0;
 }
