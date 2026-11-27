@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "OstinatoCore.h"
+#include <initializer_list>
 
 namespace studio::ostinato
 {
@@ -22,10 +23,33 @@ inline std::string encodePreset(const Pattern& p)
     auto result=encode(portablePattern(p));
     return result.size()<=maxPresetBytes?result:std::string{};
 }
+// Reject malformed UTF-8 before it reaches native text controls.
+inline bool presetUtf8(const std::string& text)
+{
+    for(size_t i=0;i<text.size();)
+    {
+        const auto first=static_cast<unsigned char>(text[i++]);
+        if(first<0x80){if(first==0)return false;continue;}
+        int count=0;unsigned value=0,min=0;
+        if(first>=0xc2&&first<=0xdf){count=1;value=first&31u;min=0x80;}
+        else if(first>=0xe0&&first<=0xef){count=2;value=first&15u;min=0x800;}
+        else if(first>=0xf0&&first<=0xf4){count=3;value=first&7u;min=0x10000;}
+        else return false;
+        if(size_t(count)>text.size()-i)return false;
+        while(count--)
+        {
+            const auto c=static_cast<unsigned char>(text[i++]);
+            if((c&0xc0)!=0x80)return false;
+            value=(value<<6)|(c&63u);
+        }
+        if(value<min||value>0x10ffff||(value>=0xd800&&value<=0xdfff))return false;
+    }
+    return true;
+}
 inline bool decodePreset(const std::string& bytes,Pattern& output)
 {
     Pattern p;
-    if(bytes.size()>maxPresetBytes||!decode(bytes,p))return false;
+    if(bytes.size()>maxPresetBytes||!presetUtf8(bytes)||!decode(bytes,p))return false;
     output=portablePattern(std::move(p));
     return true;
 }
