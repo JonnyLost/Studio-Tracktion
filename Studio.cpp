@@ -739,7 +739,9 @@ public:
             item.button->onClick = [this, mode = item.mode] { setDockMode (mode); };
         }
         addChildComponent (workspaceSummary);
-        workspaceBody.addChildComponent (browser);
+        addChildComponent (browser);
+        browser.onClose = [this] { setLibraryOpen (false); };
+        browser.onWidthChanged = [this] (int width) { libraryWidth = jlimit (studio::appearance.px (220), studio::appearance.px (460), width); resized(); };
         workspaceBody.addChildComponent (channelInspector);
         workspaceBody.addChildComponent (mixer);
         configureInstrumentWorkflow();
@@ -1519,6 +1521,10 @@ public:
             jmax (inspectorWidth, minInspector));
         const auto inspectorRegion = inspectorOpen ? area.removeFromRight (visibleInspectorWidth)
                                                    : Rectangle<int>();
+        const int libraryRoom = jmax (0, area.getWidth() - m.span (240));
+        const auto libraryRegion = libraryOpen ? area.removeFromLeft (jmin (libraryRoom, libraryWidth)) : Rectangle<int>();
+        browser.setBounds (libraryRegion);
+        browser.setVisible (libraryOpen && ! libraryRegion.isEmpty());
         layoutPerformance (area);
         layoutDock (area);
         if (keyboardDocked)
@@ -2260,6 +2266,10 @@ private:
     static constexpr int minimumSplitHeight = 170;
     int workspaceHeight = 270, splitLimit = minimumSplitHeight;
     bool inspectorOpen = false;
+    bool libraryOpen = false;
+    int libraryWidth = 320;
+    te::EditItemID libraryTrack;
+    String librarySound;
     bool showRoomReturnTrack = false; // Visual-only arrangement preference.
     int inspectorWidth = 270;
     int stereoScanTicks = 0;
@@ -2568,7 +2578,6 @@ private:
         const auto minimumContentHeight = [this, dockedMonitor] (int width)
         {
             if (instrumentWorkspace.isVisible()) return instrumentWorkspace.minimumContentHeight();
-            if (browser.isVisible()) return browser.minimumContentHeight (width);
             if (channelInspector.isVisible()) return channelInspector.minimumContentHeight (width);
             if (mixer.isVisible()) return mixer.minimumContentHeight();
             if (piano.isVisible()) return piano.minimumContentHeight (width);
@@ -2588,7 +2597,7 @@ private:
             height = minimumContentHeight (width);
         }
         workspaceBody.setSize (width, jmax (height, body.getHeight()));
-        for (Component* item : std::initializer_list<Component*> { &browser, &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace, &filmWorkspace })
+        for (Component* item : std::initializer_list<Component*> { &channelInspector, &mixer, &piano, &resources, &spatialWorkspace, &instrumentWorkspace, &filmWorkspace })
             if (item->isVisible()) item->setBounds (workspaceBody.getLocalBounds());
         if (dockedMonitor) monitor.setBounds (workspaceBody.getLocalBounds());
         if (articulationWindow == nullptr && articulation.isVisible()) articulation.setBounds (workspaceBody.getLocalBounds());
@@ -2655,6 +2664,7 @@ private:
         if (edit == nullptr || environmentWelcome.isVisible()) return;
         using A = studio::Activity;
         if (dockMode != DockMode::split) setDockMode (DockMode::split);
+        setLibraryOpen (false);
         switch (activity)
         {
             case A::compose:
@@ -2666,7 +2676,8 @@ private:
                 auto* track = workflowTrack();
                 const bool hasInstrument = track != nullptr && studio::findInstrument (*track) != nullptr;
                 setInspectorOpen (hasInstrument, false);
-                showWorkspace (hasInstrument ? Workspace::closed : Workspace::instruments);
+                showWorkspace (Workspace::closed);
+                if (! hasInstrument) showWorkspace (Workspace::instruments);
                 break;
             }
             case A::record:
@@ -2679,7 +2690,7 @@ private:
                 auto* track = workflowTrack();
                 auto* instrument = track != nullptr ? studio::findInstrument (*track) : nullptr;
                 if (instrument == nullptr || ! showNativeInstrument (*instrument))
-                    showWorkspace (Workspace::instruments);
+                { showWorkspace (Workspace::closed); showWorkspace (Workspace::instruments); }
                 break;
             }
             case A::mix:
@@ -2695,8 +2706,17 @@ private:
         updateActivityControls();
     }
 
+    void setLibraryOpen (bool open)
+    {
+        libraryOpen = open;
+        instrumentsButton.setToggleState (open || workspace == Workspace::instrumentEditor, dontSendNotification);
+        if (open) { libraryTrack = {}; librarySound.clear(); workspaceTicks = 1; }
+        resized();
+    }
+
     void toggleWorkspace (Workspace destination)
     {
+        if (destination == Workspace::instruments) { setLibraryOpen (! libraryOpen); return; }
         showWorkspace (workspace == destination ? Workspace::closed : destination);
     }
 
@@ -2724,6 +2744,7 @@ private:
 
     void showWorkspace (Workspace next)
     {
+        if (next == Workspace::instruments) { setLibraryOpen (true); return; }
         const bool changing = workspace != next;
         if (changing) rememberWorkspaceScroll();
         if (changing && next != Workspace::closed)
@@ -2750,7 +2771,6 @@ private:
         const bool mixing = workspace == Workspace::mix;
         const bool monitoring = workspace == Workspace::midi;
         const bool editingMidi = workspace == Workspace::piano;
-        const bool browsing = workspace == Workspace::instruments;
         const bool inspecting = workspace == Workspace::channel;
         const bool checkingResources = workspace == Workspace::resources;
         const bool scoringPicture = workspace == Workspace::filmScoring;
@@ -2766,6 +2786,7 @@ private:
             const bool instrumentSubview = item.destination == Workspace::instruments
                 && workspace == Workspace::instrumentEditor;
             const bool selected = workspace == item.destination || stageSubview || instrumentSubview
+                || (item.destination == Workspace::instruments && libraryOpen)
                 || (item.destination == Workspace::articulations && articulationWindow != nullptr);
             item.button->setToggleState (selected, dontSendNotification);
             if (workspace == item.destination)
@@ -2787,7 +2808,6 @@ private:
         }
 
         instrumentWorkspace.setVisible (workspace == Workspace::instrumentEditor && ! compact);
-        browser.setVisible (browsing && ! compact);
         channelInspector.setVisible (inspecting && ! compact);
         resources.setVisible (checkingResources && ! compact);
         filmWorkspace.setVisible (scoringPicture && ! compact);
@@ -4490,6 +4510,7 @@ private:
         selection.deselectAll();
         timeline.setViewedComponent (nullptr);
         editor.reset();
+        setLibraryOpen (false);
         browser.setStatus ({});
         channelInspector.setEdit (nullptr);
         inspectorDrawer.setEdit (nullptr);
@@ -4616,7 +4637,7 @@ private:
                 }
                 else if (showNativeInstrument (*savedPlugin))
                 {
-                    if (restoreFloating) instrumentWorkspace.setFloating (true);
+                    if (restoreFloating) { setDockMode (instrumentWorkspace.rememberedLayout()); instrumentWorkspace.setFloating (true); }
                 }
             }
         if (create)
@@ -4652,6 +4673,7 @@ private:
             {
                 dockMode = DockMode::split;
                 workspaceHeight = studio::appearance.defaultWorkspaceHeight (getHeight());
+                browser.browseAllSounds();
                 showWorkspace (Workspace::instruments);
             }
         }
@@ -4669,8 +4691,10 @@ private:
         }
         else if (choice == 4)
         {
-            if (addTrack ("Audio") != nullptr)
+            if (auto* audioTrack = addTrack ("Audio"))
             {
+                audioTrack->state.setProperty (Identifier ("studioAudioTrack"), true, &edit->getUndoManager());
+                setLibraryOpen (false);
                 showWorkspace (Workspace::closed);
                 setInspectorOpen (true);
             }
@@ -5120,7 +5144,7 @@ private:
             showWorkspace (Workspace::instruments);
             browser.browseGeneralMidi();
             pluginStatus ("Choose any General MIDI instrument in Apple Sounds. "
-                         "Double-click or use Select GM Sound to hear it.");
+                         "Click a sound to select it.");
             return;
         }
 
@@ -5207,14 +5231,19 @@ private:
                 return;
             }
             auto* selected = workflowTrack();
+            if (! newTrack && instrumentTrackRestriction (selected).isNotEmpty())
+            { pluginStatus (instrumentTrackRestriction (selected)); return; }
             if (! newTrack && selected != nullptr)
                 if (auto* dls = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*selected)))
                     if (isAppleDls (*dls))
                     {
                         if (selectDlsProgram (*dls, gmProgram, true))
+                        {
+                            selected->setName (studio::gm::name (gmProgram));
                             pluginStatus ("Queued GM " + String (studio::gm::displayNumber (gmProgram))
                                 + ": " + studio::gm::name (gmProgram) + " on " + selected->getName()
                                 + ". Save the project to keep this sound.");
+                        }
                         else
                             pluginStatus ("Could not select the GM sound in Apple DLSMusicDevice.");
                         return;
@@ -5283,7 +5312,9 @@ private:
             const auto name = presentation.name.isNotEmpty() ? presentation.name : instrument.name;
             sampler->commitImport (std::move (instrument), false);
             studio::library::writePresentation (*sampler, presentation);
-            commitPlugin (plugin, {}, true, true);
+            auto* target = workflowTrack();
+            if (auto reason = instrumentTrackRestriction (target); reason.isNotEmpty()) { pluginStatus (reason); return; }
+            commitPlugin (plugin, target->itemID, false, true);
             if (auto* track = dynamic_cast<te::AudioTrack*> (plugin->getOwnerTrack()))
             {
                 track->setName (name);
@@ -5309,7 +5340,8 @@ private:
             }
             const auto wanted = studio::synth::parseFamily (family);
             const auto& catalog = studio::synth::catalog().sounds;
-            const auto first = std::find_if (catalog.begin(), catalog.end(), [wanted] (const auto& sound) { return sound.family == wanted; });
+            const auto first = std::find_if (catalog.begin(), catalog.end(), [&] (const auto& sound)
+            { return family.startsWith ("preset:") ? sound.id == family.substring (7) : sound.family == wanted; });
             if (first == catalog.end())
             {
                 pluginStatus ("No Studio Synth presets were found for that family.");
@@ -5476,12 +5508,8 @@ private:
 
     void refreshInstrumentWorkflow (const Array<te::AudioTrack*>& tracks, const te::MidiClip* selectedClip)
     {
-        if (dockMode == DockMode::compact || (workspace != Workspace::instruments
-             && workspace != Workspace::channel && workspace != Workspace::mix))
-            return;
-
         auto* target = workflowTrack();
-        if (workspace == Workspace::instruments)
+        if (libraryOpen)
         {
             const auto restriction = edit == nullptr ? "Open or create a project to load an instrument."
                 : ariaReviewPending ? "Complete ARIA verification before adding plug-ins."
@@ -5491,8 +5519,15 @@ private:
                 && dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*target)) != nullptr;
             const bool hasSynth = target != nullptr && ! busy
                 && dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)) != nullptr;
-            String selectedAppleInstrument;
+            String selectedAppleInstrument, soundKey;
             int currentGeneralMidi = -1;
+            if (hasSampler) soundKey = "studio-sampler";
+            if (hasSynth)
+                if (auto* native = dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*target)); native != nullptr && native->factoryID().isNotEmpty())
+                    soundKey = "studio-preset-" + native->factoryID();
+            if (target != nullptr)
+                if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
+                    soundKey = hosted->desc.createIdentifierString();
             if (target != nullptr)
                 if (auto* hosted = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*target)))
                     if (hosted->isAU() && hosted->desc.manufacturerName.containsIgnoreCase ("Apple")
@@ -5503,13 +5538,18 @@ private:
                             && hosted->state.hasProperty (Identifier ("studioDlsGmProgram")))
                             currentGeneralMidi = (int) hosted->state.getProperty (Identifier ("studioDlsGmProgram"));
                     }
-            browser.setLoadContext (canInsertPlugin(), target != nullptr ? target->getName() : String(),
+            if (currentGeneralMidi >= 0) soundKey = "apple-dls-gm-" + String (currentGeneralMidi);
+            const auto id = target != nullptr ? target->itemID : te::EditItemID {};
+            if (id != libraryTrack || soundKey != librarySound)
+            { libraryTrack = id; librarySound = soundKey; browser.syncLoadedSound (soundKey); }
+            browser.setLoadContext (canInsertPlugin() && edit != nullptr && ! edit->getTransport().isPlaying(), target != nullptr ? target->getName() : String(),
                                     restriction, hasSampler, hasSynth,
                                     canInsertPlugin() && target != nullptr
                                         && ! target->isFrozen (te::Track::anyFreeze),
                                     selectedAppleInstrument, currentGeneralMidi);
         }
-        else if (workspace == Workspace::channel)
+        if (dockMode == DockMode::compact) return;
+        if (workspace == Workspace::channel)
         {
             const auto recovery = ariaReviewPending
                 ? (autoAriaRetryPending ? "ARIA recovery | Automatic restore pending"
@@ -5518,7 +5558,7 @@ private:
             channelInspector.refresh (target, edit != nullptr && ! busy, canEditRegions(), recovery,
                 selectedClip != nullptr && selectedClip->getAudioTrack() == target ? selectedClip : nullptr);
         }
-        else
+        else if (workspace == Workspace::mix)
         {
             te::Track* selectedMixerTrack = selectedFolder() != nullptr
                 ? static_cast<te::Track*> (selectedFolder())
@@ -5536,7 +5576,9 @@ private:
     {
         if (track == nullptr) return "Select an instrument track or use Add as New Track.";
         if (track->isFrozen (te::Track::anyFreeze)) return "The selected track is frozen.";
-        if (studio::findInstrument (*track) != nullptr) return "This track already hosts an instrument. Use Add as New Track.";
+        if (edit->getTransport().isPlaying()) return "Stop playback to change sounds.";
+        if (studio::spatial::isRoomReturn (*track) || (bool) track->state.getProperty (Identifier ("studioAudioTrack"), false))
+            return "Select an instrument track.";
         for (auto* clip : track->getClips())
             if (dynamic_cast<te::AudioClipBase*> (clip) != nullptr)
                 return "The selected track contains audio. Use Add as New Track.";
@@ -5651,15 +5693,33 @@ private:
                 ? String (studio::gm::name (gmProgram)) : plugin->getName());
         }
 
+        auto* previous = instrument && ! addNew ? studio::findInstrument (*track) : nullptr;
         const auto* volume = track->getVolumePlugin();
-        // The instrument comes first. Effects go before the existing track fader.
-        const int index = instrument ? 0 : volume != nullptr ? track->pluginList.indexOf (volume) : -1;
+        // Prepare and insert the replacement before removing the working instrument.
+        // All edits stay in one undo transaction, and unrelated inserts remain.
+        const int index = instrument ? (previous != nullptr ? track->pluginList.indexOf (previous) : 0)
+                                     : volume != nullptr ? track->pluginList.indexOf (volume) : -1;
         track->pluginList.insertPlugin (plugin, index, nullptr);
         if (track->pluginList.indexOf (plugin.get()) < 0)
         {
             if (newTrack != nullptr) edit->deleteTrack (newTrack.get());
             pluginStatus ("Could not insert " + plugin->getName() + ".");
             return;
+        }
+        if (previous != nullptr)
+        {
+            dockedKeyboard.releaseNotes();
+            if (midiKeyboardWindow != nullptr) midiKeyboardWindow->panel.releaseNotes();
+            piano.silencePreview();
+            if (workflowTrack() == track) { selection.selectOnly (track); instrumentWorkspace.clear(); inspectorDrawer.suspendAtelier(); }
+            previous->deleteFromParent();
+        }
+        if (instrument)
+        {
+            auto name = studio::gm::valid (gmProgram) ? String (studio::gm::name (gmProgram)) : plugin->getName();
+            if (auto* native = dynamic_cast<studio::synth::Plugin*> (plugin.get()); native != nullptr && native->presetName().isNotEmpty())
+                name = native->presetName();
+            track->setName (name);
         }
         if (newTrack != nullptr) selection.selectOnly (track);
         if (studio::gm::valid (gmProgram))
@@ -5693,7 +5753,8 @@ private:
         if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
-        if (instrument) showNativeInstrument (*plugin);
+        if (instrument && (! libraryOpen || workspace == Workspace::instrumentEditor || addNew)
+            && workflowTrack() == track) showNativeInstrument (*plugin);
     }
 
     // Menu callbacks re-resolve the original track and project after the popup closes.
@@ -6774,7 +6835,32 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
     loadProject (folder.getChildFile ("Another Project.tracktionedit"), true);
     if (instrumentWorkspace.getEditor() != nullptr || instrumentWorkspace.isFloating())
         return fail ("switching projects must clear the editor");
-    std::puts ("Native instrument workspace, playback, preset browser, appearance and restoration passed.");
+    // Real replacement path on a disposable project, not a mock catalogue.
+    browser.loadSynth ("analog", true);
+    auto* replacementTrack = workflowTrack();
+    if (replacementTrack == nullptr || dynamic_cast<studio::synth::Plugin*> (studio::findInstrument (*replacementTrack)) == nullptr)
+        return fail ("prepare replacement fixture");
+    const auto replacementId = replacementTrack->itemID;
+    const auto trackCount = te::getAudioTracks (*edit).size();
+    const auto before = studio::findInstrument (*replacementTrack)->itemID;
+    auto replacementClip = replacementTrack->insertMIDIClip ("Keep phrase",
+        { te::TimePosition::fromSeconds (0), te::TimePosition::fromSeconds (2) }, nullptr);
+    auto effect = edit->getPluginCache().createNewPlugin (te::EqualiserPlugin::xmlTypeName, {});
+    if (replacementClip == nullptr || effect == nullptr) return fail ("prepare clip and effect");
+    const auto clipId = replacementClip->itemID;
+    replacementTrack->pluginList.insertPlugin (effect, 1, nullptr);
+    const auto effectId = effect->itemID;
+    setLibraryOpen (true);
+    browser.loadSampler (false);
+    auto* currentTrack = trackById (replacementId);
+    if (currentTrack == nullptr || te::getAudioTracks (*edit).size() != trackCount
+        || dynamic_cast<studio::sampler::Plugin*> (studio::findInstrument (*currentTrack)) == nullptr
+        || te::findPluginForID (*edit, before) != nullptr || te::findPluginForID (*edit, effectId) == nullptr
+        || te::findClipForID (*edit, clipId) == nullptr)
+        return fail ("replace instrument without losing track, MIDI or effects");
+    replacementClip = nullptr; effect = nullptr;
+    setLibraryOpen (false);
+    std::puts ("Native instrument workspace, playback, preset browser, appearance, restoration and replacement passed.");
     return 0;
 }
 
@@ -6868,7 +6954,9 @@ int StudioView::runInterfaceReview (const File& output)
     runWorkflowCommand (studio::WorkflowCommand::microphones);
     if (workspace != Workspace::microphones || ! spatialWorkspace.isVisible()) return fail ("command launcher Microphones");
     runWorkflowCommand (studio::WorkflowCommand::browser);
-    if (workspace != Workspace::instruments || ! browser.isVisible()) return fail ("command launcher Browser");
+    if (! libraryOpen || ! browser.isVisible() || workspace != Workspace::microphones
+        || browser.getRight() > timeline.getX()) return fail ("independent left Instrument Library");
+    setLibraryOpen (false);
     showWorkspace (Workspace::closed);
     // Exercise the real activity buttons; none may start recording or add tracks.
     const auto originalTracks = te::getAudioTracks (*edit).size();
@@ -6884,9 +6972,9 @@ int StudioView::runInterfaceReview (const File& output)
         switch (studio::activities[i].activity)
         {
             case A::compose: if (workspace != Workspace::piano || ! piano.isVisible()) return fail ("Compose workspace"); break;
-            case A::perform: if (workspace != Workspace::closed && workspace != Workspace::instruments) return fail ("Perform workspace"); break;
+            case A::perform: if (workspace != Workspace::closed) return fail ("Perform workspace"); break;
             case A::record: if (workspace != Workspace::closed) return fail ("Record workspace"); break;
-            case A::design: if (workspace != Workspace::instrumentEditor && workspace != Workspace::instruments) return fail ("Design workspace"); break;
+            case A::design: if (workspace != Workspace::instrumentEditor && ! libraryOpen) return fail ("Design workspace"); break;
             case A::mix: if (workspace != Workspace::mix || ! mixer.isVisible()) return fail ("Mix workspace"); break;
             case A::score: if (workspace != Workspace::filmScoring || dockMode != DockMode::split) return fail ("Score workspace"); break;
         }
@@ -7128,8 +7216,10 @@ int StudioView::runInterfaceReview (const File& output)
     if (! capture ("composer-arrangement-1280x800.png")) return fail ("write Composer arrangement screenshot");
     showWorkspace (Workspace::instruments);
     timerCallback();
-    if (! browser.isVisible() || ! capture ("m14-instrument-browser-1280x800.png"))
-        return fail ("capture M14 instrument browser");
+    if (! libraryOpen || ! browser.isVisible() || browser.getRight() > timeline.getX()
+        || ! capture ("m14-instrument-browser-1280x800.png"))
+        return fail ("capture left Instrument Library");
+    setLibraryOpen (false);
     showWorkspace (Workspace::closed);
     if (writeImages)
     {

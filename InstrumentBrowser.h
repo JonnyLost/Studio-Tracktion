@@ -32,6 +32,10 @@ public:
                          bool canInsertEffect = false, juce::String hostedAppleIdentifier = {},
                          int selectedGmProgram = -1);
     void setStatus (const juce::String&);
+    void syncLoadedSound (juce::String key);
+    void browseAllSounds();
+    std::function<void(int)> onWidthChanged;
+    std::function<void()> onClose;
     void browseAppleEffects();
     void browseGeneralMidi();
     void appearanceChanged();
@@ -61,6 +65,8 @@ private:
         void paintListBoxItem (int, juce::Graphics&, int, int, bool) override;
         void selectedRowsChanged (int) override;
         void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
+        void listBoxItemClicked (int row, const juce::MouseEvent&) override;
+        void returnKeyPressed (int row) override;
         InstrumentBrowser& browser;
         Kind kind;
     };
@@ -88,9 +94,9 @@ private:
     juce::ComboBox compactFamily, compactType, libraryView;
     juce::TextEditor search;
     juce::Label detailsTitle, instrumentName, vendor, explanation, status, count;
-    juce::TextButton manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
+    juce::TextButton close { "Hide" }, manage { "Plug-ins..." }, load { "Load on Selected Track" }, add { "Add as New Track" },
                      programs { "Apple Sound Bank..." },
-                     favourite { "☆ Favorite" }, favouritesFilter { "Favorites" };
+                     favourite { "Favorite" }, favouritesFilter { "Favorites" };
     juce::Rectangle<int> art, detailPanel;
     const Entry* selected() const;
     void rebuildCatalog();
@@ -98,6 +104,7 @@ private:
     void rebuildResults();
     void updateDetails();
     void loadSelected (bool newTrack);
+    void activateRow (int row);
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 };
 }
