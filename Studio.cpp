@@ -7615,6 +7615,25 @@ int StudioView::runInterfaceReview (const File& output)
         folder.deleteRecursively();
         if(!verified) return fail("instrument designer profile creation and recall");
     }
+    {
+        using namespace studio::designer;
+        Profile p;p.instrument="flutes.concert-flute";p.name="Fixture flute";
+        Element a{Uuid().toString(),"wind.flutter-tongue","Flutter","articulation","button",true,true,Binding{"note",0,40,100}};
+        Element c{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        Element extra{Uuid().toString(),"release","Release","control","knob",false,true,Binding{}};
+        p.elements={a,c,extra};
+        UniversalSurface compact(true),full(false);compact.setSize(480,66);full.setSize(660,300);
+        compact.setProfile("fixture",p);full.setProfile("fixture",p);
+        if(compact.visibleElementCount()!=2||full.visibleElementCount()!=3)return fail("universal layout visibility");
+        LiveValues values;int messages=0;
+        compact.perform=[&](const String& id,int value){if(id==c.id){values.applied(c,p.channel,value);++messages;}};
+        compact.refresh(values,true,false,0,0);full.refresh(values,true,false,0,0);
+        if(messages!=0||!compact.exercise(c.id,91))return fail("universal control action");
+        full.refresh(values,true,false,0,0);
+        if(messages!=1||full.displayedValue(c.id)!=91||full.exercise(extra.id,0))return fail("universal shared state or unassigned guard");
+        compact.setProfile("fixture",p,true);
+        if(compact.visibleElementCount()!=1)return fail("universal articulation-only mode");
+    }
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
