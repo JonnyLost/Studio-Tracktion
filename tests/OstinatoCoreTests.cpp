@@ -27,12 +27,12 @@ int main()
     const auto encoded=encode(p);Pattern restored;
     require(!encoded.empty()&&decode(encoded,restored)&&restored==p,"versioned round trip");
     require(!decode(encoded+"garbage",restored)&&restored==p,"reject trailing payload transactionally");
-    require(!decode("STUDIO_OSTINATO 2 \"x\" 16 4 1",restored)&&restored==p,"reject version");
+    require(!decode("STUDIO_OSTINATO 3 \"x\" 16 4 1",restored)&&restored==p,"reject version");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 16 4 99999",restored),"reject excessive rows");
     require(!decode("STUDIO_OSTINATO 1 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0\n2 0 90 750\n",restored),"reject nonboolean flags");
     require(!p.setGrid(8,4)&&p.stepCount==16,"do not erase active steps during resize");
     auto extended=p;require(extended.setGrid(32,4)&&extended.rows[0].steps[15].enabled&&!extended.rows[0].steps[31].enabled,"extend grid without mutating old steps");
-    require(!extended.setGrid(32,7),"O1 rejects fractional ticks rather than drifting");
+    require(!extended.setGrid(32,7),"legacy master grid rejects fractional ticks; use row timing");
     auto malformed=p;malformed.rows[1].id=malformed.rows[0].id;
     require(!malformed.valid()&&encode(malformed).empty(),"reject duplicate row IDs");
     malformed=p;malformed.rows[0].steps[0].gate=0;require(!malformed.valid(),"reject zero gate");
@@ -94,5 +94,98 @@ int main()
     require(!compile(stress,{"t"},maxRepeats,second,error),"reject oversized finite render");
     require(compile(stress,{"t"},1,second,error)&&second.notes.size()==256,"dense duplicate hits normalized");
     require(stress.removeRow(stress.rows.back().id)&&stress.rows.size()==63,"delete selected row");
-    std::cout<<"O1 ostinato core: "<<checks<<" checks passed\n";
+    // O1 payload migration: retain the original grid and exact event stream.
+    const std::string legacy="STUDIO_OSTINATO 1 \"Legacy\" 2 4 1\n1 \"Old row\" \"t\" 1 60 0 0\n1 1 80 500\n1 0 95 1000\n";
+    Pattern migrated;require(decode(legacy,migrated)&&migrated.rows[0].timing==TimingMode::followGrid,"O1 migration");
+    require(compile(migrated,{"t"},1,second,error)&&second.notes==std::vector<Note>{{0,1200,0,1,60,100},{2400,4800,0,1,60,95}},"legacy exact timing");
+    require(decode(encode(migrated),restored)&&restored==migrated,"migrated v2 round trip");
+
+    Pattern poly;poly.rows[0].trackId="taiko";poly.rows[0].pitch=36;
+    require(poly.addRow()&&poly.addRow(),"three rows");
+    poly.rows[1].trackId="claves";poly.rows[2].trackId="strings";
+    require(poly.setRowTiming(1,TimingMode::sharedSpan,4)&&poly.setRowTiming(2,TimingMode::sharedSpan,5)
+        &&poly.setRowTiming(3,TimingMode::sharedSpan,7),"4:5:7 shared span");
+    for(auto& r:poly.rows)for(auto& step:r.steps){step.enabled=true;step.gate=1000;}
+    require(compile(poly,{"taiko","claves","strings"},3,second,error)&&second.notes.size()==48,"shared span repeat counts");
+    for(int route=0;route<3;++route)
+    {
+        const int count=route==0?4:route==1?5:7;
+        int index=0;
+        for(const auto& n:second.notes)if(n.route==route)
+        {
+            const Tick expectedStart=(index/count)*poly.duration()+(index%count)*poly.duration()/count;
+            const Tick expectedEnd=(index/count)*poly.duration()+((index%count)+1)*poly.duration()/count;
+            require(n.start==expectedStart&&n.end==expectedEnd,"absolute rational boundaries including cycle end");
+            ++index;
+        }
+        require(index==3*count,"all row steps generated");
+    }
+    require(decode(encode(poly),restored)&&restored==poly,"O2 row timing round trip");
+    auto changed=poly;
+    require(!changed.setRowTiming(2,TimingMode::sharedSpan,4)&&changed==poly,"refuse truncating active row");
+    require(!changed.setRowTiming(2,TimingMode::independentCycle,5,5,3)&&changed==poly,"reject invalid meter denominator");
+    require(!changed.setRowTiming(2,static_cast<TimingMode>(99),5)&&changed==poly,"reject invalid timing mode");
+    require(!changed.setRowTiming(2,TimingMode::followGrid,5),"follow-grid size must match");
+    require(changed.setMasterMeter(6,8,1,4)&&changed.duration()==3*ticksPerQuarter
+        &&changed.rows[1].steps.size()==5&&changed.rows[2].steps.size()==7,"master meter preserves independent row cells");
+    require(compile(changed,{"taiko","claves","strings"},1,second,error)&&second.notes.back().end==changed.duration(),"shared span follows master meter");
+
+    Pattern meters;meters.rows[0].trackId="a";require(meters.addRow(),"polymeter row");
+    meters.rows[1].trackId="b";
+    require(meters.setRowTiming(1,TimingMode::independentCycle,5,5,8)&&meters.setRowTiming(2,TimingMode::independentCycle,7,7,8),"5/8 and 7/8 cycles");
+    meters.rows[0].steps[0].enabled=true;meters.rows[1].steps[0].enabled=true;
+    require(meters.rowCycle(meters.rows[0])==24000&&meters.rowCycle(meters.rows[1])==33600,"meter duration");
+    require(compile(meters,{"a","b"},5,second,error)&&second.duration==192000&&second.notes.size()==14,"independent cycles continue across master spans");
+    int aCount=0,bCount=0,meeting=0;
+    for(const auto& n:second.notes)
+    {
+        if(n.route==0)require(n.start==aCount++*24000,"5/8 phase");
+        else require(n.start==bCount++*33600,"7/8 phase");
+        if(n.start==168000)++meeting;
+    }
+    require(aCount==8&&bCount==6&&meeting==2,"5/8 and 7/8 realign at 35 eighth notes");
+    auto independent=meters;
+    require(independent.setMasterMeter(3,4,1,4)&&independent.rowCycle(independent.rows[0])==24000,"master change preserves independent cycle");
+    require(decode(encode(meters),restored)&&restored==meters,"independent meter serialization");
+    require(!decode("STUDIO_OSTINATO 2 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 2 4 0 1 1\n1 0 90 750\n",restored)&&restored==meters,"invalid meter fails transactionally");
+    require(!decode("STUDIO_OSTINATO 2 \"x\" 1 4 1\n1 \"r\" \"t\" 1 60 0 0 2 4 4 1 257\n",restored),"row step limit");
+
+    // Mixed subdivisions on one MIDI pitch must not leave overlapping notes.
+    for(auto& r:poly.rows){r.trackId="t";r.pitch=60;}
+    require(compile(poly,{"t"},4,second,error),"same destination poly rhythms");
+    for(size_t i=1;i<second.notes.size();++i)require(second.notes[i-1].end<=second.notes[i].start,"overlap normalization across distinct subdivisions");
+    require(second.notes.back().end==second.duration,"exact terminal boundary");
+    emitted.clear();Cursor mixed(second);
+    for(Tick t=0;t<=second.duration;t+=353)
+        require(mixed.process(t,std::min(t+353,second.duration+1),sink),"mixed subdivision block");
+    require(emitted==second.events&&mixed.held()==0,"mixed subdivision event lifecycle partition invariant");
+
+    Pattern bounded;bounded.rows[0].trackId="t";
+    require(bounded.setRowTiming(1,TimingMode::independentCycle,256,1,32),"short dense independent cycle");
+    for(auto& step:bounded.rows[0].steps)step.enabled=true;
+    require(!compile(bounded,{"t"},256,second,error),"independent dense cycle respects output bound");
+    // Long cycle clipped to a finite print/audition range.
+    Pattern clipped;clipped.rows[0].trackId="t";
+    require(clipped.setRowTiming(1,TimingMode::independentCycle,1,7,4),"long cycle");
+    clipped.rows[0].steps[0]={true,false,90,1000};
+    require(compile(clipped,{"t"},1,second,error)&&second.notes.size()==1&&second.notes[0].end==clipped.duration(),"clip partial cycle at finite render end");
+    // Exhaust all subdivision counts and check the matrix geometry agrees
+    // with the generated note boundaries over two cycles.
+    Pattern sweep;sweep.rows[0].trackId="t";
+    require(sweep.setMasterMeter(7,8,1,4),"7/8 master span");
+    for(int cells=1;cells<=maxSteps;++cells)
+    {
+        for(auto& step:sweep.rows[0].steps)step.enabled=false;
+        require(sweep.setRowTiming(1,TimingMode::sharedSpan,cells),"all supported divisions");
+        auto& row=sweep.rows[0];
+        for(auto& step:row.steps){step.enabled=true;step.gate=1000;}
+        require(compile(sweep,{"t"},2,second,error)&&second.notes.size()==size_t(2*cells),"division sweep count");
+        for(int i=0;i<cells*2;++i)
+        {
+            const auto origin=(i/cells)*sweep.duration();
+            require(second.notes[size_t(i)].start==origin+sweep.rowBoundary(row,size_t(i%cells))
+                &&second.notes[size_t(i)].end==origin+sweep.rowBoundary(row,size_t(i%cells+1)),"matrix geometry matches engine");
+        }
+    }
+    std::cout<<"O1/O2 ostinato core: "<<checks<<" checks passed\n";
 }
