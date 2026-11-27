@@ -128,11 +128,12 @@ void StudioPianoRoll::setEditingEnabled (bool enabled)
 
 void StudioPianoRoll::refresh()
 {
+    refreshPerformanceLane();
     const bool hasClip = clip != nullptr && clip->hasValidSequence();
     if (hasClip)
     {
         for (int i = selectedNotes.size(); --i >= 0;)
-            if (clip->getSequence().getNoteFor (selectedNotes.getReference (i)) == nullptr)
+            if (clip->getSequence().getNoteFor (selectedNotes.getReference (i)) == nullptr || studio::designer::isNamedEvent(selectedNotes.getReference(i)))
                 selectedNotes.remove (i);
         if (! selectedNotes.contains (selectedNote))
             selectedNote = selectedNotes.isEmpty() ? ValueTree() : selectedNotes.getLast();
@@ -786,6 +787,7 @@ void StudioPianoRoll::paintNotes (Graphics& g)
         if (other != nullptr && other->hasValidSequence())
             for (auto* note : other->getSequence().getNotes())
             {
+                if(studio::designer::isNamedEvent(note->state))continue;
                 const double start = clip->getContentBeatAtTime (
                     other->getTimeOfContentBeat (note->getStartBeat())).inBeats();
                 const double end = clip->getContentBeatAtTime (
