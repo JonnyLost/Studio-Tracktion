@@ -2136,7 +2136,7 @@ Result Plugin::writeConvertedPreset (const Instrument& instrument, const File& f
         return Result::fail ("Choose a new native preset path.");
     if (instrument.zones.empty()) return Result::fail ("Empty instrument.");
     for (const auto& zone : instrument.zones)
-        if (! zone.mapping.sample || zone.problem.isNotEmpty() || ! currentSample (zone, zone.file))
+        if (! zone.mapping.sample || zone.problem.isNotEmpty() || ! currentSample (zone, zone.file, zone.soundFont))
             return Result::fail ("Unavailable or changed sample: " + zone.file.getFileName());
     auto next = instrument;
     next.preset = file.getFileNameWithoutExtension().substring (0, 120);
@@ -2218,7 +2218,7 @@ Result Plugin::verifyStreamSources (bool checkOfflineErrors) const
             return Result::fail ("Sampler source unavailable: " + zone.file.getFileName());
         if (sample->stream)
         {
-            if (! currentSample (zone, zone.file))
+            if (! currentSample (zone, zone.file, zone.soundFont))
                 return Result::fail ("Streamed sample changed or disappeared: " + zone.file.getFileName());
             if (checkOfflineErrors && sample->stream->offlineErrors() != 0)
                 return Result::fail ("Offline sample read failed: " + zone.file.getFileName());

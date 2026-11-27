@@ -53,7 +53,7 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     resultList.setModel (&resultRows);
     for (Component* item : std::initializer_list<Component*> {
              &search, &compactFamily, &compactType, &libraryView, &manage, &detailsTitle, &instrumentName, &vendor,
-             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter, &importLibrary, &close })
+             &explanation, &status, &count, &load, &add, &programs, &favourite, &favouritesFilter, &ariaTools, &importLibrary, &close })
         addAndMakeVisible (*item);
     search.setTitle ("Search instruments");
     search.setTextToShowWhenEmpty ("Search instruments, formats or makers", colours::secondary);
@@ -141,6 +141,8 @@ InstrumentBrowser::InstrumentBrowser (KnownPluginList& source, PropertiesFile* p
     };
     manage.onClick = [this] { if (openPluginManager) openPluginManager(); };
     close.onClick = [this] { if (onClose) onClose(); };
+    ariaTools.setTooltip ("Discover Garritan/ARIA instruments and register presets");
+    ariaTools.onClick = [this] { if (openAriaCatalog) openAriaCatalog (ariaTools); };
     favourite.setTooltip ("Mark this instrument as a favorite or remove its favorite");
     favourite.onClick = [this]
     {
@@ -186,21 +188,37 @@ void InstrumentBrowser::saveFavourites()
 
 void InstrumentBrowser::changeListenerCallback (ChangeBroadcaster*) { rebuildCatalog(); }
 
+void InstrumentBrowser::setAriaCatalog (const aria::Catalog& catalog)
+{
+    ariaCatalog = &catalog;
+    rebuildCatalog();
+}
+
+std::optional<aria::Patch> InstrumentBrowser::selectedAriaPatch() const
+{
+    if (const auto* item = selected(); item != nullptr && item->patch != nullptr
+        && item->patch->canCapture())
+        return *item->patch;
+    return {};
+}
+
 void InstrumentBrowser::rebuildCatalog()
 {
     entries.clear();
     bool hasAria = false;
     std::optional<PluginDescription> dls;
+    Array<PluginDescription> ariaUnits;
     for (const auto& plugin : known.getTypes())
     {
         if (plugin.pluginFormatName != "AudioUnit") continue;
         const bool aria = isAria (plugin);
+        hasAria |= aria;
+        if (aria) ariaUnits.add (plugin);
         const bool apple = ! aria && plugin.manufacturerName.containsIgnoreCase ("Apple");
         const bool effect = apple && ! plugin.isInstrument;
         if (apple && plugin.isInstrument && plugin.name.containsIgnoreCase ("DLSMusicDevice"))
             dls = plugin;
         if (! plugin.isInstrument && ! aria && ! effect) continue;
-        hasAria |= aria;
         const String type = plugin.category.isNotEmpty()
             ? plugin.category : effect ? "Audio Effect" : "Instrument";
         entries.push_back ({ plugin.createIdentifierString(), plugin.name,
@@ -228,6 +246,35 @@ void InstrumentBrowser::rebuildCatalog()
     if (! hasAria)
         entries.push_back ({ "missing-aria", "ARIA Player", "Orchestral", "Sample Player", "Garritan | Audio Unit",
                              "Install and scan the ARIA Audio Unit in Plug-ins.", {}, false });
+    if (ariaCatalog != nullptr)
+        for (const auto& [id, patch] : ariaCatalog->patches())
+        {
+            if (patch.kind == "original") continue;
+            const auto capture = ariaCatalog->preset (patch);
+            PluginDescription unit;
+            for (const auto& candidate : ariaUnits)
+            {
+                if (capture.state.isNotEmpty()
+                    && (candidate.createIdentifierString() != capture.pluginId
+                        || candidate.version != capture.pluginVersion))
+                    continue;
+                unit = candidate;
+                if (candidate.name.equalsIgnoreCase ("ARIA Player")) break;
+            }
+            const bool available = unit.name.isNotEmpty() && patch.present
+                && (patch.kind == "sfz" || capture.state.isNotEmpty());
+            const auto description = capture.state.isNotEmpty() && ! available
+                ? String ("Requires the ARIA Audio Unit version used to capture this preset.")
+                : ariaCatalog->status (patch);
+            const auto patchStatus = ! available && patch.present && patch.kind == "snapshot" && capture.state.isEmpty()
+                ? "Possible ensemble" : ! available ? "Unavailable" : capture.state.isNotEmpty() ? "Recall preset"
+                : patch.missingSamples > 0 ? "Check samples in ARIA" : "Choose patch in ARIA";
+            const auto separator = String::fromUTF8 (" — ");
+            entries.push_back ({ "aria:" + id, patch.name + separator + patch.library + separator + "ARIA",
+                patch.family, patch.library, "ARIA Player required",
+                description + " | " + patch.health + " | " + patch.source.getFullPathName(),
+                unit, available, false, false, -1, {}, &patch, patchStatus });
+        }
     for (int i = 0; i < 7; ++i)
     {
         const auto engine = static_cast<synth::Family> (i);
@@ -252,7 +299,7 @@ void InstrumentBrowser::rebuildCatalog()
                 ? stem.upToLastOccurrenceOf ("-", false, false) : stem;
             entries.push_back ({ "imported:" + file.getFileName(), display,
                 "Imported Libraries", "Studio Sampler", "Studio | Imported instrument",
-                "Native preset using samples in the original library folder.", {}, true, file });
+                "Native preset using samples in the original library folder.", {}, true, false, false, -1, file });
         }
     std::stable_sort (entries.begin(), entries.end(), [] (const Entry& a, const Entry& b)
     {
@@ -407,6 +454,7 @@ void InstrumentBrowser::loadSelected (bool newTrack)
 {
     const auto* entry = selected();
     if (entry == nullptr || ! entry->available) return;
+    if (! newTrack && ! entry->effect && (! canCreate || targetRestriction.isNotEmpty())) return;
     if (entry->preset != File())
     {
         if (loadImportedSampler) loadImportedSampler (entry->preset, newTrack);
@@ -437,6 +485,8 @@ void InstrumentBrowser::loadSelected (bool newTrack)
     {
         if (loadSynth) loadSynth (entry->key.fromFirstOccurrenceOf ("studio-synth-", false, false), newTrack);
     }
+    else if (entry->patch != nullptr && loadAriaPatch)
+        loadAriaPatch (*entry->patch, entry->plugin, newTrack);
     else if (loadInstrument)
         loadInstrument (entry->plugin, newTrack);
 }
@@ -508,6 +558,8 @@ String InstrumentBrowser::Rows::getNameForRow (int row)
     if (! isPositiveAndBelow (row, getNumRows())) return {};
     if (kind != results) return (kind == families ? browser.families : browser.types)[row];
     const auto& entry = browser.entries[browser.filtered[(size_t) row]];
+    if (entry.patch != nullptr)
+        return entry.name + ", " + entry.vendor + ", " + entry.patchStatus;
     return (browser.favouriteKeys.contains (entry.key) ? "Favorite: " : String())
              + entry.name + ", " + entry.type + ", " + (entry.available ? "available"
              : entry.family == "Studio" ? "planned" : "unavailable");
@@ -543,6 +595,7 @@ void InstrumentBrowser::Rows::paintListBoxItem (int row, Graphics& g, int w, int
     g.setColour (activeGm ? colours::focus : entry.available ? colours::signal
                            : entry.family == "Studio" ? colours::secondary : colours::warning);
     g.drawFittedText (entry.type + " | " + (activeGm ? "Selected on track"
+                    : entry.patch != nullptr ? entry.patchStatus
                     : entry.effect ? "Insert Effect"
                     : entry.available ? "Available" : entry.family == "Studio" ? "Planned" : "Unavailable"),
                       bounds, Justification::centredLeft, 1, 1.0f);
@@ -643,7 +696,9 @@ void InstrumentBrowser::resized()
     manage.setVisible (false); add.setVisible (false);
     load.setVisible (collection == Collection::appleEffects);
     if (load.isVisible()) load.setBounds (area.removeFromBottom (m.control (26)));
-    importLibrary.setBounds (area.removeFromBottom (m.control (26)));
+    auto libraryActions = area.removeFromBottom (m.control (26));
+    ariaTools.setBounds (libraryActions.removeFromRight (m.span (68)).reduced (1));
+    importLibrary.setBounds (libraryActions.reduced (1));
     status.setBounds (area.removeFromBottom (2 * m.line (12, 2)));
     auto actions = area.removeFromBottom (m.control (26));
     if (programs.isVisible()) programs.setBounds (actions.removeFromLeft (actions.getWidth()/2).reduced (1));

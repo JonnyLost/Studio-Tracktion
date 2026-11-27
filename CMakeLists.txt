@@ -730,7 +730,7 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
 juce_generate_juce_header(Studio)
-target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
+target_sources(Studio PRIVATE Studio.cpp StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h AriaCatalog.cpp AriaCatalog.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     InstrumentReaders.cpp InstrumentReaders.h SampleSources.h
     InstrumentLibrary.cpp InstrumentLibrary.h InstrumentImportWindow.cpp InstrumentImportWindow.h
@@ -852,6 +852,13 @@ if(BUILD_TESTING)
     target_compile_features(StudioAcousticComparison PRIVATE cxx_std_20)
     add_test(NAME StudioAcousticQuality COMMAND StudioAcousticComparison --verify)
     set_tests_properties(StudioAcousticQuality PROPERTIES TIMEOUT 90)
+
+    add_executable(StudioAriaCatalogTests tests/AriaCatalogTests.cpp AriaCatalog.cpp)
+    target_compile_features(StudioAriaCatalogTests PRIVATE cxx_std_20)
+    target_compile_definitions(StudioAriaCatalogTests PRIVATE JUCE_USE_CURL=0)
+    target_link_libraries(StudioAriaCatalogTests PRIVATE juce::juce_core)
+    add_dependencies(Studio StudioAriaCatalogTests)
+    add_test(NAME StudioAriaCatalog COMMAND StudioAriaCatalogTests)
 
     add_executable(StudioSamplerMappingTests tests/SamplerMappingTests.cpp SamplerEngine.cpp)
     target_compile_features(StudioSamplerMappingTests PRIVATE cxx_std_20)
