@@ -137,10 +137,11 @@ struct SfzInspection
         bool inComment = false;
         // Pair only explicit literal sw_label/sw_last in the same block.
         // Never resolve inheritance, macros, ranges, defaults or note names.
+        const auto definitionModified=file.getLastModificationTime().toMilliseconds(), definitionSize=file.getSize();
         String label; int note=-1; bool block=false, ambiguous=false; int labelCount=0,noteCount=0;
         const auto flush=[&]{
             if(block&&!ambiguous&&labelCount==1&&noteCount==1&&label.isNotEmpty()&&label.length()<=80&&note>=0&&note<=127&&hints.size()<1024)
-                hints.push_back({label,note,file,file.getLastModificationTime().toMilliseconds(),file.getSize()});
+                hints.push_back({label,note,file,definitionModified,definitionSize});
             label.clear();note=-1;ambiguous=false;labelCount=noteCount=0;
         };
         while (! input.isExhausted() && input.getPosition() < maxDefinitionSize)
@@ -351,7 +352,7 @@ void Catalog::scan (Array<File> selected, const std::function<bool (const Progre
         progress.root = root;
         const auto cancelled = [&] { return shouldCancel (progress); };
         if (cancelled()) break;
-        if (! root.isDirectory() || ! root.hasReadAccess())
+        if (! root.isDirectory() || ! root.hasReadAccess() || root.isSymbolicLink())
         {
             ++progress.errors;
             continue;
@@ -461,11 +462,16 @@ String Catalog::status (const Patch& patch) const
 
 String Catalog::report() const
 {
-    std::map<String, int> libraries;
+    std::map<String, int> libraries, labelled, literal, unavailable, uninspected;
     int captured = 0, original = 0, unresolved = 0, missing = 0, snapshots = 0, selectable = 0;
     for (const auto& [id, patch] : entries)
     {
-        if (patch.present) ++libraries[patch.library];
+        if (patch.present) {
+            ++libraries[patch.library];
+            if(!patch.articulations.isEmpty())++labelled[patch.library];
+            if(!patch.switchHints.empty())++literal[patch.library];
+            if(patch.kind=="sfz"&&!patch.mappingInspected)++uninspected[patch.library];
+        } else ++unavailable[patch.library];
         const auto state = status (patch);
         if (state.startsWith ("Audition-confirmed")) ++captured;
         else if (patch.present && patch.kind == "original") ++original;
@@ -487,7 +493,11 @@ String Catalog::report() const
         + "\nUnavailable roots: " + String (errors)
         + "\nPending roots: " + String (pending.size()) + "\n";
     for (const auto& [library, count] : libraries)
-        summary << "\n" << library << ": " << count;
+        summary << "\n" << library << ": " << count << " present; " << labelled[library] << " labelled; "
+                << literal[library] << " with cached literal switch evidence; " << uninspected[library] << " need mapping rescan; "
+                << unavailable[library] << " unavailable";
+    for(const auto& [library,count]:unavailable)if(libraries.count(library)==0)summary<<"\n"<<library<<": "<<count<<" unavailable";
+    summary<<"\nLiteral evidence is provisional, not verified assignments.";
     return summary;
 }
 }
