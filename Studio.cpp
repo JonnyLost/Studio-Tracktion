@@ -7379,6 +7379,19 @@ int StudioView::runInterfaceReview (const File& output)
     TemporaryFile fixture (".tracktionedit");
     loadProject (fixture.getFile(), true);
     if (edit == nullptr || editor == nullptr) return fail ("create temporary project");
+    {
+        studio::ostinato::MatrixEditor probe;probe.setSize(920,510);
+        if(!probe.verifyEditor())return fail("ostinato matrix editor and row timing");
+        showOstinato();
+        if(!ostinatoWindow||!ostinatoWindow->editor().reviewToggleFirstStep())return fail("ostinato project write");
+        const auto payload=edit->state.getProperty("studioOstinatoPattern").toString();
+        studio::ostinato::Pattern p;
+        if(!studio::ostinato::decode(payload.toStdString(),p)||!p.rows[0].steps[0].enabled)return fail("ostinato persisted step");
+        auto& undo=edit->getUndoManager();
+        if(!undo.undo()||edit->state.hasProperty("studioOstinatoPattern"))return fail("ostinato project undo");
+        if(!undo.redo()||edit->state.getProperty("studioOstinatoPattern").toString()!=payload)return fail("ostinato project redo");
+        refreshOstinato();ostinatoWindow->setVisible(false);
+    }
     // Each macOS menu category must expose at least one real command; keep
     // menu generation platform-neutral so Linux CI can verify its structure.
     for (int category = 0; category < 9; ++category)
