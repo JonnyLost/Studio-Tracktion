@@ -270,6 +270,9 @@ private:
                         bar.setWidth(int(bar.getWidth()*step.gate/1000.0));g.fillRect(bar);
                     }
                     if(step.enabled&&step.densityThreshold>0){g.setColour(colours::text.withAlpha(.8f));g.fillEllipse(float(rect.getX()+2),float(rect.getY()+2),4.f,4.f);}
+                    if(step.enabled&&(step.sustainCells>1||step.strikes>1||step.offset||step.chance<100||!step.articulation.empty()))
+                    {g.setColour(colours::text.withAlpha(.85f));g.fillRect(rect.getRight()-5,rect.getY()+2,3,3);}
+
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
                     {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::intervals?String(step.interval):String(j+1);g.drawFittedText(label,rect,Justification::centred,1);}
