@@ -26,6 +26,8 @@ struct Step
     int velocity=90,gate=750; // gate in thousandths of a step
     int interval=0; // semitones from the row's configured root
     int densityThreshold=0; // 0 always plays, 1–127 optional at corresponding density
+    int sustainCells=1,strikes=1,offset=0,chance=100; // offset in thousandths of the first cell
+    std::string articulation; // exact saved mapping ID; no inferred vendor mapping
     bool operator==(const Step&) const=default;
 };
 enum class PitchMode { fixed=0, intervals=1 };
@@ -75,9 +77,19 @@ struct Pattern
             if(r.timing!=TimingMode::followGrid&&r.timing!=TimingMode::sharedSpan&&r.timing!=TimingMode::independentCycle)return false;
             if(r.timing!=TimingMode::independentCycle&&(r.numerator!=4||r.denominator!=4||r.bars!=1))return false;
             if(r.pitchMode!=PitchMode::fixed&&r.pitchMode!=PitchMode::intervals)return false;
-            for(const auto& s:r.steps)
+            for(size_t i=0;i<r.steps.size();++i)
+            {
+                const auto& s=r.steps[i];
+                if(s.sustainCells<1||s.sustainCells>16||s.strikes<1||s.strikes>8||s.offset<-450||s.offset>450
+                    ||s.chance<0||s.chance>100||!textValid(s.articulation,128,true))return false;
+                if(s.enabled&&s.sustainCells>1)
+                {
+                    if(s.strikes!=1||i+size_t(s.sustainCells)>r.steps.size())return false;
+                    for(size_t j=i+1;j<i+size_t(s.sustainCells);++j)if(r.steps[j].enabled)return false;
+                }
                 if(s.velocity<1||s.velocity>127||s.gate<1||s.gate>1000||s.interval<-127||s.interval>127||s.densityThreshold<0||s.densityThreshold>127
                    ||(r.pitchMode==PitchMode::intervals&&s.enabled&&(r.pitch+s.interval<0||r.pitch+s.interval>127)))return false;
+            }
         }
         return true;
     }
@@ -143,11 +155,11 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 4 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
+    out<<"STUDIO_OSTINATO 5 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<'\n';
     for(const auto& r:p.rows)
     {
         out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
-        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<'\n';
+        for(const auto& s:r.steps)out<<int(s.enabled)<<' '<<int(s.accent)<<' '<<s.velocity<<' '<<s.gate<<' '<<s.interval<<' '<<s.densityThreshold<<' '<<s.sustainCells<<' '<<s.strikes<<' '<<s.offset<<' '<<s.chance<<' '<<std::quoted(s.articulation)<<'\n';
     }
     return out.str();
 }
@@ -158,7 +170,7 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version<1||version>4)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>5)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
@@ -177,7 +189,7 @@ inline bool decode(const std::string& text,Pattern& output)
             if(version>=3){int pitchMode=-1;if(!(in>>pitchMode)||pitchMode<0||pitchMode>1)return false;r.pitchMode=static_cast<PitchMode>(pitchMode);}
         }
         r.steps.resize(size_t(cells));
-        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold)))return false;
+        for(auto& s:r.steps)if(!flag(s.enabled)||!flag(s.accent)||!(in>>s.velocity>>s.gate)||(version>=3&&!(in>>s.interval))||(version>=4&&!(in>>s.densityThreshold))||(version>=5&&!(in>>s.sustainCells>>s.strikes>>s.offset>>s.chance>>std::quoted(s.articulation))))return false;
         p.rows.push_back(std::move(r));
     }
     in>>std::ws;if(!in.eof()||!p.valid())return false;
@@ -188,6 +200,7 @@ struct Note
     Tick start=0,end=0;
     int route=0,channel=1,pitch=60,velocity=90;
     int densityThreshold=0;
+    int articulation=0;
     bool operator==(const Note&) const=default;
 };
 struct Event
@@ -196,6 +209,7 @@ struct Event
     int route=0,channel=1,pitch=60,velocity=0;
     bool on=false;
     int densityThreshold=0;
+    int articulation=0;
     bool operator==(const Event&) const=default;
 };
 struct Render
@@ -204,12 +218,20 @@ struct Render
     std::vector<std::string> routes;
     std::vector<Note> notes;
     std::vector<Event> events;
+    std::vector<std::string> articulations; // event index 1-based, zero = leave articulation unchanged
     int unassignedRows=0;
 };
 // Compile off the audio thread. No routing fallback: absent destinations fail
 // closed. Unassigned rows are silent and counted. Resolve collisions on the
 // same physical route/channel/pitch; simultaneous hits merge, later hits
 // retrigger after the earlier note is released.
+// Stable integer hash: repeatable probability across machines and render partitions.
+inline unsigned chanceRoll(std::uint32_t row,Tick cycle,size_t step)
+{
+    std::uint64_t x=(std::uint64_t(row)<<32)^std::uint64_t(cycle)^((std::uint64_t(step)+1)*0x9e3779b97f4a7c15ULL);
+    x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;x^=x>>31;
+    return unsigned(x%100);
+}
 inline bool compile(const Pattern& p,const std::vector<std::string>& existingTracks,int repeats,Render& output,std::string& error)
 {
     auto fail=[&](const char* why){error=why;return false;};
@@ -237,11 +259,32 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 const auto& s=row.steps[index];
                 const Tick offset=p.rowBoundary(row,index);
                 const Tick nextOffset=p.rowBoundary(row,index+1);
-                const Tick start=origin+offset;
-                if(start>=next.duration)break;
-                if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
-                const Tick length=std::max<Tick>(1,(nextOffset-offset)*s.gate/1000);
-                next.notes.push_back({start,std::min(start+length,next.duration),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold});
+                if(s.chance==0||(s.chance<100&&chanceRoll(row.id,origin/span,index)>=unsigned(s.chance)))continue;
+                const Tick cellWidth=nextOffset-offset;
+                const Tick shift=cellWidth*s.offset/1000;
+                const Tick start=origin+std::clamp<Tick>(offset+shift,0,span-1);
+                if(start>=next.duration)continue;
+                int art=0;
+                if(!s.articulation.empty())
+                {
+                    auto found=std::find(next.articulations.begin(),next.articulations.end(),s.articulation);
+                    art=int(found-next.articulations.begin())+1;
+                    if(found==next.articulations.end())next.articulations.push_back(s.articulation);
+                }
+                const Tick width=p.rowBoundary(row,index+size_t(s.sustainCells))-offset;
+                if(width<s.strikes)return fail("Too many strikes for this timing resolution.");
+                for(int hit=0;hit<s.strikes;++hit)
+                {
+                    const Tick hitStart=start+width*hit/s.strikes;
+                    if(hitStart>=next.duration||hitStart>=origin+span)break;
+                    const Tick hitWidth=width*(hit+1)/s.strikes-width*hit/s.strikes;
+                    // A tie sustains through complete continuation cells; gate
+                    // applies only to the final cell. Ratchets use per-hit gate.
+                    const Tick tail=s.sustainCells>1?p.rowBoundary(row,index+size_t(s.sustainCells))-p.rowBoundary(row,index+size_t(s.sustainCells)-1):hitWidth;
+                    const Tick length=(s.sustainCells>1?width-tail:0)+std::max<Tick>(1,tail*s.gate/1000);
+                    if(next.notes.size()>=maxNotes)return fail("Pattern exceeds bounded render size.");
+                    next.notes.push_back({hitStart,std::min({hitStart+length,next.duration,origin+span}),route,row.channel,row.pitch+(row.pitchMode==PitchMode::intervals?s.interval:0),std::min(127,s.velocity+(s.accent?20:0)),s.densityThreshold,art});
+                }
             }
     }
     auto address=[](const Note& n){return std::tuple(n.route,n.channel,n.pitch);};
@@ -267,18 +310,29 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
         if(!normalized.empty()&&address(normalized.back())==address(n))
         {
             auto& prior=normalized.back();
-            if(prior.start==n.start){prior.end=std::max(prior.end,n.end);prior.velocity=std::max(prior.velocity,n.velocity);continue;}
+            if(prior.start==n.start){if(prior.articulation!=n.articulation)return fail("Simultaneous same-pitch notes request different articulations.");prior.end=std::max(prior.end,n.end);prior.velocity=std::max(prior.velocity,n.velocity);continue;}
             prior.end=std::min(prior.end,n.start);
         }
         normalized.push_back(n);
     }
     next.notes=std::move(normalized);
     std::sort(next.notes.begin(),next.notes.end(),[&](const auto& a,const auto& b){return std::tuple(a.start,address(a))<std::tuple(b.start,address(b));});
+    // Articulation state is shared by a MIDI channel. An explicit change
+    // may not cut across a different sounding technique on that channel.
+    std::map<std::pair<int,int>,std::pair<Tick,int>> sounding;
+    for(const auto& n:next.notes)
+    {
+        auto& lastArt=sounding[{n.route,n.channel}];
+        if(lastArt.first>n.start&&lastArt.second!=n.articulation)
+            return fail("Overlapping notes request different articulations on one instrument channel.");
+        if(lastArt.first<=n.start)lastArt={n.end,n.articulation};
+        else lastArt.first=std::max(lastArt.first,n.end);
+    }
     next.events.reserve(next.notes.size()*2);
     for(const auto& n:next.notes)
     {
-        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold});
-        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold});
+        next.events.push_back({n.start,n.route,n.channel,n.pitch,n.velocity,true,n.densityThreshold,n.articulation});
+        next.events.push_back({n.end,n.route,n.channel,n.pitch,0,false,n.densityThreshold,n.articulation});
     }
     std::sort(next.events.begin(),next.events.end(),[](const auto& a,const auto& b){
         return std::tie(a.tick,a.on,a.route,a.channel,a.pitch)<std::tie(b.tick,b.on,b.route,b.channel,b.pitch);
