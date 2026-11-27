@@ -22,6 +22,7 @@ using namespace tracktion::literals;
 #include "StudioUI.h"
 #include "StudioInstrumentIcons.h"
 #include "InstrumentDesigner.h"
+#include "InstrumentLearnInput.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
 #include "MidiPerformanceFocus.h"
@@ -986,6 +987,7 @@ public:
     ~StudioView() override
     {
         designerWindow.reset();
+        designerLearnInput.detach();
         if (monitorWindow != nullptr)
         {
             monitorWindow->clearContentComponent();
@@ -2362,6 +2364,7 @@ private:
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    studio::designer::LearnInput designerLearnInput;
     std::unique_ptr<studio::designer::DesignerWindow> designerWindow;
     studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
@@ -4684,6 +4687,8 @@ private:
             return;
         }
 
+        if (designerWindow) designerWindow->designer().cancelLive();
+        designerLearnInput.detach();
         if (edit != nullptr)
         {
             edit->getTransport().stop (false, false);
@@ -6434,19 +6439,76 @@ private:
         devices.setDeviceNumChannels (*output, 2);
     }
 
+    // Resolve the original single hosted instrument, not whichever track
+    // happens to be selected when a modal callback returns.
+    te::ExternalPlugin* designerTarget(te::EditItemID trackId,te::EditItemID pluginId,uint64 generation,bool forRelease=false)
+    {
+        if(edit==nullptr||generation!=projectGeneration)return nullptr;
+        auto* track=trackById(trackId);
+        if(track==nullptr)return nullptr;
+        te::Plugin* found=nullptr;
+        for(auto* plugin:track->pluginList)
+            if(studio::isInstrumentPlugin(*plugin))
+            {
+                if(found!=nullptr)return nullptr;
+                found=plugin;
+            }
+        auto* hosted=dynamic_cast<te::ExternalPlugin*>(found);
+        if(hosted==nullptr||hosted->itemID!=pluginId||hosted->getAudioPluginInstance()==nullptr)return nullptr;
+        if(!forRelease && (busy||ariaReviewPending||pendingPlugin.has_value()||workflowTrack()!=track
+            ||track->isFrozen(te::Track::anyFreeze)||!hosted->isEnabled()
+            ||edit->getTransport().isPlaying()||edit->getTransport().isRecording()
+            ||edit->getCurrentPlaybackContext()==nullptr))return nullptr;
+        return hosted;
+    }
+
     void showInstrumentDesigner()
     {
         studio::designer::SourceContext context;
+        te::EditItemID trackId,pluginId;
         if (auto* track = workflowTrack())
         {
-            context.track = track->getName();
-            if (auto* external = dynamic_cast<te::ExternalPlugin*> (studio::findInstrument (*track)))
+            trackId=track->itemID;context.track=track->getName();
+            if(auto* external=dynamic_cast<te::ExternalPlugin*>(studio::findInstrument(*track)))
             {
-                context.pluginId = external->desc.createIdentifierString();
-                context.pluginVersion = external->desc.version;
+                pluginId=external->itemID;
+                context.pluginId=external->desc.createIdentifierString();
+                context.pluginVersion=external->desc.version;
             }
         }
-        if (designerWindow == nullptr) designerWindow = std::make_unique<studio::designer::DesignerWindow>(context);
+        if(designerWindow==nullptr)designerWindow=std::make_unique<studio::designer::DesignerWindow>(context);
+        auto& panel=designerWindow->designer();
+        panel.cancelLive();
+        const Component::SafePointer<StudioView> safe(this);
+        const auto generation=projectGeneration;
+        panel.beginLearn=[safe,trackId,pluginId,generation]{
+            if(safe==nullptr||safe->designerTarget(trackId,pluginId,generation)==nullptr)return false;
+            return safe->designerLearnInput.attach(*safe->edit,trackId,safe->engine.getDeviceManager());
+        };
+        panel.pollLearn=[safe,trackId,pluginId,generation]() -> std::optional<studio::designer::Binding>{
+            if(safe==nullptr)return {};
+            if(safe->designerTarget(trackId,pluginId,generation)==nullptr){safe->designerLearnInput.detach();return {};}
+            return safe->designerLearnInput.poll();
+        };
+        panel.endLearn=[safe]{if(safe!=nullptr)safe->designerLearnInput.detach();};
+        panel.sendAudition=[safe,trackId,pluginId,generation](const studio::designer::Profile& p,const studio::designer::Binding& b,std::function<void()>& release){
+            if(safe==nullptr)return Result::fail("Studio is closing.");
+            auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+            if(hosted==nullptr)return Result::fail("Reopen Instrument Designer on the selected stopped instrument track.");
+            if(p.pluginId.isEmpty()||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version||p.patch.trim().isEmpty())
+                return Result::fail("Profile plug-in identity/version or patch name is missing or different. Create a profile from this instrument.");
+            auto midi=studio::designer::auditionMessage(b,p.channel);
+            if(!midi)return Result::fail("Unsupported or invalid MIDI assignment.");
+            auto* track=safe->trackById(trackId);
+            if(track==nullptr)return Result::fail("The original track was removed.");
+            if(auto off=studio::designer::releaseMessage(b,p.channel))
+                release=[safe,trackId,pluginId,generation,off=*off]{
+                    if(safe!=nullptr&&safe->designerTarget(trackId,pluginId,generation,true)!=nullptr)
+                        if(auto* original=safe->trackById(trackId))original->injectLiveMidiMessage(off,{});
+                };
+            track->injectLiveMidiMessage(*midi,{});
+            return Result::ok();
+        };
         designerWindow->open(std::move(context));
     }
 

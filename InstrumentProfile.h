@@ -7,11 +7,27 @@
 namespace studio::designer
 {
 using juce::String;
+struct Binding
+{
+    String type = "unassigned"; // note, cc, pressure, bend
+    int channel = 0, number = 0, value = 100; // 0 follows profile channel
+    bool valid() const
+    {
+        return channel>=0 && channel<=16 && number>=0 && number<=127
+            && ((type=="unassigned" && channel==0 && number==0 && value==100)
+             || (type=="note" && value>=1 && value<=127)
+             || (type=="cc" && number<120 && value>=0 && value<=127)
+             || (type=="pressure" && number==0 && value>=0 && value<=127)
+             || (type=="bend" && number==0 && value>=0 && value<=16383));
+    }
+    int resolvedChannel(int profileChannel) const {return channel==0?profileChannel:channel;}
+    bool operator==(const Binding&) const = default;
+};
 struct Element
 {
     String id, semantic, label, kind, presentation;
     bool transport = true, full = true;
-    // M46 deliberately creates no enabled MIDI or AU mappings.
+    Binding binding;
     bool operator==(const Element&) const = default;
 };
 struct Profile
@@ -43,7 +59,7 @@ struct Profile
                 || !bounded(e.label, 80) || (!art && !control)
                 || (art && e.presentation != "button")
                 || (control && e.presentation != "knob" && e.presentation != "fader" && e.presentation != "button")
-                || (!e.transport && !e.full))
+                || (!e.transport && !e.full) || !e.binding.valid())
                 return juce::Result::fail("Invalid control, duplicate ID, or no visible surface.");
         }
         return juce::Result::ok();
@@ -51,7 +67,7 @@ struct Profile
     std::unique_ptr<juce::XmlElement> xml() const
     {
         auto x = std::make_unique<juce::XmlElement>("StudioInstrumentProfile");
-        x->setAttribute("schemaVersion", 1);
+        x->setAttribute("schemaVersion", 2);
         x->setAttribute("id", id); x->setAttribute("name", name); x->setAttribute("instrument", instrument);
         x->setAttribute("library", library); x->setAttribute("patch", patch);
         x->setAttribute("pluginId", pluginId); x->setAttribute("pluginVersion", pluginVersion);
@@ -63,13 +79,15 @@ struct Profile
             n->setAttribute("id",e.id); n->setAttribute("semantic",e.semantic);
             n->setAttribute("label",e.label); n->setAttribute("kind",e.kind); n->setAttribute("presentation",e.presentation);
             n->setAttribute("transport",e.transport); n->setAttribute("full",e.full);
-            n->setAttribute("binding","unassigned");
+            n->setAttribute("binding",e.binding.type); n->setAttribute("bindingChannel",e.binding.channel);
+            n->setAttribute("bindingNumber",e.binding.number); n->setAttribute("bindingValue",e.binding.value);
         }
         return x;
     }
     static juce::Result read(const juce::XmlElement& x, Profile& out)
     {
-        if (!x.hasTagName("StudioInstrumentProfile") || x.getStringAttribute("schemaVersion") != "1")
+        const auto version=x.getStringAttribute("schemaVersion");
+        if (!x.hasTagName("StudioInstrumentProfile") || (version!="1" && version!="2"))
             return juce::Result::fail("Unsupported instrument profile version.");
         Profile p;
         p.id=x.getStringAttribute("id"); p.name=x.getStringAttribute("name"); p.instrument=x.getStringAttribute("instrument");
@@ -79,10 +97,21 @@ struct Profile
         p.channel=x.getIntAttribute("channel",0); p.slot=x.getIntAttribute("slot",0); p.channelInfo=x.getBoolAttribute("channelInfo",true);
         for (auto* n = x.getFirstChildElement(); n != nullptr; n = n->getNextElement())
         {
-            if (!n->hasTagName("Element") || n->getStringAttribute("binding") != "unassigned" || p.elements.size() >= 128)
+            if (!n->hasTagName("Element") || (version=="1" && n->getStringAttribute("binding") != "unassigned") || p.elements.size() >= 128)
                 return juce::Result::fail("Unsupported or oversized element list.");
             p.elements.push_back({n->getStringAttribute("id"),n->getStringAttribute("semantic"),n->getStringAttribute("label"),
                 n->getStringAttribute("kind"),n->getStringAttribute("presentation"),n->getBoolAttribute("transport"),n->getBoolAttribute("full")});
+            if(version=="2") {
+                auto& b=p.elements.back().binding;
+                b.type=n->getStringAttribute("binding");
+                auto readInt=[&](const char* field,int& value){
+                    const auto text=n->getStringAttribute(field);
+                    if(text.isEmpty()||text.length()>5||!text.containsOnly("0123456789"))return false;
+                    value=text.getIntValue();return true;
+                };
+                if(!readInt("bindingChannel",b.channel)||!readInt("bindingNumber",b.number)||!readInt("bindingValue",b.value))
+                    return juce::Result::fail("Invalid binding number.");
+            }
         }
         if (auto r=p.validate(); r.failed()) return r;
         out=std::move(p); return juce::Result::ok();
