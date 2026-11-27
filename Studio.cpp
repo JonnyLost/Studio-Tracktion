@@ -5313,6 +5313,7 @@ private:
                                                       : result.getErrorMessage());
                 }
             }));
+    }
 
     // DLS patch selection must travel through the same Tracktion/JUCE MIDI
     // render path as notes. Direct MusicDeviceMIDIEvent on the UI thread can
@@ -5509,7 +5510,7 @@ private:
                     }
         });
         menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&anchor));
-}
+    }
 
     void startImportedPreset (const File& file, bool newTrack)
     {

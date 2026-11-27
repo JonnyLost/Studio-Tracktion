@@ -18,7 +18,7 @@ inline std::unique_ptr<juce::AudioFormatReader> openSampleReader (const juce::Fi
    #endif
    #if JUCE_MAC
     if (file.hasFileExtension ("caf"))
-        formats.registerFormat (new CoreAudioFormat(), false);
+        formats.registerFormat (new CoreAudioFormat (CoreAudioFormat::StreamKind::kCaf), false);
    #endif
     return std::unique_ptr<AudioFormatReader> (formats.createReaderFor (file));
 }

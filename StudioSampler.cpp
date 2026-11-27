@@ -241,20 +241,6 @@ std::size_t sampleBytes (const Instrument& model, unsigned* sampleCount = nullpt
     return bytes;
 }
 
-std::unique_ptr<AudioFormatReader> openSampleReader (const File& file)
-{
-    AudioFormatManager formats;
-    formats.registerFormat (new WavAudioFormat(), true);
-    formats.registerFormat (new AiffAudioFormat(), false);
-   #if JUCE_USE_FLAC
-    formats.registerFormat (new FlacAudioFormat(), false);
-   #endif
-   #if JUCE_MAC
-    if (file.hasFileExtension ("caf")) formats.registerFormat (new CoreAudioFormat (CoreAudioFormat::StreamKind::kCaf), false);
-   #endif
-    return std::unique_ptr<AudioFormatReader> (formats.createReaderFor (file));
-}
-
 bool decodeFrames (AudioFormatReader& reader, int first, int count, float* left, float* right)
 {
     float* channels[] { left, right };
