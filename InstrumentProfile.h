@@ -34,6 +34,8 @@ struct Profile
 {
     String id = juce::Uuid().toString(), name = "Untitled instrument", instrument,
            library, patch, pluginId, pluginVersion, artwork, variant;
+    // Local catalog identity is optional; existing schema-2 bindings stay compatible.
+    String catalogPatchId, catalogLibraryVersion, catalogStamp;
     int channel = 1, slot = 1;
     bool channelInfo = true;
     std::vector<Element> elements;
@@ -47,7 +49,7 @@ struct Profile
             || name.trim().isEmpty() || !bounded(name, 160) || instrument.isEmpty()
             || !bounded(instrument, 180) || !bounded(library, 250) || !bounded(patch, 250)
             || !bounded(pluginId, 512) || !bounded(pluginVersion, 80) || !bounded(variant, 160)
-            || !bounded(artwork, 180) || channel < 1 || channel > 16 || slot < 1 || slot > 16
+            || !bounded(artwork, 180) || !bounded(catalogPatchId, 4096) || !bounded(catalogLibraryVersion, 80) || !bounded(catalogStamp, 80) || channel < 1 || channel > 16 || slot < 1 || slot > 16
             || elements.size() > 128)
             return juce::Result::fail("Invalid profile identity or too many controls.");
         std::set<String> ids;
@@ -72,6 +74,7 @@ struct Profile
         x->setAttribute("library", library); x->setAttribute("patch", patch);
         x->setAttribute("pluginId", pluginId); x->setAttribute("pluginVersion", pluginVersion);
         x->setAttribute("artwork", artwork); x->setAttribute("variant", variant);
+        x->setAttribute("catalogPatchId",catalogPatchId);x->setAttribute("catalogLibraryVersion",catalogLibraryVersion);x->setAttribute("catalogStamp",catalogStamp);
         x->setAttribute("channel", channel); x->setAttribute("slot", slot); x->setAttribute("channelInfo", channelInfo);
         for (const auto& e : elements)
         {
@@ -94,6 +97,7 @@ struct Profile
         p.library=x.getStringAttribute("library"); p.patch=x.getStringAttribute("patch");
         p.pluginId=x.getStringAttribute("pluginId"); p.pluginVersion=x.getStringAttribute("pluginVersion");
         p.artwork=x.getStringAttribute("artwork"); p.variant=x.getStringAttribute("variant");
+        p.catalogPatchId=x.getStringAttribute("catalogPatchId");p.catalogLibraryVersion=x.getStringAttribute("catalogLibraryVersion");p.catalogStamp=x.getStringAttribute("catalogStamp");
         p.channel=x.getIntAttribute("channel",0); p.slot=x.getIntAttribute("slot",0); p.channelInfo=x.getBoolAttribute("channelInfo",true);
         for (auto* n = x.getFirstChildElement(); n != nullptr; n = n->getNextElement())
         {
