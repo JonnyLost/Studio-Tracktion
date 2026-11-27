@@ -17,7 +17,12 @@
     "midi": "https://midi.org/midi-ci-profile-for-note-on-selection-of-orchestral-articulation",
     "repoSeating": "Seating/SeatingCatalog.swift",
     "repoIcons": "StudioInstrumentIcons.h",
-    "repoAria": "AriaCatalog.h"
+    "repoAria": "AriaCatalog.h",
+    "gpoOverview": "https://usermanuals.garritan.com/GPO5/Content/instruments.htm",
+    "extended": "https://www.cambridge.org/core/books/abs/conducting-for-a-new-era/extended-instrumental-techniques/AA7594CB6AC67CC87CBF1347DD49E28D",
+    "vsl3": "https://www.vsl.co.at/products/studio/special-edition-vol-3",
+    "garritanWorld": "https://www.makemusic.com/press-room/brand-assets/garritan/world-instruments/",
+    "garritanIO": "https://www.makemusic.com/press-room/brand-assets/garritan/garritan-instant-orchestra/"
   },
   "families": [
     {
@@ -793,7 +798,27 @@
         "phrasing",
         "wind"
       ],
-      "techniqueOverrides": [],
+      "techniqueOverrides": [
+        {
+          "mode": "suggest",
+          "ids": [
+            "phrasing.sustain",
+            "phrasing.legato",
+            "phrasing.staccato",
+            "phrasing.vibrato",
+            "phrasing.non-vibrato",
+            "wind.flutter-tongue",
+            "wind.double-tongue",
+            "wind.triple-tongue",
+            "wind.breath-tone",
+            "wind.whistle-tones",
+            "wind.jet-whistle",
+            "wind.key-clicks",
+            "wind.multiphonics",
+            "wind.tongue-ram"
+          ]
+        }
+      ],
       "notes": "Group suggestions are discovery candidates, not instrument or patch capabilities."
     },
     {
@@ -13475,6 +13500,87 @@
       "cc": 20,
       "condition": "Auto-legato patches where supported",
       "source": "gpo"
+    },
+    {
+      "semantic": "Dynamics",
+      "cc": 2,
+      "condition": "Alternative to CC1/CC11, not an independent expression dimension",
+      "source": "gpoControls"
+    },
+    {
+      "semantic": "Dynamics",
+      "cc": 11,
+      "condition": "Alternative to CC1/CC2, avoid simultaneous competing automation",
+      "source": "gpoControls"
+    }
+  ],
+  "sourcePolicy": "Sources establish scope and terminology; entries are original curated candidates, not transcriptions or individually verified source claims.",
+  "documentedPatchHints": [
+    {
+      "libraryId": "garritan.gpo5",
+      "patchName": "Flute Solo KS",
+      "instrumentId": "flutes.concert-flute",
+      "variant": "standard name as documented; notation variant must be checked separately",
+      "source": "gpo",
+      "verification": "documented",
+      "enabled": false,
+      "bindings": [
+        {
+          "techniqueId": "phrasing.vibrato",
+          "type": "keyswitch",
+          "printedNote": "C3",
+          "midiNote": null
+        },
+        {
+          "techniqueId": "phrasing.non-vibrato",
+          "type": "keyswitch",
+          "printedNote": "D3",
+          "midiNote": null
+        },
+        {
+          "techniqueId": "wind.flutter-tongue",
+          "type": "keyswitch",
+          "printedNote": "E3",
+          "midiNote": null
+        }
+      ],
+      "controlHints": [
+        {
+          "id": "dynamics",
+          "type": "cc",
+          "number": 1
+        },
+        {
+          "id": "vibrato-rate",
+          "type": "cc",
+          "number": 17
+        },
+        {
+          "id": "vibrato-depth",
+          "type": "channel-pressure"
+        },
+        {
+          "id": "portamento-time",
+          "type": "cc",
+          "number": 20
+        },
+        {
+          "id": "release",
+          "type": "cc",
+          "number": 21
+        },
+        {
+          "id": "tuning-variation",
+          "type": "cc",
+          "number": 22
+        },
+        {
+          "id": "legato-mode",
+          "type": "cc",
+          "number": 102
+        }
+      ],
+      "notes": "Printed note names retained pending octave convention and audition; no automatic routing."
     }
   ]
 }
