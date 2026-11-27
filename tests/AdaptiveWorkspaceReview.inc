@@ -404,11 +404,12 @@ int StudioView::runAdaptiveWorkspaceReview (const File& output)
     workspaceDivider.resizePane (studio::appearance.px (320));
     if (workspaceHeight == genericDockHeight)
         return fail ("Other workspace dividers still change their height");
-    const int pianoDockHeight = workspaceHeight;
     showWorkspace (Workspace::instrumentEditor);
+    const int defaultSplit = studio::appearance.defaultWorkspaceHeight (getHeight());
     if (! workspaceDivider.isResizeLocked() || ! instrumentWorkspace.hasDockedHeader()
-        || workspaceHeight != pianoDockHeight || workspacePanel.getHeight() != jmin (pianoDockHeight, splitLimit))
-        return fail ("Returning to Atelier uses the current Split height and locks the divider");
+        || workspaceHeight != defaultSplit || workspacePanel.getHeight() != jmin (defaultSplit, splitLimit)
+        || ! atelierContentReachable())
+        return fail ("Returning to Atelier restores the default Split layout and locks the divider");
     workspaceHeight = genericDockHeight;
     setSize (1280, 800);
 
