@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../OstinatoCore.h"
 #include "../OstinatoAudition.h"
+#include "../OstinatoLibrary.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -383,10 +384,45 @@ int main()
     }
     variation.variations.seed=43;
     require(compile(variation,{"t"},4,humanB,error)&&humanA.events!=humanB.events,"different seeds vary playback");
-    Pattern poly;poly.rows[0].trackId="t";poly.variations.sequence="AB";
-    require(poly.setRowTiming(1,TimingMode::independentCycle,3,3,4,1),"independent 3/4 row");
-    for(auto& step:poly.rows[0].steps){step.enabled=true;step.variationMask=2;}
-    require(compile(poly,{"t"},2,vr,error)&&vr.notes.size()==4,"independent cycle retains phase at master switch");
+    Pattern variationPoly;variationPoly.rows[0].trackId="t";variationPoly.variations.sequence="AB";
+    require(variationPoly.setRowTiming(1,TimingMode::independentCycle,3,3,4,1),"independent 3/4 row");
+    for(auto& step:variationPoly.rows[0].steps){step.enabled=true;step.variationMask=2;}
+    require(compile(variationPoly,{"t"},2,vr,error)&&vr.notes.size()==4,"independent cycle retains phase at master switch");
     require(vr.notes.front().start==4*ticksPerQuarter&&vr.notes.back().start==7*ticksPerQuarter,"master switch does not restart polyrhythm");
-    std::cout<<"O1–O8 ostinato core: "<<checks<<" checks passed\n";
+    auto portableSource=variation;
+    portableSource.rows[0].trackId="project-123";
+    portableSource.rows[0].name="Cellos";
+    portableSource.rows[0].steps[0].articulation="local-keyswitch-id";
+    const auto originalSource=portableSource;
+    Pattern loadedPreset;
+    require(decodePreset(encodePreset(portableSource),loadedPreset),"portable preset roundtrip");
+    require(loadedPreset==portablePattern(portableSource)&&portableSource==originalSource,"portability strips local IDs without modifying source");
+    require(loadedPreset.rows[0].trackId.empty()&&loadedPreset.rows[0].steps[0].articulation.empty()&&loadedPreset.rows[0].name=="Cellos","preserve roles, never auto-route");
+    require(decodePreset(encode(portableSource),loadedPreset)&&loadedPreset==portablePattern(portableSource),"raw project pattern import sanitized too");
+    const auto priorPreset=loadedPreset;
+    require(!decodePreset("broken",loadedPreset)&&loadedPreset==priorPreset,"bad import leaves output unchanged");
+    require(!decodePreset(std::string(maxPresetBytes+1,'x'),loadedPreset)&&loadedPreset==priorPreset,"oversized import refused");
+    require(!presetUtf8(std::string("\xc0\xaf"))&&!presetUtf8(std::string("\xed\xa0\x80"))&&!presetUtf8(std::string("\xf4\x90\x80\x80")),"reject malformed UTF-8");
+    require(presetUtf8("Viola – pizzicato"),"allow valid international text");
+    require(decodePreset(v7,loadedPreset)&&loadedPreset.variations==VariationPlan{}&&loadedPreset.rows[0].trackId.empty(),"old patterns migrate as portable presets");
+    auto library=factoryPatterns();std::set<std::string> factoryIds,factoryNames;
+    require(library.size()==16,"16 original factory patterns");
+    for(const auto& entry:library)
+    {
+        require(factoryIds.insert(entry.id).second&&factoryNames.insert(entry.pattern.name).second,"unique factory identity and name");
+        require(entry.pattern.valid()&&!entry.category.empty()&&!entry.description.empty(),"valid factory metadata and pattern");
+        require(decodePreset(encodePreset(entry.pattern),loadedPreset)&&loadedPreset==entry.pattern,"factory portable roundtrip");
+        Pattern routed=entry.pattern;std::vector<std::string> destinations;
+        for(auto& r:routed.rows)
+        {
+            require(r.trackId.empty()&&!r.name.empty(),"factory roles unassigned");
+            for(const auto& step:r.steps)require(step.articulation.empty(),"no invented keyswitch mapping");
+            r.trackId="test-"+std::to_string(r.id);destinations.push_back(r.trackId);
+        }
+        Render factoryRender,repeatRender;
+        require(compile(routed,destinations,8,factoryRender,error)&&!factoryRender.notes.empty(),"factory renders eight cycles when routed");
+        require(compile(routed,destinations,8,repeatRender,error)&&repeatRender.events==factoryRender.events,"factory rendering deterministic");
+        require(compile(entry.pattern,{},8,repeatRender,error)&&repeatRender.events.empty(),"unassigned factory never emits MIDI");
+    }
+    std::cout<<"O1–O9 ostinato core: "<<checks<<" checks passed\n";
 }

@@ -3,6 +3,8 @@
 #include "StudioUI.h"
 #include "OstinatoCore.h"
 #include "OstinatoAudition.h"
+#include "OstinatoLibrary.h"
+#include <memory>
 #include <functional>
 #include <optional>
 
@@ -22,7 +24,7 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton,&variationButton})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton,&variationButton,&libraryButton})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
@@ -35,6 +37,8 @@ public:
         interval.setInputRestrictions(4,"-0123456789");repeatCount.setInputRestrictions(3,"0123456789");repeatCount.setText("4",false);
         pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);pitchMode.addItem("Follow played root",3);pitchMode.addItem("Scale degrees",4);pitchMode.addItem("Chord tones",5);pitchMode.addItem("Arpeggio up",6);pitchMode.addItem("Arpeggio down",7);pitchMode.addItem("Arpeggio bounce",8);
         harmonyButton.onClick=[this]{editHarmony();};
+        libraryButton.onClick=[this]{showLibrary();};
+        libraryButton.setTooltip("Browse factory patterns, load or save portable user patterns, and name instrument roles.");
         variationButton.onClick=[this]{editVariations();};
         variationButton.setTooltip("Set A–D cycle sequence, fills, humanization and density evolution.");
         harmonyButton.setTooltip("Set the starting root, scale and chord. Dedicated MIDI input changes the live harmony during audition.");
@@ -137,7 +141,9 @@ public:
         const int caption=appearance.control(15);
         auto field=[&](juce::Component& c,juce::Label& l,juce::Rectangle<int> r){r=r.reduced(gap,0);l.setBounds(r.removeFromTop(caption));c.setBounds(r.reduced(0,gap));};
         auto line=a.removeFromTop(h+caption);
-        name.setBounds(line.removeFromLeft(line.getWidth()*2/5).reduced(gap));
+        auto titleArea=line.removeFromLeft(line.getWidth()*2/5);
+        libraryButton.setBounds(titleArea.removeFromLeft(titleArea.getWidth()/3).reduced(gap));
+        name.setBounds(titleArea.reduced(gap));
         field(masterSteps,masterCountLabel,line.removeFromLeft(line.getWidth()/5));
         masterDivision.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
         applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
@@ -195,6 +201,16 @@ public:
         if(matrix.cellAt(matrix.xFor(stored.rowBoundary(stored.rows[1],4))+1,1)!=4)return false;
         setContext(encode(stored),tracks,false);toggle(selected,4);if(stored!=before)return false;
         setContext(encode(stored),tracks,true);remove.onClick();if(stored.rows.size()!=1)return false;
+        const auto factory=factoryPatterns();
+        if(factory.empty()||!commit(factory.front().pattern))return false;
+        if(stored!=factory.front().pattern||!libraryButton.isEnabled())return false;
+        // Exercise real disk roundtrip in an isolated temporary file, never in
+        // the user's library. A malformed replacement must not mutate output.
+        juce::TemporaryFile fixture(".studioostinato");
+        if(!writePresetFile(fixture.getFile(),stored))return false;
+        Pattern loaded;
+        if(!readPresetFile(fixture.getFile(),loaded)||loaded!=stored)return false;
+        if(!fixture.getFile().replaceWithText("broken")||readPresetFile(fixture.getFile(),loaded)||loaded!=stored)return false;
         write={};return true;
     }
    #endif
@@ -208,7 +224,9 @@ private:
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
     juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
     juce::TextEditor interval,repeatCount,densityThreshold;
-    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"},variationButton{"Variations…"};
+    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"},variationButton{"Variations…"},libraryButton{"Library…"};
+    std::unique_ptr<juce::FileChooser> libraryChooser;
+    bool libraryChooserOpen=false;
     juce::Slider intensity,density;
     juce::TextButton hardware{"MIDI input: Off"};
     juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","CC1 · Intensity"},densityLabel{"","CC11 · Density"};
@@ -265,7 +283,7 @@ private:
                 g.setColour(row.id==owner.selected?colours::selected:colours::control);
                 g.fillRect(0,y,l-2,rh-1);
                 g.setColour(colours::text);
-                auto text=String((int)i+1)+"  "+owner.trackName(row.trackId);
+                auto text=String((int)i+1)+"  "+(row.trackId.empty()?String::fromUTF8(row.name.c_str())+" (unassigned)":owner.trackName(row.trackId));
                 if(row.mute)text+=" M";
                 if(row.solo)text+=" S";
                 g.drawFittedText(text,Rectangle<int>(4,y,l-noteWidth-8,rh),Justification::centredLeft,1);
@@ -382,7 +400,7 @@ private:
     {
         for(auto* c:std::initializer_list<juce::Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&track,&pitch,&channel,&mode,&applyRow,&mute,&solo,&cell,&velocity,&gate,&accent,&enabled,&applyCell})c->setEnabled(writable);
         remove.setEnabled(writable&&pattern.rows.size()>1);add.setEnabled(writable&&pattern.rows.size()<maxRows);
-        advanced.setEnabled(writable&&!auditioning);harmonyButton.setEnabled(writable&&!auditioning);variationButton.setEnabled(writable&&!auditioning);
+        advanced.setEnabled(writable&&!auditioning);harmonyButton.setEnabled(writable&&!auditioning);variationButton.setEnabled(writable&&!auditioning);libraryButton.setEnabled(writable&&!auditioning&&!libraryChooserOpen);
         hardware.setEnabled(writable&&!auditioning&&bool(chooseHardware));densityThreshold.setEnabled(writable&&!auditioning);
         pitchMode.setEnabled(writable&&!auditioning);interval.setEnabled(writable&&!auditioning);repeatCount.setEnabled(!auditioning);
         power.setEnabled(auditioning||(healthy&&writable&&bool(startAudition)));
@@ -473,6 +491,138 @@ private:
             if(chord>=0&&chord<int(masks.size()))p.harmony.chord=masks[size_t(chord)];
             safe->commit(std::move(p));
         }),true);
+    }
+    static juce::File libraryFolder()
+    {
+        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Studio").getChildFile("Ostinato Patterns");
+    }
+    Pattern librarySnapshot()const
+    {
+        auto p=pattern;
+        // Use the original track display name as a role hint only when
+        // the user has not authored a distinct row name.
+        for(auto& r:p.rows)
+            if(r.name=="Row "+std::to_string(r.id))
+                for(const auto& t:tracks)
+                    if(!r.trackId.empty()&&t.id==r.trackId&&Pattern::textValid(t.name,80))r.name=t.name;
+        return portablePattern(std::move(p));
+    }
+    void confirmLibraryLoad(Pattern next,const juce::String& description={})
+    {
+        using namespace juce;
+        if(!writable||auditioning||!next.valid())return;
+        const auto snapshot=pattern;
+        auto* w=new AlertWindow("Load pattern?", "Replace the current matrix with "+String::fromUTF8(next.name.c_str())
+            +"? "+(description.isNotEmpty()?description+"\n\n":String{})+"Studio Undo can restore the current matrix. Loaded rows are unassigned; project-specific articulation mappings are cleared. Assign each role to a track before audition.",MessageBoxIconType::NoIcon,this);
+        w->addButton("Load",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        const Component::SafePointer<MatrixEditor> safe(this);
+        w->enterModalState(true,ModalCallbackFunction::create([safe,snapshot,next=std::move(next)](int result){
+            if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            if(safe->commit(next)){safe->select(next.rows.front().id,0);safe->say("Pattern loaded — assign each role to a track.");}
+        }),true);
+    }
+    static bool writePresetFile(const juce::File& file,const Pattern& p)
+    {
+        auto bytes=encodePreset(p);
+        if(bytes.empty()||!presetUtf8(bytes))return false;
+        juce::TemporaryFile temp(file);
+        return temp.getFile().replaceWithData(bytes.data(),bytes.size())&&temp.overwriteTargetFileWithTemporary();
+    }
+    static bool readPresetFile(const juce::File& file,Pattern& output)
+    {
+        juce::FileInputStream input(file);
+        const auto size=input.getTotalLength();
+        if(!input.openedOk()||size<=0||size>static_cast<juce::int64>(maxPresetBytes))return false;
+        std::string bytes(size_t(size),'\0');
+        return input.read(bytes.data(),int(size))==size&&input.isExhausted()&&decodePreset(bytes,output);
+    }
+    void choosePresetFile(bool save)
+    {
+        using namespace juce;
+        if(!writable||auditioning||libraryChooserOpen)return;
+        auto folder=libraryFolder();
+        if(folder.createDirectory().failed()){say("Cannot create the user pattern library.");return;}
+        const auto snapshot=pattern;
+        const auto portable=librarySnapshot();
+        auto filename=File::createLegalFileName(String::fromUTF8(portable.name.c_str())).trim().substring(0,100);
+        if(filename.isEmpty()||filename=="."||filename=="..")filename="Ostinato";
+        libraryChooser=std::make_unique<FileChooser>(save?"Save portable ostinato pattern":"Open portable ostinato pattern",
+            save?folder.getNonexistentChildFile(filename,".studioostinato",false):folder,"*.studioostinato");
+        libraryChooserOpen=true;updateEnabled();
+        const Component::SafePointer<MatrixEditor> safe(this);
+        const int flags=save?(FileBrowserComponent::saveMode|FileBrowserComponent::canSelectFiles|FileBrowserComponent::warnAboutOverwriting)
+            :(FileBrowserComponent::openMode|FileBrowserComponent::canSelectFiles);
+        libraryChooser->launchAsync(flags,[safe,save,snapshot,portable](const FileChooser& chooser){
+            if(!safe)return;
+            safe->libraryChooserOpen=false;safe->updateEnabled();
+            if(!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            auto file=chooser.getResult();if(file==File())return;
+            if(save)
+            {
+                if(!file.hasFileExtension(".studioostinato"))
+                {safe->say("Use the .studioostinato extension.");return;}
+                if(!writePresetFile(file,portable))
+                {safe->say("Could not save pattern; check folder permissions.");return;}
+                safe->say("Portable pattern saved — routing and keyswitch IDs omitted.");
+            }
+            else
+            {
+                Pattern next;
+                if(!readPresetFile(file,next)){safe->say("Invalid, oversized or unreadable pattern; current matrix unchanged.");return;}
+                safe->confirmLibraryLoad(std::move(next));
+            }
+        });
+    }
+    void renameRole()
+    {
+        using namespace juce;
+        if(!writable||auditioning||!row())return;
+        const auto snapshot=pattern;const auto id=selected;
+        auto* w=new AlertWindow("Instrument role","Name this row for use in portable patterns. This does not rename the destination track.",MessageBoxIconType::NoIcon,this);
+        w->addTextEditor("role",String::fromUTF8(row()->name.c_str()),"Role");
+        w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
+        const Component::SafePointer<MatrixEditor> safe(this);
+        w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot,id](int result){
+            if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
+            auto p=snapshot;auto role=w->getTextEditorContents("role").trim().toStdString();
+            if(!Pattern::textValid(role,80)){safe->say("Role must contain 1–80 UTF-8 bytes.");return;}
+            for(auto& r:p.rows)if(r.id==id){r.name=role;safe->commit(std::move(p));return;}
+        }),true);
+    }
+    void showLibrary()
+    {
+        using namespace juce;
+        if(!writable||auditioning||libraryChooserOpen)return;
+        const Component::SafePointer<MatrixEditor> safe(this);
+        const auto snapshot=pattern;
+        PopupMenu menu,factory;
+        auto entries=factoryPatterns();
+        for(size_t first=0;first<entries.size();)
+        {
+            const auto category=entries[first].category;PopupMenu group;
+            size_t i=first;
+            for(;i<entries.size()&&entries[i].category==category;++i)
+            {
+                auto p=entries[i].pattern;
+                const auto label=String::fromUTF8(p.name.c_str())+" ("+String(int(p.rows.size()))+" rows)";
+                group.addItem(label,true,false,[safe,snapshot,p=std::move(p),description=String::fromUTF8(entries[i].description.c_str())]{
+                    if(safe&&safe->pattern==snapshot)safe->confirmLibraryLoad(p,description);
+                });
+            }
+            factory.addSubMenu(String::fromUTF8(category.c_str()),group);first=i;
+        }
+        menu.addSubMenu("Factory patterns",factory);
+        menu.addItem("Open user pattern / import…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(false);});
+        menu.addItem("Save portable pattern as…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(true);});
+        menu.addSeparator();
+        menu.addItem("Rename selected instrument role…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->renameRole();});
+        menu.addItem("Show user library folder",true,false,[safe]{
+            if(!safe)return;auto folder=libraryFolder();
+            if(folder.createDirectory().failed()){safe->say("Cannot create the library folder.");return;}
+            folder.revealToUser();
+        });
+        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(&libraryButton));
     }
     void editVariations()
     {
