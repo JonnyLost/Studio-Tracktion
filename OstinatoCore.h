@@ -37,6 +37,7 @@ struct Harmony
     int root=0; // pitch class, C=0
     Scale scale=Scale::major;
     unsigned chord=0x091; // relative pitch classes C E G
+    bool recognizeInversions=false; // opt-in exact chord-root recognition; default bass-relative
     bool valid()const{return root>=0&&root<12&&int(scale)>=0&&int(scale)<=6&&chord>0&&chord<4096&&(chord&1);}
     bool operator==(const Harmony&)const=default;
 };
@@ -89,7 +90,24 @@ inline Harmony harmonyFromKeys(const std::array<bool,128>& keys,Harmony previous
 {
     int bass=-1;unsigned mask=0;
     for(int i=0;i<128;++i)if(keys[size_t(i)]){if(bass<0)bass=i;mask|=1u<<positiveMod(i-bass,12);}
-    if(bass>=0){previous.root=bass%12;previous.chord=mask;}
+    if(bass<0)return previous;
+    const int bassClass=bass%12;
+    previous.root=bassClass;previous.chord=mask;
+    if(!previous.recognizeInversions)return previous;
+    // Recognize only exact pitch-class sets, not implied or missing tones.
+    // Ambiguous symmetric/suspended sets deliberately retain the bass root.
+    constexpr std::array<unsigned,12> shapes{
+        0x091,0x089,0x049,0x111,0x085,0x0a1,0x491,0x891,0x489,0x449,0x249,0x889
+    };
+    int candidate=-1;unsigned candidateMask=0;
+    for(int shift=0;shift<12;++shift)
+    {
+        const unsigned relative=((mask>>shift)|(mask<<(12-shift)))&0xfff;
+        if(std::find(shapes.begin(),shapes.end(),relative)==shapes.end())continue;
+        if(candidate>=0)return previous;
+        candidate=(bassClass+shift)%12;candidateMask=relative;
+    }
+    if(candidate>=0){previous.root=candidate;previous.chord=candidateMask;}
     return previous;
 }
 enum class TimingMode { followGrid=0, sharedSpan=1, independentCycle=2 };
@@ -217,7 +235,7 @@ inline std::string encode(const Pattern& p)
 {
     if(!p.valid())return {};
     std::ostringstream out;out.imbue(std::locale::classic());
-    out<<"STUDIO_OSTINATO 6 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<' '<<p.harmony.root<<' '<<int(p.harmony.scale)<<' '<<p.harmony.chord<<'\n';
+    out<<"STUDIO_OSTINATO 7 "<<std::quoted(p.name)<<' '<<p.stepCount<<' '<<p.stepsPerQuarter<<' '<<p.rows.size()<<' '<<p.harmony.root<<' '<<int(p.harmony.scale)<<' '<<p.harmony.chord<<' '<<int(p.harmony.recognizeInversions)<<'\n';
     for(const auto& r:p.rows)
     {
         out<<r.id<<' '<<std::quoted(r.name)<<' '<<std::quoted(r.trackId)<<' '<<r.channel<<' '<<r.pitch<<' '<<int(r.mute)<<' '<<int(r.solo)<<' '<<int(r.timing)<<' '<<r.numerator<<' '<<r.denominator<<' '<<r.bars<<' '<<r.steps.size()<<' '<<int(r.pitchMode)<<'\n';
@@ -232,8 +250,9 @@ inline bool decode(const std::string& text,Pattern& output)
     std::string magic;int version=0,count=0;
     Pattern p;
     if(!(in>>magic>>version>>std::quoted(p.name)>>p.stepCount>>p.stepsPerQuarter>>count)
-        ||magic!="STUDIO_OSTINATO"||(version<1||version>6)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
+        ||magic!="STUDIO_OSTINATO"||(version<1||version>7)||count<1||count>maxRows||p.stepCount<1||p.stepCount>maxSteps)return false;
     if(version>=6){int scale=-1;if(!(in>>p.harmony.root>>scale>>p.harmony.chord)||scale<0||scale>6)return false;p.harmony.scale=static_cast<Scale>(scale);if(!p.harmony.valid())return false;}
+    if(version>=7){int recognize=-1;if(!(in>>recognize)||recognize<0||recognize>1)return false;p.harmony.recognizeInversions=recognize==1;}
     p.rows.clear();
     auto flag=[&](bool& result){int i=-1;if(!(in>>i)||i<0||i>1)return false;result=i==1;return true;};
     for(int i=0;i<count;++i)
