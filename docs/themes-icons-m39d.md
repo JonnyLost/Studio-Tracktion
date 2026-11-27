@@ -1,0 +1,7 @@
+# M39D — Selectable themes and vector instrument identity
+
+View > Color Theme offers Studio Classic (original), Graphite Red, Light Studio, Emerald, Midnight Blue, Cinematic Atelier and Amethyst. Shared theme tokens update the main surfaces, menus, explicit palette-linked controls, and icons. The choice persists locally. No project colors, routing, audio, sample data or third-party AU state is modified. Some specialized editor/keyboard/seating controls still use fixed or derived colors and need visual auditing; no claim of complete light-theme coverage. Native macOS title bars and third-party editors retain their own styles. No custom theme editor yet.
+
+24 original reusable thin-outline glyphs, exported as transparent SVGs with currentColor and drawn by cached JUCE paths using the same geometry. Installed GM instruments, native synth/sampler and hosted devices use actual names/families with fallback; Inspector, Library, mixer, track header and Stage share the renderer. No raster decoding or painting dependency. These are representative silhouettes, not 242 distinct catalog illustrations; individual variant-specific icons and the complete recovered catalog remain outstanding. Existing artwork files and metadata preserved, not shown in basic Inspector.
+
+CI tests check palette contrast; visual review at standard and enlarged text on real Mac, switch themes with session open, check persisted selection, no project modification, inspect icon scaling and verify generated Tracktion header. M39A-C regressions remain until cumulative CI passes. No merges.

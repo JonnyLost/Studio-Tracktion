@@ -5,6 +5,7 @@
 #include <cmath>
 #include "AppearanceMetrics.h"
 #include "StudioDesignTokens.h"
+#include "StudioThemes.h"
 
 namespace studio
 {
@@ -53,34 +54,72 @@ inline void layoutToolbar (juce::Rectangle<int>& area, const std::initializer_li
 
 namespace colours
 {
-inline const juce::Colour rail      { design::rail };
-inline const juce::Colour canvas    { design::canvas };
-inline const juce::Colour timeline  { design::timeline };
-inline const juce::Colour panel     { design::panel };
-inline const juce::Colour control   { design::control };
-inline const juce::Colour raised    { design::raised };
-inline const juce::Colour divider   { design::divider };
-inline const juce::Colour selected  { design::selected };
-inline const juce::Colour well      { design::well };
-inline const juce::Colour grid      { design::grid };
-inline const juce::Colour text      { design::text };
-inline const juce::Colour secondary { design::secondary };
-inline const juce::Colour action    { design::action };
-inline const juce::Colour focus     { design::focus };
-inline const juce::Colour playhead  { design::playhead };
-inline const juce::Colour warning   { design::warning };
-inline const juce::Colour record    { design::record };
-inline const juce::Colour signal    { design::signal };
+inline juce::Colour rail { design::rail };
+inline juce::Colour canvas { design::canvas };
+inline juce::Colour timeline { design::timeline };
+inline juce::Colour panel { design::panel };
+inline juce::Colour control { design::control };
+inline juce::Colour raised { design::raised };
+inline juce::Colour divider { design::divider };
+inline juce::Colour selected { design::selected };
+inline juce::Colour well { design::well };
+inline juce::Colour grid { design::grid };
+inline juce::Colour text { design::text };
+inline juce::Colour secondary { design::secondary };
+inline juce::Colour action { design::action };
+inline juce::Colour focus { design::focus };
+inline juce::Colour playhead { design::playhead };
+inline juce::Colour warning { design::warning };
+inline juce::Colour record { design::record };
+inline juce::Colour signal { design::signal };
 inline const juce::Colour strings   { design::strings };
 inline const juce::Colour winds     { design::winds };
 inline const juce::Colour brass     { design::brass };
 inline const juce::Colour percussion{ design::percussion };
 inline const juce::Colour keys      { design::keys };
 inline const juce::Colour other     { design::other };
-inline const juce::Colour midiClip  { design::midiClip };
-inline const juce::Colour audioClip { design::audioClip };
+inline juce::Colour midiClip { design::midiClip };
+inline juce::Colour audioClip { design::audioClip };
 inline const juce::Colour roomReturn{ design::roomReturn };
-inline const juce::Colour atelierAccent{ design::atelierAccent };
+inline juce::Colour atelierAccent { design::atelierAccent };
+}
+
+// UI-only theme state. Project track colours and DSP settings are not changed.
+inline int activeTheme = 0;
+inline std::array<juce::Colour*, themes::count> themeSlots()
+{
+    return { &colours::rail, &colours::canvas, &colours::timeline, &colours::panel, &colours::control, &colours::raised, &colours::divider, &colours::selected, &colours::well, &colours::grid, &colours::text, &colours::secondary, &colours::action, &colours::focus, &colours::playhead, &colours::warning, &colours::record, &colours::signal, &colours::atelierAccent, &colours::midiClip, &colours::audioClip };
+}
+inline void installTheme(int index)
+{
+    activeTheme = themes::validIndex(index);
+    auto slots=themeSlots();
+    for(size_t i=0;i<slots.size();++i) *slots[i]=juce::Colour(themes::palettes[(size_t)activeTheme].argb[i]);
+}
+// Translate explicit component colours which were set from the previous
+// shared palette; leave custom track and third-party editor colours alone.
+inline void retintStudioComponent(juce::Component& root, int previous)
+{
+    using namespace juce;
+    constexpr int ids[] { Label::textColourId, Label::backgroundColourId,
+        TextButton::buttonColourId,TextButton::buttonOnColourId,TextButton::textColourOffId,TextButton::textColourOnId,
+        ComboBox::backgroundColourId,ComboBox::textColourId,ComboBox::outlineColourId,ComboBox::focusedOutlineColourId,
+        TextEditor::backgroundColourId,TextEditor::textColourId,TextEditor::outlineColourId,TextEditor::focusedOutlineColourId,
+        Slider::trackColourId,Slider::rotarySliderFillColourId,Slider::rotarySliderOutlineColourId,Slider::thumbColourId,
+        Slider::textBoxTextColourId,Slider::textBoxBackgroundColourId,Slider::textBoxOutlineColourId,Slider::backgroundColourId,
+        ListBox::backgroundColourId, ListBox::textColourId, ScrollBar::thumbColourId };
+    const auto& old = themes::palettes[(size_t)themes::validIndex(previous)].argb;
+    const auto& next = themes::palettes[(size_t)activeTheme].argb;
+    for(int id:ids) if(root.isColourSpecified(id))
+    {
+        auto value=root.findColour(id,false);
+        for(size_t i=0;i<old.size();++i)
+            if((value.getARGB() | 0xff000000u)==old[i])
+            { root.setColour(id,Colour(next[i]).withAlpha(value.getFloatAlpha())); break; }
+    }
+    for(int i=0;i<root.getNumChildComponents();++i)
+        if(auto* child=root.getChildComponent(i)) retintStudioComponent(*child,previous);
+    root.repaint();
 }
 
 // Shared vector knob; paint-only, with no resource loading or audio state changes.
@@ -124,10 +163,11 @@ inline void drawStudioRotary (juce::Graphics& g, int x, int y, int width, int he
 class StudioLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    StudioLookAndFeel()
+    StudioLookAndFeel() { refreshTheme(); }
+    void refreshTheme()
     {
         using namespace juce;
-        setColourScheme (getDarkColourScheme());
+        setColourScheme (themes::palettes[(size_t)activeTheme].light ? getLightColourScheme() : getDarkColourScheme());
         setColour (TextButton::buttonColourId, colours::control);
         setColour (TextButton::buttonOnColourId, colours::selected);
         setColour (TextButton::textColourOnId, colours::text);

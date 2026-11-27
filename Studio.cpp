@@ -970,6 +970,7 @@ public:
         environmentWelcome.onOpenProject = [this] { chooseProject (false); };
         environmentWelcome.onContinue = [this] { grabKeyboardFocus(); };
         setSize (1024, 640);
+        applyTheme (prefs.getIntValue ("studio.theme", 0), false);
         applyAppearance (studio::appearance.interfacePercent(), studio::appearance.textPercent(), false);
         showWorkspace (Workspace::closed);
         setInspectorOpen (inspectorOpen, false);
@@ -1103,7 +1104,7 @@ public:
 
         auto& view = editor->getEditViewState();
         auto cycleLane = area.removeFromTop (m.control (18));
-        graphics.setColour (timelineCycleColour);
+        graphics.setColour (studio::colours::panel);
         graphics.fillRect (cycleLane);
         graphics.saveState();
         graphics.reduceClipRegion (cycleLane);
@@ -1608,6 +1609,33 @@ public:
         repaint();
     }
 
+    void applyTheme(int index, bool persist = true)
+    {
+        const int previous = studio::activeTheme;
+        studio::installTheme(index);
+        style.refreshTheme();
+        studio::retintStudioComponent(*this, previous);
+        if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
+        if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
+        if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
+        if (persist)
+        {
+            auto& prefs = engine.getPropertyStorage().getPropertiesFile();
+            prefs.setValue("studio.theme",studio::activeTheme); prefs.saveIfNeeded();
+        }
+        repaint();
+    }
+
+    PopupMenu themeMenu()
+    {
+        PopupMenu menu;
+        const SafePointer<StudioView> safe(this);
+        for (int i=0;i<(int)studio::themes::palettes.size();++i)
+            menu.addItem(studio::themes::palettes[(size_t)i].name,true,i==studio::activeTheme,
+                [safe,i] { if(safe) safe->applyTheme(i); });
+        return menu;
+    }
+
     void applyAppearance (int scale, int textSize, bool persist)
     {
         auto& m = studio::appearance;
@@ -1908,6 +1936,7 @@ public:
             // and sustain pedal have ended; don't cut off a note here.
         });
         menu.addSeparator();
+        menu.addSubMenu ("Color Theme", themeMenu());
         menu.addSubMenu ("Interface Scale", scale);
         menu.addSubMenu ("Text Size", textSize);
         menu.addSeparator();
@@ -2036,6 +2065,7 @@ public:
                 add (mTransportComfortable, "Transport Size: Comfortable", true, transportSize == 1);
                 add (mTransportLarge, "Transport Size: Large", true, transportSize == 2);
                 menu.addSeparator();
+                menu.addSubMenu ("Color Theme", themeMenu());
                 add (mScaleDown, "Decrease Interface Scale", studio::appearance.interfacePercent() > 100);
                 add (mScaleUp, "Increase Interface Scale", studio::appearance.interfacePercent() < 175);
                 add (mScaleReset, "Reset Appearance");
@@ -2358,7 +2388,7 @@ private:
     double bounceProgress = 0;
     SafePointer<AlertWindow> bounceWindow;
     studio::MusicalTransport music;
-    const Colour timelineCycleColour { 0xff242c36 };
+
     std::optional<te::TimePosition> cycleAnchor;
     te::TimeRange cyclePreview, displayedCycle;
     bool displayedLooping = false;

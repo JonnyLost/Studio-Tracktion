@@ -3,6 +3,7 @@
 #include "SpatialState.h"
 #include "SpatialRouting.h"
 #include "StudioUI.h"
+#include "StudioInstrumentIcons.h"
 #include "StudioGeneralMidi.h"
 #include "StudioSampler.h"
 #include "StudioSynth.h"
@@ -17,11 +18,11 @@ namespace te = tracktion;
 namespace
 {
 // Inspector uses the shared console palette with a restrained Atelier brass accent.
-const Colour background = colours::canvas;
-const Colour panel = colours::panel;
-const Colour accent = colours::atelierAccent;
-const Colour primary = colours::text;
-const Colour secondary = colours::secondary;
+const Colour& background = colours::canvas;
+const Colour& panel = colours::panel;
+const Colour& accent = colours::atelierAccent;
+const Colour& primary = colours::text;
+const Colour& secondary = colours::secondary;
 struct Controller { const char* name; int cc, value; };
 constexpr std::array<Controller, 8> controllers {{
     { "Mod", 1, 0 }, { "Breath", 2, 0 }, { "MIDI Vol", 7, 100 },
@@ -761,23 +762,9 @@ void AtelierInspectorPanel::paint (Graphics& g)
     g.setGradientFill (ColourGradient (colours::panel, card.getTopLeft(),
                                       colours::well, card.getBottomRight(), false));
     g.fillRoundedRectangle (card, 8.0f);
-    if (portraitImage.isValid())
-    {
-        auto destination = imageBounds.reduced (appearance.px (5));
-        const auto scale = jmin ((float) destination.getWidth() / portraitImage.getWidth(),
-                                (float) destination.getHeight() / portraitImage.getHeight());
-        const int w = jmax (1, roundToInt (portraitImage.getWidth() * scale));
-        const int h = jmax (1, roundToInt (portraitImage.getHeight() * scale));
-        auto target = Rectangle<int> (w, h).withCentre (destination.getCentre());
-        g.drawImage (portraitImage, target.getX(), target.getY(), target.getWidth(), target.getHeight(),
-                     0, 0, portraitImage.getWidth(), portraitImage.getHeight());
-    }
-    else
-    {
-        g.setColour (secondary);
-        g.setFont (FontOptions (14.0f));
-        g.drawFittedText (dynamic_cast<sampler::Plugin*>(hosted())?"Assign artwork in the Instrument Library":"Select instrument artwork", imageBounds.reduced (12), Justification::centred, 2);
-    }
+    if (auto* target=track())
+        drawInstrumentIcon(g,imageBounds.toFloat().reduced((float)appearance.px(4)),
+            instrumentIcon(target->getName(),target->state.getProperty("studioTrackIcon").toString()),colours::action);
     // Artwork stays untouched; its frame follows Studio's subdued dividers.
     g.setColour (colours::divider);
     g.drawRoundedRectangle (card, 8.0f, 1.0f);

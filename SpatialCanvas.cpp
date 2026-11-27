@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SpatialWorkspace.h"
 #include "StudioUI.h"
+#include "StudioInstrumentIcons.h"
 #include "StagePresentation.h"
 #include <numbers>
 
@@ -308,7 +309,7 @@ void SpatialMap::paint (Graphics& g)
             else g.drawEllipse (tile, active ? 2.0f : 1.0f);
             g.setFont (uiFont (10.0f, Font::bold));
             g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
-            g.drawText (familyMarks[family], tile.toNearestInt(), Justification::centred);
+            drawInstrumentIcon(g,tile.reduced((float)m.px(3)),instrumentIcon(marker.name),accent);
         }
         if (active || (! micMode && showTrackLabels && markers.size() <= 24))
         {

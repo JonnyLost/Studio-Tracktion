@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../AppearanceMetrics.h"
 #include "../StudioDesignTokens.h"
+#include "../StudioThemes.h"
 #include "../StudioActivities.h"
 #include "../AtelierLayout.h"
 #include "../StagePresentation.h"
@@ -47,6 +48,10 @@ bool designContrast()
 int main()
 {
     if (!designContrast()) return 1;
+    for (const auto& theme : studio::themes::palettes)
+        for (auto surface : {studio::themes::canvas,studio::themes::panel,studio::themes::selected})
+            for (auto ink : {studio::themes::text,studio::themes::secondary,studio::themes::action})
+                if(contrast(theme.argb[ink],theme.argb[surface])<4.5) { std::cerr << "Theme contrast: " << theme.name << "\\n"; return 1; }
     using studio::Activity;
     using studio::Workspace;
     if (studio::activities.size() != 6
