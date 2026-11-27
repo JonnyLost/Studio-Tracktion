@@ -22,6 +22,7 @@ using namespace tracktion::literals;
 #include "StudioUI.h"
 #include "OstinatoMatrix.h"
 #include "OstinatoAudition.h"
+#include "OstinatoConductingInput.h"
 #include "StudioInstrumentIcons.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
@@ -1954,6 +1955,7 @@ public:
         menu.addItem ("MIDI Keyboard Follows Selected Track", true, followSelectedMidi, [safe]
         {
             if (safe == nullptr) return;
+            safe->stopOstinato("Audition stopped for MIDI focus change.");
             safe->followSelectedMidi = ! safe->followSelectedMidi;
             auto& properties = safe->engine.getPropertyStorage().getPropertiesFile();
             properties.setValue ("studio.midiFollowSelection", safe->followSelectedMidi);
@@ -2561,6 +2563,9 @@ private:
     const void* ostinatoContext=nullptr;
     te::TimePosition ostinatoPosition;
     bool ostinatoDispatchFailed=false;
+    studio::ostinato::ConductingInput ostinatoInput;
+    String ostinatoDevice;
+    int ostinatoChannel=1;
     std::size_t ostinatoTempoHash=0;
 
     struct PendingPlugin
@@ -4139,7 +4144,7 @@ private:
         const auto tracks = edit != nullptr ? te::getAudioTracks (*edit) : juce::Array<te::AudioTrack*>();
         if (edit != nullptr)
         {
-            midiFocusStatus = midiFocus.follow (*edit, workflowTrack(), followSelectedMidi,
+            if(!ostinatoCursor) midiFocusStatus = midiFocus.follow (*edit, workflowTrack(), followSelectedMidi,
                 ready && ! recording && ! recentlyStoppedRecording(), engine.getDeviceManager());
             for (auto* item : tracks)
                 names.add (item->getName());
@@ -4741,6 +4746,7 @@ private:
         seatingWorkspace.setEdit (nullptr);
        #endif
         if(ostinatoWindow){ostinatoWindow->setVisible(false);ostinatoWindow->setLookAndFeel(nullptr);ostinatoWindow.reset();}
+        ostinatoDevice.clear();ostinatoChannel=1;
         ++projectGeneration;
         appliedDlsPrograms.clear();
         settlingDlsPrograms.clear();
@@ -6477,9 +6483,47 @@ private:
             track->injectLiveMidiMessage(e.on?MidiMessage::noteOn(e.channel,e.pitch,(uint8)e.velocity):MidiMessage::noteOff(e.channel,e.pitch),{});
         else if(e.on)ostinatoDispatchFailed=true;
     }
+    std::shared_ptr<te::PhysicalMidiInputDevice> isolatedOstinatoDevice(const String& id)
+    {
+        if(!edit||followSelectedMidi||id.isEmpty())return {};
+        for(auto* input:edit->getAllInputDevices())
+            if(input&&input->getInputDevice().getDeviceID()==id&&!input->getTargets().isEmpty())return {};
+        for(const auto& device:engine.getDeviceManager().getMidiInDevices())
+            if(device&&device->getDeviceID()==id&&device->isEnabled())
+                if(auto physical=std::dynamic_pointer_cast<te::PhysicalMidiInputDevice>(device))return physical;
+        return {};
+    }
+    void chooseOstinatoHardware(Component* anchor)
+    {
+        if(!ostinatoWindow||!canEditOstinato())return;
+        PopupMenu menu;
+        const Component::SafePointer<StudioView> safe(this);
+        const auto generation=projectGeneration;
+        menu.addItem("On-screen controls only",true,ostinatoDevice.isEmpty(),[safe,generation]{
+            if(safe&&safe->projectGeneration==generation&&safe->canEditOstinato()&&safe->ostinatoWindow)
+            {safe->ostinatoDevice.clear();safe->ostinatoWindow->editor().hardwareLabel("MIDI input: Off");}
+        });
+        menu.addSectionHeader("Dedicated conducting input (no track routing)");
+        if(followSelectedMidi)menu.addItem(9000,"Turn off MIDI Keyboard Follows Selected Track first",false);
+        for(const auto& device:engine.getDeviceManager().getMidiInDevices())
+        {
+            auto physical=std::dynamic_pointer_cast<te::PhysicalMidiInputDevice>(device);
+            if(!physical||!physical->isEnabled())continue;
+            const auto id=physical->getDeviceID(),name=physical->getName();
+            PopupMenu channels;
+            for(int ch=1;ch<=16;++ch)
+                channels.addItem("Channel "+String(ch),bool(isolatedOstinatoDevice(id)),id==ostinatoDevice&&ch==ostinatoChannel,[safe,generation,id,name,ch]{
+                    if(!safe||safe->projectGeneration!=generation||!safe->canEditOstinato()||!safe->ostinatoWindow||!safe->isolatedOstinatoDevice(id))return;
+                    safe->ostinatoDevice=id;safe->ostinatoChannel=ch;
+                    safe->ostinatoWindow->editor().hardwareLabel(name+" · Ch "+String(ch));
+                });
+            menu.addSubMenu(name,channels,bool(isolatedOstinatoDevice(id)));
+        }
+        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor));
+    }
     void stopOstinato(const String& reason)
     {
-        ostinatoTimer.stopTimer();
+        ostinatoTimer.stopTimer();ostinatoInput.detach();
         if(!ostinatoCursor)return;
         ostinatoCursor->stop([this](const auto& e){sendOstinato(e);});
         ostinatoCursor.reset();ostinatoRoutes.clear();ostinatoRender={};ostinatoContext=nullptr;
@@ -6493,7 +6537,11 @@ private:
             ||edit->getTransport().getPosition()!=ostinatoPosition||edit->tempoSequence.getInternalSequence().hash()!=ostinatoTempoHash)
         {stopOstinato("Audition stopped — playback context changed.");return;}
         for(size_t i=0;i<ostinatoRoutes.size();++i)if(!ostinatoRoute(i,false)){stopOstinato("Audition stopped — instrument changed.");return;}
-        const bool keep=ostinatoCursor->advance((Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0,[this](const auto& e){sendOstinato(e);});
+        if(ostinatoInput.attached()&&!ostinatoInput.matches(isolatedOstinatoDevice(ostinatoDevice)))
+        {stopOstinato("Audition stopped — conducting input was disconnected or routed.");return;}
+        auto& panel=ostinatoWindow->editor();
+        const auto values=ostinatoInput.consume(panel.conducting());panel.setConducting(values);
+        const bool keep=ostinatoCursor->advance((Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0,values,[this](const auto& e){sendOstinato(e);});
         if(!keep||ostinatoDispatchFailed)stopOstinato(!ostinatoDispatchFailed&&ostinatoCursor->completed()?"Audition complete.":"Audition stopped — timing or destination changed.");
     }
     void startOstinato(const studio::ostinato::Pattern& p,int repeats)
@@ -6503,6 +6551,8 @@ private:
         auto fail=[this](const String& reason){ostinatoWindow->editor().auditionState(false,reason);};
         if(!canEditOstinato()||pendingPlugin.has_value()||!edit->getTransport().getCurrentPlaybackContext())
         {fail("Stop transport and wait for the audio engine and instruments to be ready.");return;}
+        auto input=isolatedOstinatoDevice(ostinatoDevice);
+        if(ostinatoDevice.isNotEmpty()&&!input){fail("Conducting input must be enabled, unrouted, and MIDI follow disabled. Choose Off to use sliders.");return;}
         Pattern stored;const auto payload=edit->state.getProperty("studioOstinatoPattern").toString().toStdString();
         if((!payload.empty()&&!decode(payload,stored))||stored!=p){fail("Pattern changed — reopen or refresh before audition.");return;}
         std::vector<std::string> ids;
@@ -6531,6 +6581,7 @@ private:
         ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoTempoHash=edit->tempoSequence.getInternalSequence().hash();ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
         ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
         ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
+        if(input)ostinatoInput.attach(std::move(input),ostinatoChannel);
         ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();
         ostinatoWindow->editor().auditionState(true,"Audition playing — avoid other MIDI input. Stop to edit.");
         refreshOstinato();
@@ -6579,6 +6630,7 @@ private:
         panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
         panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
         panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        panel.chooseHardware=[safe,generation](Component* c){if(safe&&safe->projectGeneration==generation)safe->chooseOstinatoHardware(c);};
         panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
         panel.stopAudition=[safe]{if(safe!=nullptr)safe->stopOstinato("Audition stopped.");};
         ostinatoWindow->onClose=panel.stopAudition;
