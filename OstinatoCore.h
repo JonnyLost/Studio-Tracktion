@@ -222,6 +222,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
     auto fail=[&](const char* why){error=why;return false;};
     if(!p.valid()||repeats<1||repeats>maxRepeats)return fail("Invalid pattern or repeat count.");
     Render next;next.duration=p.duration()*repeats;
+    size_t attempts=0;std::map<std::tuple<int,int,std::string>,int> requestIndices;
     const bool solo=std::any_of(p.rows.begin(),p.rows.end(),[](const auto& r){return r.solo;});
     for(const auto& row:p.rows)
     {
@@ -246,6 +247,7 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 const Tick nextOffset=p.rowBoundary(row,index+1);
                 const Tick start=origin+offset;
                 if(start>=next.duration)break;
+                if(++attempts>maxNotes*4)return fail("Pattern exceeds bounded candidate evaluation size.");
                 // Stable per-cycle/row/cell draw; no runtime random state.
                 auto hash=std::uint64_t(row.id)*0x9e3779b97f4a7c15ULL ^ std::uint64_t(origin)*0xbf58476d1ce4e5b9ULL ^ std::uint64_t(index);
                 hash^=hash>>30;hash*=0xbf58476d1ce4e5b9ULL;hash^=hash>>27;hash*=0x94d049bb133111ebULL;hash^=hash>>31;
@@ -255,10 +257,9 @@ inline bool compile(const Pattern& p,const std::vector<std::string>& existingTra
                 int art=-1;
                 if(!s.articulation.empty())
                 {
-                    ArticulationRequest req{route,row.channel,s.articulation};
-                    auto found=std::find(next.articulations.begin(),next.articulations.end(),req);
-                    art=int(found-next.articulations.begin());
-                    if(found==next.articulations.end())next.articulations.push_back(std::move(req));
+                    auto [it,inserted]=requestIndices.emplace(std::tuple(route,row.channel,s.articulation),int(next.articulations.size()));
+                    art=it->second;
+                    if(inserted)next.articulations.push_back({route,row.channel,s.articulation});
                 }
                 for(int strike=0;strike<s.repeats;++strike)
                 {
