@@ -2561,6 +2561,7 @@ private:
     const void* ostinatoContext=nullptr;
     te::TimePosition ostinatoPosition;
     bool ostinatoDispatchFailed=false;
+    std::size_t ostinatoTempoHash=0;
 
     struct PendingPlugin
     {
@@ -4009,7 +4010,7 @@ private:
 
     bool canEditRegions() const
     {
-        return edit != nullptr && ! busy && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
+        return !ostinatoCursor && edit != nullptr && ! busy && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
     }
 
     void timerCallback() override
@@ -4069,7 +4070,7 @@ private:
         rewind.setEnabled (transportReady);
         play.setEnabled (transportReady || (ready && recording));
         play.setToggleState (playing && ! recording, dontSendNotification);
-        stop.setEnabled (ready && (playing || recording));
+        stop.setEnabled (ready && (playing || recording || ostinatoCursor != nullptr));
         record.setEnabled (ready && (recording || (transportReady && ! edit->getTransport().looping)));
         record.setToggleState (recording, dontSendNotification);
         zoom.setEnabled (ready);
@@ -6489,7 +6490,7 @@ private:
         if(!ostinatoCursor)return;
         if(!edit||!ostinatoWindow||!ostinatoWindow->isVisible()||busy||ariaReviewPending||pendingPlugin.has_value()
             ||edit->getTransport().isPlaying()||edit->getTransport().isRecording()
-            ||edit->getTransport().getPosition()!=ostinatoPosition)
+            ||edit->getTransport().getPosition()!=ostinatoPosition||edit->tempoSequence.getInternalSequence().hash()!=ostinatoTempoHash)
         {stopOstinato("Audition stopped — playback context changed.");return;}
         for(size_t i=0;i<ostinatoRoutes.size();++i)if(!ostinatoRoute(i,false)){stopOstinato("Audition stopped — instrument changed.");return;}
         const bool keep=ostinatoCursor->advance((Time::getMillisecondCounterHiRes()-ostinatoStartMs)/1000.0,[this](const auto& e){sendOstinato(e);});
@@ -6527,7 +6528,7 @@ private:
         if(!prepareAudition(std::move(generated),[&](Tick tick){return edit->tempoSequence.toTime(beat+te::BeatDuration::fromBeats(double(tick)/ticksPerQuarter)).inSeconds();},timed))
         {fail("Audition duration or tempo mapping is invalid (maximum ten minutes).");return;}
         piano.silencePreview();dockedKeyboard.releaseNotes();if(midiKeyboardWindow)midiKeyboardWindow->panel.releaseNotes();
-        ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
+        ostinatoGeneration=projectGeneration;ostinatoPosition=origin;ostinatoTempoHash=edit->tempoSequence.getInternalSequence().hash();ostinatoContext=edit->getTransport().getCurrentPlaybackContext();
         ostinatoRoutes=std::move(routes);ostinatoRender=std::move(timed);
         ostinatoCursor=std::make_unique<AuditionCursor>(ostinatoRender);
         ostinatoDispatchFailed=false;ostinatoStartMs=Time::getMillisecondCounterHiRes();
@@ -6575,9 +6576,9 @@ private:
             undo.beginNewTransaction();
             return true;
         };
-        panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
-        panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
-        panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
+        panel.openMixer=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::mix);}};
+        panel.openStage=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->showWorkspace(Workspace::stage);}};
+        panel.openEffects=[safe,generation]{if(safe!=nullptr&&safe->projectGeneration==generation){safe->stopOstinato("Audition stopped.");safe->ostinatoWindow->setVisible(false);safe->setInspectorOpen(true);}};
         panel.startAudition=[safe,generation](const Pattern& p,int repeats){if(safe!=nullptr&&safe->projectGeneration==generation)safe->startOstinato(p,repeats);};
         panel.stopAudition=[safe]{if(safe!=nullptr)safe->stopOstinato("Audition stopped.");};
         ostinatoWindow->onClose=panel.stopAudition;
