@@ -24,37 +24,42 @@ public:
         using namespace juce;
         for(auto* c:std::initializer_list<Component*>{&name,&masterSteps,&masterDivision,&applyMaster,&add,&remove,&status,&viewport,
                 &track,&pitch,&channel,&mode,&division,&numerator,&denominator,&bars,&applyRow,&mute,&solo,
-                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton,&variationButton,&libraryButton})
+                &cell,&velocity,&gate,&accent,&enabled,&applyCell,&preview,&mixer,&stage,&effects,&print,&power,&pitchMode,&interval,&repeatCount,&densityThreshold,&intensity,&density,&hardware,&advanced,&harmonyButton,&variationButton,&libraryButton,&rowPage,&stepPage,&guide})
             addAndMakeVisible(*c);
         viewport.setViewedComponent(&matrix,false);viewport.setScrollBarsShown(true,true);
         effects.setTooltip("Open the arrangement track inspector for effects; no extra processing is created.");
         for(auto* l:std::initializer_list<Label*>{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel,&thresholdLabel,&intensityLabel,&densityLabel})
         {addAndMakeVisible(*l);l->setFont(uiFont(10));l->setJustificationType(Justification::centredLeft);}
+        guide.setJustificationType(Justification::centredLeft);guide.setFont(uiFont(12));
+        guide.setText("Click an instrument to assign it. Click or drag steps to paint. Shift-click to inspect.",dontSendNotification);
+        rowPage.onClick=[this]{showRowSettings=true;resized();};
+        stepPage.onClick=[this]{showRowSettings=false;resized();};
         name.setTextToShowWhenEmpty("Pattern name",colours::secondary);
         name.setInputRestrictions(160);name.setReturnKeyStartsNewLine(false);
-        for(auto* e:{&masterSteps,&pitch,&channel,&division,&numerator,&bars,&cell,&velocity,&gate})
+        for(auto* e:{&masterSteps,&channel,&division,&numerator,&bars,&cell,&velocity})
             e->setInputRestrictions(5,"0123456789");
+        pitch.setInputRestrictions(5,"ABCDEFGabcdefg#b-0123456789");gate.setInputRestrictions(5,"0123456789.");
         interval.setInputRestrictions(4,"-0123456789");repeatCount.setInputRestrictions(3,"0123456789");repeatCount.setText("4",false);
         pitchMode.addItem("Fixed pitch",1);pitchMode.addItem("Root + intervals",2);pitchMode.addItem("Follow played root",3);pitchMode.addItem("Scale degrees",4);pitchMode.addItem("Chord tones",5);pitchMode.addItem("Arpeggio up",6);pitchMode.addItem("Arpeggio down",7);pitchMode.addItem("Arpeggio bounce",8);
         harmonyButton.onClick=[this]{editHarmony();};
         libraryButton.onClick=[this]{showLibrary();};
         libraryButton.setTooltip("Browse factory patterns, load or save portable user patterns, and name instrument roles.");
         variationButton.onClick=[this]{editVariations();};
-        variationButton.setTooltip("Set A–D cycle sequence, fills, humanization and density evolution.");
+        variationButton.setTooltip("Set A-D cycle sequence, fills, humanization and density evolution.");
         harmonyButton.setTooltip("Set the starting root, scale and chord. Dedicated MIDI input changes the live harmony during audition.");
-        interval.setTooltip("Signed semitones relative to row root");repeatCount.setTooltip("Finite audition master repeats (1–256)");
-        densityThreshold.setInputRestrictions(3,"0123456789");densityThreshold.setTooltip("0 = essential; 1–127 = optional at CC11 density threshold");
+        interval.setTooltip("Signed semitones relative to row root");repeatCount.setTooltip("Finite audition master repeats (1-256)");
+        densityThreshold.setInputRestrictions(3,"0123456789");densityThreshold.setTooltip("0 = essential; 1-127 = optional at CC11 density threshold");
         for(auto* slider:{&intensity,&density}){slider->setSliderStyle(Slider::LinearHorizontal);slider->setTextBoxStyle(Slider::TextBoxRight,false,44,20);slider->setRange(0,127,1);slider->setValue(127,dontSendNotification);}
         intensity.setTooltip("CC1: scales newly generated note velocity from 25% to 100%");density.setTooltip("CC11: admits optional steps up to the selected threshold");
         hardware.onClick=[this]{if(chooseHardware)chooseHardware(&hardware);};
-        masterSteps.setTooltip("Master step count 1–256");
-        pitch.setTooltip("MIDI note 0–127 (C4 = 60)");channel.setTooltip("MIDI channel 1–16");
+        masterSteps.setTooltip("Master step count 1-256");
+        pitch.setTooltip("Musical note, e.g. C4, F#3 or MIDI number 0-127");channel.setTooltip("MIDI channel 1-16");
         division.setTooltip("Number of cells in the selected row");
         numerator.setTooltip("Independent meter numerator");bars.setTooltip("Independent cycle bars");
-        cell.setTooltip("Selected cell number (1-based)");velocity.setTooltip("MIDI velocity 1–127");
-        gate.setTooltip("Gate in thousandths (750 = 75%)");
+        cell.setTooltip("Selected cell number (1-based)");velocity.setTooltip("MIDI velocity 1-127");
+        gate.setTooltip("Note length as a percentage of one step (0.1-100%)");
         mode.addItem("Follow grid",1);mode.addItem("Shared span",2);mode.addItem("Independent cycle",3);
-        for(int d=1;d<=32;++d)if(ticksPerQuarter%d==0)masterDivision.addItem(String(d)+" / beat",d);
+        for(int d=1;d<=32;++d)if(ticksPerQuarter%d==0)masterDivision.addItem(d==1?"Quarter notes":d==2?"Eighth notes":d==4?"16th notes":d==8?"32nd notes":d==16?"64th notes":String(d)+" per quarter",d);
         for(int d:{1,2,4,8,16,32})denominator.addItem("/ "+String(d),d);
         status.setJustificationType(Justification::centredLeft);
         name.onReturnKey=[this]{applyMasterEdit();};
@@ -66,6 +71,9 @@ public:
         mode.onChange=[this]{updateTimingFields();};
         pitchMode.onChange=[this]{updatePitchCaption();};
         applyCell.onClick=[this]{applyCellEdit();};
+        velocity.onReturnKey=[this]{applyCellEdit();};gate.onReturnKey=[this]{applyCellEdit();};
+        accent.onClick=[this]{changeStepFlag(true,accent.getToggleState());};
+        enabled.onClick=[this]{changeStepFlag(false,enabled.getToggleState());};
         advanced.onClick=[this]{editAdvanced();};
         cell.onReturnKey=[this]{
             if(auto* r=row()){int value=cell.getText().getIntValue();if(value>=1&&value<=(int)r->steps.size())select(selected,(size_t)value-1);else say("Cell number out of range.");}
@@ -73,11 +81,11 @@ public:
         preview.onClick=[this]{previewRender();};
         mixer.onClick=[this]{if(openMixer)openMixer();};stage.onClick=[this]{if(openStage)openStage();};
         effects.onClick=[this]{if(openEffects)openEffects();};
-        power.onClick=[this]{if(auditioning){if(stopAudition)stopAudition();}else{int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}if(startAudition)startAudition(pattern,repeats);}};
+        power.onClick=[this]{if(auditioning){if(stopAudition)stopAudition();}else{int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1-256 repeats.");return;}if(startAudition)startAudition(pattern,repeats);}};
         power.setTooltip("Audition with main transport stopped. Do not play other MIDI notes on destination instruments during audition.");
         print.onClick=[this]{
             int repeats=0;if(!writable||auditioning||!printMidi)return;
-            if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}
+            if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1-256 repeats.");return;}
             say(printMidi(pattern,repeats,conducting()));
         };
         print.setTooltip("Create editable MIDI regions at the playhead using starting harmony, current intensity/density and the repeat count. No live performance recording.");
@@ -95,10 +103,10 @@ public:
     void setConducting(ConductingValues v){if(int(intensity.getValue())!=v.intensity)intensity.setValue(v.intensity,juce::dontSendNotification);if(int(density.getValue())!=v.density)density.setValue(v.density,juce::dontSendNotification);}
     void setConductingMapping(ConductingMapping m)
     {
-        intensityLabel.setText("CC"+juce::String(m.intensityCC)+" · Intensity",juce::dontSendNotification);
-        densityLabel.setText("CC"+juce::String(m.densityCC)+" · Density",juce::dontSendNotification);
-        intensity.setTooltip("Scales newly generated note velocity from 25% to 100%");
-        density.setTooltip("Admits optional steps up to the selected threshold");
+        intensityLabel.setText("Intensity",juce::dontSendNotification);
+        densityLabel.setText("Density",juce::dontSendNotification);
+        intensity.setTooltip("CC"+juce::String(m.intensityCC)+": scales newly generated note velocity from 25% to 100%");
+        density.setTooltip("CC"+juce::String(m.densityCC)+": admits optional steps up to the selected threshold");
     }
     void hardwareLabel(const juce::String& text){hardware.setButtonText(text);hardware.setTooltip(text);}
 
@@ -106,11 +114,11 @@ public:
     {
         static const char* names[]={"C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"};
         if(!h.valid())return;
-        juce::String label=names[h.root];label+=" · ";
+        juce::String label=names[h.root];label+="  /  ";
         for(int i=0;i<12;++i)if(h.chord&(1u<<i)){label+=names[(h.root+i)%12];label+=" ";}
-        if(harmonyButton.getButtonText()!=label){harmonyButton.setButtonText(label);harmonyButton.setTooltip(label+" — click while stopped to edit starting harmony");}
+        if(harmonyButton.getButtonText()!=label){harmonyButton.setButtonText(label);harmonyButton.setTooltip(label+" - click while stopped to edit starting harmony");}
     }
-    void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Audition");if(!active)reflectHarmony(pattern.harmony);updateEnabled();say(statusText);}
+    void auditionState(bool active,const juce::String& statusText){auditioning=active;power.setButtonText(active?"Stop":"Play pattern");if(!active)reflectHarmony(pattern.harmony);updateEnabled();say(statusText);}
 
     void setContext(const std::string& serialized,std::vector<TrackChoice> choices,bool editable)
     {
@@ -125,7 +133,7 @@ public:
             if(!row())selected=pattern.rows.front().id;
             selectedCell=std::min(selectedCell,row()->steps.size()-1);
             refreshFields();
-            if(!healthy)say("Invalid saved pattern — editing disabled to preserve the original data.");
+            if(!healthy)say("Invalid saved pattern - editing disabled to preserve the original data.");
         }
         else if(tracksChanged)refillTracks();
         writable=editable&&healthy;
@@ -135,50 +143,77 @@ public:
     void appearanceChanged()
     {
         viewport.setScrollBarThickness(appearance.scrollbar());
-        status.setFont(uiFont(12));
-        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel,&thresholdLabel,&intensityLabel,&densityLabel})l->setFont(uiFont(10));
+        status.setFont(uiFont(12));guide.setFont(uiFont(12));
+        for(auto* l:{&masterCountLabel,&pitchLabel,&channelLabel,&divisionLabel,&numeratorLabel,&barsLabel,&cellLabel,&velocityLabel,&gateLabel,&intervalLabel,&repeatLabel,&thresholdLabel,&intensityLabel,&densityLabel})l->setFont(uiFont(12));
         resized();repaint();matrix.repaint();
     }
     void paint(juce::Graphics& g) override {g.fillAll(colours::canvas);}
     void resized() override
     {
+        using namespace juce;
         auto a=getLocalBounds().reduced(appearance.px(8));
-        const int h=appearance.control(30),gap=appearance.px(3);
-        const int caption=appearance.control(15);
-        auto field=[&](juce::Component& c,juce::Label& l,juce::Rectangle<int> r){r=r.reduced(gap,0);l.setBounds(r.removeFromTop(caption));c.setBounds(r.reduced(0,gap));};
+        const int h=appearance.control(32), gap=appearance.px(3), caption=appearance.control(18);
+        auto field=[&](Component& c,Label& l,Rectangle<int> r){r=r.reduced(gap,0);l.setBounds(r.removeFromTop(caption));c.setBounds(r.reduced(0,gap));};
+        auto button=[&](Component& c,Rectangle<int>& r,int width){c.setBounds(r.removeFromLeft(jmin(r.getWidth(),appearance.span(width))).reduced(gap));};
         auto line=a.removeFromTop(h+caption);
-        auto titleArea=line.removeFromLeft(line.getWidth()*2/5);
-        libraryButton.setBounds(titleArea.removeFromLeft(titleArea.getWidth()/3).reduced(gap));
-        name.setBounds(titleArea.reduced(gap));
-        field(masterSteps,masterCountLabel,line.removeFromLeft(line.getWidth()/5));
-        masterDivision.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
-        applyMaster.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));preview.setBounds(line.reduced(gap));
+        button(libraryButton,line,104);
+        auto grid=line.removeFromRight(line.getWidth()*3/5);
+        name.setBounds(line.reduced(gap));
+        field(masterSteps,masterCountLabel,grid.removeFromLeft(grid.getWidth()/3));
+        button(applyMaster,grid,84);
+        masterDivision.setBounds(grid.reduced(gap));
         line=a.removeFromTop(h);
-        add.setBounds(line.removeFromLeft(line.getWidth()/6).reduced(gap));remove.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));
-        advanced.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));harmonyButton.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));variationButton.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));status.setBounds(line.reduced(gap));
-        auto controls=a.removeFromBottom(h+caption);
-        hardware.setBounds(controls.removeFromRight(controls.getWidth()/3).reduced(gap));
-        field(intensity,intensityLabel,controls.removeFromLeft(controls.getWidth()/2));field(density,densityLabel,controls);
-        auto bottom=a.removeFromBottom((h+caption)*4);
-        line=bottom.removeFromTop(h+caption);
-        track.setBounds(line.removeFromLeft(line.getWidth()*2/7).reduced(gap));
-        field(pitch,pitchLabel,line.removeFromLeft(line.getWidth()/7));field(channel,channelLabel,line.removeFromLeft(line.getWidth()/6));
-        mute.setBounds(line.removeFromLeft(line.getWidth()/5).reduced(gap));solo.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));
-        mode.setBounds(line.reduced(gap));
-        line=bottom.removeFromTop(h+caption);
-        field(division,divisionLabel,line.removeFromLeft(line.getWidth()/6));field(numerator,numeratorLabel,line.removeFromLeft(line.getWidth()/5));
-        denominator.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));field(bars,barsLabel,line.removeFromLeft(line.getWidth()/3));
-        applyRow.setBounds(line.reduced(gap));
-        line=bottom.removeFromTop(h+caption);
-        pitchMode.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));
-        field(interval,intervalLabel,line.removeFromLeft(line.getWidth()/3));field(densityThreshold,thresholdLabel,line.removeFromLeft(line.getWidth()/2));field(repeatCount,repeatLabel,line);
-        line=bottom.removeFromTop(h+caption);
-        field(cell,cellLabel,line.removeFromLeft(line.getWidth()/6));field(velocity,velocityLabel,line.removeFromLeft(line.getWidth()/5));
-        field(gate,gateLabel,line.removeFromLeft(line.getWidth()/4));accent.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
-        enabled.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));applyCell.setBounds(line.reduced(gap));
-        auto side=a.removeFromRight(juce::jmin(a.getWidth()/4,appearance.span(116)));
-        const int utilityHeight=juce::jmin(h+gap,side.getHeight()/5);
-        for(auto* b:{&power,&mixer,&effects,&stage,&print})b->setBounds(side.removeFromTop(utilityHeight).reduced(gap));
+        button(power,line,114);button(add,line,128);button(remove,line,82);
+        button(harmonyButton,line,104);button(variationButton,line,104);
+        print.setBounds(line.reduced(gap));
+        guide.setBounds(a.removeFromTop(caption+gap).reduced(gap,0));
+        status.setBounds(a.removeFromBottom(h).reduced(gap,0));
+        auto conductingArea=a.removeFromBottom(h+caption);
+        field(repeatCount,repeatLabel,conductingArea.removeFromRight(conductingArea.getWidth()/7));
+        hardware.setBounds(conductingArea.removeFromRight(conductingArea.getWidth()/3).reduced(gap));
+        field(intensity,intensityLabel,conductingArea.removeFromLeft(conductingArea.getWidth()/2));
+        field(density,densityLabel,conductingArea);
+        // One inspector page at a time. Keep the matrix visible on laptop screens.
+        for(auto* c:std::initializer_list<Component*>{&track,&pitch,&pitchLabel,&channel,&channelLabel,&mute,&solo,&mode,&division,&divisionLabel,&numerator,&numeratorLabel,&denominator,&bars,&barsLabel,&pitchMode,&applyRow})
+            c->setVisible(showRowSettings);
+        for(auto* c:std::initializer_list<Component*>{&cell,&cellLabel,&velocity,&velocityLabel,&gate,&gateLabel,&accent,&enabled,&interval,&intervalLabel,&densityThreshold,&thresholdLabel,&applyCell,&advanced})
+            c->setVisible(!showRowSettings);
+        auto details=a.removeFromBottom((h+caption)*2+h);
+        line=details.removeFromTop(h);
+        button(rowPage,line,116);button(stepPage,line,116);
+        rowPage.setToggleState(showRowSettings,dontSendNotification);
+        stepPage.setToggleState(!showRowSettings,dontSendNotification);
+        button(mixer,line,66);button(effects,line,70);button(stage,line,60);preview.setBounds(line.reduced(gap));
+        line=details.removeFromTop(h+caption);
+        if(showRowSettings)
+        {
+            track.setBounds(line.removeFromLeft(line.getWidth()*3/10).reduced(gap));
+            field(pitch,pitchLabel,line.removeFromLeft(line.getWidth()/5));
+            field(channel,channelLabel,line.removeFromLeft(line.getWidth()/5));
+            mute.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));
+            solo.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
+            pitchMode.setBounds(line.reduced(gap));
+            line=details.removeFromTop(h+caption);
+            mode.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));
+            field(division,divisionLabel,line.removeFromLeft(line.getWidth()/5));
+            field(numerator,numeratorLabel,line.removeFromLeft(line.getWidth()/4));
+            denominator.setBounds(line.removeFromLeft(line.getWidth()/4).reduced(gap));
+            field(bars,barsLabel,line.removeFromLeft(line.getWidth()/3));
+            applyRow.setBounds(line.reduced(gap));
+        }
+        else
+        {
+            field(cell,cellLabel,line.removeFromLeft(line.getWidth()/7));
+            field(velocity,velocityLabel,line.removeFromLeft(line.getWidth()/5));
+            field(gate,gateLabel,line.removeFromLeft(line.getWidth()/4));
+            accent.setBounds(line.removeFromLeft(line.getWidth()/3).reduced(gap));
+            enabled.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));
+            applyCell.setBounds(line.reduced(gap));
+            line=details.removeFromTop(h+caption);
+            field(interval,intervalLabel,line.removeFromLeft(line.getWidth()/4));
+            field(densityThreshold,thresholdLabel,line.removeFromLeft(line.getWidth()/3));
+            advanced.setBounds(line.reduced(gap));
+        }
         viewport.setBounds(a.reduced(gap));
         matrix.setSize(matrix.preferredWidth(viewport.getWidth()),matrix.preferredHeight());
     }
@@ -188,16 +223,25 @@ public:
     bool verifyEditor()
     {
         setContext({},{{"taiko","Taiko"},{"claves","Claves"}},true);
-        Pattern stored;
-        write=[&](const Pattern& old,const Pattern& next){if(old!=stored)return false;stored=next;return true;};
+        Pattern stored;int writes=0;
+        write=[&](const Pattern& old,const Pattern& next){if(old!=stored)return false;stored=next;++writes;return true;};
         add.onClick();
         if(stored.rows.size()!=2||selected!=stored.rows.back().id)return false;
-        track.setSelectedId(3,juce::dontSendNotification);pitch.setText("36",false);
+        if(!assignTrack(selected,"taiko")||stored.rows[1].trackId!="taiko"||assignTrack(selected,"unknown"))return false;
+        const int beforeStroke=writes;
+        matrix.beginStroke(1,0);matrix.paintAt(1,2);
+        if(writes!=beforeStroke||!matrix.finishStroke()||writes!=beforeStroke+1)return false;
+        for(size_t i=0;i<3;++i)if(!stored.rows[1].steps[i].enabled)return false;
+        matrix.beginStroke(1,0);matrix.paintAt(1,2);
+        if(!matrix.finishStroke()||writes!=beforeStroke+2)return false;
+        for(size_t i=0;i<3;++i)if(stored.rows[1].steps[i].enabled)return false;
+        gate.setText("75.1",false);int parsedGate=0;if(!readGate(gate,parsedGate)||parsedGate!=751)return false;
+        track.setSelectedId(3,juce::dontSendNotification);pitch.setText("C2",false);
         mode.setSelectedId(2,juce::dontSendNotification);division.setText("5",false);applyRow.onClick();
         if(stored.rows[1].trackId!="claves"||stored.rows[1].steps.size()!=5||stored.rows[1].pitch!=36)return false;
-        select(selected,4);velocity.setText("111",false);gate.setText("500",false);accent.setToggleState(true,juce::dontSendNotification);
+        select(selected,4);velocity.setText("111",false);gate.setText("50",false);accent.setToggleState(true,juce::dontSendNotification);
         enabled.setToggleState(true,juce::dontSendNotification);applyCell.onClick();
-        if(!stored.rows[1].steps[4].enabled||!stored.rows[1].steps[4].accent||stored.rows[1].steps[4].velocity!=111)return false;
+        if(!stored.rows[1].steps[4].enabled||!stored.rows[1].steps[4].accent||stored.rows[1].steps[4].velocity!=111||stored.rows[1].steps[4].gate!=500)return false;
         pitchMode.setSelectedId(2,juce::dontSendNotification);applyRow.onClick();
         interval.setText("-5",false);densityThreshold.setText("80",false);applyCell.onClick();
         if(stored.rows[1].pitchMode!=PitchMode::intervals||stored.rows[1].steps[4].interval!=-5||stored.rows[1].steps[4].densityThreshold!=80)return false;
@@ -224,33 +268,35 @@ private:
     Pattern pattern;
     std::vector<TrackChoice> tracks;
     std::string payload;
-    bool healthy=true,writable=false,hasContext=false,auditioning=false;
+    bool healthy=true,writable=false,hasContext=false,auditioning=false,showRowSettings=false;
     std::uint32_t selected=1;
     size_t selectedCell=0;
     juce::TextEditor name,masterSteps,pitch,channel,division,numerator,bars,cell,velocity,gate;
     juce::ComboBox masterDivision,track,mode,denominator,pitchMode;
     juce::TextEditor interval,repeatCount,densityThreshold;
-    juce::TextButton advanced{"Step details…"},harmonyButton{"Harmony…"},variationButton{"Variations…"},libraryButton{"Library…"};
+    juce::TextButton rowPage{"Instrument settings"},stepPage{"Step settings"};
+    juce::Label guide;
+    juce::TextButton advanced{"Step details..."},harmonyButton{"Harmony..."},variationButton{"Variations..."},libraryButton{"Library..."};
     std::unique_ptr<juce::FileChooser> libraryChooser;
     bool libraryChooserOpen=false;
     juce::Slider intensity,density;
     juce::TextButton hardware{"MIDI input: Off"};
-    juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","CC1 · Intensity"},densityLabel{"","CC11 · Density"};
+    juce::Label thresholdLabel{"","Density tier"},intensityLabel{"","Intensity"},densityLabel{"","Density"};
     juce::Label intervalLabel{"","Semitones"},repeatLabel{"","Repeats"};
-    juce::TextButton applyMaster{"Set grid"},add{"+ Row"},remove{"− Row"},applyRow{"Apply row"},applyCell{"Apply step"},
-        preview{"Check pattern"},mixer{"Mixer"},stage{"Stage"},effects{"Effects"},print{"Print MIDI"},power{"Audition"};
+    juce::TextButton applyMaster{"Set grid"},add{"+ Instrument"},remove{"Remove row"},applyRow{"Apply row"},applyCell{"Apply step"},
+        preview{"Check pattern"},mixer{"Mixer"},stage{"Stage"},effects{"Effects"},print{"Print MIDI"},power{"Play pattern"};
     juce::ToggleButton mute{"Mute"},solo{"Solo"},accent{"Accent"},enabled{"Active"};
-    juce::Label status,masterCountLabel{"","Grid steps"},pitchLabel{"","MIDI note"},channelLabel{"","Channel"},divisionLabel{"","Divisions"},numeratorLabel{"","Meter"},barsLabel{"","Bars"},cellLabel{"","Step"},velocityLabel{"","Velocity"},gateLabel{"","Gate / 1000"};
+    juce::Label status,masterCountLabel{"","Steps"},pitchLabel{"","Note"},channelLabel{"","Channel"},divisionLabel{"","Divisions"},numeratorLabel{"","Meter"},barsLabel{"","Bars"},cellLabel{"","Step"},velocityLabel{"","Velocity"},gateLabel{"","Length %"};
     juce::Viewport viewport;
 
     class Matrix final : public juce::Component
     {
     public:
         explicit Matrix(MatrixEditor& o):owner(o){setWantsKeyboardFocus(true);}
-        int rowHeight()const{return appearance.control(34);}
+        int rowHeight()const{return appearance.control(40);}
         int headerHeight()const{return appearance.control(28);}
-        int left()const{return appearance.span(180);}
-        int right()const{return appearance.span(90);}
+        int left()const{return appearance.span(196);}
+        int right()const{return appearance.span(64);}
         Tick span()const
         {
             Tick span=owner.pattern.duration();
@@ -259,7 +305,7 @@ private:
         }
         int preferredWidth(int available)const
         {
-            double width=std::max(360,available-left()-right());
+            double width=std::max(280,available-left()-right());
             for(const auto& r:owner.pattern.rows)
                 width=std::max(width,double(appearance.span(22))*r.steps.size()*double(span())/double(owner.pattern.rowCycle(r)));
             return left()+right()+int(std::min(16384.0,width));
@@ -278,49 +324,64 @@ private:
             using namespace juce;
             g.fillAll(colours::panel);g.setFont(uiFont(12));g.setColour(colours::text);
             const int h=headerHeight(),rh=rowHeight(),l=left(),r=right();
+            const auto& visiblePattern=stroke&&strokeBase==owner.pattern?*stroke:owner.pattern;
             const int noteWidth=appearance.span(52);
-            g.drawFittedText("Track",Rectangle<int>(4,0,l-noteWidth-8,h),Justification::centredLeft,1);
+            g.drawFittedText("Instrument / assign",Rectangle<int>(4,0,l-noteWidth-8,h),Justification::centredLeft,1);
             g.drawFittedText("Note",Rectangle<int>(l-noteWidth,0,noteWidth,h),Justification::centred,1);
-            g.drawFittedText("Pattern matrix — first cycle",Rectangle<int>(l+4,0,getWidth()-l-r-8,h),Justification::centredLeft,1);
+            // Quarter-note divisions, not a claimed project time signature.
+            const Tick beatCount=(span()+ticksPerQuarter-1)/ticksPerQuarter;
+            for(Tick beat=0;beat<beatCount;++beat)
+            {
+                const int x=xFor(beat*ticksPerQuarter),end=xFor(std::min(span(),(beat+1)*ticksPerQuarter));
+                if(end-x>=appearance.span(24))
+                    g.drawFittedText("Beat "+String(int(beat+1)),Rectangle<int>(x+2,0,end-x-4,h),Justification::centredLeft,1);
+            }
             g.drawFittedText("Division",Rectangle<int>(getWidth()-r,0,r,h),Justification::centred,1);
             for(size_t i=0;i<owner.pattern.rows.size();++i)
             {
-                const auto& row=owner.pattern.rows[i];const int y=h+int(i)*rh;
+                const auto& row=visiblePattern.rows[i];const int y=h+int(i)*rh;
                 g.setColour(row.id==owner.selected?colours::selected:colours::control);
                 g.fillRect(0,y,l-2,rh-1);
                 g.setColour(colours::text);
                 auto text=String((int)i+1)+"  "+(row.trackId.empty()?String::fromUTF8(row.name.c_str())+" (unassigned)":owner.trackName(row.trackId));
                 if(row.mute)text+=" M";
                 if(row.solo)text+=" S";
-                g.drawFittedText(text,Rectangle<int>(4,y,l-noteWidth-8,rh),Justification::centredLeft,1);
+                g.drawFittedText(text,Rectangle<int>(4,y+2,l-noteWidth-8,rh/2),Justification::centredLeft,1);
+                g.setColour(colours::secondary);g.setFont(uiFont(10));
+                g.drawFittedText(row.trackId.empty()?"Click to assign":"Click to change",Rectangle<int>(4,y+rh/2,l-noteWidth-8,rh/2-2),Justification::centredLeft,1);
+                g.setFont(uiFont(12));g.setColour(colours::text);
                 g.drawFittedText(MidiMessage::getMidiNoteName(row.pitch,true,true,4),Rectangle<int>(l-noteWidth,y,noteWidth-2,rh),Justification::centred,1);
                 for(size_t j=0;j<row.steps.size();++j)
                 {
                     const auto& step=row.steps[j];const int x=xFor(owner.pattern.rowBoundary(row,j)),end=xFor(owner.pattern.rowBoundary(row,j+1));
                     auto rect=Rectangle<int>(x,y,end-x,rh).reduced(1);
                     if(rect.isEmpty())continue;
-                    g.setColour(step.enabled?(step.accent?colours::record:colours::action):colours::well);
+                    const auto fill=step.enabled?(step.accent?colours::record:colours::action):colours::well;
+                    const auto ink=fill.contrasting();g.setColour(fill);
                     g.fillRoundedRectangle(rect.toFloat(),2);
                     if(step.enabled)
                     {
-                        g.setColour(colours::text.withAlpha(.65f));auto bar=rect.reduced(2).removeFromBottom(3);
+                        g.setColour(ink.withAlpha(.65f));auto bar=rect.reduced(2).removeFromBottom(3);
                         bar.setWidth(int(bar.getWidth()*step.gate/1000.0));g.fillRect(bar);
                     }
-                    if(step.enabled&&step.densityThreshold>0){g.setColour(colours::text.withAlpha(.8f));g.fillEllipse(float(rect.getX()+2),float(rect.getY()+2),4.f,4.f);}
+                    if(step.enabled&&step.densityThreshold>0){g.setColour(ink.withAlpha(.8f));g.fillEllipse(float(rect.getX()+2),float(rect.getY()+2),4.f,4.f);}
                     if(step.enabled&&(step.sustainCells>1||step.strikes>1||step.offset||step.chance<100||!step.articulation.empty()))
-                    {g.setColour(colours::text.withAlpha(.85f));g.fillRect(rect.getRight()-5,rect.getY()+2,3,3);}
+                    {g.setColour(ink.withAlpha(.85f));g.fillRect(rect.getRight()-5,rect.getY()+2,3,3);}
 
                     if(row.id==owner.selected&&j==owner.selectedCell){g.setColour(colours::focus);g.drawRect(rect,2);}
                     if(rect.getWidth()>=appearance.span(19))
-                    {g.setColour(colours::text);auto label=row.pitchMode==PitchMode::fixed?String(j+1):int(row.pitchMode)>=5?String(int(j)+step.interval):String(step.interval);if(step.enabled&&step.variationMask!=15){label+="\n";for(int k=0;k<5;++k)if(step.variationMask&(1u<<k))label+=String::charToString("ABCDF"[k]);}g.drawFittedText(label,rect,Justification::centred,2);}
+                    {g.setColour(ink);auto label=row.pitchMode==PitchMode::fixed?String(j+1):int(row.pitchMode)>=5?String(int(j)+step.interval):String(step.interval);if(step.enabled&&step.variationMask!=15){label+="\n";for(int k=0;k<5;++k)if(step.variationMask&(1u<<k))label+=String::charToString("ABCDF"[k]);}g.drawFittedText(label,rect,Justification::centred,2);}
                 }
                 g.setColour(colours::text);
                 String detail=String(row.steps.size());
-                if(row.timing==TimingMode::independentCycle)detail+=" · "+String(row.numerator)+"/"+String(row.denominator);
-                else if(row.timing==TimingMode::followGrid)detail+=" · grid";
+                if(row.timing==TimingMode::independentCycle)detail+="  /  "+String(row.numerator)+"/"+String(row.denominator);
+                else if(row.timing==TimingMode::followGrid)detail+="  /  grid";
                 g.drawFittedText(detail,Rectangle<int>(getWidth()-r,y,r,rh),Justification::centred,2);
                 g.setColour(colours::divider);g.drawHorizontalLine(y+rh-1,0,float(getWidth()));
             }
+            g.setColour(colours::divider.withAlpha(.9f));
+            for(Tick t=ticksPerQuarter;t<span();t+=ticksPerQuarter)
+                g.drawVerticalLine(xFor(t),0,float(getHeight()));
             g.setColour(colours::focus.withAlpha(.7f));g.drawVerticalLine(xFor(owner.pattern.duration()),float(h),float(getHeight()));
         }
         void mouseDown(const juce::MouseEvent& e)override
@@ -329,7 +390,47 @@ private:
             const auto index=size_t(y/rowHeight());if(index>=owner.pattern.rows.size())return;
             const auto id=owner.pattern.rows[index].id;const int hit=cellAt(e.x,index);
             grabKeyboardFocus();owner.select(id,hit>=0?size_t(hit):0);
-            if(hit>=0&&e.mods.isPopupMenu())owner.editAdvanced();else if(hit>=0)owner.toggle(id,size_t(hit));
+            if(hit<0)
+            {
+                owner.showRowSettings=true;owner.resized();
+                if(e.x<left()-appearance.span(52))owner.chooseRowTrack(id,this);
+                return;
+            }
+            owner.showRowSettings=false;owner.resized();
+            if(e.mods.isPopupMenu()){owner.editAdvanced();return;}
+            if(e.mods.isShiftDown()||!owner.writable||owner.auditioning)return;
+            beginStroke(index,size_t(hit));
+        }
+        void mouseDrag(const juce::MouseEvent& e)override{if(stroke)paintCell(e);}
+        void mouseUp(const juce::MouseEvent&)override{finishStroke();}
+        void beginStroke(size_t index,size_t hit)
+        {
+            if(!owner.writable||owner.auditioning||index>=owner.pattern.rows.size()||hit>=owner.pattern.rows[index].steps.size())return;
+            strokeBase=owner.pattern;stroke=strokeBase;
+            paintOn=!stroke->rows[index].steps[hit].enabled;
+            lastRow=index;lastCell=hit;paintAt(index,hit);
+        }
+        bool finishStroke()
+        {
+            if(!stroke)return false;
+            auto next=std::move(*stroke);stroke.reset();
+            const bool changed=owner.pattern==strokeBase&&next!=strokeBase&&owner.commit(std::move(next));
+            repaint();return changed;
+        }
+        void paintAt(size_t index,size_t hit)
+        {
+            if(!stroke||owner.pattern!=strokeBase||!owner.writable||owner.auditioning||index>=stroke->rows.size()||hit>=stroke->rows[index].steps.size())return;
+            auto& steps=stroke->rows[index].steps;
+            const auto first=lastRow==index?std::min(lastCell,hit):hit;
+            const auto last=lastRow==index?std::max(lastCell,hit):hit;
+            for(size_t j=first;j<=last;++j)steps[j].enabled=paintOn;
+            lastRow=index;lastCell=hit;repaint();
+        }
+        void paintCell(const juce::MouseEvent& e)
+        {
+            const int y=e.y-headerHeight();if(y<0)return;
+            const auto index=size_t(y/rowHeight());const int hit=cellAt(e.x,index);
+            if(hit>=0)paintAt(index,size_t(hit));
         }
         bool keyPressed(const juce::KeyPress& k)override
         {
@@ -342,6 +443,10 @@ private:
             return false;
         }
     private:MatrixEditor& owner;
+        std::optional<Pattern> stroke;
+        Pattern strokeBase;
+        bool paintOn=true;
+        size_t lastRow=0,lastCell=0;
     } matrix;
 
     Row* row(){for(auto& r:pattern.rows)if(r.id==selected)return &r;return nullptr;}
@@ -350,6 +455,57 @@ private:
         if(id.empty())return "Unassigned";
         for(const auto& t:tracks)if(t.id==id)return juce::String::fromUTF8(t.name.c_str());
         return "Missing track";
+    }
+    void chooseRowTrack(std::uint32_t id,juce::Component* anchor)
+    {
+        using namespace juce;
+        if(!writable||auditioning)return;
+        const auto snapshot=pattern;
+        const Component::SafePointer<MatrixEditor> safe(this);
+        PopupMenu menu;
+        auto addChoice=[&](String label,std::string target)
+        {
+            const auto* r=row();const bool checked=r&&r->trackId==target;
+            menu.addItem(label,true,checked,[safe,snapshot,id,target]
+            {
+                if(!safe||safe->pattern!=snapshot||!safe->writable||safe->auditioning)return;
+                safe->assignTrack(id,target);
+            });
+        };
+        addChoice("Unassigned",{});
+        for(const auto& t:tracks)addChoice(String::fromUTF8(t.name.c_str()),t.id);
+        if(tracks.empty())menu.addItem("Create an instrument track in Studio first",false,false,[]{});
+        const auto pos=juce::Desktop::getMousePosition();
+        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor).withTargetScreenArea(juce::Rectangle<int>(pos.x,pos.y,1,1)));
+    }
+    bool assignTrack(std::uint32_t id,const std::string& target)
+    {
+        if(!target.empty()&&std::none_of(tracks.begin(),tracks.end(),[&](const auto& t){return t.id==target;}))return false;
+        auto p=pattern;for(auto& r:p.rows)if(r.id==id){r.trackId=target;return p==pattern||commit(std::move(p));}
+        return false;
+    }
+    void changeStepFlag(bool isAccent,bool value)
+    {
+        auto p=pattern;for(auto& r:p.rows)if(r.id==selected&&selectedCell<r.steps.size())
+        {auto& step=r.steps[selectedCell];if(isAccent)step.accent=value;else step.enabled=value;commit(std::move(p));return;}
+    }
+    static bool readPitch(const juce::TextEditor& e,int& value)
+    {
+        if(read(e,0,127,value))return true;
+        const auto t=e.getText().trim();
+        for(int n=0;n<128;++n)
+            if(t.equalsIgnoreCase(juce::MidiMessage::getMidiNoteName(n,true,true,4))||t.equalsIgnoreCase(juce::MidiMessage::getMidiNoteName(n,false,true,4)))
+            {value=n;return true;}
+        return false;
+    }
+    static bool readGate(const juce::TextEditor& e,int& value)
+    {
+        const auto t=e.getText().trim();
+        if(t.isEmpty()||!t.containsOnly("0123456789.")||t=="."||t.indexOfChar('.')!=t.lastIndexOfChar('.'))return false;
+        const int dot=t.indexOfChar('.');
+        if(dot>=0&&t.length()-dot-1>1)return false;
+        value=juce::roundToInt(t.getDoubleValue()*10.0);
+        return value>=1&&value<=1000;
     }
     void say(const juce::String& s){status.setText(s,juce::dontSendNotification);status.setTooltip(s);}
     static void set(juce::TextEditor& e,int n){e.setText(juce::String(n),false);}
@@ -379,14 +535,14 @@ private:
         {
             pitchMode.setSelectedId(int(r->pitchMode)+1,dontSendNotification);
             updatePitchCaption();
-            set(pitch,r->pitch);set(channel,r->channel);set(division,(int)r->steps.size());
+            pitch.setText(MidiMessage::getMidiNoteName(r->pitch,true,true,4),false);set(channel,r->channel);set(division,(int)r->steps.size());
             mode.setSelectedId(int(r->timing)+1,dontSendNotification);set(numerator,r->numerator);
             denominator.setSelectedId(r->denominator,dontSendNotification);set(bars,r->bars);
             mute.setToggleState(r->mute,dontSendNotification);solo.setToggleState(r->solo,dontSendNotification);
-            auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);set(gate,s.gate);set(interval,s.interval);set(densityThreshold,s.densityThreshold);
+            auto& s=r->steps[selectedCell];set(cell,int(selectedCell+1));set(velocity,s.velocity);gate.setText(String(s.gate/10.0, s.gate%10?1:0),false);set(interval,s.interval);set(densityThreshold,s.densityThreshold);
             accent.setToggleState(s.accent,dontSendNotification);enabled.setToggleState(s.enabled,dontSendNotification);
         }
-        variationButton.setTooltip("Sequence: "+String::fromUTF8(pattern.variations.sequence.c_str())+" — click to edit variations, fills and evolution.");
+        variationButton.setTooltip("Sequence: "+String::fromUTF8(pattern.variations.sequence.c_str())+" - click to edit variations, fills and evolution.");
         if(!auditioning)reflectHarmony(pattern.harmony);
         updateTimingFields();
     }
@@ -419,11 +575,11 @@ private:
     }
     bool commit(Pattern p)
     {
-        if(auditioning||!writable||!p.valid()||!write||!write(pattern,p)){say("Pattern edit refused — project changed, locked, or invalid.");return false;}
+        if(auditioning||!writable||!p.valid()||!write||!write(pattern,p)){say("Pattern edit refused - project changed, locked, or invalid.");return false;}
         pattern=std::move(p);payload=encode(pattern);
         if(!row())selected=pattern.rows.front().id;
         selectedCell=std::min(selectedCell,row()->steps.size()-1);
-        refreshFields();updateEnabled();resized();matrix.repaint();say("Pattern updated — save project to keep it.");return true;
+        refreshFields();updateEnabled();resized();matrix.repaint();say("Pattern updated - save project to keep it.");return true;
     }
     void toggle(std::uint32_t id,size_t index)
     {
@@ -441,7 +597,7 @@ private:
     {
         auto p=pattern;int n=4,d=4,b=1,count=p.stepCount,pitchValue=0,ch=0;
         const int choice=mode.getSelectedId();
-        if(choice<1||choice>3||!read(pitch,0,127,pitchValue)||!read(channel,1,16,ch)
+        if(choice<1||choice>3||!readPitch(pitch,pitchValue)||!read(channel,1,16,ch)
             ||(choice!=1&&!read(division,1,maxSteps,count))
             ||(choice==3&&(!read(numerator,1,32,n)||!read(bars,1,16,b))))
         {say("Invalid row fields.");return;}
@@ -460,10 +616,10 @@ private:
         auto p=pattern;int c=0,v=0,g=0;
         for(auto& r:p.rows)if(r.id==selected)
         {
-            if(!read(cell,1,(int)r.steps.size(),c)||!read(velocity,1,127,v)||!read(gate,1,1000,g)){say("Invalid cell, velocity or gate.");return;}
+            if(!read(cell,1,(int)r.steps.size(),c)||!read(velocity,1,127,v)||!readGate(gate,g)){say("Invalid cell, velocity or gate.");return;}
             auto text=interval.getText();auto digits=text.startsWithChar('-')?text.substring(1):text;
             if(digits.isEmpty()||!digits.containsOnly("0123456789")||text.getIntValue()<-127||text.getIntValue()>127){say("Invalid semitone interval.");return;}
-            int tier=0;if(!read(densityThreshold,0,127,tier)){say("Density tier must be 0–127.");return;}
+            int tier=0;if(!read(densityThreshold,0,127,tier)){say("Density tier must be 0-127.");return;}
             auto& s=r.steps[size_t(c-1)];s.enabled=enabled.getToggleState();s.accent=accent.getToggleState();s.velocity=v;s.gate=g;s.interval=text.getIntValue();s.densityThreshold=tier;
             if(commit(std::move(p)))select(selected,size_t(c-1));return;
         }
@@ -525,7 +681,7 @@ private:
         const Component::SafePointer<MatrixEditor> safe(this);
         w->enterModalState(true,ModalCallbackFunction::create([safe,snapshot,next=std::move(next)](int result){
             if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
-            if(safe->commit(next)){safe->select(next.rows.front().id,0);safe->say("Pattern loaded — assign each role to a track.");}
+            if(safe->commit(next)){safe->select(next.rows.front().id,0);safe->say("Pattern loaded - assign each role to a track.");}
         }),true);
     }
     static bool writePresetFile(const juce::File& file,const Pattern& p)
@@ -570,7 +726,7 @@ private:
                 {safe->say("Use the .studioostinato extension.");return;}
                 if(!writePresetFile(file,portable))
                 {safe->say("Could not save pattern; check folder permissions.");return;}
-                safe->say("Portable pattern saved — routing and keyswitch IDs omitted.");
+                safe->say("Portable pattern saved - routing and keyswitch IDs omitted.");
             }
             else
             {
@@ -592,7 +748,7 @@ private:
         w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot,id](int result){
             if(result!=1||!safe||!safe->writable||safe->auditioning||safe->pattern!=snapshot)return;
             auto p=snapshot;auto role=w->getTextEditorContents("role").trim().toStdString();
-            if(!Pattern::textValid(role,80)){safe->say("Role must contain 1–80 UTF-8 bytes.");return;}
+            if(!Pattern::textValid(role,80)){safe->say("Role must contain 1-80 UTF-8 bytes.");return;}
             for(auto& r:p.rows)if(r.id==id){r.name=role;safe->commit(std::move(p));return;}
         }),true);
     }
@@ -619,10 +775,10 @@ private:
             factory.addSubMenu(String::fromUTF8(category.c_str()),group);first=i;
         }
         menu.addSubMenu("Factory patterns",factory);
-        menu.addItem("Open user pattern / import…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(false);});
-        menu.addItem("Save portable pattern as…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(true);});
+        menu.addItem("Open user pattern / import...",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(false);});
+        menu.addItem("Save portable pattern as...",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->choosePresetFile(true);});
         menu.addSeparator();
-        menu.addItem("Rename selected instrument role…",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->renameRole();});
+        menu.addItem("Rename selected instrument role...",true,false,[safe,snapshot]{if(safe&&safe->pattern==snapshot)safe->renameRole();});
         menu.addItem("Show user library folder",true,false,[safe]{
             if(!safe)return;auto folder=libraryFolder();
             if(folder.createDirectory().failed()){safe->say("Cannot create the library folder.");return;}
@@ -636,14 +792,14 @@ private:
         if(!writable||auditioning)return;
         const auto snapshot=pattern;
         const auto& v=pattern.variations;
-        auto* w=new AlertWindow("Variations and evolution","One letter per master cycle. Set step membership in Step details (A–D or F for additive fills). Humanization is repeatable with the same seed.",MessageBoxIconType::NoIcon,this);
-        w->addTextEditor("sequence",String::fromUTF8(v.sequence.c_str()),"Sequence (A–D, max 64)");
+        auto* w=new AlertWindow("Variations and evolution","One letter per master cycle. Set step membership in Step details (A-D or F for additive fills). Humanization is repeatable with the same seed.",MessageBoxIconType::NoIcon,this);
+        w->addTextEditor("sequence",String::fromUTF8(v.sequence.c_str()),"Sequence (A-D, max 64)");
         w->addTextEditor("fill",String(v.fillEvery),"Fill every N cycles (0 = off)");
-        w->addTextEditor("timing",String(v.timing),"Timing variation (0–200 / 1000 cell)");
-        w->addTextEditor("velocity",String(v.velocity),"Velocity variation (0–30)");
-        w->addTextEditor("seed",String(v.seed),"Random seed (0–999999)");
-        w->addTextEditor("first",String(v.densityStart),"Starting density ceiling (0–127)");
-        w->addTextEditor("last",String(v.densityEnd),"Ending density ceiling (0–127)");
+        w->addTextEditor("timing",String(v.timing),"Timing variation (0-200 / 1000 cell)");
+        w->addTextEditor("velocity",String(v.velocity),"Velocity variation (0-30)");
+        w->addTextEditor("seed",String(v.seed),"Random seed (0-999999)");
+        w->addTextEditor("first",String(v.densityStart),"Starting density ceiling (0-127)");
+        w->addTextEditor("last",String(v.densityEnd),"Ending density ceiling (0-127)");
         w->addButton("Apply",1,KeyPress(KeyPress::returnKey));w->addButton("Cancel",0,KeyPress(KeyPress::escapeKey));
         const Component::SafePointer<MatrixEditor> safe(this);
         w->enterModalState(true,ModalCallbackFunction::create([safe,w,snapshot](int result){
@@ -668,15 +824,15 @@ private:
         const auto snapshot=pattern;const auto id=selected;const auto index=selectedCell;
         const auto& step=row()->steps[index];
         auto choices=articulationChoices?articulationChoices(row()->trackId,row()->channel):std::vector<std::pair<std::string,std::string>>{};
-        StringArray names;names.add("Leave articulation unchanged");
+        StringArray names;names.add("No articulation");
         int current=0;
         for(size_t i=0;i<choices.size();++i){names.add(String::fromUTF8(choices[i].second.c_str()));if(choices[i].first==step.articulation)current=int(i)+1;}
         if(!step.articulation.empty()&&current==0){choices.push_back({step.articulation,"Missing mapping (retained)"});names.add("Missing mapping (retained)");current=names.size()-1;}
         auto* w=new AlertWindow("Step details","Sustain spans inactive following cells; repeated strikes require a one-cell span. Articulations use saved track mappings.",MessageBoxIconType::NoIcon,this);
-        w->addTextEditor("span",String(step.sustainCells),"Sustain cells (1–16)");
-        w->addTextEditor("strikes",String(step.strikes),"Strikes (1–8)");
-        w->addTextEditor("offset",String(step.offset),"Timing offset (−450 to +450 / 1000)");
-        w->addTextEditor("chance",String(step.chance),"Probability (0–100%)");
+        w->addTextEditor("span",String(step.sustainCells),"Sustain cells (1-16)");
+        w->addTextEditor("strikes",String(step.strikes),"Strikes (1-8)");
+        w->addTextEditor("offset",String(step.offset),"Timing offset (-450 to +450 / 1000)");
+        w->addTextEditor("chance",String(step.chance),"Probability (0-100%)");
         String membership;
         for(int i=0;i<5;++i)if(step.variationMask&(1u<<i))membership+=String::charToString("ABCDF"[i]);
         w->addTextEditor("variation",membership,"Variations (A B C D F, no spaces)");
@@ -699,7 +855,7 @@ private:
                 {safe->say("Invalid step details.");return;}
                 const auto letters=w->getTextEditorContents("variation").trim().toUpperCase().toStdString();
                 if(letters.empty()||letters.size()>5||letters.find_first_not_of("ABCDF")!=std::string::npos)
-                {safe->say("Use A–D and/or F for step membership.");return;}
+                {safe->say("Use A-D and/or F for step membership.");return;}
                 s.variationMask=0;
                 for(char letter:letters)s.variationMask|=1u<<(letter=='F'?4:letter-'A');
                 const int choice=w->getComboBoxComponent("art")->getSelectedItemIndex();
@@ -713,25 +869,25 @@ private:
     {
         std::vector<std::string> ids;for(const auto& t:tracks)ids.push_back(t.id);
         Render render;std::string error;
-        int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1–256 repeats.");return;}
+        int repeats=0;if(!read(repeatCount,1,maxRepeats,repeats)){say("Enter 1-256 repeats.");return;}
         if(!compile(pattern,ids,repeats,render,error)){say(juce::String::fromUTF8(error.c_str()));return;}
-        say(juce::String((int)render.notes.size())+" notes · "+juce::String(render.duration/double(ticksPerQuarter),2)+" beats · "+juce::String(render.unassignedRows)+" unassigned rows. No MIDI sent.");
+        say(juce::String((int)render.notes.size())+" notes  /  "+juce::String(render.duration/double(ticksPerQuarter),2)+" beats  /  "+juce::String(render.unassignedRows)+" unassigned rows. No MIDI sent.");
     }
 };
 
 class MatrixWindow final : public juce::DocumentWindow
 {
 public:
-    MatrixWindow():DocumentWindow("Studio — Ostinato Engine",colours::canvas,closeButton)
+    MatrixWindow():DocumentWindow("Studio - Ostinato Engine",colours::canvas,closeButton)
     {
-        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(640,520,1800,1100);
+        setUsingNativeTitleBar(true);setResizable(true,false);setResizeLimits(720,560,1800,1100);
         panel=new MatrixEditor;setContentOwned(panel,true);
         if(auto* display=juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         {
             const auto bounds=display->userBounds.toNearestInt();
-            centreWithSize(juce::jmin(980,bounds.getWidth()-30),juce::jmin(620,bounds.getHeight()-30));
+            centreWithSize(juce::jmin(1080,bounds.getWidth()-30),juce::jmin(690,bounds.getHeight()-30));
         }
-        else centreWithSize(980,560);
+        else centreWithSize(980,620);
     }
     std::function<void()> onClose;
     void closeButtonPressed()override{if(onClose)onClose();setVisible(false);}
