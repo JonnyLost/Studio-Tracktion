@@ -700,14 +700,27 @@ juce_add_binary_data(StudioSynthData
     HEADER_NAME StudioSynthData.h NAMESPACE StudioSynthData
     SOURCES SynthDSP/data/StudioSynthFactory.json)
 
-set(STUDIO_ICON_FILE "" CACHE FILEPATH "Approved 1024 x 1024 Studio icon PNG")
+set(STUDIO_ICON_FILE "" CACHE FILEPATH "Approved Studio icon PNG (normalized to 1024 x 1024)")
 set(studio_icon_args)
 if(APPLE)
     if(NOT STUDIO_ICON_FILE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/Studio.png")
         set(STUDIO_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/assets/Studio.png")
     endif()
     if(STUDIO_ICON_FILE)
-        list(APPEND studio_icon_args ICON_BIG "${STUDIO_ICON_FILE}")
+        # Preserve the approved artwork; normalize its size for JUCE's macOS icon generation.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${STUDIO_ICON_FILE}")
+        set(studio_icon_normalized "${CMAKE_CURRENT_BINARY_DIR}/StudioIcon/Studio.png")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/StudioIcon")
+        execute_process(
+            COMMAND /usr/bin/sips -s format png -z 1024 1024
+                "${STUDIO_ICON_FILE}" --out "${studio_icon_normalized}"
+            RESULT_VARIABLE studio_icon_result
+            ERROR_VARIABLE studio_icon_error
+            OUTPUT_QUIET)
+        if(NOT studio_icon_result EQUAL 0 OR NOT EXISTS "${studio_icon_normalized}")
+            message(FATAL_ERROR "Cannot prepare the approved Studio icon: ${studio_icon_error}")
+        endif()
+        list(APPEND studio_icon_args ICON_BIG "${studio_icon_normalized}")
     endif()
 endif()
 juce_add_gui_app(Studio

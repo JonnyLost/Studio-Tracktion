@@ -336,12 +336,9 @@ jobs:
         shell: bash
         run: |
           archive=Studio-0.2-Complete-Intel
-          if [[ -f assets/Studio.png ]]; then
-            export STUDIO_ICON_FILE=assets/Studio.png
-          else
-            archive=Studio-0.2-Complete-Intel-preview
-            echo "::warning::Approved Studio icon missing; preview only."
-          fi
+          test -s assets/Studio.png
+          test -s build/StudioIcon/Studio.png
+          export STUDIO_ICON_FILE="$PWD/build/StudioIcon/Studio.png"
           tools/package-intel-studio.sh build/Studio_artefacts/Release/Studio.app "$RUNNER_TEMP/$archive.zip"
           shasum -a 256 "$RUNNER_TEMP/$archive.zip" > "$RUNNER_TEMP/$archive.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
