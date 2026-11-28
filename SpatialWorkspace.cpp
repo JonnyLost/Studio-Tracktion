@@ -201,6 +201,7 @@ SpatialWorkspace::SpatialWorkspace()
     add (stageRoster, rosterTitle, trackList);
     add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, sourceOptions, stageStatus, stageSignal,
          directLevel, sourceWidth, sourceEarly);
+    sourceOptions.setButtonText ("Advanced source");
     directLevel.onChange = [this] { editSourceField (&stage::Source::directDb, directLevel.get()); };
     sourceWidth.onChange = [this] { editSourceField (&stage::Source::width, sourceWidth.get()); };
     sourceEarly.onChange = [this] { editSourceField (&stage::Source::early, sourceEarly.get()); };
@@ -247,7 +248,8 @@ SpatialWorkspace::SpatialWorkspace()
     micList.setTitle ("Virtual capsule");
     setups.setTitle ("Named microphone setup");
     patterns.setTitle ("Pickup pattern");
-    stereo.setTitle ("Stereo geometry preset");
+    stereo.setTitle ("Microphone array preset");
+    stereo.setTooltip ("Select an array, adjust spacing and angle, then place it. Existing microphones remain until removed.");
     for (auto* field : { &roomName, &micName, &setupName }) field->setInputRestrictions (64);
     roomName.setTitle ("Room name"); roomName.setTextToShowWhenEmpty ("Room name", colours::secondary);
     micName.setTitle ("Capsule name"); micName.setTextToShowWhenEmpty ("Capsule name", colours::secondary);
@@ -1935,6 +1937,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         else
         {
             toolbar (area, { { &stereo, 184 }, { &addStereo, 205 } });
+            fields (area, { &spacing, &pairAngle });
             mapAndInspector (micMap, [&] (Rectangle<int>& region, bool assign)
             {
                 const auto items = { ToolbarItem { &micList, 142 }, ToolbarItem { &micName, 133 }, ToolbarItem { &addMic, 76 },
@@ -1944,7 +1947,6 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
                 if (assign) layoutFields (region, { &micX, &micDepth, &micHeight, &azimuth, &elevation });
                 else region.removeFromTop (fieldRows (region.getWidth(), 5) * fieldHeight());
             });
-            fields (area, { &spacing, &pairAngle });
         }
         if (bounds)
         {
