@@ -571,15 +571,46 @@ void RoomGraphic::paint (Graphics& g)
     auto decay = predictDecay (value);
     for (auto& seconds : decay) seconds = std::clamp (seconds * value.shape.decay, .15f, 12.f);
     const float top = jmax (1.0f, *std::max_element (decay.begin(), decay.end()));
+    auto labels = chart.removeFromBottom (m.line (10, 3));
+    auto values = chart.removeFromTop (m.line (11, 2));
+    const auto plot = chart.toFloat().reduced (2.f, 2.f);
+    if (plot.isEmpty()) return;
+    g.setColour (colours::divider.withAlpha (.5f));
+    for (int i = 0; i <= 4; ++i)
+    {
+        const auto y = plot.getBottom() - plot.getHeight() * float (i) / 4.f;
+        g.drawHorizontalLine (roundToInt (y), plot.getX(), plot.getRight());
+    }
+    Path curve;
+    Path fill;
     for (size_t i = 0; i < decay.size(); ++i)
     {
-        auto col = chart.removeFromLeft (chart.getWidth() / (int) (decay.size() - i)).reduced (m.px (3), 0);
+        const auto colWidth = float (plot.getWidth()) / float (decay.size());
+        const auto x = plot.getX() + (float (i) + .5f) * colWidth;
+        const auto y = plot.getBottom() - plot.getHeight() * decay[i] / top;
+        if (i == 0) { curve.startNewSubPath (x, y); fill.startNewSubPath (x, plot.getBottom()); }
+        else curve.lineTo (x, y);
+        fill.lineTo (x, y);
+        if (i + 1 == decay.size()) fill.lineTo (x, plot.getBottom());
+        const auto column = [x, colWidth] (Rectangle<int> r)
+        {
+            return Rectangle<int> (roundToInt (x - colWidth / 2.f), r.getY(),
+                                   jmax (1, roundToInt (colWidth)), r.getHeight());
+        };
         g.setColour (colours::secondary);
-        g.drawFittedText (bandNames[i], col.removeFromBottom (m.line (10, 2)), Justification::centred, 1, 1.0f);
-        g.drawFittedText (String (decay[i], 1), col.removeFromTop (m.line (11, 1)), Justification::centred, 1, 1.0f);
-        g.setColour (colours::action.withAlpha (0.66f));
-        g.fillRect (col.withSizeKeepingCentre (jmax (1, col.getWidth() / 2), col.getHeight())
-                       .removeFromBottom (roundToInt ((float) col.getHeight() * decay[i] / top)));
+        g.drawFittedText (bandNames[i], column (labels), Justification::centred, 1);
+        g.drawFittedText (String (decay[i], 1), column (values), Justification::centred, 1);
+    }
+    fill.closeSubPath();
+    g.setColour (colours::action.withAlpha (.18f));
+    g.fillPath (fill);
+    g.setColour (colours::action);
+    g.strokePath (curve, PathStrokeType (1.7f));
+    for (size_t i = 0; i < decay.size(); ++i)
+    {
+        const auto x = plot.getX() + (float (i) + .5f) * plot.getWidth() / float (decay.size());
+        const auto y = plot.getBottom() - plot.getHeight() * decay[i] / top;
+        g.fillEllipse (Rectangle<float> (4.f, 4.f).withCentre ({ x, y }));
     }
 }
 }
