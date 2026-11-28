@@ -112,6 +112,10 @@ void SourcePlugin::initialise(const te::PluginInitialisationInfo& info)
     if(coherent&&active)accepted=seq;
     peakL.store(0);peakR.store(0);
 }
+void SourcePlugin::reset()
+{
+    dsp.reset();reflections.reset();peakL.store(0);peakR.store(0);
+}
 void SourcePlugin::deinitialise()
 {
     active=false;earlyReady.store(false);peakL.store(0);peakR.store(0);
