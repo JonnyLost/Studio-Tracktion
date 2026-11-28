@@ -1636,6 +1636,7 @@ public:
         style.refreshTheme();
         studio::retintStudioComponent(*this, previous);
         if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
+        if (spatialEffectWindow) { studio::retintStudioComponent (*spatialEffectWindow, previous); spatialEffectWindow->appearanceChanged(); }
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
         if(ostinatoWindow){studio::retintStudioComponent(*ostinatoWindow,previous);ostinatoWindow->setBackgroundColour(studio::colours::canvas);ostinatoWindow->editor().appearanceChanged();}
@@ -1687,6 +1688,7 @@ public:
         monitor.appearanceChanged();
         resources.appearanceChanged();
         spatialWorkspace.appearanceChanged();
+        if (spatialEffectWindow) spatialEffectWindow->appearanceChanged();
        #if JUCE_MAC
         seatingWorkspace.appearanceChanged();
        #endif
