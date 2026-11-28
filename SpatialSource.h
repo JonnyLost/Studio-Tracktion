@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "SpatialBinaural.h"
+#include "SpatialEarlyReflections.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -17,6 +18,7 @@ struct Parameters
     float distance=0, width=1, tiltDb=0, outputDb=0, amount=1;
     float air=1, distanceWidth=0, mono=0;
     binaural::Parameters direction{};
+    early::Settings reflections{};
 };
 inline float bounded(float v,float lo,float hi,float fallback) noexcept
 {
@@ -33,6 +35,7 @@ inline Parameters validate(Parameters p) noexcept
     p.distanceWidth=bounded(p.distanceWidth,0,1,0);
     p.mono=bounded(p.mono,0,1,0);
     p.direction=binaural::validate(p.direction);
+    p.reflections=early::validate(p.reflections);
     return p;
 }
 inline float gain(float db) noexcept {return std::pow(10.0f,db/20);}
@@ -114,14 +117,14 @@ public:
     static constexpr std::size_t allocatedBytes() noexcept {return 0;}
     static constexpr int latencySamples() noexcept {return 0;} // no buffered lookahead
     // In-place distinct stereo buffers. Invalid pointers/counts are no-op.
-    Peaks process(float* left,float* right,int frames) noexcept
+    Peaks process(float* left,float* right,int frames,early::Engine* reflections=nullptr) noexcept
     {
         Peaks peaks;
         if(!ready||!left||!right||left==right||frames<=0)return peaks;
         for(int i=0;i<frames;++i)
         {
             float l=clean(left[i]),r=clean(right[i]);
-            frame(l,r);
+            frame(l,r,reflections);
             left[i]=l;right[i]=r;
             peaks.left=std::max(peaks.left,std::abs(l));
             peaks.right=std::max(peaks.right,std::abs(r));
@@ -130,14 +133,14 @@ public:
     }
     // Explicit mono-to-stereo path. Input may alias exactly one output;
     // output arrays must be distinct, and partial overlap is not supported.
-    Peaks processMono(const float* input,float* left,float* right,int frames) noexcept
+    Peaks processMono(const float* input,float* left,float* right,int frames,early::Engine* reflections=nullptr) noexcept
     {
         Peaks peaks;
         if(!ready||!input||!left||!right||left==right||frames<=0)return peaks;
         for(int i=0;i<frames;++i)
         {
             float l=clean(input[i]),r=l;
-            frame(l,r);
+            frame(l,r,reflections);
             left[i]=l;right[i]=r;
             peaks.left=std::max(peaks.left,std::abs(l));
             peaks.right=std::max(peaks.right,std::abs(r));
@@ -187,7 +190,7 @@ private:
         // Unity tilt is explicitly transparent; the states remain warm.
         return (shaped+(current.tiltLow-1)*low+(current.tiltHigh-1)*(shaped-low))*current.level;
     }
-    void frame(float& l,float& r) noexcept
+    void frame(float& l,float& r,early::Engine* reflections) noexcept
     {
         advance();
         const float dryL=l,dryR=r,cross=.5f*(1-current.width);
@@ -195,7 +198,9 @@ private:
         const auto wl=current.width==0?inputMid:l+cross*(r-l);
         const auto wr=current.width==0?inputMid:r+cross*(l-r);
         float wetL=filter(wl,state[0]),wetR=filter(wr,state[1]);
+        const float reflectedInput=.5f*(wetL+wetR);
         direction.frame(wetL,wetR);
+        if(reflections)reflections->frame(reflectedInput,wetL,wetR);
         const auto blend=[this](float dry,float wet) noexcept
         {
             if(current.amount==0)return dry;

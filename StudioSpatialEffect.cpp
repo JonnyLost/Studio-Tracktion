@@ -18,19 +18,21 @@ ParameterValues valuesOf(SourceParameters raw) noexcept
 {
     const auto p=source::validate(raw);
     return {p.distance,p.width,p.tiltDb,p.outputDb,p.amount,p.air,p.distanceWidth,p.mono,
-            p.direction.angle,p.direction.timing,p.direction.level,p.direction.shadow,p.direction.focus};
+            p.direction.angle,p.direction.timing,p.direction.level,p.direction.shadow,p.direction.focus,
+            p.reflections.amount,p.reflections.room};
 }
 SourceParameters parametersOf(ParameterValues v) noexcept
 {
     SourceParameters p{v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7]};
     p.direction={v[8],v[9],v[10],v[11],v[12]};
+    p.reflections={v[13],v[14]};
     return source::validate(p);
 }
 String encodeSource(SourceParameters p)
 {
     std::ostringstream out;
     out.imbue(std::locale::classic());
-    out<<std::setprecision(std::numeric_limits<float>::max_digits10)<<"1";
+    out<<std::setprecision(std::numeric_limits<float>::max_digits10)<<"2";
     for(auto value:valuesOf(p))out<<' '<<value;
     return String(out.str());
 }
@@ -39,9 +41,10 @@ SourceParameters decodeSource(const String& text)
     if(text.isEmpty()||text.length()>512)return {};
     std::istringstream in(text.toStdString());in.imbue(std::locale::classic());
     int version=0;
-    if(!(in>>version)||version!=1)return {};
-    ParameterValues v{};
-    for(auto& value:v)if(!(in>>value)||!std::isfinite(value))return {};
+    if(!(in>>version)||(version!=1&&version!=2))return {};
+    auto v=valuesOf(SourceParameters{});
+    const size_t fields=version==1?13:v.size();
+    for(size_t i=0;i<fields;++i)if(!(in>>v[i])||!std::isfinite(v[i]))return {};
     in>>std::ws;
     if(!in.eof())return {};
     return parametersOf(v);
@@ -103,13 +106,19 @@ void SourcePlugin::initialise(const te::PluginInitialisationInfo& info)
     rate=info.sampleRate;accepted=1;
     ParameterValues v{};unsigned seq=0;
     const bool coherent=read(v,seq);
-    active=dsp.prepare(rate,coherent?parametersOf(v):SourceParameters{});
+    const auto p=coherent?parametersOf(v):SourceParameters{};
+    active=dsp.prepare(rate,p);
+    earlyReady.store(active&&reflections.prepare(rate,early::makePlan(rate,p.direction.angle,p.distance,p.reflections)));
     if(coherent&&active)accepted=seq;
     peakL.store(0);peakR.store(0);
 }
+void SourcePlugin::reset()
+{
+    dsp.reset();reflections.reset();peakL.store(0);peakR.store(0);
+}
 void SourcePlugin::deinitialise()
 {
-    active=false;peakL.store(0);peakR.store(0);
+    active=false;earlyReady.store(false);peakL.store(0);peakR.store(0);
 }
 source::Peaks SourcePlugin::peaks() const noexcept
 {
@@ -126,11 +135,20 @@ void SourcePlugin::applyToBuffer(const te::PluginRenderContext& c)
         ParameterValues v{};unsigned seq=0;
         // Rate-specific coefficient math only once per changed, coherent
         // block snapshot, not per sample. Bounded, no allocations or locks.
-        if(read(v,seq)&&seq!=accepted&&dsp.setPlan(source::makePlan(rate,parametersOf(v))))
-            accepted=seq;
+        if(read(v,seq)&&seq!=accepted)
+        {
+            const auto p=parametersOf(v);
+            if(dsp.setPlan(source::makePlan(rate,p)))
+            {
+                if(earlyReady.load(std::memory_order_relaxed))
+                    reflections.setPlan(early::makePlan(rate,p.direction.angle,p.distance,p.reflections));
+                accepted=seq;
+            }
+        }
     }
     const auto result=dsp.process(b->getWritePointer(0,c.bufferStartSample),
-                                  b->getWritePointer(1,c.bufferStartSample),c.bufferNumSamples);
+                                  b->getWritePointer(1,c.bufferStartSample),c.bufferNumSamples,
+                                  earlyReady.load(std::memory_order_relaxed)?&reflections:nullptr);
     const float fall=1.f/(1.f+float(c.bufferNumSamples)/float(.3*rate));
     peakL.store(std::max(result.left,fall*peakL.load(std::memory_order_relaxed)),std::memory_order_relaxed);
     peakR.store(std::max(result.right,fall*peakR.load(std::memory_order_relaxed)),std::memory_order_relaxed);
@@ -207,7 +225,7 @@ class SourceEditor final : public Component,private Timer
 public:
     explicit SourceEditor(SourceWindow::Resolve r):resolve(std::move(r))
     {
-        addAndMakeVisible(preset);preset.setTextWhenNothingSelected("Custom settings");
+        addAndMakeVisible(preset);preset.setName("Spatial preset");preset.setTextWhenNothingSelected("Custom settings");
         int id=1;for(const auto& p:sourcePresets())preset.addItem(p.name,id++);
         preset.onChange=[this]
         {
@@ -230,6 +248,18 @@ public:
         {
             edit([this](auto& p){p.mono=mono.getToggleState()?1.f:0.f;},"Spatial mono check");
         };
+        addAndMakeVisible(room);room.setName("Reflection room");
+        int roomId=1;for(const auto& r:early::rooms)room.addItem(r.name,roomId++);
+        room.setTooltip("Local early reflection geometry, not the shared Stage Room Return");
+        room.onChange=[this]{if(room.getSelectedId()>0)edit([this](auto& p){p.reflections.room=float(room.getSelectedId()-1);},"Reflection room");};
+        addAndMakeVisible(earlyLabel);earlyLabel.setText("Early reflections",dontSendNotification);
+        addAndMakeVisible(earlyAmount);earlyAmount.setName("Early reflections");
+        earlyAmount.setSliderStyle(Slider::LinearHorizontal);earlyAmount.setRange(0,100,1);
+        earlyAmount.setTextBoxStyle(Slider::TextBoxRight,false,78,23);earlyAmount.setTextValueSuffix(" %");
+        earlyAmount.setDoubleClickReturnValue(true,0);
+        earlyAmount.onDragStart=[this]{begin("Adjust early reflections");};
+        earlyAmount.onDragEnd=[this]{finish();};
+        earlyAmount.onValueChange=[this]{edit([this](auto& p){p.reflections.amount=float(earlyAmount.getValue())/100.f;},"Adjust early reflections");};
         addAndMakeVisible(pad);
         pad.begin=[this]{begin("Position source");};
         pad.end=[this]{finish();};
@@ -259,12 +289,12 @@ public:
                 },"Adjust "+String(controls[i].name));
             };
         }
-        setSize(720,530);appearanceChanged();refresh();startTimerHz(20);
+        setSize(720,565);appearanceChanged();refresh();startTimerHz(20);
     }
     void appearanceChanged()
     {
         for(auto& label:labels)label.setFont(uiFont(12.f));
-        status.setFont(uiFont(11.f));
+        status.setFont(uiFont(11.f));earlyLabel.setFont(uiFont(12.f));
         resized();repaint();
     }
     void paint(Graphics& g) override
@@ -283,6 +313,10 @@ public:
         bypass.setBounds(bar.removeFromRight(92).reduced(2));
         preset.setBounds(bar.reduced(2));
         status.setBounds(a.removeFromBottom(30));
+        auto reflectionsRow=a.removeFromBottom(32).reduced(3,2);
+        room.setBounds(reflectionsRow.removeFromRight(reflectionsRow.getWidth()/2).reduced(3,0));
+        earlyLabel.setBounds(reflectionsRow.removeFromLeft(jmin(appearance.span(126),reflectionsRow.getWidth()/2)));
+        earlyAmount.setBounds(reflectionsRow);
         pad.setBounds(a.removeFromTop(jlimit(105,185,a.getHeight()/2)));
         a.removeFromTop(5);
         const int height=jmax(26,a.getHeight()/6);
@@ -302,7 +336,7 @@ public:
 private:
     SourceWindow::Resolve resolve;
     ComboBox preset;TextButton reset{"Reset"};ToggleButton mono{"Mono check"},bypass{"Bypass"};
-    PositionPad pad;Label status;
+    PositionPad pad;Label status,earlyLabel;ComboBox room;Slider earlyAmount;
     std::array<Slider,12> sliders;
     std::array<Label,12> labels;
     bool gesture=false;
@@ -331,7 +365,7 @@ private:
         auto* p=resolve();
         const bool available=p!=nullptr;
         preset.setEnabled(available);reset.setEnabled(available);mono.setEnabled(available);bypass.setEnabled(available);
-        pad.setEnabled(available);
+        pad.setEnabled(available);room.setEnabled(available);earlyAmount.setEnabled(available);
         for(auto& slider:sliders)slider.setEnabled(available);
         if(!p)
         {
@@ -352,13 +386,16 @@ private:
             for(size_t i=0;i<sourcePresets().size();++i)
                 if(v==valuesOf(sourcePresets()[i].parameters))matched=int(i+1);
             preset.setSelectedId(matched,dontSendNotification);
+            room.setSelectedId(int(raw.reflections.room)+1,dontSendNotification);
+            if(!earlyAmount.hasKeyboardFocus(true))earlyAmount.setValue(raw.reflections.amount*100,dontSendNotification);
         }
         mono.setToggleState(raw.mono>=.5f,dontSendNotification);
         bypass.setToggleState(!p->isEnabled(),dontSendNotification);
         const auto peaks=p->peaks();
         const auto db=[](float gain){return String(Decibels::gainToDecibels(gain,-90.f),1);};
         status.setText(p->isEnabled() ? "Output  L "+db(peaks.left)+" dB   R "+db(peaks.right)
-                       +" dB  |  Perceptual distance; no room processing"
+                       +" dB  |  "+(raw.reflections.amount==0?String("Early reflections off"):
+                           p->reflectionsAvailable()?String("Local early reflections"):String("Reflections inactive / not prepared"))
                        : String("Bypassed | Settings retained"),dontSendNotification);
     }
 };
@@ -368,8 +405,8 @@ SourceWindow::SourceWindow(Resolve resolve)
 {
     setUsingNativeTitleBar(true);
     setContentOwned(new SourceEditor(std::move(resolve)),true);
-    setResizable(true,false);setResizeLimits(610,470,1400,900);
-    centreWithSize(720,530);setVisible(true);
+    setResizable(true,false);setResizeLimits(610,505,1400,900);
+    centreWithSize(720,565);setVisible(true);
 }
 void SourceWindow::appearanceChanged()
 {
