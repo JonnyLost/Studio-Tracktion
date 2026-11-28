@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "SpatialBinaural.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,6 +16,7 @@ struct Parameters
 {
     float distance=0, width=1, tiltDb=0, outputDb=0, amount=1;
     float air=1, distanceWidth=0, mono=0;
+    binaural::Parameters direction{};
 };
 inline float bounded(float v,float lo,float hi,float fallback) noexcept
 {
@@ -30,6 +32,7 @@ inline Parameters validate(Parameters p) noexcept
     p.air=bounded(p.air,0,1,1);
     p.distanceWidth=bounded(p.distanceWidth,0,1,0);
     p.mono=bounded(p.mono,0,1,0);
+    p.direction=binaural::validate(p.direction);
     return p;
 }
 inline float gain(float db) noexcept {return std::pow(10.0f,db/20);}
@@ -50,6 +53,7 @@ struct Plan
     float width=1, level=1, airPole=.2f, airMix=0, proximity=0;
     float proximityPole=.03f, tiltPole=.12f, tiltLow=1, tiltHigh=1;
     float output=1, amount=1, mono=0;
+    binaural::Plan direction{};
 };
 inline Plan makePlan(double rate,Parameters raw) noexcept
 {
@@ -72,6 +76,7 @@ inline Plan makePlan(double rate,Parameters raw) noexcept
     plan.tiltHigh=gain(p.tiltDb);
     plan.output=gain(p.outputDb);
     plan.amount=p.amount;plan.mono=p.mono;
+    plan.direction=binaural::makePlan(rate,p.direction);
     return plan;
 }
 struct Peaks {float left=0,right=0;};
@@ -82,7 +87,9 @@ public:
     bool prepare(double rate,Parameters p={}) noexcept
     {
         if(!supportedRate(rate))return false;
-        target=makePlan(rate,p);
+        const auto next=makePlan(rate,p);
+        if(!direction.prepare(rate,next.direction))return false;
+        target=next;
         smooth=coefficient(rate,1.0/(6.283185307179586*.015));
         ready=true;reset();
         return true;
@@ -97,11 +104,12 @@ public:
            !in(p.tiltPole,0,1)||!in(p.tiltLow,.5f-0.001f,2)||
            !in(p.tiltHigh,.5f-0.001f,2)||!in(p.output,.06f,4)||
            !in(p.amount,0,1)||!in(p.mono,0,1))return false;
+        if(!direction.setPlan(p.direction))return false;
         target=p;return true;
     }
     // Explicit reset snaps to the current target and clears filter histories.
     // Never reset on each process block.
-    void reset() noexcept {current=target;state={};}
+    void reset() noexcept {current=target;state={};direction.reset();}
     bool prepared() const noexcept {return ready;}
     static constexpr std::size_t allocatedBytes() noexcept {return 0;}
     static constexpr int latencySamples() noexcept {return 0;} // no buffered lookahead
@@ -140,6 +148,7 @@ private:
     struct Channel {float air1=0,air2=0,near=0,tilt=0;};
     Plan target,current;
     std::array<Channel,2> state{};
+    binaural::Engine direction;
     float smooth=.001f;
     bool ready=false;
     static bool in(float v,float lo,float hi) noexcept {return std::isfinite(v)&&v>=lo&&v<=hi;}
@@ -185,8 +194,10 @@ private:
         const float inputMid=.5f*(l+r);
         const auto wl=current.width==0?inputMid:l+cross*(r-l);
         const auto wr=current.width==0?inputMid:r+cross*(l-r);
-        l=(dryL+current.amount*(filter(wl,state[0])-dryL))*current.output;
-        r=(dryR+current.amount*(filter(wr,state[1])-dryR))*current.output;
+        float wetL=filter(wl,state[0]),wetR=filter(wr,state[1]);
+        direction.frame(wetL,wetR);
+        l=(dryL+current.amount*(wetL-dryL))*current.output;
+        r=(dryR+current.amount*(wetR-dryR))*current.output;
         const float mid=.5f*(l+r);
         if(current.mono==1){l=r=clean(mid);}
         else {l=clean(l+current.mono*(mid-l));r=clean(r+current.mono*(mid-r));}
