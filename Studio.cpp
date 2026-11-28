@@ -35,6 +35,7 @@ using namespace tracktion::literals;
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
 #include "StudioSpatialEffect.h"
+#include "StudioReverbEffect.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
@@ -648,6 +649,7 @@ public:
         workspaceBody.addChildComponent (articulation);
         workspaceBody.addChildComponent (spatialWorkspace);
         spatialWorkspace.onExpandStage = [this] { setDockMode (DockMode::split); };
+        spatialWorkspace.setFloatAction ([this] { showFloatingStage(); });
        #if JUCE_MAC
         addChildComponent (seatingWorkspace);
         spatialWorkspace.onOpenSeating = [this]
@@ -929,6 +931,7 @@ public:
         stop.onClick = [this]
         {
             spatialEffectWindow.reset();
+            reverbWindow.reset();
         stopOstinato("Audition stopped.");
             if (edit == nullptr) return;
             if (edit->getTransport().isRecording())
@@ -1028,6 +1031,7 @@ public:
         inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        stageWindow.reset();
         spatialWorkspace.setEdit (nullptr);
         filmWorkspace.setEdit (nullptr);
        #if JUCE_MAC
@@ -1637,6 +1641,8 @@ public:
         studio::retintStudioComponent(*this, previous);
         if (midiKeyboardWindow) studio::retintStudioComponent(*midiKeyboardWindow, previous);
         if (spatialEffectWindow) { studio::retintStudioComponent (*spatialEffectWindow, previous); spatialEffectWindow->appearanceChanged(); }
+        if (reverbWindow) { studio::retintStudioComponent (*reverbWindow, previous); reverbWindow->appearanceChanged(); }
+        if (stageWindow) { studio::retintStudioComponent (*stageWindow, previous); stageWindow->appearanceChanged(); }
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
         if(ostinatoWindow){studio::retintStudioComponent(*ostinatoWindow,previous);ostinatoWindow->setBackgroundColour(studio::colours::canvas);ostinatoWindow->editor().appearanceChanged();}
@@ -1688,7 +1694,9 @@ public:
         monitor.appearanceChanged();
         resources.appearanceChanged();
         spatialWorkspace.appearanceChanged();
+        if (stageWindow) stageWindow->appearanceChanged();
         if (spatialEffectWindow) spatialEffectWindow->appearanceChanged();
+        if (reverbWindow) reverbWindow->appearanceChanged();
        #if JUCE_MAC
         seatingWorkspace.appearanceChanged();
        #endif
@@ -2370,6 +2378,8 @@ private:
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
     std::unique_ptr<studio::spatial::SourceWindow> spatialEffectWindow;
+    std::unique_ptr<studio::spatial::ReverbWindow> reverbWindow;
+    std::unique_ptr<studio::spatial::StageWindow> stageWindow;
     studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
@@ -4208,13 +4218,15 @@ private:
                 articulation.refresh (context, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr, ready);
                 if (articulationStrip.isVisible()) articulationStrip.refresh();
             }
-            if (spatialWorkspace.isShowing())
+            if (spatialWorkspace.isShowing() || (stageWindow && stageWindow->isVisible()))
             {
                 auto selectedTracks = selection.getItemsOfType<te::AudioTrack>();
                 if (selectedTracks.isEmpty())
                     if (auto* context = workflowTrack()) selectedTracks.add (context);
-                spatialWorkspace.refresh (tracks, selectedTracks, ready && ! recording,
-                    ready && ! recording && ! ariaReviewPending && ! edit->getTransport().isPlaying());
+                const bool canRoute = ready && ! recording && ! ariaReviewPending && ! edit->getTransport().isPlaying();
+                if (spatialWorkspace.isShowing()) spatialWorkspace.refresh (tracks, selectedTracks, ready && ! recording, canRoute);
+                if (stageWindow && stageWindow->isVisible())
+                    stageWindow->workspace().refresh (tracks, selectedTracks, ready && ! recording, canRoute);
             }
         }
     }
@@ -4720,6 +4732,7 @@ private:
         }
 
         spatialEffectWindow.reset();
+        reverbWindow.reset();
         stopOstinato("Audition stopped for project change.");
         if (edit != nullptr)
         {
@@ -4754,6 +4767,7 @@ private:
         inspectorDrawer.setEdit (nullptr);
         mixer.setEdit (nullptr);
         resources.setEdit (nullptr);
+        stageWindow.reset();
         spatialWorkspace.setEdit (nullptr);
         filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);
@@ -5214,26 +5228,51 @@ private:
         instrumentWorkspace.saveSession (workspace == Workspace::instrumentEditor || instrumentWorkspace.isFloating(), dockMode);
     }
 
+    void showFloatingStage()
+    {
+        if (edit == nullptr) return;
+        if (! stageWindow)
+        {
+            stageWindow = std::make_unique<studio::spatial::StageWindow>();
+            auto& stage = stageWindow->workspace();
+            stage.onSelectTrack = spatialWorkspace.onSelectTrack;
+            stage.onOpenRoomMixer = spatialWorkspace.onOpenRoomMixer;
+           #if JUCE_MAC
+            stage.onOpenSeating = spatialWorkspace.onOpenSeating;
+           #endif
+            stage.setEdit (edit.get());
+            stage.refresh (te::getAudioTracks (*edit), selection.getItemsOfType<te::AudioTrack>(),
+                           ! busy && ! edit->getTransport().isRecording(), canInsertPlugin() && ! edit->getTransport().isPlaying());
+        }
+        stageWindow->setVisible (true);
+        stageWindow->toFront (true);
+    }
+
     bool showSpatialEffect (te::Plugin& plug)
     {
+        const bool isReverb = dynamic_cast<studio::spatial::ReverbPlugin*> (&plug) != nullptr;
         if (edit == nullptr || &plug.edit != edit.get()
-            || dynamic_cast<studio::spatial::SourcePlugin*> (&plug) == nullptr) return false;
+            || (! isReverb && dynamic_cast<studio::spatial::SourcePlugin*> (&plug) == nullptr)) return false;
         auto* track = dynamic_cast<te::AudioTrack*> (plug.getOwnerTrack());
         if (track == nullptr) return false;
         const auto trackId = track->itemID, pluginId = plug.itemID;
         const auto generation = projectGeneration;
-        spatialEffectWindow.reset();
-        spatialEffectWindow = std::make_unique<studio::spatial::SourceWindow> (
-            [safe = SafePointer<StudioView> (this), generation, trackId, pluginId]() -> studio::spatial::SourcePlugin*
-            {
-                if (safe == nullptr || safe->edit == nullptr || safe->projectGeneration != generation
-                    || safe->busy || safe->ariaReviewPending || safe->edit->getTransport().isRecording()) return nullptr;
-                auto* target = safe->trackById (trackId);
-                if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return nullptr;
-                for (auto* p : target->pluginList.getPlugins())
-                    if (p->itemID == pluginId) return dynamic_cast<studio::spatial::SourcePlugin*> (p);
-                return nullptr;
-            });
+        auto resolve = [safe = SafePointer<StudioView> (this), generation, trackId, pluginId]() -> te::Plugin*
+        {
+            if (safe == nullptr || safe->edit == nullptr || safe->projectGeneration != generation
+                || safe->busy || safe->ariaReviewPending || safe->edit->getTransport().isRecording()) return nullptr;
+            auto* target = safe->trackById (trackId);
+            if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return nullptr;
+            for (auto* p : target->pluginList.getPlugins())
+                if (p->itemID == pluginId) return p;
+            return nullptr;
+        };
+        if (isReverb)
+            reverbWindow = std::make_unique<studio::spatial::ReverbWindow> ([resolve]
+                { return dynamic_cast<studio::spatial::ReverbPlugin*> (resolve()); });
+        else
+            spatialEffectWindow = std::make_unique<studio::spatial::SourceWindow> ([resolve]
+                { return dynamic_cast<studio::spatial::SourcePlugin*> (resolve()); });
         return true;
     }
 
@@ -6239,7 +6278,8 @@ private:
         else if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
-        if (dynamic_cast<studio::spatial::SourcePlugin*> (plugin.get()) != nullptr)
+        if (dynamic_cast<studio::spatial::SourcePlugin*> (plugin.get()) != nullptr
+            || dynamic_cast<studio::spatial::ReverbPlugin*> (plugin.get()) != nullptr)
             showSpatialEffect (*plugin);
         if (instrument && (! libraryOpen || workspace == Workspace::instrumentEditor || addNew)
             && workflowTrack() == track) showNativeInstrument (*plugin);
@@ -6453,16 +6493,17 @@ private:
             { "Equaliser", te::EqualiserPlugin::xmlTypeName },
             { "Compressor", te::CompressorPlugin::xmlTypeName },
             { "Delay", te::DelayPlugin::xmlTypeName },
-            { "Studio Spatial", studio::spatial::SourcePlugin::xmlTypeName }
+            { "Studio Spatial", studio::spatial::SourcePlugin::xmlTypeName },
+            { "Studio Reverb", studio::spatial::ReverbPlugin::xmlTypeName }
         };
         for (const auto& [label, type] : builtIns)
             effects.addItem (label, String (type) != studio::spatial::SourcePlugin::xmlTypeName
-                                    || ! studio::spatial::isRoomReturn (track), false,
+                                    || (! studio::spatial::isRoomReturn (track) && ! studio::spatial::hasStageSource (track)), false,
                 trackMenuAction (id, [type] (StudioView& studio, te::AudioTrack& target)
             {
                 if (! studio.canInsertPlugin()) return;
                 if (String (type) == studio::spatial::SourcePlugin::xmlTypeName
-                    && (studio::spatial::isRoomReturn (target) || target.edit.getTransport().isPlaying()))
+                    && (studio::spatial::isRoomReturn (target) || studio::spatial::hasStageSource (target) || target.edit.getTransport().isPlaying()))
                 {
                     studio.pluginStatus ("Stop playback and select a regular audio or instrument track.");
                     return;
@@ -7461,6 +7502,7 @@ int StudioView::runInstrumentWorkspaceReview (const File& output)
         resources.setEdit (nullptr);
         channelInspector.setEdit (nullptr);
         inspectorDrawer.setEdit (nullptr);
+        stageWindow.reset();
         spatialWorkspace.setEdit (nullptr);
         filmWorkspace.setEdit (nullptr);
         articulation.setContext (nullptr);

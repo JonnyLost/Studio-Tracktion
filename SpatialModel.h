@@ -212,10 +212,18 @@ struct StereoPair
 {
     float spacingMetres, angleDegrees;
     Pattern pattern;
+    int capsules = 2;
+    float depth = .08f, height = 2.6f;
 };
-inline constexpr std::array stereoNames { "XY 90 degrees", "ORTF 17 cm / 110 degrees", "Spaced omnis 2 m", "Blumlein 90 degrees" };
+inline constexpr std::array stereoNames { "XY 90 degrees", "ORTF 17 cm / 110 degrees", "Spaced omnis 2 m",
+    "Blumlein 90 degrees", "Decca Tree-inspired", "Main stereo pair", "Wide outriggers", "Stage microphones", "Spot microphone" };
 inline constexpr std::array stereoPairs {
     StereoPair { 0.0f, 90, Pattern::cardioid }, StereoPair { 0.17f, 110, Pattern::cardioid },
-    StereoPair { 2.0f, 0, Pattern::omni }, StereoPair { 0.0f, 90, Pattern::figureEight }
+    StereoPair { 2.0f, 0, Pattern::omni }, StereoPair { 0.0f, 90, Pattern::figureEight },
+    StereoPair { 2.f, 0, Pattern::omni, 3, .09f, 3.2f },
+    StereoPair { .40f, 90, Pattern::cardioid, 2, .08f, 2.7f },
+    StereoPair { 6.f, 0, Pattern::omni, 2, .13f, 3.1f },
+    StereoPair { 3.1f, 75, Pattern::cardioid, 2, .39f, 2.1f },
+    StereoPair { 0, 0, Pattern::supercardioid, 1, .53f, 1.7f }
 };
 }
