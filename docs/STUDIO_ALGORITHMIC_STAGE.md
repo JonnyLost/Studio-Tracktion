@@ -107,6 +107,21 @@ build/stage-dsp-tests --listening listening
 6. Open **Studio Reverb** from a track's **Add Effect** menu. Compare a hall and a plate, save a preset and reopen the project. Export a stereo WAV with the proposed tail and listen through its end.
 7. Float Stage and try the docked view at 1024×640 and 1280×800 in Graphite and Deep Black, including the largest text setting.
 
+## Development checkpoints
+
+| Phases | Delivered | Verification and open work |
+| --- | --- | --- |
+| A, D, E | Version-two project scene, explicit P4 adoption, physical source placement, directional families and room-derived image paths | Portable geometry and hosted motion. Native Audio Unit listening remains open. |
+| B, C, I | Shared wet-only FDN, three quality modes, recording/classical/sacred venues and a native reverb insert with creative and user presets | Optimized impulse measurements, exact legacy comparison, sanitizer run and hosted project recall. |
+| F | Nine capsule arrangements, causal direct and early paths, shared diffuse field, meters and a six-capsule mixer | Portable delay, polarity and material tests plus Tracktion mute and solo checks. |
+| G, H | Search and explicit Atlas assignment, custom Stage layouts, grouping, zoom, docked and floating views | Actual app captures at two laptop sizes and largest text. The compact dock scrolls for the full map and controls. |
+| J, L | Managed Tracktion routing, migration undo/redo, project persistence, rendered tail and offline comparison | The hosted fixture measured −37.89 dBFS in live and exported audio. The WAV peaked at 0.006454 FS in the 1–2 s tail window. |
+| K, M | Bounded DSP, measured source/count/rate/block matrix, inspection and release checklist | Linux offline timing and Intel CI cover the automated fixtures. Physical Intel device utilization and production listening remain open. |
+
+- [Docked Stage at 1280×800](reviews/algorithmic-stage/docked-1280x800.png)
+- [Docked Stage at 1024×640 with the largest text](reviews/algorithmic-stage/docked-1024x640-largest-text.png)
+- [Floating Stage](reviews/algorithmic-stage/floating.png)
+
 ## Remaining acceptance work
 
 Physical Stage and Studio Reverb provide the core positioning, room and microphone workflows above. Composer listening, physical Intel MacBook callback measurements and third-party Audio Unit session acceptance are required for release confidence. A single-point project listener has no elevation-dependent pinna cues. The limited virtual microphone model is a mix perspective for existing recorded signals. Individual capsule delay affects direct and reflected paths, and the shared diffuse return follows the mix's energy weights. Track and instrument recording through the app's existing regression suite should be interpreted according to the device and fixture used. No branch was merged.
