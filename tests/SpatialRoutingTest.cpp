@@ -278,6 +278,8 @@ Result verifySignal()
 
 Result verifySourceInsert()
 {
+    if(valuesOf(decodeSource("1 0 1 0 0 1 1 0 0 0 1 1 1 0"))!=valuesOf(SourceParameters{}))
+        return Result::fail("P3 state migration keeps reflections off");
     if (valuesOf(decodeSource("2 1 2")) != valuesOf(SourceParameters{})
         || valuesOf(decodeSource("1 0 1 0 0 1 1 0 0 0 1 1 1 0 trailing")) != valuesOf(SourceParameters{}))
         return Result::fail("invalid source settings must fall back to neutral");
@@ -339,7 +341,7 @@ Result verifySourceInsert()
         {
             auto* child=content->getChildComponent(i);
             if(auto* slider=dynamic_cast<juce::Slider*>(child);slider&&slider->getName()=="Distance")distance=slider;
-            if(auto* combo=dynamic_cast<juce::ComboBox*>(child))preset=combo;
+            if(auto* combo=dynamic_cast<juce::ComboBox*>(child);combo&&combo->getName()=="Spatial preset")preset=combo;
         }
         if(!distance||!preset)return Result::fail("editor controls missing");
         distance->setValue(50,juce::sendNotificationSync);
