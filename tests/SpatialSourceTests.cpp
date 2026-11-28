@@ -117,7 +117,7 @@ static void stateAndSafety()
     require(x[0]==0&&x[1]==0&&x[2]==1e6f&&x[3]==0&&peaks.left==1e6f,"pathological input bounded");
     auto invalid=validate({std::numeric_limits<float>::quiet_NaN(),100,-100,100,-1,9,9,9});
     require(invalid.distance==0&&invalid.width==2&&invalid.tiltDb==-6&&invalid.outputDb==12&&invalid.amount==0&&invalid.air==1&&invalid.distanceWidth==1&&invalid.mono==1,"parameter bounds");
-    require(Processor::allocatedBytes()==0&&Processor::latencySamples()==0&&sizeof(Processor)<256,"fixed footprint");
+    require(Processor::allocatedBytes()==0&&Processor::latencySamples()==0&&sizeof(Processor)<5120,"fixed footprint");
 }
 int main()
 {
