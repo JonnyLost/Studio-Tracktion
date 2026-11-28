@@ -60,6 +60,7 @@ class SourceWindow final : public juce::DocumentWindow
 public:
     using Resolve=std::function<SourcePlugin*()>;
     explicit SourceWindow(Resolve);
+    void appearanceChanged();
     void closeButtonPressed() override { setVisible(false); }
 };
 }
