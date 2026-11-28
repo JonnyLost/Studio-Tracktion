@@ -186,7 +186,7 @@ public:
     explicit RoomPlugin (te::PluginCreationInfo info)
         : Plugin (info), listener (edit.state, [this] (const ValueTree& node)
           {
-              if (node.hasType (sceneType) || node.hasType (roomType)) publishRoom();
+              if (isSceneAcousticChange (node)) publishRoom();
           })
     {
         publishRoom();
@@ -309,7 +309,6 @@ private:
         if (tree == state && p == roomProperty)
         {
             publishRoom();
-            if (isBypassed()) setCheck (false);
         }
         Plugin::valueTreePropertyChanged (tree, p);
     }
@@ -321,7 +320,21 @@ private:
         auto room = isPhysicalScene (scene) ? readRoom (scene.getChildWithName (roomType))
             : xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room();
         if (isPhysicalScene (scene) && (bool) scene.getProperty ("stageBypass", false)) room.bypass = true;
-        const auto plan = makeRoomPlan (room, isPhysicalScene (scene) ? RoomMode::stage : RoomMode::legacy);
+        auto plan = makeRoomPlan (room, isPhysicalScene (scene) ? RoomMode::stage : RoomMode::legacy);
+        if (isPhysicalScene (scene) && (bool) scene.getProperty ("microphoneMix", false))
+        {
+            const auto mics = scene.getChildWithName (microphonesType);
+            if (mics.getNumChildren() <= (int) stage::microphoneLimit)
+            {
+                std::array<Mic, stage::microphoneLimit> bank {};
+                int count = 0;
+                for (const auto mic : mics)
+                    if (mic.hasType (micType)) bank[(size_t) count++] = readMic (mic);
+                const auto gain = stage::diffuseFieldGain (bank, count);
+                plan.leftGain = gain[0];
+                plan.rightGain = gain[1];
+            }
+        }
         bypassed.store (plan.bypass != 0);
         const auto values = std::bit_cast<PlanScalars> (plan);
         // Single writer on the settings thread. The render reader keeps its
@@ -329,6 +342,7 @@ private:
         ++revisionNumber;
         for (size_t i = 0; i < values.size(); ++i) publication[i].store (values[i]);
         ++revisionNumber;
+        if (isBypassed()) setCheck (false);
     }
 
     RoomPlan readPublishedPlan() const
@@ -569,6 +583,17 @@ te::AudioTrack* roomReturnTrack (te::Edit& edit) { return findReturn (edit).trac
 
 bool usesPhysicalStage (const te::Edit& edit) { return isPhysicalScene (edit.state.getChildWithName (sceneType)); }
 
+double recommendedStageTail (te::Edit& edit)
+{
+    if (! usesPhysicalStage (edit) || roomReturnTrack (edit) == nullptr) return 2.;
+    const auto scene = edit.state.getChildWithName (sceneType);
+    const auto room = readRoom (scene.getChildWithName (roomType));
+    if (room.bypass || room.late == 0 || (bool) scene.getProperty ("stageBypass", false)) return 2.;
+    const auto decay = predictDecay (room);
+    const auto longest = std::clamp (*std::max_element (decay.begin(), decay.end()) * room.shape.decay, .15f, 12.f);
+    return std::max (2., double (longest) + .3 + room.preDelayMs * .001);
+}
+
 bool hasStageSource (te::AudioTrack& track) { return find<StageSourcePlugin> (track) != nullptr; }
 
 bool hasLegacyStageSources (te::Edit& edit)
@@ -696,6 +721,9 @@ Result setRoomSend (te::AudioTrack& track, bool enable, Position position, float
     }
     if (auto reason = routeRestriction (track); reason.isNotEmpty()) return Result::fail (reason);
     if (send != nullptr) return Result::ok();
+    const auto requiredSlots = panner == nullptr ? 2 : 1;
+    if (track.pluginList.size() + requiredSlots > edit.engine.getEngineBehaviour().getEditLimits().maxPluginsOnTrack)
+        return Result::fail ("Free two insert slots on this track before enabling Stage audio.");
 
     const bool physical = usesPhysicalStage (edit);
     auto nextSend = edit.getPluginCache().createNewPlugin (RoomSendPlugin::xmlTypeName, {});

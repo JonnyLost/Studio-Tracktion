@@ -124,6 +124,25 @@ struct Settings
     bool microphoneMix = false, bypass = false;
 };
 
+inline std::array<float, 2> diffuseFieldGain (const std::array<Mic, microphoneLimit>& mics, int count)
+{
+    if (count <= 0 || count > (int) microphoneLimit) return { 1.f, 1.f };
+    bool solo = false;
+    for (int i = 0; i < count; ++i) solo |= mics[(size_t) i].solo;
+    std::array<float, 2> energy {};
+    constexpr std::array polarRms { 1.f, .58f, .52f, .58f };
+    for (int i = 0; i < count; ++i)
+    {
+        const auto mic = spatial::validate (mics[(size_t) i]);
+        if (mic.mute || (solo && ! mic.solo)) continue;
+        const auto gain = source::gain (mic.gain) * polarRms[(size_t) mic.pattern];
+        energy[0] += gain * gain * (1 - mic.pan);
+        energy[1] += gain * gain * (1 + mic.pan);
+    }
+    return { std::clamp (std::sqrt (energy[0] / float (count)), 0.f, 2.f),
+             std::clamp (std::sqrt (energy[1] / float (count)), 0.f, 2.f) };
+}
+
 struct CapsuleTap
 {
     float delay = 0, gain = 0, pole = 1, high = 1;

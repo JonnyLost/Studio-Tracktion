@@ -12,6 +12,7 @@ void prepareRoomPlayback (tracktion::Edit&);
 tracktion::AudioTrack* roomReturnTrack (tracktion::Edit&);
 bool isRoomReturn (const tracktion::AudioTrack&);
 bool usesPhysicalStage (const tracktion::Edit&);
+double recommendedStageTail (tracktion::Edit&);
 bool hasStageSource (tracktion::AudioTrack&);
 bool hasLegacyStageSources (tracktion::Edit&);
 juce::Result adoptPhysicalStage (tracktion::Edit&);

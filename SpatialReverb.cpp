@@ -214,6 +214,8 @@ void RoomReverb::reset()
     build = target.buildup;
     equalLow = target.lowEq;
     equalHigh = target.highEq;
+    leftGain = target.leftGain;
+    rightGain = target.rightGain;
     updateOutputTarget();
     gain = targetGain;
     inputGain = target.bypass == 0.0f ? 1.0f : 0.0f;
@@ -348,6 +350,8 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
             build += smooth * (target.buildup - build);
             equalLow += smooth * (target.lowEq - equalLow);
             equalHigh += smooth * (target.highEq - equalHigh);
+            leftGain += smooth * (target.leftGain - leftGain);
+            rightGain += smooth * (target.rightGain - rightGain);
         }
         outputMix += smooth * (targetMix - outputMix);
         if (std::abs (targetMix - outputMix) < 1e-5f) outputMix = targetMix;
@@ -452,8 +456,8 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
             outL = equalize (outL, 0);
             outR = equalize (outR, 1);
         }
-        const float wetL = safeWet (outL * gain * crossfade);
-        const float wetR = safeWet (outR * gain * crossfade);
+        const float wetL = safeWet (outL * gain * crossfade * leftGain);
+        const float wetR = safeWet (outR * gain * crossfade * rightGain);
         const float l = standalone ? std::lerp (dryL, wetL, outputMix) : wetL;
         const float r = standalone ? std::lerp (dryR, wetR, outputMix) : wetR;
         left[frame] = right != nullptr ? l : .5f * (l + r);

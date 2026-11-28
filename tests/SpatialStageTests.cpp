@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -110,7 +111,11 @@ void testStage()
     setup.microphones[0].solo = true;
     const auto solo = impulse (setup);
     require (energy (solo[0]) > 0 && energy (solo[1]) == 0, "microphone solo removes other dry paths");
+    auto field = stage::diffuseFieldGain (setup.microphones, 2);
+    require (field[0] > .99f && field[1] == 0, "solo shapes shared diffuse field");
     setup.microphones[0].mute = true;
+    field = stage::diffuseFieldGain (setup.microphones, 2);
+    require (field[0] == 0 && field[1] == 0, "muted capsules silence the diffuse return");
     const auto muted = impulse (setup);
     require (energy (muted[0]) == 0 && energy (muted[1]) == 0, "muted bank has no duplicate direct signal");
     require (stage::polarGain (Pattern::omni, -1) == 1 && stage::polarGain (Pattern::cardioid, -1) == 0
@@ -245,13 +250,14 @@ void testReverb()
 void bench()
 {
     using namespace std::chrono;
-    std::puts ("rate,frames,sources,perspective,quality,mean_us,period_pct,delay_bytes");
+    std::puts ("rate,frames,sources,perspective,quality,wall_us,cpu_us,cpu_period_pct,delay_bytes");
     for (const int rate : { 44100, 48000, 96000 })
         for (const int block : { 64, 128, 256, 512, 1024 })
-            for (const int count : { 16, 32, 64, 128 })
+            for (const int count : { 0, 16, 32, 64, 128 })
                 for (const int perspective : { 0, 2, 6 })
                     for (int quality = 0; quality < 3; ++quality)
                     {
+                        if (count == 0 && perspective != 0) continue;
                         Room room;
                         room.shape.quality = (Quality) quality;
                         RoomReverb tank;
@@ -275,6 +281,7 @@ void bench()
                         constexpr int repeats = 15;
                         std::vector<float> l ((size_t) block, .013f), r ((size_t) block, .01f), wetL (l), wetR (r);
                         const auto start = steady_clock::now();
+                        const auto cpuStart = std::clock();
                         for (int run = 0; run < repeats; ++run)
                         {
                             std::fill (wetL.begin(), wetL.end(), .03f);
@@ -288,8 +295,9 @@ void bench()
                             tank.process (wetL.data(), wetR.data(), block);
                         }
                         const auto elapsed = duration<double, std::micro> (steady_clock::now() - start).count() / repeats;
-                        std::printf ("%d,%d,%d,%d,%s,%.1f,%.2f,%zu\n", rate, block, count, perspective,
-                                     qualityNames[(size_t) quality], elapsed, elapsed * rate / (10000. * block), bytes);
+                        const auto cpu = 1.e6 * double (std::clock() - cpuStart) / (double (CLOCKS_PER_SEC) * repeats);
+                        std::printf ("%d,%d,%d,%d,%s,%.1f,%.1f,%.2f,%zu\n", rate, block, count, perspective,
+                                     qualityNames[(size_t) quality], elapsed, cpu, cpu * rate / (10000. * block), bytes);
                     }
 }
 

@@ -6436,7 +6436,7 @@ private:
             // Keep internal stage/room plumbing out of destructive plug-in
             // management: those processors have dedicated Stage controls.
             const auto type = plugin->getPluginType();
-            const bool managed = type == "studioStagePanV1" || type == "studioRoomSendV1"
+            const bool managed = type == "studioStagePanV1" || type == "studioStageSourceV2" || type == "studioRoomSendV1"
                 || type == "studioWetRoomV1" || dynamic_cast<te::AuxReturnPlugin*> (plugin) != nullptr
                 || dynamic_cast<te::AuxSendPlugin*> (plugin) != nullptr;
             if (! managed)
@@ -8285,6 +8285,21 @@ int StudioView::runInterfaceReview (const File& output)
         if (! capture (filename)) return fail ("write Stage screenshot");
     }
     if (! spatialWorkspace.verifyMoveForInterfaceReview (*tracks[1])) return fail ("Stage seat move, undo and redo");
+    edit->getUndoManager().beginNewTransaction ("Review physical Stage");
+    if (auto adoption = studio::spatial::adoptPhysicalStage (*edit); adoption.failed()) return fail ("adopt physical Stage");
+    spatialWorkspace.refresh (tracks, { tracks[1] }, true, true);
+    if (! capture ("physical-stage-1280x800.png")) return fail ("capture physical Stage");
+    showFloatingStage();
+    if (! stageWindow || ! capture ("physical-stage-floating.png", stageWindow->getContentComponent()))
+        return fail ("capture floating Stage");
+    stageWindow->setVisible (false);
+    setSize (1024, 640);
+    applyAppearance (175, 130, false);
+    setDockMode (DockMode::expanded);
+    spatialWorkspace.refresh (tracks, { tracks[1] }, true, true);
+    if (! capture ("physical-stage-1024x640-largest-text.png")) return fail ("capture scaled physical Stage");
+    applyAppearance (100, 100, false);
+    setSize (1280, 800);
     auto* clip = dynamic_cast<te::MidiClip*> (tracks[0]->getClips()[0]);
     if (clip == nullptr) return fail ("fixture MIDI clip");
     selection.selectOnly (clip);

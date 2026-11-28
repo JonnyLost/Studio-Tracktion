@@ -569,6 +569,12 @@ Result verifyPhysicalStage()
     auto expected = device.capture (*edit);
     if (! expected.room || expected.room->wetPeak < .001f || ! expected.room->reachesMaster)
         return Result::fail ("managed shared late-field contribution");
+    mics.getChild (0).setProperty ("mute", true, nullptr);
+    mics.getChild (1).setProperty ("mute", true, nullptr);
+    if (const auto silence = device.capture (*edit); energyDb (silence.output, 0) > -100 || energyDb (silence.output, 1) > -100)
+        return Result::fail ("the shared tail must follow microphone mixer mute");
+    mics.getChild (0).setProperty ("mute", false, nullptr);
+    mics.getChild (1).setProperty ("mute", false, nullptr);
     source->getVolumePlugin()->setVolumeDb (-12.f);
     auto lowered = device.capture (*edit);
     if (std::abs (energyDb (expected.output, 1) - energyDb (lowered.output, 1) - 12.f) > .8f)

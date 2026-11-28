@@ -30,6 +30,7 @@ struct RoomPlan
     float early = 0, late = 0, level = 0, bypass = 0;
     float mode = 0, diffusion = 1, buildup = 1, motion = .00028f, motionRate = 1;
     float width = 1, lowEq = 1, highEq = 1, mix = 1, standalone = 0;
+    float leftGain = 1, rightGain = 1;
 };
 
 enum class RoomMode { legacy, stage, effect };
@@ -66,7 +67,7 @@ private:
     int geometryStep = 0, geometryFrames = 0, controlFrame = 0;
     int quietFrames = 0, lines = 8, mode = 0;
     float crossfade = 1, outputMix = 1, stereoWidth = 1, motionDepth = .00028f, motionSpeed = 1;
-    float diffusionAmount = 1, build = 1, equalLow = 1, equalHigh = 1;
+    float diffusionAmount = 1, build = 1, equalLow = 1, equalHigh = 1, leftGain = 1, rightGain = 1;
     std::array<std::array<float, 2>, 2> eqState {};
     std::array<float, 2> eqPoles {};
     void switchNetwork() noexcept;
