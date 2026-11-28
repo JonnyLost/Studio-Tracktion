@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import pathlib
+import random
 import struct
 import sys
 import wave
@@ -49,6 +50,13 @@ def generate(root):
         (root/sub).mkdir()
     for mode in ("L", "R", "M"):
         probe(root/"inputs"/("impulse_"+mode+".wav"), mode)
+    # Deterministic listening/noise-burst probe; do NOT treat as an IR.
+    rng=random.Random(603)
+    noise=array.array("h",[0])*(2*RATE*18)
+    for i in range(RATE,2*RATE):
+        x=int(4096*rng.uniform(-1,1));noise[2*i]=noise[2*i+1]=x
+    if sys.byteorder!="little":noise.byteswap()
+    write_wave(root/"inputs"/"noise_burst.wav",2,RATE,noise.tobytes())
     # One-frame excitation followed by silence; no copyrighted content.
     for mode in ("L", "R", "M"):
         probe(root/"aria"/("pulse_"+mode+".wav"), mode, duration=2, onset=.1)
@@ -66,6 +74,9 @@ def generate(root):
                 input="inputs/impulse_"+mode+".wav",
                 output="renders/chroma_"+slug+"_"+mode+str(take)+".wav",
                 excitation_s=1, settings="Wet 100%; Dry 0%; Predelay 0; tempo sync off; record other controls"))
+    rows.append(dict(engine="ARIA",preset="Dry calibration",mode="M",take=1,
+        input="aria/Acoustic Probe.sfz",output="renders/aria_dry_M1.wav",
+        excitation_s="",settings="All reverbs disabled, MIDI note 64"))
     for name in ARIA:
         slug = name.lower().replace(" ", "_")
         rows.append(dict(engine="ARIA",preset=name,mode="M",take=1,
@@ -273,13 +284,21 @@ def analyze(root):
         base=root/folder
         for path in sorted(base.rglob("*")):
             if path.is_file() and path.suffix.lower() in (".wav",".aif",".aiff",".aifc",".sdir",".pwav",".wir",".zip"):
-                sources.append(path)
-    results=[];errors=[];envelopes=[]
+                if not path.name.startswith("._") and "__MACOSX" not in path.parts:
+                    sources.append(path)
+    results=[];errors=[];envelopes=[];inventory=[]
     def inspect(label,data):
         try:
             case=cases.get(label,{})
+            if not case and label.startswith("renders/studio_"):
+                stem=pathlib.PurePosixPath(label).stem
+                name,mode=stem[7:].rsplit("_",1)
+                case=dict(engine="Studio baseline",preset=name.replace("_"," "),mode=mode[0],take=mode[1:],excitation_s="1")
+            inventory.append(dict(file=label,bytes=len(data),container=repr(data[:4]),subtype=repr(data[8:12]),sha256=hashlib.sha256(data).hexdigest()))
             excitation=float(case["excitation_s"]) if case.get("excitation_s") else None
             row,env=metrics(data,excitation)
+            if case.get("engine")=="ARIA":
+                row["warning"]=(row.get("warning","")+"; verify wet-only capture and dry calibration").strip("; ")
             row.update(file=label,sha256=hashlib.sha256(data).hexdigest(),
                        engine=case.get("engine","reference"),preset=case.get("preset",""),
                        mode=case.get("mode",""),take=case.get("take",""))
@@ -295,7 +314,7 @@ def analyze(root):
             if path.suffix.lower()==".zip":
                 with zipfile.ZipFile(path) as z:
                     for entry in z.infolist():
-                        if entry.is_dir() or pathlib.PurePosixPath(entry.filename).suffix.lower() not in (".wav",".aif",".aiff",".aifc",".sdir",".pwav",".wir"):
+                        if entry.is_dir() or "__MACOSX" in pathlib.PurePosixPath(entry.filename).parts or pathlib.PurePosixPath(entry.filename).name.startswith("._") or pathlib.PurePosixPath(entry.filename).suffix.lower() not in (".wav",".aif",".aiff",".aifc",".sdir",".pwav",".wir"):
                             continue
                         name=label+"::"+entry.filename
                         if entry.file_size>MAX_BYTES:
@@ -312,6 +331,19 @@ def analyze(root):
         with (report/name).open("w",newline="",encoding="utf-8") as f:
             w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(rows)
     write_csv("measurements.csv",results);write_csv("envelopes.csv",envelopes);write_csv("errors.csv",errors)
+    write_csv("inventory.csv",inventory)
+    repeat=[]
+    for a in results:
+        if str(a.get("take"))!="1":continue
+        for b in results:
+            if str(b.get("take"))!="2" or any(a.get(k)!=b.get(k) for k in ("engine","preset","mode")):continue
+            row=dict(file=a["file"],repeat=b["file"],identical_file=a["sha256"]==b["sha256"])
+            for k in ("rt60_t20_s","relative_onset_ms","stereo_correlation","energy","density_100ms"):
+                if a.get(k) is not None and b.get(k) is not None:row[k+"_difference"]=b[k]-a[k]
+            repeat.append(row)
+    write_csv("repeatability.csv",repeat)
+    if (root/"native_performance.csv").is_file():
+        (report/"native_performance.csv").write_bytes((root/"native_performance.csv").read_bytes())
     (report/"summary.json").write_text(json.dumps(dict(schema="studio.acoustic-lab.l3.v1",
         decoded=len(results),skipped=len(errors),missing_cases=sorted(set(cases)-{r["file"] for r in results}),
         note="Finite-window T20 extrapolations; not certified RT60. Four channels analyzed as aggregate, routing unknown."),indent=2),encoding="utf-8")
