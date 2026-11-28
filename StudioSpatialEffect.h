@@ -8,7 +8,7 @@
 namespace studio::spatial
 {
 using SourceParameters=source::Parameters;
-using ParameterValues=std::array<float,13>;
+using ParameterValues=std::array<float,15>;
 ParameterValues valuesOf(SourceParameters) noexcept;
 SourceParameters parametersOf(ParameterValues) noexcept;
 juce::String encodeSource(SourceParameters);
@@ -29,6 +29,8 @@ public:
     bool canBeAddedToClip() override { return false; }
     bool canBeAddedToRack() override { return false; }
     bool noTail() override { return false; }
+    bool producesAudioWhenNoAudioInput() override { return true; }
+    bool reflectionsAvailable() const noexcept { return earlyReady.load(std::memory_order_relaxed); }
     int getNumOutputChannelsGivenInputs(int n) override { return juce::jmax(2,n); }
     BusLayout getBusses() const override { return BusLayout::singleStereoInOut(); }
     void initialise(const tracktion::PluginInitialisationInfo&) override;
@@ -41,11 +43,13 @@ public:
     source::Peaks peaks() const noexcept;
 private:
     static_assert(std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
-    std::array<std::atomic<float>,13> published{};
+    std::array<std::atomic<float>,15> published{};
     std::atomic<unsigned> revision{0};
     unsigned accepted=1;
     std::atomic<float> peakL{0},peakR{0};
     source::Processor dsp;
+    early::Engine reflections;
+    std::atomic<bool> earlyReady{false};
     double rate=48000;
     bool active=false;
     void publish();
