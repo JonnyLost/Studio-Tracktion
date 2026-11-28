@@ -196,8 +196,14 @@ private:
         const auto wr=current.width==0?inputMid:r+cross*(l-r);
         float wetL=filter(wl,state[0]),wetR=filter(wr,state[1]);
         direction.frame(wetL,wetR);
-        l=(dryL+current.amount*(wetL-dryL))*current.output;
-        r=(dryR+current.amount*(wetR-dryR))*current.output;
+        const auto blend=[this](float dry,float wet) noexcept
+        {
+            if(current.amount==0)return dry;
+            if(current.amount==1)return wet;
+            return dry+current.amount*(wet-dry);
+        };
+        l=blend(dryL,wetL)*current.output;
+        r=blend(dryR,wetR)*current.output;
         const float mid=.5f*(l+r);
         if(current.mono==1){l=r=clean(mid);}
         else {l=clean(l+current.mono*(mid-l));r=clean(r+current.mono*(mid-r));}
