@@ -169,6 +169,7 @@ public:
         guide.setBounds(a.removeFromTop(caption+gap).reduced(gap,0));
         status.setBounds(a.removeFromBottom(h).reduced(gap,0));
         auto conductingArea=a.removeFromBottom(h+caption);
+        field(repeatCount,repeatLabel,conductingArea.removeFromRight(conductingArea.getWidth()/7));
         hardware.setBounds(conductingArea.removeFromRight(conductingArea.getWidth()/3).reduced(gap));
         field(intensity,intensityLabel,conductingArea.removeFromLeft(conductingArea.getWidth()/2));
         field(density,densityLabel,conductingArea);
@@ -211,11 +212,8 @@ public:
             line=details.removeFromTop(h+caption);
             field(interval,intervalLabel,line.removeFromLeft(line.getWidth()/4));
             field(densityThreshold,thresholdLabel,line.removeFromLeft(line.getWidth()/3));
-            advanced.setBounds(line.removeFromLeft(line.getWidth()/2).reduced(gap));
-            field(repeatCount,repeatLabel,line);
+            advanced.setBounds(line.reduced(gap));
         }
-        // Repeat count belongs to the step page; its value remains active on both pages.
-        repeatCount.setVisible(!showRowSettings);repeatLabel.setVisible(!showRowSettings);
         viewport.setBounds(a.reduced(gap));
         matrix.setSize(matrix.preferredWidth(viewport.getWidth()),matrix.preferredHeight());
     }
@@ -225,11 +223,19 @@ public:
     bool verifyEditor()
     {
         setContext({},{{"taiko","Taiko"},{"claves","Claves"}},true);
-        Pattern stored;
-        write=[&](const Pattern& old,const Pattern& next){if(old!=stored)return false;stored=next;return true;};
+        Pattern stored;int writes=0;
+        write=[&](const Pattern& old,const Pattern& next){if(old!=stored)return false;stored=next;++writes;return true;};
         add.onClick();
         if(stored.rows.size()!=2||selected!=stored.rows.back().id)return false;
         if(!assignTrack(selected,"taiko")||stored.rows[1].trackId!="taiko"||assignTrack(selected,"unknown"))return false;
+        const int beforeStroke=writes;
+        matrix.beginStroke(1,0);matrix.paintAt(1,2);
+        if(writes!=beforeStroke||!matrix.finishStroke()||writes!=beforeStroke+1)return false;
+        for(size_t i=0;i<3;++i)if(!stored.rows[1].steps[i].enabled)return false;
+        matrix.beginStroke(1,0);matrix.paintAt(1,2);
+        if(!matrix.finishStroke()||writes!=beforeStroke+2)return false;
+        for(size_t i=0;i<3;++i)if(stored.rows[1].steps[i].enabled)return false;
+        gate.setText("75.1",false);int parsedGate=0;if(!readGate(gate,parsedGate)||parsedGate!=751)return false;
         track.setSelectedId(3,juce::dontSendNotification);pitch.setText("C2",false);
         mode.setSelectedId(2,juce::dontSendNotification);division.setText("5",false);applyRow.onClick();
         if(stored.rows[1].trackId!="claves"||stored.rows[1].steps.size()!=5||stored.rows[1].pitch!=36)return false;
@@ -318,6 +324,7 @@ private:
             using namespace juce;
             g.fillAll(colours::panel);g.setFont(uiFont(12));g.setColour(colours::text);
             const int h=headerHeight(),rh=rowHeight(),l=left(),r=right();
+            const auto& visiblePattern=stroke&&strokeBase==owner.pattern?*stroke:owner.pattern;
             const int noteWidth=appearance.span(52);
             g.drawFittedText("Instrument / assign",Rectangle<int>(4,0,l-noteWidth-8,h),Justification::centredLeft,1);
             g.drawFittedText("Note",Rectangle<int>(l-noteWidth,0,noteWidth,h),Justification::centred,1);
@@ -332,7 +339,7 @@ private:
             g.drawFittedText("Division",Rectangle<int>(getWidth()-r,0,r,h),Justification::centred,1);
             for(size_t i=0;i<owner.pattern.rows.size();++i)
             {
-                const auto& row=stroke&&stroke->rows.size()==owner.pattern.rows.size()&&strokeBase==owner.pattern?stroke->rows[i]:owner.pattern.rows[i];const int y=h+int(i)*rh;
+                const auto& row=visiblePattern.rows[i];const int y=h+int(i)*rh;
                 g.setColour(row.id==owner.selected?colours::selected:colours::control);
                 g.fillRect(0,y,l-2,rh-1);
                 g.setColour(colours::text);
@@ -392,25 +399,38 @@ private:
             owner.showRowSettings=false;owner.resized();
             if(e.mods.isPopupMenu()){owner.editAdvanced();return;}
             if(e.mods.isShiftDown()||!owner.writable||owner.auditioning)return;
-            strokeBase=owner.pattern;stroke=strokeBase;
-            paintOn=!stroke->rows[index].steps[size_t(hit)].enabled;
-            paintCell(e);
+            beginStroke(index,size_t(hit));
         }
         void mouseDrag(const juce::MouseEvent& e)override{if(stroke)paintCell(e);}
-        void mouseUp(const juce::MouseEvent&)override
+        void mouseUp(const juce::MouseEvent&)override{finishStroke();}
+        void beginStroke(size_t index,size_t hit)
         {
-            if(!stroke)return;
+            if(!owner.writable||owner.auditioning||index>=owner.pattern.rows.size()||hit>=owner.pattern.rows[index].steps.size())return;
+            strokeBase=owner.pattern;stroke=strokeBase;
+            paintOn=!stroke->rows[index].steps[hit].enabled;
+            lastRow=index;lastCell=hit;paintAt(index,hit);
+        }
+        bool finishStroke()
+        {
+            if(!stroke)return false;
             auto next=std::move(*stroke);stroke.reset();
-            if(owner.pattern==strokeBase&&next!=strokeBase)owner.commit(std::move(next));
-            repaint();
+            const bool changed=owner.pattern==strokeBase&&next!=strokeBase&&owner.commit(std::move(next));
+            repaint();return changed;
+        }
+        void paintAt(size_t index,size_t hit)
+        {
+            if(!stroke||owner.pattern!=strokeBase||!owner.writable||owner.auditioning||index>=stroke->rows.size()||hit>=stroke->rows[index].steps.size())return;
+            auto& steps=stroke->rows[index].steps;
+            const auto first=lastRow==index?std::min(lastCell,hit):hit;
+            const auto last=lastRow==index?std::max(lastCell,hit):hit;
+            for(size_t j=first;j<=last;++j)steps[j].enabled=paintOn;
+            lastRow=index;lastCell=hit;repaint();
         }
         void paintCell(const juce::MouseEvent& e)
         {
-            if(!stroke||owner.pattern!=strokeBase||!owner.writable||owner.auditioning)return;
             const int y=e.y-headerHeight();if(y<0)return;
             const auto index=size_t(y/rowHeight());const int hit=cellAt(e.x,index);
-            if(hit<0)return;
-            stroke->rows[index].steps[size_t(hit)].enabled=paintOn;repaint();
+            if(hit>=0)paintAt(index,size_t(hit));
         }
         bool keyPressed(const juce::KeyPress& k)override
         {
@@ -426,6 +446,7 @@ private:
         std::optional<Pattern> stroke;
         Pattern strokeBase;
         bool paintOn=true;
+        size_t lastRow=0,lastCell=0;
     } matrix;
 
     Row* row(){for(auto& r:pattern.rows)if(r.id==selected)return &r;return nullptr;}
@@ -454,7 +475,7 @@ private:
         addChoice("Unassigned",{});
         for(const auto& t:tracks)addChoice(String::fromUTF8(t.name.c_str()),t.id);
         if(tracks.empty())menu.addItem("Create an instrument track in Studio first",false,false,[]{});
-        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor));
+        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor).withTargetScreenArea(juce::Rectangle<int>(juce::Desktop::getMousePosition(),juce::Point<int>(1,1))));
     }
     bool assignTrack(std::uint32_t id,const std::string& target)
     {
@@ -802,7 +823,7 @@ private:
         const auto snapshot=pattern;const auto id=selected;const auto index=selectedCell;
         const auto& step=row()->steps[index];
         auto choices=articulationChoices?articulationChoices(row()->trackId,row()->channel):std::vector<std::pair<std::string,std::string>>{};
-        StringArray names;names.add("Leave articulation unchanged");
+        StringArray names;names.add("No articulation");
         int current=0;
         for(size_t i=0;i<choices.size();++i){names.add(String::fromUTF8(choices[i].second.c_str()));if(choices[i].first==step.articulation)current=int(i)+1;}
         if(!step.articulation.empty()&&current==0){choices.push_back({step.articulation,"Missing mapping (retained)"});names.add("Missing mapping (retained)");current=names.size()-1;}
