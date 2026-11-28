@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "../ComposerBounce.h"
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
 #include "../StudioSpatialEffect.h"
@@ -89,6 +90,12 @@ public:
     {
         devices.deviceManager.closeAudioDevice();
         devices.removeHostedAudioDeviceInterface();
+    }
+
+    void changeRate (double rate)
+    {
+        audio.prepareToPlay (rate, blockSize);
+        devices.dispatchPendingUpdates();
     }
 
     struct Capture
@@ -538,6 +545,12 @@ Result verifyPhysicalStage()
     if (! undo.redo() || ! usesPhysicalStage (*edit) || ! hasStageSource (*source))
         return Result::fail ("redo physical migration");
 
+    const auto previousX = (double) seat["xMetres"];
+    const auto moved = device.capture (*edit, [&] { seat.setProperty ("xMetres", -previousX, nullptr); });
+    if (energyDb (moved.output, 1) <= energyDb (moved.output, 0))
+        return Result::fail ("moving the physical seat during playback must move the hosted stereo image");
+    seat.setProperty ("xMetres", previousX, nullptr);
+
     root.setProperty ("stageBypass", true, nullptr);
     if (energyDb (device.capture (*edit).output, 0, &original.output) > -90.f)
         return Result::fail ("Stage bypass restores the single dry path");
@@ -572,6 +585,11 @@ Result verifyPhysicalStage()
     auto expected = device.capture (*edit);
     if (! expected.room || expected.room->wetPeak < .001f || ! expected.room->reachesMaster)
         return Result::fail ("managed shared late-field contribution");
+    source->setMute (true);
+    const auto trackMuted = device.capture (*edit);
+    if (energyDb (trackMuted.output, 0) > -100 || energyDb (trackMuted.output, 1) > -100)
+        return Result::fail ("track mute must silence both Stage paths");
+    source->setMute (false);
     mics.getChild (0).setProperty ("mute", true, nullptr);
     mics.getChild (1).setProperty ("mute", true, nullptr);
     if (const auto silence = device.capture (*edit); energyDb (silence.output, 0) > -100 || energyDb (silence.output, 1) > -100)
@@ -584,19 +602,25 @@ Result verifyPhysicalStage()
         return Result::fail ("physical Stage track fader must control the direct and wet paths");
     source->getVolumePlugin()->setVolumeDb (0.f);
 
-    te::Renderer::Parameters params (*edit);
+    bounce::Options options;
+    options.destination = rendered.getFile();
+    options.range = { {}, te::TimePosition::fromSeconds (1.4) };
+    options.tail = recommendedStageTail (*edit);
+    if (options.tail <= 2.) return Result::fail ("render tail should follow the active Stage room");
+    std::unique_ptr<bounce::Job> job;
+    if (auto status = bounce::Job::create (*edit, options, job); status.failed()) return status;
+    job->start();
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 10000;
+    while (! job->isFinished() && juce::Time::getMillisecondCounterHiRes() < deadline)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    if (! job->isFinished()) return Result::fail ("Stage WAV export timed out");
+    if (auto status = job->publish(); status.failed()) return status;
+    job.reset();
     juce::WavAudioFormat wave;
-    params.audioFormat = &wave;
-    params.destFile = rendered.getFile();
-    params.sampleRateForAudio = testRate;
-    params.blockSizeForAudio = blockSize;
-    params.bitDepth = 24;
-    params.time = { {}, te::TimePosition::fromSeconds (3.0) };
-    params.canRenderInMono = false;
-    params.useMasterPlugins = true;
-    auto file = te::Renderer::renderToFile ("Studio Stage export test", params);
-    std::unique_ptr<juce::AudioFormatReader> reader (wave.createReaderFor (file.createInputStream().release(), true));
-    if (reader == nullptr || reader->numChannels != 2 || reader->lengthInSamples < 2 * testRate)
+    auto stream = options.destination.createInputStream();
+    if (stream == nullptr) return Result::fail ("Stage WAV file was not written");
+    std::unique_ptr<juce::AudioFormatReader> reader (wave.createReaderFor (stream.release(), true));
+    if (reader == nullptr || reader->numChannels != 2 || std::abs (reader->lengthInSamples - std::llround ((1.4 + options.tail) * testRate)) > 1)
         return Result::fail ("offline Stage WAV capture");
     AudioBuffer<float> exported (2, int (reader->lengthInSamples));
     if (! reader->read (&exported, 0, exported.getNumSamples(), 0, true, true)
@@ -631,6 +655,13 @@ Result verifyPhysicalStage()
     if (reopened == nullptr || reopened->room().shape.quality != Quality::high
         || reopened->room().shape.mix != 0 || energyDb (device.capture (*edit).output, 1, &expected.output) > -75)
         return Result::fail ("restored microphone audio and reverb parameters");
+    for (const double rate : { 44100., 96000. })
+    {
+        device.changeRate (rate);
+        const auto changed = device.capture (*edit);
+        if (energyDb (changed.output, 1) < -55.f || ! changed.room || changed.room->wetPeak < .0001f)
+            return Result::fail ("Stage stopped rendering after changing the hosted sample rate to " + juce::String (rate));
+    }
     edit->deleteTrack (restored);
     if (energyDb (device.capture (*edit).output, 1) > -100)
         return Result::fail ("deleted source leaked audio into the room");

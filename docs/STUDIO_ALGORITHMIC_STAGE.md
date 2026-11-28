@@ -115,8 +115,8 @@ build/stage-dsp-tests --listening listening
 | B, C, I | Shared wet-only FDN, three quality modes, recording/classical/sacred venues and a native reverb insert with creative and user presets | Optimized impulse measurements, exact legacy comparison, sanitizer run and hosted project recall. |
 | F | Nine capsule arrangements, causal direct and early paths, shared diffuse field, meters and a six-capsule mixer | Portable delay, polarity and material tests plus Tracktion mute and solo checks. |
 | G, H | Search and explicit Atlas assignment, custom Stage layouts, grouping, zoom, docked and floating views | Actual app captures at two laptop sizes and largest text. The compact dock scrolls for the full map and controls. |
-| J, L | Managed Tracktion routing, migration undo/redo, project persistence, rendered tail and offline comparison | The hosted fixture measured −37.89 dBFS in live and exported audio. The WAV peaked at 0.006454 FS in the 1–2 s tail window. |
-| K, M | Bounded DSP, measured source/count/rate/block matrix, inspection and release checklist | Linux offline timing and Intel CI cover the automated fixtures. Physical Intel device utilization and production listening remain open. |
+| J, L | Managed Tracktion routing, migration undo/redo, project persistence, rendered tail and offline comparison | The hosted fixture measured −37.89 dBFS in live and exported audio. The WAV peaked at 0.006454 FS in the 1–2 s tail window. Hosted device reconfiguration also rendered at 44.1 and 96 kHz. |
+| K, M | Bounded DSP, measured source/count/rate/block matrix, inspection and release checklist | Linux Release passed all 49 CTest targets. Intel CI runs the portable DSP and the full application workflows. Physical Intel device utilization and production listening remain open. |
 
 - [Docked Stage at 1280×800](reviews/algorithmic-stage/docked-1280x800.png)
 - [Docked Stage at 1024×640 with the largest text](reviews/algorithmic-stage/docked-1024x640-largest-text.png)

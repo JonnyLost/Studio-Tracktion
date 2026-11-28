@@ -182,6 +182,7 @@ void RoomReverb::switchNetwork() noexcept
 {
     mode = (int) target.mode;
     lines = mode == 1 ? 4 : mode == 3 ? 16 : 8;
+    if (mode == 0) leftGain = rightGain = 1;
     for (auto& ring : tank) ring.clear();
     for (auto& side : diffusers)
         for (auto& ring : side) ring.clear();
