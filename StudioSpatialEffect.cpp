@@ -249,7 +249,13 @@ public:
                 },"Adjust "+String(controls[i].name));
             };
         }
-        setSize(720,530);refresh();startTimerHz(20);
+        setSize(720,530);appearanceChanged();refresh();startTimerHz(20);
+    }
+    void appearanceChanged()
+    {
+        for(auto& label:labels)label.setFont(uiFont(12.f));
+        status.setFont(uiFont(11.f));
+        resized();repaint();
     }
     void paint(Graphics& g) override
     {
@@ -277,7 +283,7 @@ public:
             {
                 const auto i=row*2+size_t(col);
                 auto cell=(col==0?left:line).reduced(4,2);
-                labels[i].setBounds(cell.removeFromLeft(jmin(112,cell.getWidth()/2)));
+                labels[i].setBounds(cell.removeFromLeft(jmin(appearance.span(116),cell.getWidth()/2)));
                 sliders[i].setBounds(cell);
             }
         }
@@ -351,5 +357,11 @@ SourceWindow::SourceWindow(Resolve resolve)
     setContentOwned(new SourceEditor(std::move(resolve)),true);
     setResizable(true,false);setResizeLimits(610,470,1400,900);
     centreWithSize(720,530);setVisible(true);
+}
+void SourceWindow::appearanceChanged()
+{
+    setBackgroundColour(colours::canvas);
+    if(auto* editor=dynamic_cast<SourceEditor*>(getContentComponent()))editor->appearanceChanged();
+    repaint();
 }
 }
