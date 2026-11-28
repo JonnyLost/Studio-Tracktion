@@ -51,7 +51,7 @@ public:
         };
         initialiseTime (begin, "Start (seconds)", "0.000");
         initialiseTime (end, "End (seconds)", String (whole.getEnd().inSeconds(), 3));
-        initialiseTime (tail, "Tail (seconds)", "2.000");
+        initialiseTime (tail, "Tail (seconds)", String (spatial::recommendedStageTail (edit), 3));
         trackList.setViewedComponent (&trackChoices, false);
         trackList.setScrollBarsShown (true, false);
         for (auto* track : te::getAudioTracks (edit))

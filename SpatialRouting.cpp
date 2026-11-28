@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SpatialRouting.h"
 #include "StudioSpatialEffect.h"
+#include "StudioReverbEffect.h"
 #include "SpatialReverb.h"
 #include "SpatialState.h"
+#include "SpatialPublication.h"
 #include <atomic>
 #include <bit>
 
@@ -17,12 +19,175 @@ const Identifier roomProperty { "studioRoomSettings" }, panProperty { "studioSta
     roleProperty { "studioSpatialRole" }, sendGainProperty { "studioSpatialSendDb" };
 const String returnRole { "roomReturnV1" }, receiverRole { "roomInputV1" };
 
+bool isSceneAcousticChange (const ValueTree& tree)
+{
+    return tree.hasType (sceneType) || tree.hasType (roomType) || tree.hasType (microphonesType) || tree.hasType (micType);
+}
+
+class SceneListener final : private ValueTree::Listener
+{
+public:
+    SceneListener (ValueTree root, std::function<void(const ValueTree&)> callback)
+        : state (std::move (root)), changed (std::move (callback)) { state.addListener (this); }
+    ~SceneListener() override { state.removeListener (this); }
+private:
+    ValueTree state;
+    std::function<void(const ValueTree&)> changed;
+    void valueTreePropertyChanged (ValueTree& tree, const Identifier&) override { changed (tree); }
+    void valueTreeChildAdded (ValueTree& parent, ValueTree& child) override
+    {
+        changed (child);
+        if (child.hasType (te::IDs::PLUGIN)) changed (parent);
+    }
+    void valueTreeChildRemoved (ValueTree& parent, ValueTree& child, int) override
+    {
+        if (child.hasType (seatType)) changed (parent);
+        else changed (child);
+    }
+    void valueTreeChildOrderChanged (ValueTree& parent, int, int) override { changed (parent); }
+};
+
+const Identifier trackKeyProperty { "studioStageTrackID" };
+
+class StageSourcePlugin final : public te::Plugin
+{
+public:
+    static constexpr const char* xmlTypeName = "studioStageSourceV2";
+    explicit StageSourcePlugin (te::PluginCreationInfo info)
+        : Plugin (info), listener (edit.state, [this] (const ValueTree& node)
+          {
+              const auto owner = state.getParent();
+              if (isSceneAcousticChange (node) || node == owner
+                  || (node.hasType (seatType) && node.getParent() == owner))
+                  publish();
+          })
+    { publish(); }
+    ~StageSourcePlugin() override { notifyListenersOfDeletion(); }
+    String getName() const override { return "Studio Stage Source"; }
+    String getPluginType() override { return xmlTypeName; }
+    String getVendor() override { return "Studio"; }
+    String getSelectableDescription() override { return "Physical Stage source and microphone paths"; }
+    bool canBeAddedToClip() override { return false; }
+    bool canBeAddedToRack() override { return false; }
+    bool canBeDisabled() override { return false; }
+    bool shouldMeasureCpuUsage() const noexcept override { return false; }
+    bool noTail() override { return false; }
+    double getTailLength() const override { return .35; }
+    bool producesAudioWhenNoAudioInput() override { return true; }
+    int getNumOutputChannelsGivenInputs (int inputs) override { return jmax (2, inputs); }
+    BusLayout getBusses() const override { return BusLayout::singleStereoInOut(); }
+
+    void initialise (const te::PluginInitialisationInfo& info) override
+    {
+        rate.store (float (info.sampleRate));
+        accepted = 0;
+        Snapshot snapshot {};
+        publication.read (snapshot, accepted);
+        const auto plan = stage::makePlan (info.sampleRate, snapshot.settings);
+        try { active = renderer.prepare (info.sampleRate, plan); }
+        catch (const std::bad_alloc&) { active = false; }
+        clearPeaks();
+    }
+
+    void deinitialise() override { active = false; clearPeaks(); }
+    void reset() override { renderer.reset(); clearPeaks(); }
+
+    void applyToBuffer (const te::PluginRenderContext& context) override
+    {
+        auto* buffer = context.destBuffer;
+        if (! active || buffer == nullptr || buffer->getNumChannels() == 0) return;
+        Snapshot snapshot;
+        const auto currentRate = rate.load (std::memory_order_relaxed);
+        if (publication.read (snapshot, accepted))
+            renderer.setPlan (snapshot.planRate == currentRate ? snapshot.plan : stage::makePlan (currentRate, snapshot.settings));
+        const int start = context.bufferStartSample;
+        const auto levels = renderer.process (buffer->getWritePointer (0, start),
+            buffer->getNumChannels() > 1 ? buffer->getWritePointer (1, start) : nullptr,
+            context.bufferNumSamples);
+        const float fall = 1.f / (1.f + float (context.bufferNumSamples) / (.22f * currentRate));
+        for (size_t i = 0; i < peaks.size(); ++i)
+            peaks[i].store (std::max (levels[i], peaks[i].load (std::memory_order_relaxed) * fall),
+                            std::memory_order_relaxed);
+    }
+
+    void configure (te::EditItemID trackID)
+    {
+        state.setProperty (trackKeyProperty, trackID.toString(), nullptr);
+    }
+
+    void collectPeaks (std::array<float, stage::microphoneLimit>& result) const
+    {
+        for (size_t i = 0; i < peaks.size(); ++i)
+            result[i] = std::max (result[i], peaks[i].load (std::memory_order_relaxed));
+    }
+
+private:
+    struct Snapshot
+    {
+        stage::Settings settings;
+        stage::Plan plan;
+        float planRate = 0;
+    };
+    Publication<Snapshot> publication;
+    std::atomic<float> rate { 48000 };
+    std::array<std::atomic<float>, stage::microphoneLimit> peaks {};
+    unsigned accepted = 0;
+    bool active = false;
+    stage::Renderer renderer;
+    SceneListener listener;
+
+    void clearPeaks()
+    {
+        for (auto& peak : peaks) peak.store (0, std::memory_order_relaxed);
+    }
+
+    void publish()
+    {
+        const auto scene = edit.state.getChildWithName (sceneType);
+        Snapshot snapshot {};
+        auto& settings = snapshot.settings;
+        settings.room = readRoom (scene.getChildWithName (roomType));
+        settings.bypass = ! isPhysicalScene (scene) || (bool) scene.getProperty ("stageBypass", false);
+        settings.listener = { (float) scene.getProperty ("listenerX", 0.f),
+            (float) scene.getProperty ("listenerDepth", .08f) };
+        settings.listenerHeight = (float) scene.getProperty ("listenerHeight", 1.4f);
+        auto owner = state.getParent();
+        if (! owner.hasType (te::IDs::TRACK))
+            if (auto* track = te::findAudioTrackForID (edit, te::EditItemID::fromString (state[trackKeyProperty].toString())))
+                owner = track->state;
+        const auto seat = owner.getChildWithName (seatType);
+        settings.seat = readPhysicalSeat (seat, settings.room).position;
+        settings.source = readSource (seat);
+        const auto microphones = scene.getChildWithName (microphonesType);
+        settings.microphoneMix = (bool) scene.getProperty ("microphoneMix", false)
+            && microphones.getNumChildren() <= (int) stage::microphoneLimit;
+        for (const auto mic : microphones)
+        {
+            if (settings.microphoneCount == (int) stage::microphoneLimit) break;
+            if (mic.hasType (micType)) settings.microphones[(size_t) settings.microphoneCount++] = readMic (mic);
+        }
+        snapshot.planRate = rate.load();
+        snapshot.plan = stage::makePlan (snapshot.planRate, settings);
+        publication.write (snapshot);
+    }
+
+    void valueTreePropertyChanged (ValueTree& node, const Identifier& property) override
+    {
+        if (node == state && property == trackKeyProperty) publish();
+        Plugin::valueTreePropertyChanged (node, property);
+    }
+};
+
 class RoomPlugin final : public te::Plugin, private Timer
 {
 public:
     static constexpr const char* xmlTypeName = "studioWetRoomV1";
 
-    explicit RoomPlugin (te::PluginCreationInfo info) : Plugin (info)
+    explicit RoomPlugin (te::PluginCreationInfo info)
+        : Plugin (info), listener (edit.state, [this] (const ValueTree& node)
+          {
+              if (isSceneAcousticChange (node)) publishRoom();
+          })
     {
         publishRoom();
     }
@@ -43,6 +208,8 @@ public:
     // The dedicated room bypass instead fades the wet output to silence.
     bool canBeDisabled() override { return false; }
     bool noTail() override { return false; }
+    double getTailLength() const override { return 12.4; }
+    void reset() override { reverb.reset(); }
     bool producesAudioWhenNoAudioInput() override { return true; }
     int getNumOutputChannelsGivenInputs (int inputs) override { return jmax (2, inputs); }
     BusLayout getBusses() const override { return BusLayout::singleStereoInOut(); }
@@ -105,7 +272,7 @@ public:
 
     std::size_t memoryBytes() const { return bytes.load(); }
 
-    bool isBypassed() const { return publication.back().load() != 0.0f; }
+    bool isBypassed() const { return bypassed.load(); }
 
     void setCheck (bool enable)
     {
@@ -122,7 +289,7 @@ public:
 
 private:
     static_assert (std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
-    static constexpr size_t parameterCount = roomLineCount * 7 + roomEarlyTaps * 2 + 5;
+    static constexpr size_t parameterCount = sizeof (RoomPlan) / sizeof (float);
     using PlanScalars = std::array<float, parameterCount>;
     static_assert (sizeof (RoomPlan) == sizeof (PlanScalars));
     std::array<std::atomic<float>, parameterCount> publication {};
@@ -130,9 +297,10 @@ private:
     std::atomic<std::size_t> bytes { 0 };
     unsigned acceptedRevision = 0;
     std::atomic<float> inputPeak { 0.0f }, wetPeak { 0.0f };
-    std::atomic<bool> checkEnabled { false };
+    std::atomic<bool> checkEnabled { false }, bypassed { false };
     float meterTime = 14400.0f;
     RoomReverb reverb;
+    SceneListener listener;
 
     void timerCallback() override { setCheck (false); }
 
@@ -141,7 +309,6 @@ private:
         if (tree == state && p == roomProperty)
         {
             publishRoom();
-            if (isBypassed()) setCheck (false);
         }
         Plugin::valueTreePropertyChanged (tree, p);
     }
@@ -149,13 +316,33 @@ private:
     void publishRoom()
     {
         const auto xml = parseXML (state.getProperty (roomProperty).toString());
-        const auto plan = makeRoomPlan (xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room());
+        const auto scene = edit.state.getChildWithName (sceneType);
+        auto room = isPhysicalScene (scene) ? readRoom (scene.getChildWithName (roomType))
+            : xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room();
+        if (isPhysicalScene (scene) && (bool) scene.getProperty ("stageBypass", false)) room.bypass = true;
+        auto plan = makeRoomPlan (room, isPhysicalScene (scene) ? RoomMode::stage : RoomMode::legacy);
+        if (isPhysicalScene (scene) && (bool) scene.getProperty ("microphoneMix", false))
+        {
+            const auto mics = scene.getChildWithName (microphonesType);
+            if (mics.getNumChildren() <= (int) stage::microphoneLimit)
+            {
+                std::array<Mic, stage::microphoneLimit> bank {};
+                int count = 0;
+                for (const auto mic : mics)
+                    if (mic.hasType (micType)) bank[(size_t) count++] = readMic (mic);
+                const auto gain = stage::diffuseFieldGain (bank, count);
+                plan.leftGain = gain[0];
+                plan.rightGain = gain[1];
+            }
+        }
+        bypassed.store (plan.bypass != 0);
         const auto values = std::bit_cast<PlanScalars> (plan);
         // Single writer on the settings thread. The render reader keeps its
         // last complete plan if a new plan overlaps its bounded scalar read.
         ++revisionNumber;
         for (size_t i = 0; i < values.size(); ++i) publication[i].store (values[i]);
         ++revisionNumber;
+        if (isBypassed()) setCheck (false);
     }
 
     RoomPlan readPublishedPlan() const
@@ -378,6 +565,8 @@ void registerPlugins (te::Engine& engine)
     engine.getPluginManager().createBuiltInType<SourcePlugin>();
     engine.getPluginManager().createBuiltInType<StagePanPlugin>();
     engine.getPluginManager().createBuiltInType<RoomSendPlugin>();
+    engine.getPluginManager().createBuiltInType<StageSourcePlugin>();
+    engine.getPluginManager().createBuiltInType<ReverbPlugin>();
 }
 
 void prepareRoomPlayback (te::Edit& edit)
@@ -391,6 +580,100 @@ void prepareRoomPlayback (te::Edit& edit)
 
 bool isRoomReturn (const te::AudioTrack& track) { return track.state.getProperty (roleProperty).toString() == returnRole; }
 te::AudioTrack* roomReturnTrack (te::Edit& edit) { return findReturn (edit).track; }
+
+bool usesPhysicalStage (const te::Edit& edit) { return isPhysicalScene (edit.state.getChildWithName (sceneType)); }
+
+double recommendedStageTail (te::Edit& edit)
+{
+    if (! usesPhysicalStage (edit) || roomReturnTrack (edit) == nullptr) return 2.;
+    const auto scene = edit.state.getChildWithName (sceneType);
+    const auto room = readRoom (scene.getChildWithName (roomType));
+    if (room.bypass || room.late == 0 || (bool) scene.getProperty ("stageBypass", false)) return 2.;
+    const auto decay = predictDecay (room);
+    const auto longest = std::clamp (*std::max_element (decay.begin(), decay.end()) * room.shape.decay, .15f, 12.f);
+    return std::max (2., double (longest) + .3 + room.preDelayMs * .001);
+}
+
+bool hasStageSource (te::AudioTrack& track) { return find<StageSourcePlugin> (track) != nullptr; }
+
+bool hasLegacyStageSources (te::Edit& edit)
+{
+    for (auto* track : te::getAudioTracks (edit))
+        if (find<StagePanPlugin> (*track) != nullptr || (hasRoomSend (*track) && ! hasStageSource (*track))) return true;
+    return false;
+}
+
+std::array<float, stage::microphoneLimit> stageMicrophonePeaks (te::Edit& edit)
+{
+    std::array<float, stage::microphoneLimit> result {};
+    for (auto* track : te::getAudioTracks (edit))
+        if (auto* source = find<StageSourcePlugin> (*track)) source->collectPeaks (result);
+    return result;
+}
+
+Result adoptPhysicalStage (te::Edit& edit)
+{
+    if (usesPhysicalStage (edit)) return Result::ok();
+    if (! stopped (edit)) return Result::fail ("Stop the transport to adopt the physical Stage.");
+    auto scene = edit.state.getChildWithName (sceneType);
+    if (scene.isValid() && (int) scene.getProperty ("version", -1) != version)
+        return Result::fail ("This project uses an unsupported Stage version.");
+    struct Change { te::AudioTrack* track; StagePanPlugin* pan; te::Plugin::Ptr source; };
+    std::vector<Change> changes;
+    for (auto* track : te::getAudioTracks (edit))
+        if (auto* pan = find<StagePanPlugin> (*track); pan != nullptr || hasRoomSend (*track))
+        {
+            if (pan == nullptr || ! hasRoomSend (*track) || find<StageSourcePlugin> (*track) != nullptr)
+                return Result::fail ("Repair the Stage inserts on " + track->getName() + " before migration.");
+            if (track->isFrozen (te::Track::anyFreeze) || ! track->getOutput().usesDefaultAudioOut()
+                || track->getParentTrack() != nullptr || find<SourcePlugin> (*track) != nullptr)
+                return Result::fail ("Review the routing and Studio Spatial inserts on " + track->getName() + ".");
+            auto fresh = edit.getPluginCache().createNewPlugin (StageSourcePlugin::xmlTypeName, {});
+            auto* source = dynamic_cast<StageSourcePlugin*> (fresh.get());
+            if (source == nullptr) return Result::fail ("Studio could not create the physical Stage processor.");
+            source->configure (track->itemID);
+            changes.push_back ({ track, pan, fresh });
+        }
+    const auto existing = findReturn (edit);
+    if (! changes.empty())
+    {
+        std::array<BusClaims, 16> claims {};
+        collectBusClaims (edit.state, claims);
+        if (existing.room == nullptr || ! isPositiveAndBelow (existing.bus, (int) claims.size())
+            || claims[(size_t) existing.bus].foreign || claims[(size_t) existing.bus].returns != 1
+            || claims[(size_t) existing.bus].sends != (int) changes.size()
+            || ! existing.track->getOutput().usesDefaultAudioOut() || existing.track->getParentTrack() != nullptr)
+            return Result::fail ("Restore a single Studio Room Return on a dedicated aux bus before migration.");
+        for (const auto& change : changes)
+            if ((int) find<RoomSendPlugin> (*change.track)->busNumber != existing.bus)
+                return Result::fail ("Restore the Studio Room Send destination on " + change.track->getName() + ".");
+    }
+    auto& undo = edit.getUndoManager();
+    if (! scene.isValid())
+    {
+        scene = ValueTree (sceneType);
+        edit.state.addChild (scene, -1, &undo);
+    }
+    const auto room = readRoom (scene.getChildWithName (roomType));
+    for (auto* track : te::getAudioTracks (edit))
+    {
+        auto node = track->state.getChildWithName (seatType);
+        if (! node.isValid() && hasRoomSend (*track))
+        {
+            node = writeSeat (track->itemID.toString(), {});
+            track->state.addChild (node, -1, &undo);
+        }
+        if (node.isValid()) writeMetres (node, room, readSeat (node).position, undo);
+    }
+    scene.setProperty ("version", physicalVersion, &undo);
+    for (const auto& change : changes)
+    {
+        change.pan->deleteFromParent();
+        const auto index = change.track->pluginList.indexOf (find<RoomSendPlugin> (*change.track));
+        change.track->pluginList.insertPlugin (change.source, index + 1, nullptr);
+    }
+    return Result::ok();
+}
 
 bool hasRoomSend (te::AudioTrack& track) { return find<RoomSendPlugin> (track) != nullptr; }
 
@@ -410,9 +693,12 @@ String routeRestriction (te::AudioTrack& track)
         return "Stage routing currently supports top-level tracks assigned to the default audio output.";
     for (auto* plugin : track.pluginList)
     {
-        if (auto* send = dynamic_cast<te::AuxSendPlugin*> (plugin); send != nullptr && dynamic_cast<RoomSendPlugin*> (send) == nullptr)
+        if (usesPhysicalStage (track.edit) && dynamic_cast<SourcePlugin*> (plugin) != nullptr)
+            return "Remove the standalone Studio Spatial insert before enabling the managed Stage.";
+        if (auto* send = dynamic_cast<te::AuxSendPlugin*> (plugin); ! usesPhysicalStage (track.edit)
+            && send != nullptr && dynamic_cast<RoomSendPlugin*> (send) == nullptr)
             return "This track already has an aux send. Review its routing before adding the room.";
-        if (isRecognisedReverb (*plugin))
+        if (! usesPhysicalStage (track.edit) && isRecognisedReverb (*plugin))
             return "This track already has an insert reverb. Review it before adding the shared room.";
     }
     return {};
@@ -423,32 +709,47 @@ Result setRoomSend (te::AudioTrack& track, bool enable, Position position, float
     auto& edit = track.edit;
     auto* panner = find<StagePanPlugin> (track);
     auto* send = find<RoomSendPlugin> (track);
+    auto* stageSource = find<StageSourcePlugin> (track);
     if (! stopped (edit)) return Result::fail ("Stop the transport to change routing.");
     if (! enable)
     {
         if (track.isFrozen (te::Track::anyFreeze)) return Result::fail ("Unfreeze this track first.");
         if (send != nullptr) send->deleteFromParent();
         if (panner != nullptr) panner->deleteFromParent();
+        if (stageSource != nullptr) stageSource->deleteFromParent();
         return Result::ok();
     }
     if (auto reason = routeRestriction (track); reason.isNotEmpty()) return Result::fail (reason);
     if (send != nullptr) return Result::ok();
+    const auto requiredSlots = panner == nullptr ? 2 : 1;
+    if (track.pluginList.size() + requiredSlots > edit.engine.getEngineBehaviour().getEditLimits().maxPluginsOnTrack)
+        return Result::fail ("Free two insert slots on this track before enabling Stage audio.");
 
+    const bool physical = usesPhysicalStage (edit);
     auto nextSend = edit.getPluginCache().createNewPlugin (RoomSendPlugin::xmlTypeName, {});
-    auto nextPan = panner == nullptr ? edit.getPluginCache().createNewPlugin (StagePanPlugin::xmlTypeName, {}) : te::Plugin::Ptr();
+    auto nextStage = physical ? edit.getPluginCache().createNewPlugin (StageSourcePlugin::xmlTypeName, {}) : te::Plugin::Ptr();
+    auto nextPan = ! physical && panner == nullptr
+        ? edit.getPluginCache().createNewPlugin (StagePanPlugin::xmlTypeName, {}) : te::Plugin::Ptr();
     send = dynamic_cast<RoomSendPlugin*> (nextSend.get());
     if (panner == nullptr) panner = dynamic_cast<StagePanPlugin*> (nextPan.get());
-    if (send == nullptr || panner == nullptr) return Result::fail ("Studio could not create spatial inserts.");
+    auto* stage = dynamic_cast<StageSourcePlugin*> (nextStage.get());
+    if (send == nullptr || (physical ? stage == nullptr || stageSource != nullptr || panner != nullptr : panner == nullptr))
+        return Result::fail ("Studio could not create a single spatial processor for this track.");
     const auto target = ensureReturn (edit, settings);
     if (target.track == nullptr || target.room == nullptr || target.bus < 0)
         return Result::fail ("The room return is incomplete or there is no free aux bus.");
     if (! target.track->getOutput().usesDefaultAudioOut() || target.track->getParentTrack() != nullptr)
         return Result::fail ("Set the Studio Room Return to the default audio output.");
     send->busNumber = target.bus;
-    panner->setPan (validPosition (position).x);
+    if (panner != nullptr) panner->setPan (validPosition (position).x);
     send->setSpatialGain (sendDb (position, trimDb));
     if (nextPan != nullptr) track.pluginList.insertPlugin (nextPan, track.pluginList.size(), nullptr);
     track.pluginList.insertPlugin (nextSend, track.pluginList.size(), nullptr);
+    if (stage != nullptr)
+    {
+        stage->configure (track.itemID);
+        track.pluginList.insertPlugin (nextStage, track.pluginList.size(), nullptr);
+    }
     return Result::ok();
 }
 
@@ -464,7 +765,8 @@ void updateRoomSend (te::AudioTrack& track, Position position, float trimDb)
 
 void updateReturn (te::Edit& edit, Room settings)
 {
-    if (auto target = findReturn (edit); target.room != nullptr) target.room->setRoom (settings);
+    if (! usesPhysicalStage (edit))
+        if (auto target = findReturn (edit); target.room != nullptr) target.room->setRoom (settings);
 }
 
 void setRoomCheck (te::Edit& edit, bool enabled)
@@ -495,7 +797,9 @@ std::optional<ResourceReport> resourceReport (te::Edit& edit)
         const auto bytes = target.room->memoryBytes();
         const auto active = edit.state.getChildWithName (sceneType).getChildWithName (roomType);
         auto description = active.getProperty ("name", "Chamber Hall").toString()
-            + " | " + String (sends) + (sends == 1 ? " send" : " sends") + " | 8-line spatial reverb";
+            + " | " + String (sends) + (sends == 1 ? " send" : " sends")
+            + (usesPhysicalStage (edit) ? " | " + String (qualityNames[(size_t) readRoom (active).shape.quality])
+                                       : String (" | 8-line spatial reverb"));
         if (readRoom (active).bypass) description << " | Bypassed";
        #if TRACKTION_ENABLE_PLUGIN_CPU_MEASUREMENT
         const auto cpu = bytes > 0 && edit.getTransport().isPlayContextActive()

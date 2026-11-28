@@ -15,6 +15,7 @@ on:
       - feature/studio-ostinato-midi-print-o10
       - feature/studio-acoustic-atlas-s1
       - 'feature/studio-native-spatial-*'
+      - feature/studio-complete-algorithmic-stage
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10

@@ -108,11 +108,11 @@ public:
            !in(p.tiltHigh,.5f-0.001f,2)||!in(p.output,.06f,4)||
            !in(p.amount,0,1)||!in(p.mono,0,1))return false;
         if(!direction.setPlan(p.direction))return false;
-        target=p;return true;
+        target=p;settling=true;return true;
     }
     // Explicit reset snaps to the current target and clears filter histories.
     // Never reset on each process block.
-    void reset() noexcept {current=target;state={};direction.reset();}
+    void reset() noexcept {current=target;state={};direction.reset();settling=false;}
     bool prepared() const noexcept {return ready;}
     static constexpr std::size_t allocatedBytes() noexcept {return 0;}
     static constexpr int latencySamples() noexcept {return 0;} // no buffered lookahead
@@ -147,13 +147,18 @@ public:
         }
         return peaks;
     }
+    // Stage already validates the two input samples and tracks its own meters.
+    void processFrame(float& left,float& right) noexcept
+    {
+        if(ready)frame(left,right,nullptr);
+    }
 private:
     struct Channel {float air1=0,air2=0,near=0,tilt=0;};
     Plan target,current;
     std::array<Channel,2> state{};
     binaural::Engine direction;
     float smooth=.001f;
-    bool ready=false;
+    bool ready=false,settling=false;
     static bool in(float v,float lo,float hi) noexcept {return std::isfinite(v)&&v>=lo&&v<=hi;}
     // Bound pathological host input to prevent overflow; ordinary audio
     // including float headroom is not limited or clipped at +/-1.
@@ -165,13 +170,15 @@ private:
         if(std::abs(z)<1e-25f)z=0;
         return z;
     }
-    void move(float& v,float t) const noexcept
+    void move(float& v,float t) noexcept
     {
         const float delta=t-v;
-        v=std::abs(delta)<1e-6f?t:v+smooth*delta;
+        if(std::abs(delta)<1e-6f)v=t;
+        else {v+=smooth*delta;settling=true;}
     }
     void advance() noexcept
     {
+        settling=false;
         move(current.width,target.width);move(current.level,target.level);
         move(current.airPole,target.airPole);move(current.airMix,target.airMix);
         move(current.proximity,target.proximity);move(current.proximityPole,target.proximityPole);
@@ -192,7 +199,7 @@ private:
     }
     void frame(float& l,float& r,early::Engine* reflections) noexcept
     {
-        advance();
+        if(settling)advance();
         const float dryL=l,dryR=r,cross=.5f*(1-current.width);
         const float inputMid=.5f*(l+r);
         const auto wl=current.width==0?inputMid:l+cross*(r-l);

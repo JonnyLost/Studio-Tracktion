@@ -729,14 +729,17 @@ juce_add_binary_data(StudioEnvironmentsAssets
     assets/environments/OrchestralStage.jpg
     assets/environments/ComposerDesk.jpg
     assets/environments/ModernStudio.jpg)
+juce_add_binary_data(StudioStageAssets
+    NAMESPACE StudioStageData HEADER_NAME StudioStageData.h
+    SOURCES assets/seating/Studio_Atlas_Master_I-XL.json)
 juce_generate_juce_header(Studio)
 target_sources(Studio PRIVATE Studio.cpp OstinatoCore.h OstinatoLibrary.h OstinatoPrint.h OstinatoMatrix.h OstinatoAudition.h OstinatoConductingInput.h StudioDlsAudioUnit.cpp StudioDlsAudioUnit.h MusicalTransport.cpp MusicalTransport.h ComposerMidi.cpp ComposerMidi.h ComposerFiles.h ComposerBounce.cpp ComposerBounce.h ComposerBounceUI.cpp ComposerBounceUI.h ComposerTracks.cpp ComposerTracks.h AppearanceMetrics.h StudioUI.h InstrumentBrowser.cpp InstrumentBrowser.h AriaCatalog.cpp AriaCatalog.h StudioMixing.cpp StudioMixing.h AtelierInspectorPanel.cpp AtelierInspectorPanel.h MidiMonitor.cpp MidiMonitor.h PianoRoll.cpp PianoRoll.h MusicalRuler.h StudioResources.cpp StudioResources.h MidiControllerLanes.cpp MidiControllerLanes.h MidiExpressionValues.h ArticulationPalette.cpp ArticulationPalette.h ArticulationMappings.h ResourceSample.h
     SamplerEngine.cpp StudioSampler.cpp SamplerEditor.cpp
     InstrumentReaders.cpp InstrumentReaders.h SampleSources.h
     InstrumentLibrary.cpp InstrumentLibrary.h InstrumentImportWindow.cpp InstrumentImportWindow.h
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
-    SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
-    StudioSpatialEffect.cpp StudioSpatialEffect.h SpatialSource.h SpatialBinaural.h SpatialEarlyReflections.h
+    SpatialStage.cpp SpatialStage.h SpatialPublication.h SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
+    StudioReverbEffect.cpp StudioReverbEffect.h StudioSpatialEffect.cpp StudioSpatialEffect.h SpatialSource.h SpatialBinaural.h SpatialEarlyReflections.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
     FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
@@ -749,7 +752,7 @@ target_compile_definitions(Studio PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
     TRACKTION_ENABLE_TIMESTRETCH_SOUNDTOUCH=1)
 target_link_libraries(Studio PRIVATE
-    StudioNativeSynth StudioSynthData StudioEnvironmentsAssets Threads::Threads
+    StudioNativeSynth StudioSynthData StudioEnvironmentsAssets StudioStageAssets Threads::Threads
     tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
     juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils)
 if(APPLE)
@@ -866,6 +869,11 @@ if(BUILD_TESTING)
     target_compile_features(StudioSpatialEarlyTests PRIVATE cxx_std_17)
     add_dependencies(Studio StudioSpatialEarlyTests)
     add_test(NAME StudioSpatialEarly COMMAND StudioSpatialEarlyTests)
+
+    add_executable(StudioPhysicalStageTests tests/SpatialStageTests.cpp SpatialStage.cpp SpatialReverb.cpp)
+    target_compile_features(StudioPhysicalStageTests PRIVATE cxx_std_20)
+    add_dependencies(Studio StudioPhysicalStageTests)
+    add_test(NAME StudioPhysicalStage COMMAND StudioPhysicalStageTests)
 
     add_executable(StudioSeatingAtlasTests tests/SeatingAtlasTests.cpp Seating/SeatingAtlas.h)
     target_compile_features(StudioSeatingAtlasTests PRIVATE cxx_std_20)

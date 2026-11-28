@@ -3,6 +3,9 @@
 #include "SpatialRouting.h"
 #include "StudioMixing.h"
 #include "StudioUI.h"
+#include "Seating/SeatingAtlas.h"
+#include "StudioStageData.h"
+#include "StudioReverbEffect.h"
 
 using namespace juce;
 namespace te = tracktion;
@@ -13,7 +16,7 @@ namespace
 {
 const Identifier setupType { "MIC_SETUP" };
 constexpr int firstCustomRoom = 100;
-constexpr int maximumMics = 32;
+constexpr int maximumMics = (int) stage::microphoneLimit;
 
 template <typename Parent, typename... Items>
 void add (Parent& parent, Items&... items)
@@ -81,7 +84,8 @@ class MicStrip final : public Component
 public:
     explicit MicStrip (String keyToUse) : key (std::move (keyToUse))
     {
-        add (*this, name, gain, pan, delay, mute, solo);
+        add (*this, name, level, gain, pan, delay, mute, solo);
+        level.setTitle ("Capsule signal peak");
         name.setFont (FontOptions (13.0f, Font::bold));
         gain.onChange = pan.onChange = delay.onChange = mute.onClick = solo.onClick = [this]
         {
@@ -92,8 +96,8 @@ public:
         };
         mute.setClickingTogglesState (true);
         solo.setClickingTogglesState (true);
-        mute.setTooltip ("Save the planned capsule mute setting. The audio mix is unaffected.");
-        solo.setTooltip ("Save the planned capsule solo setting. The audio mix is unaffected.");
+        mute.setTooltip ("Mute this capsule in the microphone perspective.");
+        solo.setTooltip ("Listen to the soloed capsules in the microphone perspective.");
     }
 
     const String key;
@@ -109,6 +113,12 @@ public:
         setEnabled (canEdit);
     }
 
+    void setPeak (float peak)
+    {
+        level.setText (peak > .0001f ? String (Decibels::gainToDecibels (peak), 1) + " dBFS" : "Silent",
+                       dontSendNotification);
+    }
+
     void paint (Graphics& g) override
     {
         g.setColour (colours::control);
@@ -117,13 +127,14 @@ public:
 
     static int height()
     {
-        return appearance.line (13, 4) + 3 * fieldHeight() + appearance.control (25) + appearance.px (12);
+        return 2 * appearance.line (13, 4) + 3 * fieldHeight() + appearance.control (25) + appearance.px (12);
     }
 
     void resized() override
     {
         auto area = getLocalBounds().reduced (appearance.px (5));
         name.setBounds (area.removeFromTop (appearance.line (13, 4)));
+        level.setBounds (area.removeFromTop (appearance.line (13, 4)));
         gain.setBounds (area.removeFromTop (fieldHeight()));
         pan.setBounds (area.removeFromTop (fieldHeight()));
         delay.setBounds (area.removeFromTop (fieldHeight()));
@@ -134,9 +145,9 @@ public:
 
 private:
     Mic state;
-    Label name;
+    Label name, level;
     SpatialField gain { "Level", -60, 12, 0.5, " dB" }, pan { "Pan", -1, 1, 0.01 },
-                 delay { "Delay trim", -30, 30, 0.1, " ms" };
+                 delay { "Delay", 0, 30, 0.1, " ms" };
     TextButton mute { "Mute" }, solo { "Solo" };
 };
 
@@ -155,18 +166,19 @@ SpatialWorkspace::SpatialWorkspace()
     seatingDesigner.setTooltip ("Browse the VSL catalog and reference seating without changing acoustic positions");
     seatingDesigner.onClick = [this] { if (onOpenSeating) onOpenSeating(); };
    #endif
-    add (stageToolbar, stageCheck, seating, arrangeScope, arrange);
+    add (stageToolbar, stageCheck, seating, arrangeScope, arrange, stageOptions, atlasButton);
+    stagePage.addChildComponent (floatStage);
     add (stageRoster, rosterTitle, trackList);
-    add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, stageStatus, stageSignal);
+    add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, sourceOptions, stageStatus, stageSignal);
     rosterTitle.setText ("Project Tracks", dontSendNotification);
     trackList.setColour (ListBox::backgroundColourId, colours::canvas);
     add (roomPage, roomStatus, roomDraftStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
          wall, floor, ceiling, applyRoom, saveRoom,
          renameRoom, deleteRoom, bypassRoom, resetRoom, widthField, lengthField, heightField, treatment,
-         early, late, roomGain, preDelay);
+         early, late, roomGain, preDelay, roomOptions);
     for (auto& band : decay) roomPage.addAndMakeVisible (band);
     add (micPage, micStatus, micMap, micList, patterns, stereo, setups, micName, setupName, placement, micMixer,
-         addMic, removeMic, addStereo, renameMic, saveSetup, recallSetup, removeSetup, micRoomBypass,
+         addMic, removeMic, addStereo, renameMic, saveSetup, recallSetup, removeSetup, micRoomBypass, monitorMics,
          micX, micDepth, micHeight, azimuth, elevation, spacing, pairAngle, micBankViewport);
     micBankViewport.setViewedComponent (&micBank, false);
     micBankViewport.setScrollBarsShown (false, true);
@@ -221,6 +233,20 @@ SpatialWorkspace::SpatialWorkspace()
         syncMaps();
     };
     stageMap.onMove = [this] (const String& key, Position p, bool section) { moveTrack (key, p, section); };
+    stageMap.onBeginLiveMove = [this] (const String& key)
+    {
+        auto* track = lookup (te::EditItemID::fromString (key));
+        if (! editable || track == nullptr || ! hasStageSource (*track) || track->isFrozen (te::Track::anyFreeze))
+            return false;
+        liveSeatGesture = true;
+        begin ("Move Stage sources");
+        return true;
+    };
+    stageMap.onEndLiveMove = [this]
+    {
+        liveSeatGesture = false;
+        if (edit != nullptr) finish();
+    };
     stageMap.trackFromDrag = [this] (const DragAndDropTarget::SourceDetails& details) -> String
     {
         const auto payload = details.description.toString();
@@ -247,6 +273,19 @@ SpatialWorkspace::SpatialWorkspace()
         }
     };
     toggleSend.onClick = [this] { toggleTrackAudio(); };
+    stageOptions.onClick = [this] { showStageOptions(); };
+    sourceOptions.onClick = [this] { showSourceOptions(); };
+    atlasButton.onClick = [this] { showAtlas(); };
+    roomOptions.onClick = [this] { showRoomOptions(); };
+    monitorMics.onClick = [this]
+    {
+        if (! editable || ! isPhysicalScene (scene()) || microphones().getNumChildren() == 0
+            || microphones().getNumChildren() > maximumMics) return;
+        auto root = scene();
+        begin ("Change Stage listening perspective");
+        root.setProperty ("microphoneMix", ! (bool) root.getProperty ("microphoneMix", false), &edit->getUndoManager());
+        finish();
+    };
     sections.onChange = [this] { editSeat (SeatField::family); };
     pan.onChange = [this] { editSeat (SeatField::pan); };
     depth.onChange = [this] { editSeat (SeatField::depth); };
@@ -259,6 +298,7 @@ SpatialWorkspace::SpatialWorkspace()
         {
             const auto& preset = factoryRooms[(size_t) id - 1];
             setDraft (preset.room, preset.name);
+            roomList.setTooltip (preset.description);
         }
         else if (id >= firstCustomRoom)
         {
@@ -310,6 +350,7 @@ SpatialWorkspace::SpatialWorkspace()
         {
             spacing.set (stereoPairs[(size_t) i].spacingMetres);
             pairAngle.set (stereoPairs[(size_t) i].angleDegrees);
+            syncMicrophones();
         }
     };
     stereo.onChange();
@@ -353,10 +394,17 @@ SpatialWorkspace::~SpatialWorkspace()
     micBankViewport.setViewedComponent (nullptr);
 }
 
+void SpatialWorkspace::setFloatAction (std::function<void()> action)
+{
+    floatStage.onClick = std::move (action);
+    floatStage.setVisible (floatStage.onClick != nullptr && ! compactStage);
+}
+
 void SpatialWorkspace::setEdit (te::Edit* next)
 {
     if (edit != nullptr) setRoomCheck (*edit, false);
     edit = next;
+    liveSeatGesture = false;
     editable = routable = false;
     selectedTrack = lastArrangementSelection = {};
     arrangementSelection.clear();
@@ -393,6 +441,7 @@ void SpatialWorkspace::setCompactStage (bool value)
 {
     if (compactStage == value) return;
     compactStage = value;
+    floatStage.setVisible (floatStage.onClick != nullptr && ! value);
     stageMap.setOverview (value);
     for (auto* item : { &stageToolbar, &stageRoster, &stageInspector }) item->setVisible (! value);
     stageSummary.setVisible (value);
@@ -405,7 +454,7 @@ ValueTree SpatialWorkspace::scene() const { return edit != nullptr ? edit->state
 bool SpatialWorkspace::supported() const
 {
     auto root = scene();
-    return ! root.isValid() || (int) root.getProperty ("version", -1) == version;
+    return ! root.isValid() || (int) root.getProperty ("version", -1) == version || isPhysicalScene (root);
 }
 
 ValueTree SpatialWorkspace::ensureChild (ValueTree parent, const Identifier& type)
@@ -475,12 +524,14 @@ void SpatialWorkspace::refresh (const Array<te::AudioTrack*>& items, const Array
 void SpatialWorkspace::updateTracks (const Array<te::AudioTrack*>& items)
 {
     std::vector<TrackRow> next;
+    const auto physical = isPhysicalScene (scene());
+    const auto room = readRoom (activeRoom());
     std::array<int, sectionNames.size()> totals {}, counts {};
     for (auto* track : items)
         if (! isRoomReturn (*track))
         {
             auto v = track->state.getChildWithName (seatType);
-            auto data = readSeat (v, inferSection (*track));
+            auto data = physical ? readPhysicalSeat (v, room, inferSection (*track)) : readSeat (v, inferSection (*track));
             ++totals[(size_t) data.section];
             auto* instrument = studio::findInstrument (*track);
             next.push_back ({ track->itemID, track->getName(), instrument != nullptr ? instrument->getName() : String(),
@@ -606,13 +657,21 @@ void SpatialWorkspace::syncStage()
     arrange.setEnabled (editable && ! tracks.empty());
     toggleSend.setButtonText (enabled ? "Disable stage audio" : "Enable stage audio");
     toggleSend.setEnabled (routable && hasTrack);
+    sourceOptions.setEnabled (canChangeSeat && isPhysicalScene (scene()));
+    stageOptions.setEnabled (editable);
+    atlasButton.setEnabled (editable);
     if (hasTrack)
     {
         const auto seatValue = found->seat;
         sections.setSelectedId ((int) seatValue.section + 1, dontSendNotification);
         pan.set (seatValue.position.x); depth.set (seatValue.position.depth); trim.set (seatValue.sendTrim);
-        toggleSend.setTooltip (enabled ? "Remove Studio's stage balance and owned aux send."
-            : "Explicitly add Studio stage balance and a shared room send to this track.");
+        toggleSend.setTooltip (enabled ? "Remove the Stage processor and its shared room send."
+            : "Place this track in the Stage audio graph with one source and one room send.");
+        const auto point = stage::sourcePoint (readRoom (activeRoom()), seatValue.position,
+                                               readSource (track->state.getChildWithName (seatType)).height);
+        if (isPhysicalScene (scene()))
+            selectedName.setTooltip (selectedName.getText() + " | " + String (point.x, 1) + " m across, "
+                + String (point.y, 1) + " m from front wall, " + String (point.z, 1) + " m high");
     }
     const auto liveGain = enabled ? activeRoomSendDb (*track) : std::nullopt;
     const auto signal = liveGain ? "Stage audio on | Room send " + String (*liveGain, 1) + " dB"
@@ -634,15 +693,22 @@ void SpatialWorkspace::syncMaps()
     for (const auto& row : tracks)
         if (row.placed || view == View::microphones)
             markers.push_back ({ row.id.toString(), row.name, row.seat.position, (int) row.seat.section, false, 0, Pattern::omni });
-    if (view == View::microphones)
+    const auto root = scene();
+    const bool physical = isPhysicalScene (root);
+    if (physical)
+    {
+        const Position point { (float) root.getProperty ("listenerX", 0.f), (float) root.getProperty ("listenerDepth", .08f) };
+        markers.push_back ({ {}, "Listener", validPosition (point), 0, true, 0, Pattern::omni, true });
+    }
+    if (view == View::microphones || (physical && (bool) root.getProperty ("microphoneMix", false)))
         for (auto mic : microphones())
         {
             const auto value = readMic (mic);
             markers.push_back ({ keyOf (mic), nameOf (mic), value.position, 0, true, value.azimuth, value.pattern });
         }
     const auto seatingLayout = (Seating) jlimit (0, 2, (int) scene().getProperty ("seating", 0));
-    if (view == View::microphones) micMap.display (std::move (markers), selectedMic, true, seatingLayout);
-    else stageMap.display (std::move (markers), selectedTrack.toString(), false, seatingLayout);
+    if (view == View::microphones) micMap.display (std::move (markers), selectedMic, true, seatingLayout, physical);
+    else stageMap.display (std::move (markers), selectedTrack.toString(), false, seatingLayout, physical);
 }
 
 void SpatialWorkspace::setSeat (te::AudioTrack& track, Seat value)
@@ -657,6 +723,13 @@ void SpatialWorkspace::setSeat (te::AudioTrack& track, Seat value)
             const auto key = properties.getPropertyName (i);
             existing.setProperty (key, properties.getProperty (key), &undo);
         }
+    if (isPhysicalScene (scene()))
+    {
+        const auto room = readRoom (activeRoom());
+        auto node = track.state.getChildWithName (seatType);
+        if (! node.hasProperty ("xMetres") || readPhysicalSeat (node, room).position != validPosition (value.position))
+            writeMetres (node, room, value.position, undo);
+    }
     updateRoomSend (track, value.position, value.sendTrim);
 }
 
@@ -683,7 +756,7 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
         delta = { jlimit (left, right, delta.x), jlimit (front, back, delta.depth) };
     }
     if (found->placed && delta.x == 0.0f && delta.depth == 0.0f) return;
-    begin (! found->placed ? "Place stage track" : group ? "Move stage section" : "Move stage seat");
+    if (! liveSeatGesture) begin (! found->placed ? "Place stage track" : group ? "Move stage section" : "Move stage seat");
     for (const auto& row : tracks)
         if (row.id == found->id || (group && row.placed && row.seat.section == found->seat.section))
             if (auto* track = lookup (row.id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
@@ -693,7 +766,12 @@ void SpatialWorkspace::moveTrack (const String& key, Position point, bool group)
                 setSeat (*track, value);
             }
     statusMessage.clear();
-    finish();
+    if (liveSeatGesture)
+    {
+        updateTracks (te::getAudioTracks (*edit));
+        syncMaps();
+    }
+    else finish();
 }
 
 void SpatialWorkspace::placeSelectedTrack()
@@ -761,10 +839,363 @@ void SpatialWorkspace::toggleTrackAudio()
     const auto row = std::find_if (tracks.begin(), tracks.end(), [this] (const auto& item) { return item.id == selectedTrack; });
     if (! routable || track == nullptr || row == tracks.end()) return;
     begin ("Change stage routing");
-    const auto result = setRoomSend (*track, ! hasRoomSend (*track), row->seat.position, row->seat.sendTrim, readRoom (activeRoom()));
+    const bool enabling = ! hasRoomSend (*track);
+    const bool newScene = enabling && ! usesPhysicalStage (*edit) && ! hasLegacyStageSources (*edit);
+    if (newScene)
+    {
+        if (const auto result = adoptPhysicalStage (*edit); result.failed())
+        {
+            statusMessage = result.getErrorMessage();
+            finish();
+            return;
+        }
+    }
+    const auto result = setRoomSend (*track, enabling, row->seat.position, row->seat.sendTrim, readRoom (activeRoom()));
     statusMessage = result.getErrorMessage();
-    if (result.wasOk() && ! row->placed) setSeat (*track, row->seat);
+    if (result.failed() && newScene) edit->getUndoManager().undoCurrentTransactionOnly();
+    if (result.wasOk() && enabling && ! row->placed) setSeat (*track, row->seat);
     finish();
+}
+
+namespace
+{
+class StagePanel final : public Component
+{
+public:
+    template <typename Item, typename... Args>
+    Item& make (Args&&... args)
+    {
+        auto item = std::make_unique<Item> (std::forward<Args> (args)...);
+        auto& ref = *item;
+        addAndMakeVisible (ref);
+        items.push_back (std::move (item));
+        return ref;
+    }
+
+    void open (TextButton& anchor, int width = 330)
+    {
+        const auto w = jmin (appearance.span (width), 490);
+        int height = appearance.px (14);
+        for (const auto& item : items) height += rowHeight (*item, w);
+        setSize (w, height);
+        CallOutBox::launchAsynchronously (std::unique_ptr<StagePanel> (this), anchor.getScreenBounds(), nullptr);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (appearance.px (7));
+        for (const auto& item : items) item->setBounds (area.removeFromTop (rowHeight (*item, getWidth())));
+    }
+
+    void dismiss()
+    {
+        if (auto* callout = findParentComponentOfClass<CallOutBox>()) callout->dismiss();
+    }
+
+private:
+    std::vector<std::unique_ptr<Component>> items;
+
+    static int rowHeight (Component& item, int width)
+    {
+        if (auto* controls = dynamic_cast<ReverbControls*> (&item))
+            return controls->preferredHeight (width - 2 * appearance.px (7));
+        if (dynamic_cast<SpatialField*> (&item) != nullptr) return fieldHeight();
+        return appearance.control (29);
+    }
+};
+}
+
+void SpatialWorkspace::showStageOptions()
+{
+    if (! editable) return;
+    auto* panel = new StagePanel;
+    const SafePointer<SpatialWorkspace> safe (this);
+    auto* project = edit;
+    const auto sceneState = scene();
+    if (! isPhysicalScene (sceneState))
+    {
+        auto& adopt = panel->make<TextButton> ("Adopt physical Stage");
+        adopt.setEnabled (routable);
+        adopt.setTooltip ("Convert the legacy Stage routes and room in one undoable transaction.");
+        adopt.onClick = [safe, project, panel]
+        {
+            if (safe == nullptr || safe->edit != project || ! safe->routable) return;
+            safe->begin ("Adopt physical Stage");
+            const auto result = adoptPhysicalStage (*project);
+            safe->statusMessage = result.failed() ? result.getErrorMessage() : "Physical Stage active. Undo restores legacy routing.";
+            safe->finish();
+            panel->dismiss();
+        };
+    }
+    else
+    {
+        auto& bypass = panel->make<TextButton> ((bool) sceneState.getProperty ("stageBypass", false) ? "Enable Stage" : "Bypass Stage");
+        bypass.onClick = [safe, project, panel]
+        {
+            if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+            auto root = safe->scene();
+            safe->begin ("Toggle Stage bypass");
+            root.setProperty ("stageBypass", ! (bool) root.getProperty ("stageBypass", false), &project->getUndoManager());
+            safe->finish();
+            panel->dismiss();
+        };
+        const auto listener = [&] (const char* label, const char* key, float fallback, double low, double high, double step)
+        {
+            auto& field = panel->make<SpatialField> (label, low, high, step);
+            field.set ((float) sceneState.getProperty (key, fallback));
+            field.onChange = [safe, project, &field, key]
+            {
+                if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+                auto root = safe->scene();
+                safe->begin ("Move the Stage listener");
+                root.setProperty (key, field.get(), &project->getUndoManager());
+                safe->finish();
+            };
+        };
+        listener ("Listener left / right", "listenerX", 0, -1, 1, .01);
+        listener ("Listener front / rear", "listenerDepth", .08f, 0, 1, .01);
+        listener ("Listener height (m)", "listenerHeight", 1.4f, .25, 20, .05);
+    }
+    panel->open (stageOptions);
+}
+
+void SpatialWorkspace::showSourceOptions()
+{
+    auto* track = lookup (selectedTrack);
+    if (! editable || track == nullptr || ! isPhysicalScene (scene())) return;
+    auto* panel = new StagePanel;
+    const auto id = track->itemID;
+    const auto settings = readSource (track->state.getChildWithName (seatType));
+    auto* project = edit;
+    const SafePointer<SpatialWorkspace> safe (this);
+    const auto change = [safe, project, id] (auto update)
+    {
+        if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+        auto* target = safe->lookup (id);
+        if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return;
+        safe->begin ("Edit physical Stage source");
+        auto state = target->state.getChildWithName (seatType);
+        if (! state.isValid())
+        {
+            const auto row = std::find_if (safe->tracks.begin(), safe->tracks.end(), [id] (const auto& t) { return t.id == id; });
+            if (row == safe->tracks.end()) return;
+            safe->setSeat (*target, row->seat);
+            state = target->state.getChildWithName (seatType);
+        }
+        auto source = readSource (state);
+        update (source);
+        writeSource (state, source, project->getUndoManager());
+        safe->finish();
+    };
+    auto& family = panel->make<ComboBox>();
+    populate (family, stage::familyNames, (int) settings.family + 1);
+    family.setTitle ("Radiation family");
+    family.onChange = [change, &family] { change ([&] (auto& source)
+        { source.family = (stage::Family) (family.getSelectedId() - 1); }); };
+    const auto field = [&] (const char* label, float stage::Source::*member, double low, double high,
+                            double step, const char* suffix)
+    {
+        auto& control = panel->make<SpatialField> (label, low, high, step, suffix);
+        control.set (settings.*member);
+        control.onChange = [change, member, &control] { change ([&] (auto& source) { source.*member = control.get(); }); };
+    };
+    field ("Height", &stage::Source::height, .25, 20, .05, " m");
+    field ("Orientation", &stage::Source::orientation, -180, 180, 1, " deg");
+    field ("Stereo width", &stage::Source::width, 0, 2, .01, " x");
+    field ("Direct level", &stage::Source::directDb, -24, 6, .5, " dB");
+    field ("Directivity strength", &stage::Source::direction, 0, 1, .01, " x");
+    field ("Reflections", &stage::Source::early, 0, 1, .01, " x");
+    auto& reset = panel->make<TextButton> ("Reset source");
+    reset.onClick = [change, panel] { change ([] (auto& source) { source = {}; }); panel->dismiss(); };
+    panel->open (sourceOptions);
+}
+
+void SpatialWorkspace::showRoomOptions()
+{
+    if (! editable || ! isPhysicalScene (scene())) return;
+    auto* panel = new StagePanel;
+    auto& controls = panel->make<ReverbControls> (false, true);
+    controls.setRoom (readDraft());
+    auto& applySettings = panel->make<TextButton> ("Apply reverb settings");
+    const SafePointer<SpatialWorkspace> safe (this);
+    auto* project = edit;
+    applySettings.onClick = [safe, project, panel, &controls]
+    {
+        if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+        auto room = safe->readDraft();
+        room.shape = controls.readRoom().shape;
+        safe->apply (room, safe->roomName.getText().trim());
+        panel->dismiss();
+    };
+    panel->open (roomOptions, 460);
+}
+
+void SpatialWorkspace::showAtlas()
+{
+    if (! editable) return;
+    using studio::seating::atlas::Catalog;
+    using studio::seating::atlas::Layout;
+    static const auto catalog = []
+    {
+        Catalog result;
+        result.load (String::fromUTF8 (StudioStageData::Studio_Atlas_Master_IXL_json,
+                                      StudioStageData::Studio_Atlas_Master_IXL_jsonSize));
+        return result;
+    }();
+    auto* panel = new StagePanel;
+    auto& search = panel->make<TextEditor>();
+    auto& layouts = panel->make<ComboBox>();
+    auto& roles = panel->make<ComboBox>();
+    auto& target = panel->make<Label>();
+    auto& place = panel->make<TextButton> ("Place track at selected role");
+    auto& save = panel->make<TextButton> ("Save a copy of this layout");
+    auto& recall = panel->make<TextButton> ("Load a saved layout");
+    auto& clear = panel->make<TextButton> ("Clear selected track placement");
+    auto& zoom = panel->make<TextButton> (stageMap.isZoomed() ? "Fit Stage" : "Zoom Stage");
+    auto matches = std::make_shared<std::vector<const Layout*>>();
+    search.setTextToShowWhenEmpty ("Search Atlas seating layouts", colours::secondary);
+    layouts.setTitle ("Seating chart");
+    roles.setTitle ("Orchestral role");
+    const auto& rows = tracks;
+    const auto id = selectedTrack;
+    const auto row = std::find_if (rows.begin(), rows.end(), [id] (const auto& item) { return item.id == id; });
+    target.setText (row == rows.end() ? "Select a project track from the roster first."
+                                     : "Assign to " + row->name, dontSendNotification);
+    zoom.onClick = [safe = SafePointer<SpatialWorkspace> (this), panel]
+    {
+        if (safe == nullptr) return;
+        safe->stageMap.setZoomed (! safe->stageMap.isZoomed());
+        panel->dismiss();
+    };
+    layouts.onChange = [matches, &layouts, &roles, &place, id]
+    {
+        roles.clear (dontSendNotification);
+        const auto index = layouts.getSelectedId() - 1;
+        if (! isPositiveAndBelow (index, (int) matches->size())) return;
+        const auto* layout = (*matches)[(size_t) index];
+        roles.setTextWhenNothingSelected (layout->singleStage() ? "Choose an orchestral role" : "Reference chart");
+        if (layout->singleStage())
+        {
+            const auto options = Catalog::reviewRoles (*layout);
+            for (size_t i = 0; i < options.size(); ++i)
+                if (const auto found = catalog.instruments().find (options[i].instrumentId); found != catalog.instruments().end())
+                    roles.addItem (found->second.name + (options[i].zone.isNotEmpty() ? " / " + options[i].zone : String()), (int) i + 1);
+        }
+        place.setEnabled (id.isValid() && roles.getSelectedId() > 0);
+    };
+    roles.onChange = [&roles, &place, id] { place.setEnabled (id.isValid() && roles.getSelectedId() > 0); };
+    search.onTextChange = [matches, &search, &layouts]
+    {
+        matches->clear();
+        layouts.clear (dontSendNotification);
+        const auto query = search.getText().trim();
+        for (const auto& layout : catalog.layouts())
+            if (layout.title.containsIgnoreCase (query) || layout.plate.containsIgnoreCase (query))
+            {
+                matches->push_back (&layout);
+                layouts.addItem (layout.plate + "  " + layout.title + (layout.singleStage() ? "" : " (reference)"), (int) matches->size());
+            }
+        layouts.setTextWhenNothingSelected (matches->empty() ? "No matching charts" : "Choose an Atlas chart");
+        layouts.onChange();
+    };
+    const SafePointer<SpatialWorkspace> safe (this);
+    auto* project = edit;
+    place.onClick = [safe, project, panel, matches, &layouts, &roles, id]
+    {
+        if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+        auto* track = safe->lookup (id);
+        const auto index = layouts.getSelectedId() - 1;
+        if (track == nullptr || track->isFrozen (te::Track::anyFreeze) || ! isPositiveAndBelow (index, (int) matches->size())) return;
+        const auto& layout = *(*matches)[(size_t) index];
+        const auto options = Catalog::reviewRoles (layout);
+        const auto chosen = roles.getSelectedId() - 1;
+        if (! layout.singleStage() || ! isPositiveAndBelow (chosen, (int) options.size())) return;
+        const auto& role = options[(size_t) chosen];
+        auto seat = readSeat (track->state.getChildWithName (seatType), inferSection (*track));
+        seat.position = stage::atlasToSeat (role.chartX, role.chartY);
+        safe->begin ("Assign Atlas role to project track");
+        safe->setSeat (*track, seat);
+        auto node = track->state.getChildWithName (seatType);
+        StringArray markers;
+        for (const auto& marker : role.markerIds) markers.add (marker);
+        node.setProperty ("atlasLayout", layout.id, &project->getUndoManager())
+            .setProperty ("atlasRole", role.instrumentId, &project->getUndoManager())
+            .setProperty ("atlasMarkers", markers.joinIntoString (" "), &project->getUndoManager());
+        safe->finish();
+        panel->dismiss();
+    };
+    save.onClick = [safe, panel] { if (safe != nullptr) safe->manageLayout (false); panel->dismiss(); };
+    recall.onClick = [safe, panel] { if (safe != nullptr) safe->manageLayout (true); panel->dismiss(); };
+    clear.setEnabled (row != rows.end() && row->placed && routable);
+    clear.onClick = [safe, project, panel, id]
+    {
+        if (safe == nullptr || safe->edit != project || ! safe->routable) return;
+        if (auto* track = safe->lookup (id); track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
+        {
+            safe->begin ("Clear Stage placement");
+            const auto result = setRoomSend (*track, false, {}, -14, {});
+            if (result.wasOk()) track->state.removeChild (track->state.getChildWithName (seatType), &project->getUndoManager());
+            else safe->statusMessage = result.getErrorMessage();
+            safe->finish();
+        }
+        panel->dismiss();
+    };
+    search.onTextChange();
+    panel->open (atlasButton, 408);
+}
+
+void SpatialWorkspace::manageLayout (bool recall)
+{
+    static const Identifier layoutsType { "STAGE_LAYOUTS" }, layoutType { "STAGE_LAYOUT" };
+    if (! editable) return;
+    auto root = scene();
+    auto saved = root.getChildWithName (layoutsType);
+    const SafePointer<SpatialWorkspace> safe (this);
+    auto* project = edit;
+    if (recall)
+    {
+        PopupMenu menu;
+        for (const auto layout : saved)
+            menu.addItem (nameOf (layout), [safe, project, layout]
+            {
+                if (safe == nullptr || safe->edit != project || ! safe->editable) return;
+                safe->begin ("Recall Stage layout");
+                for (const auto entry : layout)
+                    if (auto* track = safe->lookup (te::EditItemID::fromString (entry["trackKey"].toString()));
+                        track != nullptr && ! track->isFrozen (te::Track::anyFreeze))
+                    {
+                        auto node = entry.createCopy();
+                        replaceChild (track->state, track->state.getChildWithName (seatType), node, project->getUndoManager());
+                        const auto seat = readPhysicalSeat (node, readRoom (safe->activeRoom()));
+                        updateRoomSend (*track, seat.position, seat.sendTrim);
+                    }
+                safe->finish();
+            });
+        if (menu.getNumItems() == 0) { setStatus ("Save a layout before recalling it."); return; }
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (&atlasButton));
+        return;
+    }
+    auto* dialog = new AlertWindow ("Save a Stage layout", {}, MessageBoxIconType::NoIcon);
+    dialog->addTextEditor ("name", "Layout " + String (saved.getNumChildren() + 1), "Name");
+    dialog->addButton ("Save", 1, KeyPress (KeyPress::returnKey));
+    dialog->addButton ("Cancel", 0, KeyPress (KeyPress::escapeKey));
+    dialog->enterModalState (true, ModalCallbackFunction::create ([safe, project, dialog] (int result)
+    {
+        if (result != 1 || safe == nullptr || safe->edit != project || ! safe->editable) return;
+        auto name = dialog->getTextEditorContents ("name").trim().substring (0, 64);
+        if (name.isEmpty()) return;
+        safe->begin ("Save Stage layout copy");
+        auto layouts = safe->ensureChild (safe->requireScene(), layoutsType);
+        if (layouts.getChildWithProperty ("name", name).isValid())
+            name += " (" + String (layouts.getNumChildren() + 1) + ")";
+        ValueTree layout (layoutType);
+        layout.setProperty ("name", name, nullptr);
+        for (auto* track : te::getAudioTracks (*project))
+            if (auto node = track->state.getChildWithName (seatType); node.isValid())
+                layout.addChild (node.createCopy(), -1, nullptr);
+        layouts.addChild (layout, -1, &project->getUndoManager());
+        safe->finish();
+    }), true);
 }
 
 #if STUDIO_SPATIAL_TESTS
@@ -926,6 +1357,7 @@ void SpatialWorkspace::syncRooms()
     deleteRoom.setEnabled (editable && custom);
     saveRoom.setEnabled (editable);
     applyRoom.setEnabled (editable);
+    roomOptions.setEnabled (editable && isPhysicalScene (scene()));
     const auto current = active.isValid() ? nameOf (active) : String ("Chamber Hall");
     roomStatus.setText (edit == nullptr ? "Open or create a project to apply a room." : ! supported()
         ? "This project uses a newer spatial state version."
@@ -1085,19 +1517,35 @@ void SpatialWorkspace::syncMicrophones()
         micHeight.set (mic.height); azimuth.set (mic.azimuth); elevation.set (mic.elevation);
         patterns.setSelectedId ((int) mic.pattern + 1, dontSendNotification);
     }
-    for (size_t i = 0; mixer && i < micStrips.size(); ++i) micStrips[i]->display (current.getChild ((int) i), editable);
+    const bool physical = isPhysicalScene (scene());
+    const bool playableBank = current.getNumChildren() > 0 && current.getNumChildren() <= maximumMics;
+    const bool monitoring = physical && (bool) scene().getProperty ("microphoneMix", false) && playableBank;
+    const auto levels = monitoring && mixer ? stageMicrophonePeaks (*edit) : std::array<float, stage::microphoneLimit> {};
+    for (size_t i = 0; mixer && i < micStrips.size(); ++i)
+    {
+        micStrips[i]->display (current.getChild ((int) i), editable);
+        micStrips[i]->setPeak (i < levels.size() ? levels[i] : 0.f);
+    }
+    monitorMics.setEnabled (editable && physical && playableBank);
+    monitorMics.setToggleState (monitoring, dontSendNotification);
+    monitorMics.setButtonText (monitoring ? "Monitor listener" : "Monitor microphones");
     for (Component* control : std::initializer_list<Component*> { &micX, &micDepth, &micHeight, &azimuth,
           &elevation, &patterns, &renameMic, &removeMic })
         control->setEnabled (editable && selected.isValid());
     addMic.setEnabled (editable && current.getNumChildren() < maximumMics);
-    addStereo.setEnabled (editable && current.getNumChildren() <= maximumMics - 2);
+    const auto preset = stereoPairs[(size_t) jlimit (0, (int) stereoPairs.size() - 1, stereo.getSelectedItemIndex())];
+    addStereo.setEnabled (editable && current.getNumChildren() <= maximumMics - preset.capsules);
+    addStereo.setButtonText (preset.capsules == 1 ? "Place spot mic" : "Place microphone array");
     recallSetup.setEnabled (editable && presets().getNumChildren() > 0);
     removeSetup.setEnabled (editable && presets().getNumChildren() > 0);
     saveSetup.setEnabled (editable && current.getNumChildren() > 0);
     if (view == View::microphones && mixer) syncRoomAudioControls();
     micStatus.setText (! supported() ? "This project uses a newer spatial state version."
-        : "Visual setup only  |  Microphone capture is unavailable."
-            + (statusMessage.isNotEmpty() ? " " + statusMessage : String()), dontSendNotification);
+        : statusMessage.isNotEmpty() ? statusMessage
+        : ! physical ? "Adopt the physical Stage to hear virtual microphones."
+        : current.getNumChildren() > maximumMics ? "Keep up to six capsules in the active setup to monitor it."
+        : monitoring ? "Monitoring virtual microphones and the shared late field." : "Monitoring the Stage listener.",
+        dontSendNotification);
     micStatus.setTooltip (micStatus.getText());
 }
 
@@ -1126,25 +1574,28 @@ void SpatialWorkspace::editMic()
 
 void SpatialWorkspace::createMics (bool pair)
 {
-    if (! editable || microphones().getNumChildren() > maximumMics - (pair ? 2 : 1)) return;
-    begin (pair ? "Place virtual stereo pair" : "Add virtual microphone");
+    const auto configuration = stereoPairs[(size_t) jlimit (0, (int) stereoPairs.size() - 1, stereo.getSelectedItemIndex())];
+    const int added = pair ? configuration.capsules : 1;
+    if (! editable || microphones().getNumChildren() > maximumMics - added) return;
+    begin (pair ? "Place virtual microphone array" : "Add virtual microphone");
     auto list = ensureChild (requireScene(), microphonesType);
     const auto count = list.getNumChildren();
-    for (int i = 0; i < (pair ? 2 : 1); ++i)
+    for (int i = 0; i < added; ++i)
     {
         const auto key = Uuid().toString();
         Mic m;
         String name = "Mic " + String (count + i + 1);
         if (pair)
         {
-            const int side = i == 0 ? -1 : 1;
-            const auto configuration = stereoPairs[(size_t) jlimit (0, 3, stereo.getSelectedItemIndex())];
+            const int side = added == 1 || i == 2 ? 0 : i == 0 ? -1 : 1;
+            const auto acousticRoom = readRoom (activeRoom());
             m.pattern = configuration.pattern;
-            // Normalised X maps to half the active room's width.
-            m.position.x = (float) side * spacing.get() / readRoom (activeRoom()).width;
+            m.position.x = (float) side * spacing.get() / (.92f * acousticRoom.width);
+            m.position.depth = configuration.depth + (i == 2 ? 1.f / (.79f * acousticRoom.length) : 0.f);
+            m.height = configuration.height;
             m.azimuth = (float) side * pairAngle.get() * 0.5f;
-            m.pan = 0.8f * (float) side;
-            name += i == 0 ? " L" : " R";
+            m.pan = .85f * (float) side;
+            name += side < 0 ? " L" : side > 0 ? " R" : " C";
         }
         list.addChild (writeMic (key, name, m), -1, &edit->getUndoManager());
         if (i == 0) selectedMic = key;
@@ -1299,11 +1750,15 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
             return 1;
         }
         const auto controls = { ToolbarItem { &seating, 163 }, ToolbarItem { &arrangeScope, 137 },
-                                ToolbarItem { &arrange, 110 }, ToolbarItem { &stageCheck, 150 }
+                                ToolbarItem { &arrange, 110 }, ToolbarItem { &stageOptions, 132 },
+                                ToolbarItem { &atlasButton, 139 }, ToolbarItem { &stageCheck, 150 }
                                #if JUCE_MAC
                                 , ToolbarItem { &seatingDesigner, 174 }
                                #endif
                               };
+        if (floatStage.isVisible()) toolbar (area, { { &floatStage, 124 } });
+        const bool showMapFirst = isPhysicalScene (scene()) && area.getWidth() < m.span (650);
+        const auto priorityMap = showMapFirst ? area.removeFromTop (mapHeight() + extra) : Rectangle<int>();
         const auto top = area.removeFromTop (toolbarHeight (area.getWidth(), controls));
         if (bounds)
         {
@@ -1344,12 +1799,14 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
             }
             region.removeFromTop (m.px (3));
             put (toggleSend, m.control (26));
+            put (sourceOptions, m.control (26));
             put (stageStatus, 2 * m.line (11, 1));
             put (stageSignal, 2 * m.line (11, 1));
             return region.getY() - startY + gap;
         };
         const int inspectionHeight = layoutInspector (area.withWidth (columns ? inspectorWidth : area.getWidth()), false);
-        auto row = area.removeFromTop ((columns ? jmax (mapHeight(), inspectionHeight) : mapHeight()) + extra);
+        auto row = showMapFirst ? priorityMap
+            : area.removeFromTop ((columns ? jmax (mapHeight(), inspectionHeight) : mapHeight()) + extra);
         const auto layoutRoster = [&] (Rectangle<int> sidebar)
         {
             if (! bounds) return;
@@ -1390,11 +1847,11 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         toolbar (area, { { &wall, 150 }, { &floor, 150 }, { &ceiling, 153 } });
         fields (area, { &decay[0], &decay[1], &decay[2], &decay[3], &decay[4], &decay[5] });
         fields (area, { &early, &late, &preDelay, &roomGain });
-        toolbar (area, { { &resetRoom, 122 } });
+        toolbar (area, { { &resetRoom, 122 }, { &roomOptions, 153 } });
     }
     else
     {
-        toolbar (area, { { &placement, 106 }, { &micMixer, 106 } });
+        toolbar (area, { { &placement, 106 }, { &micMixer, 106 }, { &monitorMics, 192 } });
         place (area, micStatus, 2 * m.line (12, 1));
         toolbar (area, { { &setups, 137 }, { &setupName, 140 }, { &saveSetup, 105 }, { &recallSetup, 112 }, { &removeSetup, 108 } });
         if (mixer)
@@ -1420,7 +1877,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
                 if (assign) layoutFields (region, { &micX, &micDepth, &micHeight, &azimuth, &elevation });
                 else region.removeFromTop (fieldRows (region.getWidth(), 5) * fieldHeight());
             });
-            toolbar (area, { { &stereo, 184 }, { &addStereo, 145 } });
+            toolbar (area, { { &stereo, 184 }, { &addStereo, 205 } });
             fields (area, { &spacing, &pairAngle });
         }
         if (bounds)
@@ -1438,4 +1895,67 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
 
     return area.getY() - start + m.px (10);
 }
+
+class StageWindow::Content final : public Component
+{
+public:
+    Content()
+    {
+        add (*this, viewport, stage, rooms, microphones);
+        viewport.setViewedComponent (&workspace, false);
+        viewport.setScrollBarsShown (true, false);
+        const auto show = [this] (SpatialWorkspace::View view)
+        {
+            workspace.setView (view);
+            stage.setToggleState (view == SpatialWorkspace::View::stage, dontSendNotification);
+            rooms.setToggleState (view == SpatialWorkspace::View::rooms, dontSendNotification);
+            microphones.setToggleState (view == SpatialWorkspace::View::microphones, dontSendNotification);
+            viewport.setViewPosition (0, 0);
+            resized();
+        };
+        stage.onClick = [show] { show (SpatialWorkspace::View::stage); };
+        rooms.onClick = [show] { show (SpatialWorkspace::View::rooms); };
+        microphones.onClick = [show] { show (SpatialWorkspace::View::microphones); };
+        workspace.onLayoutChange = [this] { resized(); };
+        show (SpatialWorkspace::View::stage);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (appearance.px (6));
+        auto row = area.removeFromTop (appearance.control (31));
+        stage.setBounds (row.removeFromLeft (row.getWidth() / 3));
+        rooms.setBounds (row.removeFromLeft (row.getWidth() / 2));
+        microphones.setBounds (row);
+        viewport.setBounds (area);
+        const auto width = jmax (1, area.getWidth() - appearance.scrollbar());
+        workspace.setSize (width, jmax (area.getHeight(), workspace.minimumContentHeight (width)));
+    }
+
+    SpatialWorkspace workspace;
+private:
+    Viewport viewport;
+    TextButton stage { "Stage" }, rooms { "Rooms" }, microphones { "Microphones" };
+};
+
+StageWindow::StageWindow() : DocumentWindow ("Studio Stage", colours::canvas, DocumentWindow::closeButton)
+{
+    setUsingNativeTitleBar (true);
+    setContentOwned (new Content, true);
+    setResizable (true, false);
+    setResizeLimits (575, 390, 1800, 1200);
+    const auto screen = Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    const auto fit = screen != nullptr ? screen->userArea.reduced (14) : Rectangle<int> (960, 625);
+    centreWithSize (jmin (960, fit.getWidth()), jmin (625, fit.getHeight()));
+}
+
+SpatialWorkspace& StageWindow::workspace() { return static_cast<Content*> (getContentComponent())->workspace; }
+
+void StageWindow::appearanceChanged()
+{
+    setBackgroundColour (colours::canvas);
+    workspace().appearanceChanged();
+    getContentComponent()->resized();
+}
+
 }

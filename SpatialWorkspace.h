@@ -7,7 +7,7 @@
 
 namespace studio::spatial
 {
-class SpatialField final : public juce::Component
+class SpatialField : public juce::Component
 {
 public:
     SpatialField (const char* title, double min, double max, double interval, const char* suffix = "");
@@ -32,17 +32,22 @@ public:
         bool microphone = false;
         float aim = 0.0f;
         Pattern pattern = Pattern::cardioid;
+        bool reference = false;
         bool operator== (const Marker&) const = default;
     };
     std::function<void(const juce::String&)> onSelect;
     std::function<void(const juce::String&, Position, bool wholeSection)> onMove;
+    std::function<bool(const juce::String&)> onBeginLiveMove;
+    std::function<void()> onEndLiveMove;
     std::function<juce::String(const SourceDetails&)> trackFromDrag;
     void setOverview (bool);
+    void setZoomed (bool value) { zoomed = value; repaint(); }
+    bool isZoomed() const { return zoomed; }
     bool isInterestedInDragSource (const SourceDetails&) override;
     void itemDragMove (const SourceDetails&) override;
     void itemDragExit (const SourceDetails&) override;
     void itemDropped (const SourceDetails&) override;
-    void display (std::vector<Marker>, juce::String selected, bool microphones, Seating);
+    void display (std::vector<Marker>, juce::String selected, bool microphones, Seating, bool physical = false);
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -56,7 +61,8 @@ private:
     std::vector<Marker> markers;
     juce::String selected, dragged;
     Position preview, dragOrigin;
-    bool micMode = false, moving = false, overview = false, dropTarget = false;
+    bool micMode = false, moving = false, liveMove = false, overview = false, dropTarget = false;
+    bool zoomed = false, physicalStage = false;
     bool showTrackLabels = true; // Presentation-only; Stage coordinates and DSP are unchanged.
     Seating seating = Seating::concert;
     juce::Rectangle<float> plot() const;
@@ -64,7 +70,8 @@ private:
     void paintSeating (juce::Graphics&, juce::Rectangle<float>) const;
     void paintSemicircle (juce::Graphics&, juce::Rectangle<float>) const;
     bool containsStagePoint (juce::Point<float>) const;
-    juce::Point<float> screen (Position) const;
+    juce::Point<float> screen (Position, bool receiver = false) const;
+    juce::Rectangle<float> physicalStageArea() const;
     Position location (juce::Point<float>) const;
 };
 
@@ -87,6 +94,7 @@ public:
     ~SpatialWorkspace() override;
     std::function<void(tracktion::EditItemID)> onSelectTrack, onOpenRoomMixer;
     std::function<void()> onLayoutChange, onExpandStage;
+    void setFloatAction (std::function<void()>);
    #if JUCE_MAC
     std::function<void()> onOpenSeating;
    #endif
@@ -113,6 +121,7 @@ private:
     bool editable = false, routable = false, mixer = false, roomDraftDirty = false, compactStage = false;
     tracktion::EditItemID selectedTrack, lastArrangementSelection;
     int appliedSeating = -1;
+    bool liveSeatGesture = false;
     juce::Array<tracktion::EditItemID> arrangementSelection;
     struct TrackRow
     {
@@ -142,13 +151,15 @@ private:
     SpatialMap stageMap, micMap;
     RoomGraphic roomGraphic;
 
+    juce::TextButton floatStage { "Float Stage" };
     juce::ComboBox seating, arrangeScope, sections;
     juce::ListBox trackList { "Project tracks", this };
    #if JUCE_MAC
     juce::TextButton seatingDesigner { "Arrangement Reference" };
    #endif
     juce::TextButton arrange { "Auto Arrange" }, resetSeat { "Reset seat" }, toggleSend { "Enable stage audio" },
-                     stageCheck { "Room Check +12 dB" }, placeSelected { "Place on Stage" }, openStage { "Open Stage" };
+                     stageCheck { "Room Check +12 dB" }, stageOptions { "Stage controls" }, sourceOptions { "Source controls" },
+                     atlasButton { "Atlas & layouts" }, placeSelected { "Place on Stage" }, openStage { "Open Stage" };
     SpatialField pan { "Stage pan", -1, 1, 0.01 }, depth { "Stage depth", 0, 1, 0.01 },
                  trim { "Send trim", -60, 0, 1, " dB" };
 
@@ -156,7 +167,7 @@ private:
     juce::TextEditor roomName;
     juce::TextButton applyRoom { "Apply Room" }, saveRoom { "Save copy" }, renameRoom { "Rename" },
                      deleteRoom { "Delete custom" }, bypassRoom { "Bypass return" }, resetRoom { "Reset draft" },
-                     roomCheck { "Room Check +12 dB" }, roomMixer { "Show return in Mixer" };
+                     roomCheck { "Room Check +12 dB" }, roomOptions { "Advanced reverb" }, roomMixer { "Show return in Mixer" };
     SpatialField widthField { "Width", 3, 80, 0.1, " m" }, lengthField { "Length", 3, 80, 0.1, " m" },
                  heightField { "Ceiling height", 2.2, 35, 0.1, " m" }, treatment { "Treatment", 0, 100, 1, "%" },
                  early { "Early reflections", 0, 100, 1, "%" }, late { "Late reverb", 0, 100, 1, "%" },
@@ -171,7 +182,7 @@ private:
     juce::TextButton placement { "Placement" }, micMixer { "Mic Mixer" }, addMic { "Add mic" }, removeMic { "Remove mic" },
                      addStereo { "Place stereo pair" }, renameMic { "Rename" }, saveSetup { "Save setup" },
                      recallSetup { "Recall setup" }, removeSetup { "Delete setup" },
-                     micRoomBypass { "Bypass shared room" };
+                     micRoomBypass { "Bypass shared room" }, monitorMics { "Monitor microphones" };
     SpatialField micX { "Left / right", -1, 1, 0.01 }, micDepth { "Front / rear", 0, 1, 0.01 },
                  micHeight { "Capsule height", 0.25, 20, 0.05, " m" }, azimuth { "Azimuth", -180, 180, 1, " deg" },
                  elevation { "Elevation", -90, 90, 1, " deg" }, spacing { "Stereo spacing", 0, 10, 0.01, " m" },
@@ -198,6 +209,11 @@ private:
     void editSeat (SeatField);
     void arrangeTracks();
     void toggleTrackAudio();
+    void showStageOptions();
+    void showSourceOptions();
+    void showRoomOptions();
+    void showAtlas();
+    void manageLayout (bool recall);
     juce::ValueTree library() const;
     juce::ValueTree presets() const;
     juce::ValueTree microphones() const;
@@ -220,4 +236,16 @@ private:
     void layoutChanged();
     int layoutWorkspace (int width, bool setBounds, int extra);
 };
+
+class StageWindow final : public juce::DocumentWindow
+{
+public:
+    StageWindow();
+    SpatialWorkspace& workspace();
+    void appearanceChanged();
+    void closeButtonPressed() override { setVisible (false); }
+private:
+    class Content;
+};
+
 }

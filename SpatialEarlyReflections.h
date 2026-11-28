@@ -139,6 +139,12 @@ public:
     }
     size_t allocatedBytes()const noexcept{return ring.capacity()*sizeof(float);}
     bool prepared()const noexcept{return ready;}
+    void historyFrame(float input) noexcept
+    {
+        if(!ready)return;
+        ring[cursor]=clean(input);
+        cursor=(cursor+1)&mask;
+    }
     void frame(float input,float& left,float& right) noexcept
     {
         if(!ready)return;

@@ -54,16 +54,24 @@ Rectangle<float> SpatialMap::plot() const
     if (! micMode)
     {
         if (overview) return getLocalBounds().toFloat().reduced (5.0f, 2.0f);
-        return getLocalBounds().toFloat().reduced ((float) m.px (21), (float) m.px (12))
+        auto area = getLocalBounds().toFloat().reduced ((float) m.px (21), (float) m.px (12))
             .withTrimmedBottom ((float) (m.line (10, 10) + legendHeight()));
+        return zoomed ? area.expanded (area.getWidth() * .12f, area.getHeight() * .08f) : area;
     }
     return getLocalBounds().toFloat().reduced ((float) m.px (30), (float) m.px (10))
         .withTrimmedBottom ((float) (m.line (11, 12) + legendHeight()));
 }
 
-Point<float> SpatialMap::screen (Position p) const
+Point<float> SpatialMap::screen (Position p, bool receiver) const
 {
     const auto area = plot();
+    if (physicalStage)
+    {
+        const auto room = receiver ? area : physicalStageArea();
+        const auto x = receiver ? .46f * p.x : .5f * p.x;
+        const auto y = receiver ? .12f + .79f * p.depth : p.depth;
+        return { room.getCentreX() + room.getWidth() * x, room.getBottom() - room.getHeight() * y };
+    }
     if (! micMode)
     {
         const auto [x, d] = StageSemicircle::project (p);
@@ -77,6 +85,13 @@ Position SpatialMap::location (Point<float> p) const
 {
     const auto area = plot();
     if (area.isEmpty()) return {};
+    if (physicalStage)
+    {
+        const auto room = micMode ? area : physicalStageArea();
+        const auto x = (p.x - room.getCentreX()) / room.getWidth();
+        const auto y = (room.getBottom() - p.y) / room.getHeight();
+        return validPosition (micMode ? Position { x / .46f, (y - .12f) / .79f } : Position { 2 * x, y });
+    }
     if (! micMode)
         return StageSemicircle::unproject ((p.x - area.getCentreX()) * 2.0f / area.getWidth(),
                                            (area.getBottom() - p.y) / area.getHeight());
@@ -84,9 +99,17 @@ Position SpatialMap::location (Point<float> p) const
                                                           (p.y - area.getY()) / area.getHeight());
 }
 
+Rectangle<float> SpatialMap::physicalStageArea() const
+{
+    const auto room = plot();
+    return { room.getX() + room.getWidth() * .09f, room.getY() + room.getHeight() * .12f,
+             room.getWidth() * .82f, room.getHeight() * .54f };
+}
+
 bool SpatialMap::containsStagePoint (Point<float> p) const
 {
     const auto area = plot();
+    if (physicalStage) return physicalStageArea().contains (p);
     return ! area.isEmpty() && StageSemicircle::contains ((p.x - area.getCentreX()) * 2.0f / area.getWidth(),
                                                          (area.getBottom() - p.y) / area.getHeight());
 }
@@ -124,14 +147,15 @@ void SpatialMap::itemDropped (const SourceDetails& details)
     if (onSelect) onSelect (key);
 }
 
-void SpatialMap::display (std::vector<Marker> next, String key, bool microphones, Seating layout)
+void SpatialMap::display (std::vector<Marker> next, String key, bool microphones, Seating layout, bool physical)
 {
-    if (markers != next || selected != key || micMode != microphones || seating != layout)
+    if (markers != next || selected != key || micMode != microphones || seating != layout || physicalStage != physical)
     {
         markers = std::move (next);
         selected = std::move (key);
         micMode = microphones;
         seating = layout;
+        physicalStage = physical;
         repaint();
     }
 }
@@ -245,17 +269,36 @@ void SpatialMap::paint (Graphics& g)
     g.setColour (colours::timeline);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), (float) m.px (6));
     if (area.isEmpty()) return;
-    if (micMode) paintSeating (g, area); else paintSemicircle (g, area);
+    if (physicalStage)
+    {
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (area, (float) m.px (5));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (area, (float) m.px (5), 1.f);
+        const auto stage = physicalStageArea();
+        g.setColour (colours::control);
+        g.fillRoundedRectangle (stage, (float) m.px (7));
+        g.setColour (dropTarget ? colours::focus : colours::divider);
+        g.drawRoundedRectangle (stage, (float) m.px (7), 1.3f);
+        g.setColour (colours::secondary.withAlpha (.35f));
+        for (float depth : { .25f, .5f, .75f })
+        {
+            const auto y = stage.getBottom() - stage.getHeight() * depth;
+            g.drawHorizontalLine (roundToInt (y), stage.getX() + m.px (3), stage.getRight() - m.px (3));
+        }
+    }
+    else if (micMode) paintSeating (g, area);
+    else paintSemicircle (g, area);
     if (overview)
     {
         for (const auto& marker : markers)
         {
             g.setColour (stageColours[(size_t) jlimit (0, 5, marker.section)]);
-            g.fillEllipse (Rectangle<float> (4.0f, 4.0f).withCentre (screen (marker.point)));
+            g.fillEllipse (Rectangle<float> (4.0f, 4.0f).withCentre (screen (marker.point, marker.microphone)));
         }
         return;
     }
-    if (! micMode && markers.empty())
+    if (! micMode && std::none_of (markers.begin(), markers.end(), [] (const Marker& marker) { return ! marker.microphone; }))
     {
         g.setFont (uiFont (13.0f));
         g.setColour (colours::secondary);
@@ -269,7 +312,19 @@ void SpatialMap::paint (Graphics& g)
     const auto drawMarker = [&] (const Marker& marker)
     {
         const bool active = marker.microphone == micMode && marker.key == selected;
-        const auto point = screen (moving && marker.key == dragged && marker.microphone == micMode ? preview : marker.point);
+        const auto point = screen (moving && marker.key == dragged && marker.microphone == micMode ? preview : marker.point, marker.microphone);
+        if (marker.reference)
+        {
+            const auto radius = (float) m.px (7);
+            g.setColour (colours::focus);
+            g.drawEllipse (Rectangle<float> (radius * 2, radius * 2).withCentre (point), 1.4f);
+            g.fillEllipse (Rectangle<float> (4.f, 4.f).withCentre (point));
+            g.setFont (uiFont (11, Font::bold));
+            const int labelWidth = m.span (83);
+            g.drawFittedText (marker.name, roundToInt (point.x) + m.px (9), roundToInt (point.y) - m.px (8),
+                              labelWidth, m.px (17), Justification::centredLeft, 1);
+            return;
+        }
         if (marker.microphone)
         {
             const float radius = (float) m.px (13);
@@ -341,8 +396,8 @@ void SpatialMap::mouseMove (const MouseEvent& event)
     String hint;
     const float radius = (float) appearance.px (18);
     for (const auto& marker : markers)
-        if (marker.microphone == micMode
-            && screen (marker.point).getDistanceFrom (event.position) <= radius)
+        if (! marker.reference && marker.microphone == micMode
+            && screen (marker.point, marker.microphone).getDistanceFrom (event.position) <= radius)
         {
             hint = marker.name;
             if (! micMode)
@@ -372,7 +427,7 @@ void SpatialMap::mouseDown (const MouseEvent& event)
             menu.addSeparator();
         }
         for (const auto& marker : markers)
-            if (marker.microphone == micMode && screen (marker.point).getDistanceFrom (event.position) <= radius)
+            if (! marker.reference && marker.microphone == micMode && screen (marker.point, marker.microphone).getDistanceFrom (event.position) <= radius)
                 menu.addItem (marker.name, true, marker.key == selected, [safe, key = marker.key]
                 {
                     if (safe != nullptr && safe->onSelect) safe->onSelect (key);
@@ -385,9 +440,9 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     auto distance = radius;
     const Marker* best = nullptr;
     for (const auto& marker : markers)
-        if (marker.microphone == micMode)
+        if (! marker.reference && marker.microphone == micMode)
         {
-            const auto d = screen (marker.point).getDistanceFrom (event.position);
+            const auto d = screen (marker.point, marker.microphone).getDistanceFrom (event.position);
             if (d < distance || (d == distance && marker.key == selected))
             {
                 best = &marker;
@@ -399,7 +454,7 @@ void SpatialMap::mouseDown (const MouseEvent& event)
     const auto key = best->key;
     dragOrigin = preview = best->point;
     dragged = key;
-    moving = false;
+    moving = liveMove = false;
     if (isShowing()) grabKeyboardFocus();
     if (onSelect) onSelect (key);
 }
@@ -407,8 +462,10 @@ void SpatialMap::mouseDown (const MouseEvent& event)
 void SpatialMap::mouseDrag (const MouseEvent& event)
 {
     if (dragged.isEmpty() || ! event.mouseWasDraggedSinceMouseDown()) return;
-    preview = location (screen (dragOrigin) + (event.position - event.mouseDownPosition));
+    preview = location (screen (dragOrigin, micMode) + (event.position - event.mouseDownPosition));
+    if (! moving && onBeginLiveMove) liveMove = onBeginLiveMove (dragged);
     moving = true;
+    if (liveMove && onMove) onMove (dragged, preview, event.mods.isShiftDown());
     repaint();
 }
 
@@ -418,7 +475,12 @@ void SpatialMap::mouseUp (const MouseEvent& event)
     const auto key = dragged;
     moving = false;
     dragged.clear();
-    if (commit && onMove) onMove (key, preview, event.mods.isShiftDown());
+    if (liveMove)
+    {
+        liveMove = false;
+        if (onEndLiveMove) onEndLiveMove();
+    }
+    else if (commit && onMove) onMove (key, preview, event.mods.isShiftDown());
     repaint();
 }
 
@@ -429,7 +491,7 @@ bool SpatialMap::keyPressed (const KeyPress& key)
         return false;
     if (key.getModifiers().isCommandDown() || key.getModifiers().isAltDown()) return false;
     for (const auto& marker : markers)
-        if (marker.key == selected && marker.microphone == micMode && onMove)
+        if (! marker.reference && marker.key == selected && marker.microphone == micMode && onMove)
         {
             auto next = marker.point;
             next.x += code == KeyPress::leftKey ? -0.02f : code == KeyPress::rightKey ? 0.02f : 0;
@@ -474,7 +536,8 @@ void RoomGraphic::paint (Graphics& g)
                       Justification::centred, 1, 1.0f);
     g.drawFittedText ("Estimated decay targets (seconds)", chart.removeFromTop (m.line (11, 3)),
                       Justification::centred, 1, 1.0f);
-    const auto decay = predictDecay (value);
+    auto decay = predictDecay (value);
+    for (auto& seconds : decay) seconds = std::clamp (seconds * value.shape.decay, .15f, 12.f);
     const float top = jmax (1.0f, *std::max_element (decay.begin(), decay.end()));
     for (size_t i = 0; i < decay.size(); ++i)
     {

@@ -8,9 +8,10 @@ namespace studio::spatial
 {
 namespace
 {
-constexpr std::array baseDelay { .02171f, .02683f, .03163f, .03697f, .04231f, .04953f, .05737f, .06419f };
+constexpr std::array baseDelay { .02171f, .02683f, .03163f, .03697f, .04231f, .04953f, .05737f, .06419f,
+    .01931f, .02359f, .02911f, .03403f, .03991f, .04661f, .05323f, .06103f };
 constexpr std::array splitHz { 177.0f, 354.0f, 707.0f, 1414.0f, 2828.0f };
-constexpr float maxScale = 1.55f, maxHistory = .27f, motionSeconds = .00028f;
+constexpr float maxScale = 1.55f, maxHistory = .27f, maximumMotion = .0013f, motionSeconds = .00028f;
 constexpr float unitary = 0.3535533905932738f, denormalFloor = 1.0e-20f;
 constexpr std::array leftSigns { 1.f, -1.f, 1.f, -1.f, -1.f, 1.f, -1.f, 1.f };
 constexpr std::array rightSigns { 1.f, 1.f, -1.f, -1.f, -1.f, -1.f, 1.f, 1.f };
@@ -33,11 +34,11 @@ float safeWet (float sample) noexcept
     return std::copysign (0.85f + 0.145f * excess / (0.145f + excess), sample);
 }
 
-void mixFeedback (std::array<float, roomLineCount>& samples) noexcept
+void mixFeedback (std::array<float, roomLineCount>& samples, size_t lines) noexcept
 {
     // Three butterfly stages implement the orthonormal 8-point Hadamard.
-    for (size_t span = 1; span < samples.size(); span *= 2)
-        for (size_t start = 0; start < samples.size(); start += 2 * span)
+    for (size_t span = 1; span < lines; span *= 2)
+        for (size_t start = 0; start < lines; start += 2 * span)
             for (size_t i = start; i < start + span; ++i)
             {
                 const float a = samples[i], b = samples[i + span];
@@ -47,20 +48,35 @@ void mixFeedback (std::array<float, roomLineCount>& samples) noexcept
 }
 }
 
-RoomPlan makeRoomPlan (Room raw)
+RoomPlan makeRoomPlan (Room raw, RoomMode mode)
 {
     const auto room = validate (raw);
     const auto decay = predictDecay (room);
     const float volume = room.width * room.length * room.height;
-    const float scale = std::clamp (std::pow (volume / 2520.0f, 0.16f), 0.58f, maxScale);
+    const bool modern = mode != RoomMode::legacy;
+    const float scale = std::clamp (std::pow (volume / 2520.0f, 0.16f) * (modern ? room.shape.size : 1.f), modern ? 0.44f : 0.58f, maxScale);
     const float pre = room.preDelayMs * .001f;
     RoomPlan plan;
-    plan.early = room.early;
+    plan.early = mode == RoomMode::stage ? 0.f : room.early;
     plan.late = room.late;
     // Kept in the M4 calibration range at the factory Chamber Hall trims.
     plan.level = std::pow (10.0f, (room.gain + 16.0f) / 20.0f);
     plan.bypass = room.bypass ? 1.0f : 0.0f;
     plan.geometry.preDelay = pre;
+    if (modern)
+    {
+        const auto& shape = room.shape;
+        plan.mode = float ((int) shape.quality + 1);
+        plan.diffusion = shape.diffusion;
+        plan.buildup = .25f * shape.density + .75f * shape.attack;
+        plan.motion = shape.motionDepthMs * .001f;
+        plan.motionRate = shape.motionRate / .38f;
+        plan.width = shape.width;
+        plan.lowEq = std::pow (10.f, shape.lowEq / 20);
+        plan.highEq = std::pow (10.f, shape.highEq / 20);
+        plan.standalone = mode == RoomMode::effect ? 1.f : 0.f;
+        plan.mix = plan.standalone != 0 ? shape.mix : 1.f;
+    }
     const float abWall = std::lerp (absorption[(size_t) room.wall][3], absorption[(size_t) Surface::absorber][3], room.treatment);
     const float wall = std::sqrt (1.0f - abWall);
     const float floor = std::sqrt (1.0f - absorption[(size_t) room.floor][3]);
@@ -80,12 +96,15 @@ RoomPlan makeRoomPlan (Room raw)
         plan.reflectionGain[tap + paths.size()] = levels[tap] * (tap % 2 == 0 ? .86f : 1.06f);
     }
 
+    constexpr std::array ecoDelays { .01931f, .03163f, .04661f, .06103f };
     for (size_t i = 0; i < roomLineCount; ++i)
     {
-        const float delay = plan.geometry.delay[i] = scale * baseDelay[i];
+        const float seconds = plan.mode == 1 && i < ecoDelays.size() ? ecoDelays[i] : baseDelay[i];
+        const float distribution = modern ? std::lerp ((i & 1u) == 0 ? .94f : 1.05f, 1.f, room.shape.density) : 1.f;
+        const float delay = plan.geometry.delay[i] = std::min (maxScale, scale * distribution) * seconds;
         std::array<float, 6> gains;
         for (size_t band = 0; band < gains.size(); ++band)
-            gains[band] = std::exp (-6.90775528f * delay / decay[band]);
+            gains[band] = std::exp (-6.90775528f * delay / std::clamp (decay[band] * (modern ? room.shape.decay : 1.f), .15f, 12.f));
         plan.feedback.back()[i] = gains.back();
         float bound = gains.back();
         for (size_t band = 0; band + 1 < gains.size(); ++band)
@@ -109,10 +128,9 @@ void RoomReverb::Ring::prepare (size_t length)
     clear();
 }
 
-void RoomReverb::Ring::clear()
+void RoomReverb::Ring::clear() noexcept
 {
-    cursor = 0;
-    std::fill (samples.begin(), samples.end(), 0.0f);
+    cursor = written = 0;
 }
 
 float RoomReverb::Ring::read (float delay) const noexcept
@@ -120,7 +138,8 @@ float RoomReverb::Ring::read (float delay) const noexcept
     const auto integer = (size_t) delay;
     const auto index = cursor - integer;
     const float fraction = delay - (float) integer;
-    const float a = samples[index & mask], b = samples[(index - 1) & mask];
+    const float a = integer <= written ? samples[index & mask] : 0.f;
+    const float b = integer < written ? samples[(index - 1) & mask] : 0.f;
     return a + fraction * (b - a);
 }
 
@@ -128,6 +147,7 @@ void RoomReverb::Ring::push (float value) noexcept
 {
     samples[cursor] = value;
     cursor = (cursor + 1) & mask;
+    if (written < samples.size()) ++written;
 }
 
 void RoomReverb::preparePlan (double sampleRate, const RoomPlan& initial)
@@ -137,10 +157,13 @@ void RoomReverb::preparePlan (double sampleRate, const RoomPlan& initial)
     controlSmooth = (float) -std::expm1 (-16.0 / (.060 * rate));
     geometryFrames = (int) std::lround (.16 * rate);
     for (size_t i = 0; i < tank.size(); ++i)
-        tank[i].prepare ((size_t) std::ceil ((baseDelay[i] * maxScale + motionSeconds) * rate) + 4);
+        tank[i].prepare ((size_t) std::ceil ((std::max (baseDelay[i], i < 4 ? .062f : 0.f) * maxScale + maximumMotion) * rate) + 4);
     for (size_t band = 0; band < poles.size(); ++band)
         poles[band] = (float) -std::expm1 (-2.0 * std::numbers::pi * (double) splitHz[band] / rate);
-    constexpr std::array delayMs { std::array { 3.13f, 5.31f, 9.17f }, std::array { 3.67f, 6.07f, 10.31f } };
+    eqPoles = { (float) -std::expm1 (-2 * std::numbers::pi * 210 / rate),
+                (float) -std::expm1 (-2 * std::numbers::pi * 4200 / rate) };
+    constexpr std::array delayMs { std::array { 3.13f, 5.31f, 9.17f, 12.37f, 16.97f },
+                                  std::array { 3.67f, 6.07f, 10.31f, 14.11f, 19.31f } };
     for (size_t side = 0; side < diffusers.size(); ++side)
     {
         inputHistory[side].prepare ((size_t) std::ceil (maxHistory * rate) + 4);
@@ -155,23 +178,45 @@ void RoomReverb::preparePlan (double sampleRate, const RoomPlan& initial)
     reset();
 }
 
-void RoomReverb::reset()
+void RoomReverb::switchNetwork() noexcept
 {
+    mode = (int) target.mode;
+    lines = mode == 1 ? 4 : mode == 3 ? 16 : 8;
+    if (mode == 0) leftGain = rightGain = 1;
     for (auto& ring : tank) ring.clear();
-    for (auto& ring : inputHistory) ring.clear();
     for (auto& side : diffusers)
         for (auto& ring : side) ring.clear();
     filters = {};
+    eqState = {};
     constexpr std::array phases { -.87f, -.61f, -.35f, -.09f, .13f, .38f, .63f, .88f };
     constexpr std::array speeds { .19f, .27f, .31f, .37f, .41f, .47f, .53f, .59f };
     for (size_t i = 0; i < modulation.size(); ++i)
-        modulation[i] = { phases[i], (i % 2 == 0 ? 4.f : -4.f) * speeds[i] / (float) rate };
+        modulation[i] = { phases[i % 8] * (i < 8 ? 1.f : -.82f),
+            (i % 2 == 0 ? 4.f : -4.f) * speeds[i % 8] * (i < 8 ? 1.f : 1.13f) / (float) rate };
     from = to = target.geometry;
     geometryStep = geometryFrames;
     feedback = target.feedback;
     reflectionGain = target.reflectionGain;
+    settling = false;
+}
+
+void RoomReverb::reset()
+{
+    switchNetwork();
+    for (auto& ring : inputHistory) ring.clear();
     early = target.early;
     late = target.late;
+    crossfade = 1;
+    outputMix = target.bypass != 0 && target.standalone != 0 ? 0 : target.mix;
+    stereoWidth = target.width;
+    motionDepth = target.motion;
+    motionSpeed = target.motionRate;
+    diffusionAmount = target.diffusion;
+    build = target.buildup;
+    equalLow = target.lowEq;
+    equalHigh = target.highEq;
+    leftGain = target.leftGain;
+    rightGain = target.rightGain;
     updateOutputTarget();
     gain = targetGain;
     inputGain = target.bypass == 0.0f ? 1.0f : 0.0f;
@@ -187,6 +232,7 @@ void RoomReverb::setPlan (const RoomPlan& next) noexcept
     updateOutputTarget();
     if (sleeping)
     {
+        if (mode != (int) target.mode) switchNetwork();
         feedback = next.feedback;
         reflectionGain = next.reflectionGain;
         from = to = next.geometry;
@@ -245,11 +291,12 @@ void RoomReverb::updateCoefficients() noexcept
 
 float RoomReverb::diffuse (size_t channel, float sample) noexcept
 {
-    for (size_t stage = 0; stage < diffusers[channel].size(); ++stage)
+    const auto stages = (size_t) (mode == 1 ? 2 : mode == 3 ? 5 : mode == 2 ? 4 : 3);
+    for (size_t stage = 0; stage < stages; ++stage)
     {
         auto& ring = diffusers[channel][stage];
-        constexpr std::array coefficients { .62f, -.64f, .60f };
-        const float coefficient = coefficients[stage];
+        constexpr std::array coefficients { .62f, -.64f, .60f, -.56f, .51f };
+        const float coefficient = coefficients[stage] * (mode == 0 ? 1.f : diffusionAmount);
         const float delay = ring.read (diffuserDelays[channel][stage]);
         const float out = delay - coefficient * sample;
         ring.push (clean (sample + coefficient * out));
@@ -267,7 +314,7 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
         for (int i = 0; i < count; ++i)
             peaks.input = std::max (peaks.input, std::max (std::abs (inputSample (left[i])),
                 right != nullptr ? std::abs (inputSample (right[i])) : 0.0f));
-        if (peaks.input < 1.0e-8f || targetGain == 0.0f)
+        if (peaks.input < 1.0e-8f || (targetGain == 0.0f && target.standalone == 0))
         {
             std::fill_n (left, count, 0.0f);
             if (right != nullptr) std::fill_n (right, count, 0.0f);
@@ -280,9 +327,35 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
     const auto sampleRate = (float) rate;
     const float transitionScale = 1.0f / (float) geometryFrames;
     const float targetInputGain = target.bypass == 0.0f ? 1.0f : 0.0f;
+    const bool standalone = target.standalone != 0;
+    const float targetMix = standalone && target.bypass != 0 ? 0.f : target.mix;
+    const float switchIncrement = 1.f / (.03f * sampleRate);
     float internalPeak = 0;
     for (int frame = 0; frame < count; ++frame)
     {
+        if (mode != (int) target.mode)
+        {
+            crossfade = std::max (0.f, crossfade - switchIncrement);
+            if (crossfade == 0) switchNetwork();
+        }
+        else
+            crossfade = std::min (1.f, crossfade + switchIncrement);
+        const auto lineCount = (size_t) lines;
+        const float normalization = mode == 1 ? .5f : mode == 3 ? .25f : unitary;
+        if (mode != 0)
+        {
+            stereoWidth += smooth * (target.width - stereoWidth);
+            motionDepth += smooth * (target.motion - motionDepth);
+            motionSpeed += smooth * (target.motionRate - motionSpeed);
+            diffusionAmount += smooth * (target.diffusion - diffusionAmount);
+            build += smooth * (target.buildup - build);
+            equalLow += smooth * (target.lowEq - equalLow);
+            equalHigh += smooth * (target.highEq - equalHigh);
+            leftGain += smooth * (target.leftGain - leftGain);
+            rightGain += smooth * (target.rightGain - rightGain);
+        }
+        outputMix += smooth * (targetMix - outputMix);
+        if (std::abs (targetMix - outputMix) < 1e-5f) outputMix = targetMix;
         if (settling)
         {
             if (controlFrame == 0) updateCoefficients();
@@ -316,7 +389,7 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
         inputHistory[0].push (dryL * inputGain);
         inputHistory[1].push (dryR * inputGain);
         float reflectionsL = 0, reflectionsR = 0;
-        for (size_t tap = 0; tap < roomEarlyTaps / 2; ++tap)
+        for (size_t tap = 0; early > 1e-7f && tap < roomEarlyTaps / 2; ++tap)
         {
             const size_t r = tap + roomEarlyTaps / 2;
             reflectionsL += reflectionGain[tap] * read (inputHistory[tap % 3 == 2 ? 1 : 0],
@@ -324,48 +397,73 @@ RoomPeaks RoomReverb::process (float* left, float* right, int count) noexcept
             reflectionsR += reflectionGain[r] * read (inputHistory[tap % 3 == 2 ? 0 : 1],
                 from.reflection[r], to.reflection[r], 1.0f);
         }
-        const float diffusedL = diffuse (0, read (inputHistory[0], from.preDelay, to.preDelay, 1.0f));
-        const float diffusedR = diffuse (1, read (inputHistory[1], from.preDelay, to.preDelay, 1.0f));
+        const float preL = read (inputHistory[0], from.preDelay, to.preDelay, 1.0f);
+        const float preR = read (inputHistory[1], from.preDelay, to.preDelay, 1.0f);
+        const float diffusedL = std::lerp (preL, diffuse (0, preL), mode == 0 ? 1.f : build);
+        const float diffusedR = std::lerp (preR, diffuse (1, preR), mode == 0 ? 1.f : build);
         std::array<float, roomLineCount> out, loop;
         float tailL = 0, tailR = 0;
-        for (size_t line = 0; line < out.size(); ++line)
+        for (size_t line = 0; line < lineCount; ++line)
         {
             auto& lfo = modulation[line];
-            lfo.value += lfo.step;
+            lfo.value += lfo.step * (mode == 0 ? 1.f : motionSpeed);
             if (lfo.value >= 1 || lfo.value <= -1)
             {
                 lfo.value = std::clamp (lfo.value, -1.0f, 1.0f);
                 lfo.step = -lfo.step;
             }
             const float value = out[line] = read (tank[line], from.delay[line], to.delay[line],
-                                                 lfo.value * motionSeconds * sampleRate);
+                                                 lfo.value * (mode == 0 ? motionSeconds : motionDepth) * sampleRate);
             internalPeak = std::max (internalPeak, std::abs (value));
             loop[line] = feedback.back()[line] * value;
-            tailL += leftSigns[line] * value;
-            tailR += rightSigns[line] * value;
+            const auto polarity = line < 8 ? 1.f : -1.f;
+            tailL += leftSigns[line % 8] * value;
+            tailR += rightSigns[line % 8] * value * polarity;
         }
         // Store predictor state by band so the eight independent paths can
         // be vectorized and each write stays local to its cache line.
         for (size_t band = 0; band < poles.size(); ++band)
-            for (size_t line = 0; line < out.size(); ++line)
+            for (size_t line = 0; line < lineCount; ++line)
             {
                 auto& filter = filters[band][line];
                 filter = clean (filter + poles[band] * (out[line] - filter));
                 loop[line] += feedback[band][line] * filter;
             }
-        mixFeedback (loop);
-        for (size_t line = 0; line < tank.size(); ++line)
+        mixFeedback (loop, lineCount);
+        for (size_t line = 0; line < lineCount; ++line)
         {
             const float signL = (line & 1u) == 0 ? 1.0f : -1.0f;
             const float signR = (line & 2u) == 0 ? 1.0f : -1.0f;
-            tank[line].push (clean (unitary * loop[line] + .165f * (signL * diffusedL + signR * diffusedR)));
+            const auto inputGainCompensation = mode == 1 ? .195f : mode == 3 ? .121f : .165f;
+            const auto polarity = line < 8 ? 1.f : -1.f;
+            tank[line].push (clean (normalization * loop[line]
+                + inputGainCompensation * (signL * diffusedL + polarity * signR * diffusedR)));
         }
 
-        const float wetL = safeWet ((reflectionsL * early + tailL * unitary * late) * gain);
-        const float wetR = safeWet ((reflectionsR * early + tailR * unitary * late) * gain);
-        left[frame] = right != nullptr ? wetL : .5f * (wetL + wetR);
-        if (right != nullptr) right[frame] = wetR;
-        peaks.wet = std::max (peaks.wet, right != nullptr ? std::max (std::abs (wetL), std::abs (wetR)) : std::abs (left[frame]));
+        float outL = reflectionsL * early + tailL * normalization * late;
+        float outR = reflectionsR * early + tailR * normalization * late;
+        if (mode != 0)
+        {
+            const auto mid = .5f * (outL + outR);
+            outL = std::lerp (mid, outL, stereoWidth);
+            outR = std::lerp (mid, outR, stereoWidth);
+            const auto equalize = [&] (float sample, size_t side)
+            {
+                auto& eq = eqState[side];
+                eq[0] = clean (eq[0] + eqPoles[0] * (sample - eq[0]));
+                eq[1] = clean (eq[1] + eqPoles[1] * (sample - eq[1]));
+                return sample + (equalLow - 1) * eq[0] + (equalHigh - 1) * (sample - eq[1]);
+            };
+            outL = equalize (outL, 0);
+            outR = equalize (outR, 1);
+        }
+        const float wetL = safeWet (outL * gain * crossfade * leftGain);
+        const float wetR = safeWet (outR * gain * crossfade * rightGain);
+        const float l = standalone ? std::lerp (dryL, wetL, outputMix) : wetL;
+        const float r = standalone ? std::lerp (dryR, wetR, outputMix) : wetR;
+        left[frame] = right != nullptr ? l : .5f * (l + r);
+        if (right != nullptr) right[frame] = r;
+        peaks.wet = std::max (peaks.wet, right != nullptr ? std::max (std::abs (wetL), std::abs (wetR)) : std::abs (.5f * (wetL + wetR)));
         if (moving && ++geometryStep == geometryFrames) startGeometryChange();
     }
 
