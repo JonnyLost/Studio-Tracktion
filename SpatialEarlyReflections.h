@@ -130,12 +130,12 @@ public:
         if(!ready||!valid(p,target.rate))return false;
         // Keep latest pending geometry, finish current bounded crossfade.
         // Never sweep a delay line across a long distance on mouse drag.
-        target=p;return true;
+        target=p;pending=true;return true;
     }
     void reset() noexcept
     {
         std::fill(ring.begin(),ring.end(),0.f);cursor=0;
-        from=to=target;states={};nextStates={};remaining=0;
+        from=to=target;states={};nextStates={};remaining=0;pending=false;
     }
     size_t allocatedBytes()const noexcept{return ring.capacity()*sizeof(float);}
     bool prepared()const noexcept{return ready;}
@@ -143,9 +143,10 @@ public:
     {
         if(!ready)return;
         ring[cursor]=clean(input);
-        if(remaining==0&&!from.equals(target))
+        if(remaining==0&&pending)
         {
-            to=target;nextStates={};remaining=fadeFrames;
+            pending=false;
+            if(!from.equals(target)){to=target;nextStates={};remaining=fadeFrames;}
         }
         // At zero amount retain warm input history but skip all six taps.
         if(remaining>0)
@@ -168,7 +169,7 @@ private:
     Plan from,to,target;
     Filters states{},nextStates{};
     int fadeFrames=1,remaining=0;
-    bool ready=false;
+    bool ready=false,pending=false;
     static float clean(float x) noexcept
     {return std::isfinite(x)&&std::abs(x)>=1e-25f?std::clamp(x,-1e6f,1e6f):0.f;}
     std::array<float,2> render(const Plan& p,Filters& filter) noexcept
