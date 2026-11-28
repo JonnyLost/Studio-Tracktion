@@ -6,6 +6,8 @@ on:
     paths:
       - 'SpatialSource.h'
       - 'SpatialBinaural.h'
+      - 'SpatialEarlyReflections.h'
+      - 'tests/SpatialEarlyReflectionTests.cpp'
       - 'tests/SpatialBinauralTests.cpp'
       - 'tests/SpatialSourceTests.cpp'
       - '.github/workflows/spatial-source.yml'
@@ -14,6 +16,8 @@ on:
     paths:
       - 'SpatialSource.h'
       - 'SpatialBinaural.h'
+      - 'SpatialEarlyReflections.h'
+      - 'tests/SpatialEarlyReflectionTests.cpp'
       - 'tests/SpatialBinauralTests.cpp'
       - 'tests/SpatialSourceTests.cpp'
       - '.github/workflows/spatial-source.yml'
@@ -38,6 +42,8 @@ jobs:
           "$RUNNER_TEMP/spatial-source" | tee "$RUNNER_TEMP/spatial-source-response.txt"
           clang++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror tests/SpatialBinauralTests.cpp -o "$RUNNER_TEMP/spatial-binaural"
           "$RUNNER_TEMP/spatial-binaural" | tee "$RUNNER_TEMP/spatial-binaural-response.txt"
+          clang++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror tests/SpatialEarlyReflectionTests.cpp -o "$RUNNER_TEMP/spatial-early"
+          "$RUNNER_TEMP/spatial-early" | tee "$RUNNER_TEMP/spatial-early-response.txt"
         shell: bash
       - name: Address and undefined-behavior sanitizer tests
         run: |
@@ -45,9 +51,12 @@ jobs:
           "$RUNNER_TEMP/spatial-source-sanitized"
           clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialBinauralTests.cpp -o "$RUNNER_TEMP/spatial-binaural-sanitized"
           "$RUNNER_TEMP/spatial-binaural-sanitized"
+          clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialEarlyReflectionTests.cpp -o "$RUNNER_TEMP/spatial-early-sanitized"
+          "$RUNNER_TEMP/spatial-early-sanitized"
       - uses: actions/upload-artifact@v4
         with:
           name: spatial-source-response-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/spatial-source-response.txt
             ${{ runner.temp }}/spatial-binaural-response.txt
+            ${{ runner.temp }}/spatial-early-response.txt
