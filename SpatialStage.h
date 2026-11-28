@@ -194,7 +194,9 @@ inline Plan makePlan (double rate, Settings raw)
     source::Parameters p;
     p.width = setup.width;
     p.outputDb = setup.directDb;
-    p.direction.angle = float (std::atan2 (s.x - reference.x, s.y - reference.y) * 180 / early::pi);
+    // The horizontal head model uses signed lateral bearing. Folding rear
+    // directions into its front half keeps a centered rear source centered.
+    p.direction.angle = float (std::atan2 (s.x - reference.x, std::abs (s.y - reference.y)) * 180 / early::pi);
     p.direction.focus = .25f;
     Plan plan;
     plan.bypass = raw.bypass;

@@ -67,6 +67,14 @@ void testStage()
     setup.seat.depth = 1;
     const auto rear = impulse (setup);
     require (front[0] == front[1] && rear[0] == rear[1], "centred image");
+    auto rearward = setup;
+    rearward.seat.depth = 0;
+    rearward.listener.depth = 1;
+    const auto behind = impulse (rearward);
+    require (behind[0] == behind[1], "centred image behind the listener");
+    rearward.seat.x = -.45f;
+    const auto backLeft = impulse (rearward);
+    require (energy (backLeft[0]) > energy (backLeft[1]), "rear source retains its lateral side");
     require (energy (rear[0], 0, 20) < .4 * energy (front[0], 0, 20), "physical distance attenuation");
     const auto rearPlan = stage::makePlan (48000, setup);
     require (rearPlan.earlyField.taps[0].delay > 10, "geometric sidewall reflection after direct signal");
