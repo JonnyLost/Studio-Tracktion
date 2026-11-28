@@ -324,6 +324,11 @@ Result verifySourceInsert()
         return Result::fail("undo source settings");
     if(!undo.redo()||valuesOf(spatial->parameters())!=valuesOf(p))
         return Result::fail("redo source settings");
+    spatial->beginGesture("Test bypass");spatial->setEnabled(false);spatial->endGesture();
+    auto bypassed=device.capture(*edit);
+    if(energyDb(bypassed.output,0,&dry.output)>-95||energyDb(bypassed.output,1,&dry.output)>-95)
+        return Result::fail("source insert true bypass");
+    spatial->beginGesture("Enable source");spatial->setEnabled(true);spatial->endGesture();
 
     // Actual editor sliders and preset selector address the attached instance.
     {
