@@ -736,7 +736,7 @@ target_sources(Studio PRIVATE Studio.cpp OstinatoCore.h OstinatoLibrary.h Ostina
     InstrumentLibrary.cpp InstrumentLibrary.h InstrumentImportWindow.cpp InstrumentImportWindow.h
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
-    StudioSpatialEffect.cpp StudioSpatialEffect.h SpatialSource.h SpatialBinaural.h
+    StudioSpatialEffect.cpp StudioSpatialEffect.h SpatialSource.h SpatialBinaural.h SpatialEarlyReflections.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
     FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
@@ -861,6 +861,11 @@ if(BUILD_TESTING)
     target_compile_features(StudioSpatialBinauralTests PRIVATE cxx_std_17)
     add_dependencies(Studio StudioSpatialBinauralTests)
     add_test(NAME StudioSpatialBinaural COMMAND StudioSpatialBinauralTests)
+
+    add_executable(StudioSpatialEarlyTests tests/SpatialEarlyReflectionTests.cpp SpatialEarlyReflections.h SpatialSource.h)
+    target_compile_features(StudioSpatialEarlyTests PRIVATE cxx_std_17)
+    add_dependencies(Studio StudioSpatialEarlyTests)
+    add_test(NAME StudioSpatialEarly COMMAND StudioSpatialEarlyTests)
 
     add_executable(StudioSeatingAtlasTests tests/SeatingAtlasTests.cpp Seating/SeatingAtlas.h)
     target_compile_features(StudioSeatingAtlasTests PRIVATE cxx_std_20)
