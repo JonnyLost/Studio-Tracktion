@@ -117,6 +117,7 @@ ReverbControls::ReverbControls (bool effect, bool advanced)
                               auto read, auto write)
     {
         auto field = std::make_unique<Field> (label, low, high, step, suffix, read, write);
+        if (effect && ! advanced) field->setControlStyle (Slider::RotaryHorizontalVerticalDrag);
         field->onChange = [this] { if (onChange) onChange(); };
         addAndMakeVisible (*field);
         fields.push_back (std::move (field));
@@ -139,6 +140,11 @@ ReverbControls::ReverbControls (bool effect, bool advanced)
         shape ("Wet mix", &ReverbShape::mix, 0, 100, 1, "%", 100);
         roomField ("Predelay", &Room::preDelayMs, 0, 100, 1, " ms");
         roomField ("Wet trim", &Room::gain, -60, 0, .5, " dB");
+        if (! advanced)
+        {
+            shape ("Room size", &ReverbShape::size, .5, 1.5, .01, " x");
+            shape ("Diffusion", &ReverbShape::diffusion, 0, 100, 1, "%", 100);
+        }
     }
     if (advanced)
     {
@@ -159,8 +165,12 @@ ReverbControls::ReverbControls (bool effect, bool advanced)
                 control (bandNames[band], .25, 2, .05, " x", [band] (Room r) { return r.decayTrim[band]; },
                          [band] (Room& r, float v) { r.decayTrim[band] = v; });
         }
+    }
+    if (advanced || effect)
+    {
         for (int i = 0; i < (int) qualityNames.size(); ++i) quality.addItem (qualityNames[(size_t) i], i + 1);
         quality.setTitle ("Reverb quality");
+        quality.setTextWhenNothingSelected ("Quality");
         quality.setTooltip ("Eco uses four delay lines, Standard eight, High sixteen.");
         quality.onChange = [this] { if (onChange) onChange(); };
         addAndMakeVisible (quality);
@@ -187,19 +197,22 @@ Room ReverbControls::readRoom() const
 
 int ReverbControls::preferredHeight (int width) const
 {
-    const auto columns = jmax (1, width / appearance.span (140));
+    const bool knobs = fields.size() == 6;
+    const auto columns = jmax (1, jmin ((int) fields.size(), width / appearance.span (knobs ? 95 : 140)));
     const auto rows = ((int) fields.size() + columns - 1) / columns;
-    return rows * (appearance.line (12, 2) + appearance.control (29)) + (quality.isVisible() ? appearance.control (28) : 0);
+    return rows * (knobs ? appearance.px (112) : appearance.line (12, 2) + appearance.control (29))
+        + (quality.isVisible() ? appearance.control (28) : 0);
 }
 
 void ReverbControls::resized()
 {
     auto area = getLocalBounds();
-    const auto columns = jmax (1, getWidth() / appearance.span (140));
+    const bool knobs = fields.size() == 6;
+    const auto columns = jmax (1, jmin ((int) fields.size(), getWidth() / appearance.span (knobs ? 95 : 140)));
     Rectangle<int> row;
     for (int i = 0; i < (int) fields.size(); ++i)
     {
-        if (i % columns == 0) row = area.removeFromTop (appearance.line (12, 2) + appearance.control (29));
+        if (i % columns == 0) row = area.removeFromTop (knobs ? appearance.px (112) : appearance.line (12, 2) + appearance.control (29));
         fields[(size_t) i]->setBounds (row.removeFromLeft (row.getWidth() / (columns - i % columns)));
     }
     if (quality.isVisible()) quality.setBounds (area.removeFromTop (appearance.control (28)).withWidth (appearance.span (150)));
@@ -207,6 +220,42 @@ void ReverbControls::resized()
 
 namespace
 {
+class ReverbMeters final : public Component
+{
+public:
+    void display (std::array<float, 2> values, bool ready)
+    {
+        peaks = values; available = ready; repaint();
+    }
+    void paint (Graphics& g) override
+    {
+        auto area = getLocalBounds().reduced (appearance.px (3), 1);
+        g.setFont (uiFont (11.f));
+        if (! available)
+        {
+            g.setColour (colours::secondary);
+            g.drawFittedText ("Reverb unavailable while the project is busy.", area, Justification::centredLeft, 1);
+            return;
+        }
+        for (int i = 0; i < 2; ++i)
+        {
+            auto row = area.removeFromTop (area.getHeight() / (2 - i)).reduced (0, 2);
+            g.setColour (colours::secondary);
+            g.drawFittedText (i == 0 ? "INPUT" : "OUTPUT", row.removeFromLeft (appearance.span (58)), Justification::centredLeft, 1);
+            const float db = Decibels::gainToDecibels (peaks[(size_t) i], -90.f);
+            g.drawFittedText (String (db, 1) + " dBFS", row.removeFromRight (appearance.span (88)), Justification::centredRight, 1);
+            auto track = row.toFloat().reduced (3.f, 1.f);
+            g.setColour (colours::well);
+            g.fillRoundedRectangle (track, 2.f);
+            const float fill = jlimit (0.f, 1.f, (db + 60.f) / 60.f);
+            g.setColour (db > -3.f ? colours::warning : Colour (0xff72b58e));
+            g.fillRoundedRectangle (track.withWidth (track.getWidth() * fill), 2.f);
+        }
+    }
+private:
+    std::array<float, 2> peaks {};
+    bool available = false;
+};
 class ReverbEditor final : public Component, private Timer
 {
 public:
@@ -274,8 +323,8 @@ public:
         bypass.setBounds (row.removeFromLeft (width).withTrimmedRight (3));
         undo.setBounds (row.removeFromLeft (width).withTrimmedRight (3));
         redo.setBounds (row);
-        meters.setBounds (box.removeFromTop (appearance.line (12, 6)));
-        chart.setBounds (box.removeFromTop (appearance.px (95)));
+        meters.setBounds (box.removeFromTop (2 * appearance.line (11, 2)));
+        chart.setBounds (box.removeFromTop (jlimit (appearance.px (68), appearance.px (138), box.getHeight() / 2)));
         viewport.setBounds (box);
         if (controls != nullptr)
         {
@@ -291,7 +340,8 @@ private:
     TextEditor search, saveName;
     ComboBox presets;
     TextButton save { "Save" }, advanced { "Advanced" }, bypass { "Bypass" }, undo { "Undo" }, redo { "Redo" };
-    Label meters, details;
+    ReverbMeters meters;
+    Label details;
     RoomGraphic chart;
     std::unique_ptr<ReverbControls> controls;
     Viewport viewport;
@@ -357,7 +407,7 @@ private:
         redo.setEnabled (available && plugin->edit.getUndoManager().canRedo());
         if (! available)
         {
-            meters.setText ("Reverb unavailable while the project is busy.", dontSendNotification);
+            meters.display ({}, false);
             return;
         }
         const auto room = plugin->room();
@@ -366,8 +416,7 @@ private:
         bypass.setToggleState (room.bypass, dontSendNotification);
         bypass.setButtonText (room.bypass ? "Enable" : "Bypass");
         const auto peaks = plugin->levels();
-        const auto db = [] (float peak) { return String (Decibels::gainToDecibels (peak, -90.f), 1) + " dBFS"; };
-        meters.setText ("Input " + db (peaks[0]) + "    Output " + db (peaks[1]), dontSendNotification);
+        meters.display (peaks, true);
     }
 };
 }
@@ -379,7 +428,7 @@ ReverbWindow::ReverbWindow (Resolve resolve)
     setContentOwned (new ReverbEditor (std::move (resolve)), true);
     setResizable (true, false);
     setResizeLimits (470, 385, 1200, 900);
-    centreWithSize (700, 510);
+    centreWithSize (740, 455);
     setVisible (true);
 }
 
