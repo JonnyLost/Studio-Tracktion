@@ -337,19 +337,26 @@ Result verifySourceInsert()
         SourceWindow window([&]{return spatial;});
         auto* content=window.getContentComponent();
         juce::Slider* distance=nullptr;juce::ComboBox* preset=nullptr;
+        juce::Slider* earlyAmount=nullptr;juce::ComboBox* reflectionRoom=nullptr;
         for(int i=0;content&&i<content->getNumChildComponents();++i)
         {
             auto* child=content->getChildComponent(i);
             if(auto* slider=dynamic_cast<juce::Slider*>(child);slider&&slider->getName()=="Distance")distance=slider;
             if(auto* combo=dynamic_cast<juce::ComboBox*>(child);combo&&combo->getName()=="Spatial preset")preset=combo;
+            if(auto* slider=dynamic_cast<juce::Slider*>(child);slider&&slider->getName()=="Early reflections")earlyAmount=slider;
+            if(auto* combo=dynamic_cast<juce::ComboBox*>(child);combo&&combo->getName()=="Reflection room")reflectionRoom=combo;
         }
-        if(!distance||!preset)return Result::fail("editor controls missing");
+        if(!distance||!preset||!earlyAmount||!reflectionRoom)return Result::fail("editor controls missing");
         distance->setValue(50,juce::sendNotificationSync);
         if(std::abs(spatial->parameters().distance-.5f)>.001f)
             return Result::fail("editor distance binding");
         preset->setSelectedId(4,juce::sendNotificationSync);
         if(valuesOf(spatial->parameters())!=valuesOf(sourcePresets()[3].parameters))
             return Result::fail("editor preset binding");
+        earlyAmount->setValue(75,juce::sendNotificationSync);
+        reflectionRoom->setSelectedId(2,juce::sendNotificationSync);
+        if(spatial->parameters().reflections.amount!=.75f||spatial->parameters().reflections.room!=1)
+            return Result::fail("reflection editor bindings");
         window.setVisible(false);
     }
     spatial->beginGesture("Test live source parameter");spatial->setParameters(p);spatial->endGesture();
@@ -357,6 +364,12 @@ Result verifySourceInsert()
     auto live=device.capture(*edit,[&]{spatial->setParameters(right);});
     if(std::abs((energyDb(live.output,1)-energyDb(live.output,0))-4.f)>.5f)
         return Result::fail("source parameter publication during playback");
+    const auto direct=device.capture(*edit);
+    right.reflections={1,2};
+    spatial->beginGesture("Test early reflections");spatial->setParameters(right);spatial->endGesture();
+    const auto reflected=device.capture(*edit);
+    if(energyDb(reflected.output,0,&direct.output)<-85||energyDb(reflected.output,1,&direct.output)<-85)
+        return Result::fail("native early reflections must change audible output");
     if(hasRoomSend(*track)||roomReturnTrack(*edit)!=nullptr)
         return Result::fail("source insert changed Stage routing");
     if(!te::EditFileOperations(*edit).writeToFile(temporary.getFile(),false))
@@ -371,8 +384,8 @@ Result verifySourceInsert()
     if(!spatial||valuesOf(spatial->parameters())!=valuesOf(right))
         return Result::fail("restored native spatial type and settings");
     auto reopened=device.capture(*edit);
-    if(std::abs((energyDb(reopened.output,1)-energyDb(reopened.output,0))-4.f)>.3f)
-        return Result::fail("restored source processing");
+    if(energyDb(reopened.output,0,&reflected.output)>-90||energyDb(reopened.output,1,&reflected.output)>-90)
+        return Result::fail("restored source and early reflection processing");
     return Result::ok();
 }
 
