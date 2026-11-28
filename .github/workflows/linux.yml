@@ -16,6 +16,7 @@ on:
       - feature/studio-acoustic-atlas-s1
       - 'feature/studio-native-spatial-*'
       - feature/studio-complete-algorithmic-stage
+      - feature/studio-stage-interface-s2
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
