@@ -2,6 +2,7 @@
 #include "../SpatialStage.h"
 #include "../SpatialReverb.h"
 #include <chrono>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -161,6 +162,56 @@ double t30 (std::vector<float> x, double rate)
     return 0;
 }
 
+double persistentPeak (const std::vector<float>& tail, int rate)
+{
+    constexpr size_t bins = 2048;
+    std::array<double, bins / 2> averaged {};
+    for (int window = 0; window < 12; ++window)
+    {
+        const auto offset = size_t (rate / 5 + window * rate / 15);
+        std::array<std::complex<double>, bins> data;
+        for (size_t i = 0, reversed = 0; i < bins; ++i)
+        {
+            const auto hann = .5 - .5 * std::cos (2 * std::numbers::pi * double (i) / (bins - 1));
+            data[reversed] = tail[offset + i] * hann;
+            for (size_t bit = bins >> 1; bit != 0; bit >>= 1)
+            {
+                reversed ^= bit;
+                if ((reversed & bit) != 0) break;
+            }
+        }
+        for (size_t span = 2; span <= bins; span *= 2)
+        {
+            const auto step = std::polar (1., -2 * std::numbers::pi / double (span));
+            for (size_t start = 0; start < bins; start += span)
+            {
+                std::complex<double> phase (1);
+                for (size_t i = start; i < start + span / 2; ++i)
+                {
+                    const auto a = data[i], b = phase * data[i + span / 2];
+                    data[i] = a + b;
+                    data[i + span / 2] = a - b;
+                    phase *= step;
+                }
+            }
+        }
+        for (size_t i = 0; i < averaged.size(); ++i) averaged[i] += std::norm (data[i]);
+    }
+    double peak = 0;
+    for (size_t i = 12; i < size_t (8000 * bins / rate); ++i)
+    {
+        std::array<double, 20> neighbours;
+        for (size_t j = 0; j < 10; ++j)
+        {
+            neighbours[j] = averaged[i - 11 + j];
+            neighbours[j + 10] = averaged[i + 2 + j];
+        }
+        std::nth_element (neighbours.begin(), neighbours.begin() + 10, neighbours.end());
+        peak = std::max (peak, 10 * std::log10 (std::max (1.e-30, averaged[i]) / std::max (1.e-30, neighbours[10])));
+    }
+    return peak;
+}
+
 void report (const char* name, const Stereo& audio, int sampleRate, size_t bytes)
 {
     const auto& l = audio[0];
@@ -183,9 +234,9 @@ void report (const char* name, const Stereo& audio, int sampleRate, size_t bytes
         lp += loPole * (l[i] - lp); hp += hiPole * (l[i] - hp);
         low[i] = (float) lp; high[i] = l[i] - (float) hp;
     }
-    std::printf ("%s,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%zu\n", name, 1000. * double (offset) / sampleRate,
+    std::printf ("%s,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%zu\n", name, 1000. * double (offset) / sampleRate,
                  t30 (l, sampleRate), t30 (low, sampleRate), t30 (high, sampleRate),
-                 double (count) / double (densityCount), corr, bytes);
+                 double (count) / double (densityCount), corr, persistentPeak (l, sampleRate), bytes);
 }
 
 void testReverb()
@@ -193,7 +244,7 @@ void testReverb()
     constexpr int rate = 48000;
     auto room = factoryRooms.front().room;
     room.preDelayMs = 21;
-    std::puts ("mode,first_ms,T30_s,low_T30_s,high_T30_s,occupancy_first_50ms,tail_LR_corr,delay_bytes");
+    std::puts ("mode,first_ms,T30_s,low_T30_s,high_T30_s,occupancy_first_50ms,tail_LR_corr,local_spectral_peak_db,delay_bytes");
     for (int quality = -1; quality < 3; ++quality)
     {
         room.shape.quality = quality >= 0 ? (Quality) quality : Quality::standard;

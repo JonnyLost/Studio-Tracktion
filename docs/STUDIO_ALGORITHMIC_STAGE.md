@@ -50,16 +50,16 @@ The original seven rooms remain available alongside original recording, classica
 
 ## Acoustic measurements
 
-48 kHz, generated stereo impulse, Wood Concert Hall, 21 ms of specified predelay, all four modes measured wet. T30 estimates RT60 from the −5 to −35 dB portion of the reverse energy curve. Occupancy is the fraction of samples above −100 dBFS in the first 50 ms after the wet onset. The extra onset delay comes from the first modeled reflection.
+48 kHz, generated stereo impulse, Wood Concert Hall, 21 ms of specified predelay, all four modes measured wet. T30 estimates RT60 from the −5 to −35 dB portion of the reverse energy curve. Occupancy is the fraction of samples above −100 dBFS in the first 50 ms after the wet onset. The extra onset delay comes from the first modeled reflection. The local spectral peak is the largest averaged late-tail FFT bin above its neighboring median from about 280 Hz to 8 kHz. Standard lowers that peak slightly in this fixture. High increases occupancy and has the highest local peak, so the measurements support a density trade-off and a listening comparison.
 
-| Mode | First arrival | Broadband T30 | Low T30 | High T30 | Early occupancy | Late L/R correlation |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| P4 | 33.33 ms | 2.820 s | 3.980 s | 1.962 s | 20.1% | 0.000 |
-| Eco | 33.33 ms | 2.881 s | 4.027 s | 1.935 s | 11.6% | −0.002 |
-| Standard | 33.33 ms | 2.779 s | 3.881 s | 1.951 s | 24.0% | 0.008 |
-| High | 33.33 ms | 2.749 s | 3.963 s | 1.871 s | 34.0% | −0.016 |
+| Mode | First arrival | Broadband T30 | Low T30 | High T30 | Early occupancy | Late L/R correlation | Local spectral peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| P4 | 33.33 ms | 2.820 s | 3.980 s | 1.962 s | 20.1% | 0.000 | 5.53 dB |
+| Eco | 33.33 ms | 2.881 s | 4.027 s | 1.935 s | 11.6% | −0.002 | 6.16 dB |
+| Standard | 33.33 ms | 2.779 s | 3.881 s | 1.951 s | 24.0% | 0.008 | 5.40 dB |
+| High | 33.33 ms | 2.749 s | 3.963 s | 1.871 s | 34.0% | −0.016 | 6.90 dB |
 
-The original and current legacy-mode code produced byte-identical stereo output for an independent 128,000-frame source-and-tail comparison across all seven P4 factory venues at 44.1, 48 and 96 kHz. The result applies to the exercised project-compatible mode and fixtures. The benchmark runs active synthetic signals for 16, 32, 64 and 128 sources, at 44.1, 48 and 96 kHz with 64–1024 frame blocks. It reports delay storage, process CPU time and wall time. CPU percentages compare the time of sequential DSP work with the nominal period. They exclude Tracktion, audio hardware, instruments and device scheduling. The Linux measurements characterize this workstation only.
+The P4 and current legacy-mode code produced byte-identical stereo output for an independent 128,000-frame source-and-tail comparison across all seven P4 factory venues at 44.1, 48 and 96 kHz. The result applies to the exercised project-compatible mode and fixtures. The benchmark runs active synthetic signals for 16, 32, 64 and 128 sources, at 44.1, 48 and 96 kHz with 64–1024 frame blocks. It reports delay storage, process CPU time and wall time. CPU percentages compare the time of sequential DSP work with the nominal period. They exclude Tracktion, audio hardware, instruments and device scheduling. The Linux measurements characterize this workstation only.
 
 At 48 kHz and 256 frames, the isolated tank used 25.1 µs in Eco, 33.3 µs in Standard and 50.5 µs in High. Standard's delay memory and nominal single-process CPU load were:
 
