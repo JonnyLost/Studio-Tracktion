@@ -5,12 +5,16 @@ on:
     branches: ['feature/studio-native-spatial-*']
     paths:
       - 'SpatialSource.h'
+      - 'SpatialBinaural.h'
+      - 'tests/SpatialBinauralTests.cpp'
       - 'tests/SpatialSourceTests.cpp'
       - '.github/workflows/spatial-source.yml'
   pull_request:
     branches: ['feature/studio-spatial-lab-*', 'feature/studio-native-spatial-*', 'feature/studio-acoustic-*']
     paths:
       - 'SpatialSource.h'
+      - 'SpatialBinaural.h'
+      - 'tests/SpatialBinauralTests.cpp'
       - 'tests/SpatialSourceTests.cpp'
       - '.github/workflows/spatial-source.yml'
 permissions:
@@ -32,12 +36,18 @@ jobs:
         run: |
           clang++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror tests/SpatialSourceTests.cpp -o "$RUNNER_TEMP/spatial-source"
           "$RUNNER_TEMP/spatial-source" | tee "$RUNNER_TEMP/spatial-source-response.txt"
+          clang++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror tests/SpatialBinauralTests.cpp -o "$RUNNER_TEMP/spatial-binaural"
+          "$RUNNER_TEMP/spatial-binaural" | tee "$RUNNER_TEMP/spatial-binaural-response.txt"
         shell: bash
       - name: Address and undefined-behavior sanitizer tests
         run: |
           clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialSourceTests.cpp -o "$RUNNER_TEMP/spatial-source-sanitized"
           "$RUNNER_TEMP/spatial-source-sanitized"
+          clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialBinauralTests.cpp -o "$RUNNER_TEMP/spatial-binaural-sanitized"
+          "$RUNNER_TEMP/spatial-binaural-sanitized"
       - uses: actions/upload-artifact@v4
         with:
           name: spatial-source-response-${{ matrix.os }}
-          path: ${{ runner.temp }}/spatial-source-response.txt
+          path: |
+            ${{ runner.temp }}/spatial-source-response.txt
+            ${{ runner.temp }}/spatial-binaural-response.txt
