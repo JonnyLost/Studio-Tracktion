@@ -85,7 +85,11 @@ public:
     explicit MicStrip (String keyToUse) : key (std::move (keyToUse))
     {
         add (*this, name, level, gain, pan, delay, mute, solo);
-        level.setTitle ("Capsule signal peak");
+        level.setTitle ("Capsule signal peak (maximum source contribution, not summed output)");
+        name.setJustificationType (Justification::centred);
+        level.setJustificationType (Justification::centred);
+        gain.setControlStyle (Slider::LinearVertical);
+        pan.setControlStyle (Slider::RotaryHorizontalVerticalDrag);
         name.setFont (FontOptions (13.0f, Font::bold));
         gain.onChange = pan.onChange = delay.onChange = mute.onClick = solo.onClick = [this]
         {
@@ -115,6 +119,8 @@ public:
 
     void setPeak (float peak)
     {
+        meterPeak = std::isfinite (peak) ? jmax (0.f, peak) : 0.f;
+        repaint();
         level.setText (peak > .0001f ? String (Decibels::gainToDecibels (peak), 1) + " dBFS" : "Silent",
                        dontSendNotification);
     }
@@ -122,12 +128,31 @@ public:
     void paint (Graphics& g) override
     {
         g.setColour (colours::control);
-        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), (float) appearance.px (5));
+        const auto panel = getLocalBounds().toFloat().reduced (2.0f);
+        g.fillRoundedRectangle (panel, (float) appearance.px (5));
+        g.setColour (colours::divider);
+        g.drawRoundedRectangle (panel, (float) appearance.px (5), 1.f);
+        const auto well = meterBounds.toFloat().reduced (2.f, 0.f);
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (well, 2.f);
+        const float db = Decibels::gainToDecibels (meterPeak, -60.f);
+        const auto fraction = jlimit (0.f, 1.f, (db + 60.f) / 60.f);
+        const int segments = 24;
+        const float step = well.getHeight() / float (segments);
+        for (int i = 0; i < segments; ++i)
+        {
+            const bool lit = float (i + 1) / segments <= fraction;
+            g.setColour (! lit ? colours::divider.withAlpha (.28f) : i > 21 ? colours::warning
+                : Colour (0xff72b58e));
+            g.fillRect (Rectangle<float> (well.getX() + 1.f, well.getBottom() - (i + 1) * step + 1.f,
+                jmax (0.f, well.getWidth() - 2.f), jmax (0.f, step - 2.f)));
+        }
     }
 
     static int height()
     {
-        return 2 * appearance.line (13, 4) + 3 * fieldHeight() + appearance.control (25) + appearance.px (12);
+        return 2 * appearance.line (13, 4) + appearance.px (82) + appearance.px (136)
+            + fieldHeight() + appearance.control (25) + appearance.px (12);
     }
 
     void resized() override
@@ -135,8 +160,11 @@ public:
         auto area = getLocalBounds().reduced (appearance.px (5));
         name.setBounds (area.removeFromTop (appearance.line (13, 4)));
         level.setBounds (area.removeFromTop (appearance.line (13, 4)));
-        gain.setBounds (area.removeFromTop (fieldHeight()));
-        pan.setBounds (area.removeFromTop (fieldHeight()));
+        pan.setBounds (area.removeFromTop (appearance.px (82)));
+        auto fader = area.removeFromTop (appearance.px (136));
+        meterBounds = fader.removeFromLeft (appearance.px (18)).withTrimmedTop (appearance.line (12, 2))
+            .withTrimmedBottom (appearance.line (13, 4));
+        gain.setBounds (fader);
         delay.setBounds (area.removeFromTop (fieldHeight()));
         auto row = area.removeFromTop (appearance.control (25));
         mute.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (appearance.px (1)));
@@ -145,6 +173,8 @@ public:
 
 private:
     Mic state;
+    float meterPeak = 0.f;
+    Rectangle<int> meterBounds;
     Label name, level;
     SpatialField gain { "Level", -60, 12, 0.5, " dB" }, pan { "Pan", -1, 1, 0.01 },
                  delay { "Delay", 0, 30, 0.1, " ms" };
@@ -167,9 +197,14 @@ SpatialWorkspace::SpatialWorkspace()
     seatingDesigner.onClick = [this] { if (onOpenSeating) onOpenSeating(); };
    #endif
     add (stageToolbar, stageCheck, seating, arrangeScope, arrange, stageOptions, atlasButton);
-    stagePage.addChildComponent (floatStage);
+    stageToolbar.addChildComponent (floatStage);
     add (stageRoster, rosterTitle, trackList);
-    add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, sourceOptions, stageStatus, stageSignal);
+    add (stageInspector, selectedName, sections, pan, depth, trim, placeSelected, resetSeat, toggleSend, sourceOptions, stageStatus, stageSignal,
+         directLevel, sourceWidth, sourceEarly);
+    sourceOptions.setButtonText ("Advanced source");
+    directLevel.onChange = [this] { editSourceField (&stage::Source::directDb, directLevel.get()); };
+    sourceWidth.onChange = [this] { editSourceField (&stage::Source::width, sourceWidth.get()); };
+    sourceEarly.onChange = [this] { editSourceField (&stage::Source::early, sourceEarly.get()); };
     rosterTitle.setText ("Project Tracks", dontSendNotification);
     trackList.setColour (ListBox::backgroundColourId, colours::canvas);
     add (roomPage, roomStatus, roomDraftStatus, roomSignalLabel, roomCheck, roomMixer, roomGraphic, roomList, roomName,
@@ -213,10 +248,12 @@ SpatialWorkspace::SpatialWorkspace()
     micList.setTitle ("Virtual capsule");
     setups.setTitle ("Named microphone setup");
     patterns.setTitle ("Pickup pattern");
-    stereo.setTitle ("Stereo geometry preset");
+    stereo.setTitle ("Microphone array preset");
+    stereo.setTooltip ("Select an array, adjust spacing and angle, then place it. Existing microphones remain until removed.");
     for (auto* field : { &roomName, &micName, &setupName }) field->setInputRestrictions (64);
     roomName.setTitle ("Room name"); roomName.setTextToShowWhenEmpty ("Room name", colours::secondary);
     micName.setTitle ("Capsule name"); micName.setTextToShowWhenEmpty ("Capsule name", colours::secondary);
+    setups.setTextWhenNothingSelected ("Saved setups");
     setupName.setTitle ("Setup name"); setupName.setTextToShowWhenEmpty ("Setup name", colours::secondary);
     stageMap.setWantsKeyboardFocus (true);
     stageMap.setTitle ("Orchestral Stage seating plan");
@@ -657,7 +694,9 @@ void SpatialWorkspace::syncStage()
     arrange.setEnabled (editable && ! tracks.empty());
     toggleSend.setButtonText (enabled ? "Disable stage audio" : "Enable stage audio");
     toggleSend.setEnabled (routable && hasTrack);
-    sourceOptions.setEnabled (canChangeSeat && isPhysicalScene (scene()));
+    const bool physicalControls = canChangeSeat && isPhysicalScene (scene());
+    sourceOptions.setEnabled (physicalControls);
+    for (auto* control : { &directLevel, &sourceWidth, &sourceEarly }) control->setEnabled (physicalControls);
     stageOptions.setEnabled (editable);
     atlasButton.setEnabled (editable);
     if (hasTrack)
@@ -665,6 +704,8 @@ void SpatialWorkspace::syncStage()
         const auto seatValue = found->seat;
         sections.setSelectedId ((int) seatValue.section + 1, dontSendNotification);
         pan.set (seatValue.position.x); depth.set (seatValue.position.depth); trim.set (seatValue.sendTrim);
+        const auto source = readSource (track->state.getChildWithName (seatType));
+        directLevel.set (source.directDb); sourceWidth.set (source.width); sourceEarly.set (source.early);
         toggleSend.setTooltip (enabled ? "Remove the Stage processor and its shared room send."
             : "Place this track in the Stage audio graph with one source and one room send.");
         const auto point = stage::sourcePoint (readRoom (activeRoom()), seatValue.position,
@@ -700,7 +741,7 @@ void SpatialWorkspace::syncMaps()
         const Position point { (float) root.getProperty ("listenerX", 0.f), (float) root.getProperty ("listenerDepth", .08f) };
         markers.push_back ({ {}, "Listener", validPosition (point), 0, true, 0, Pattern::omni, true });
     }
-    if (view == View::microphones || (physical && (bool) root.getProperty ("microphoneMix", false)))
+    if (view == View::microphones || physical)
         for (auto mic : microphones())
         {
             const auto value = readMic (mic);
@@ -957,6 +998,26 @@ void SpatialWorkspace::showStageOptions()
         listener ("Listener height (m)", "listenerHeight", 1.4f, .25, 20, .05);
     }
     panel->open (stageOptions);
+}
+
+void SpatialWorkspace::editSourceField (float stage::Source::*member, float value)
+{
+    auto* target = lookup (selectedTrack);
+    if (! editable || target == nullptr || target->isFrozen (te::Track::anyFreeze) || ! isPhysicalScene (scene())) return;
+    const auto row = std::find_if (tracks.begin(), tracks.end(), [this] (const auto& t) { return t.id == selectedTrack; });
+    if (row == tracks.end()) return;
+    auto state = target->state.getChildWithName (seatType);
+    if (readSource (state).*member == value) return;
+    begin ("Edit physical Stage source");
+    if (! state.isValid())
+    {
+        setSeat (*target, row->seat);
+        state = target->state.getChildWithName (seatType);
+    }
+    auto source = readSource (state);
+    source.*member = value;
+    writeSource (state, source, edit->getUndoManager());
+    finish();
 }
 
 void SpatialWorkspace::showSourceOptions()
@@ -1751,12 +1812,12 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         }
         const auto controls = { ToolbarItem { &seating, 163 }, ToolbarItem { &arrangeScope, 137 },
                                 ToolbarItem { &arrange, 110 }, ToolbarItem { &stageOptions, 132 },
-                                ToolbarItem { &atlasButton, 139 }, ToolbarItem { &stageCheck, 150 }
+                                ToolbarItem { &atlasButton, 126 }, ToolbarItem { &stageCheck, 140 }, ToolbarItem { &floatStage, 116 }
                                #if JUCE_MAC
                                 , ToolbarItem { &seatingDesigner, 174 }
                                #endif
                               };
-        if (floatStage.isVisible()) toolbar (area, { { &floatStage, 124 } });
+        // Floating control shares the toolbar where available.
         const bool showMapFirst = isPhysicalScene (scene()) && area.getWidth() < m.span (650);
         const auto priorityMap = showMapFirst ? area.removeFromTop (mapHeight() + extra) : Rectangle<int>();
         const auto top = area.removeFromTop (toolbarHeight (area.getWidth(), controls));
@@ -1799,6 +1860,13 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
             }
             region.removeFromTop (m.px (3));
             put (toggleSend, m.control (26));
+            auto directRow = region.removeFromTop (fieldHeight());
+            if (assign)
+            {
+                directLevel.setBounds (directRow.removeFromLeft (directRow.getWidth() / 2));
+                sourceWidth.setBounds (directRow);
+            }
+            put (sourceEarly, fieldHeight());
             put (sourceOptions, m.control (26));
             put (stageStatus, 2 * m.line (11, 1));
             put (stageSignal, 2 * m.line (11, 1));
@@ -1860,7 +1928,7 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
             place (area, micBankViewport, MicStrip::height() + m.scrollbar() + extra);
             if (bounds)
             {
-                const int strip = m.span (155);
+                const int strip = m.span (116);
                 micBank.setSize (jmax (1, (int) micStrips.size() * strip), MicStrip::height());
                 for (size_t i = 0; i < micStrips.size(); ++i)
                     micStrips[i]->setBounds ((int) i * strip, 0, strip, MicStrip::height());
@@ -1868,6 +1936,8 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
         }
         else
         {
+            toolbar (area, { { &stereo, 184 }, { &addStereo, 205 } });
+            fields (area, { &spacing, &pairAngle });
             mapAndInspector (micMap, [&] (Rectangle<int>& region, bool assign)
             {
                 const auto items = { ToolbarItem { &micList, 142 }, ToolbarItem { &micName, 133 }, ToolbarItem { &addMic, 76 },
@@ -1877,8 +1947,6 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
                 if (assign) layoutFields (region, { &micX, &micDepth, &micHeight, &azimuth, &elevation });
                 else region.removeFromTop (fieldRows (region.getWidth(), 5) * fieldHeight());
             });
-            toolbar (area, { { &stereo, 184 }, { &addStereo, 205 } });
-            fields (area, { &spacing, &pairAngle });
         }
         if (bounds)
         {

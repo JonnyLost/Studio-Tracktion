@@ -14,6 +14,7 @@ public:
     std::function<void()> onChange;
     void set (double);
     float get() const;
+    void setControlStyle (juce::Slider::SliderStyle);
     void resized() override;
 private:
     juce::Label label;
@@ -161,7 +162,9 @@ private:
                      stageCheck { "Room Check +12 dB" }, stageOptions { "Stage controls" }, sourceOptions { "Source controls" },
                      atlasButton { "Atlas & layouts" }, placeSelected { "Place on Stage" }, openStage { "Open Stage" };
     SpatialField pan { "Stage pan", -1, 1, 0.01 }, depth { "Stage depth", 0, 1, 0.01 },
-                 trim { "Send trim", -60, 0, 1, " dB" };
+                 trim { "Room send", -60, 0, 1, " dB" };
+    SpatialField directLevel { "Direct", -24, 6, .5, " dB" }, sourceWidth { "Width", 0, 2, .01, " x" },
+                 sourceEarly { "Reflections", 0, 1, .01, " x" };
 
     juce::ComboBox roomList, wall, floor, ceiling;
     juce::TextEditor roomName;
@@ -211,6 +214,7 @@ private:
     void toggleTrackAudio();
     void showStageOptions();
     void showSourceOptions();
+    void editSourceField (float stage::Source::*, float);
     void showRoomOptions();
     void showAtlas();
     void manageLayout (bool recall);
