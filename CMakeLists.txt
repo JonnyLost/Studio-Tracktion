@@ -856,6 +856,11 @@ if(BUILD_TESTING)
     add_dependencies(Studio StudioSpatialSourceTests)
     add_test(NAME StudioSpatialSource COMMAND StudioSpatialSourceTests)
 
+    add_executable(StudioSpatialBinauralTests tests/SpatialBinauralTests.cpp SpatialSource.h SpatialBinaural.h)
+    target_compile_features(StudioSpatialBinauralTests PRIVATE cxx_std_17)
+    add_dependencies(Studio StudioSpatialBinauralTests)
+    add_test(NAME StudioSpatialBinaural COMMAND StudioSpatialBinauralTests)
+
     add_executable(StudioSeatingAtlasTests tests/SeatingAtlasTests.cpp Seating/SeatingAtlas.h)
     target_compile_features(StudioSeatingAtlasTests PRIVATE cxx_std_20)
     target_compile_definitions(StudioSeatingAtlasTests PRIVATE JUCE_USE_CURL=0)
