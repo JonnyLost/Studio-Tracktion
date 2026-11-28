@@ -1,0 +1,44 @@
+name: Spatial Lab native host
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/studio-spatial-lab-*']
+    paths:
+      - 'tools/spatial-lab/**'
+      - '.github/workflows/spatial-lab.yml'
+  pull_request:
+    branches: ['feature/studio-acoustic-*', 'feature/studio-spatial-lab-*']
+    paths:
+      - 'tools/spatial-lab/**'
+      - '.github/workflows/spatial-lab.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile standalone host and check launcher syntax
+        run: |
+          bash -n tools/spatial-lab/run.sh
+          xcrun clang++ -std=c++17 -O2 -Wall -Wextra tools/spatial-lab/SpatialLab.cpp -framework AudioToolbox -framework CoreFoundation -o "$RUNNER_TEMP/spatial-lab"
+      - name: Test signal generation, measurements and WAV writer
+        run: '"$RUNNER_TEMP/spatial-lab" --self-test'
+      - name: Smoke test offline host with Apple system AU
+        run: |
+          set +e
+          "$RUNNER_TEMP/spatial-lab" --host-smoke
+          result=$?
+          if [ "$result" -eq 77 ]; then
+            echo "::warning::System AU unavailable on runner; offline host smoke skipped"
+          elif [ "$result" -ne 0 ]; then
+            exit "$result"
+          fi
+      - name: Sanitizer self-test
+        run: |
+          xcrun clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tools/spatial-lab/SpatialLab.cpp -framework AudioToolbox -framework CoreFoundation -o "$RUNNER_TEMP/spatial-lab-sanitized"
+          "$RUNNER_TEMP/spatial-lab-sanitized" --self-test
