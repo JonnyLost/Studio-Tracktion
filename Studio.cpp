@@ -2690,7 +2690,8 @@ private:
         const auto mode = (studio::PerformanceMode) performanceMode.getSelectedId();
         const bool visible = edit != nullptr && mode != studio::PerformanceMode::hidden;
         // The full mapping editor already displays these same actions.
-        const bool showStrip = visible && workspace != Workspace::articulations;
+        const bool stageNeedsHeight = getHeight() <= 700 && workspace == Workspace::stage;
+        const bool showStrip = visible && workspace != Workspace::articulations && ! stageNeedsHeight;
         articulationStrip.setVisible (showStrip);
         if (showStrip) articulationStrip.setBounds (area.removeFromBottom (studio::ArticulationStrip::height()));
         int panelHeight = jmin (studio::InstrumentPerformance::height(), getHeight() * 26 / 100);

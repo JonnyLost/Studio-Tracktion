@@ -526,10 +526,12 @@ Result verifyPhysicalStage()
     if (! hasStageSource (*source) || ! usesPhysicalStage (*edit) || ! seat.hasProperty ("xMetres"))
         return Result::fail ("physical migration and stable seat identity");
     auto physical = device.capture (*edit);
-    if (energyDb (physical.output, 0, &legacy.output) < -55.f ||
-        energyDb (physical.output, 0) <= energyDb (physical.output, 1) ||
-        energyDb (physical.output, 0) < -35)
-        return Result::fail ("physical direct path must be audible, distinct and left-biased");
+    const auto physicalL = energyDb (physical.output, 0), physicalR = energyDb (physical.output, 1);
+    const auto unprocessed = energyDb (original.output, 0);
+    if (energyDb (physical.output, 0, &legacy.output) < -55.f || physicalL <= physicalR
+        || physicalL < unprocessed - 18.f || physicalL > unprocessed - 3.f)
+        return Result::fail ("physical direct path must be audible, distinct and left-biased: "
+            + juce::String (physicalL) + " L, " + juce::String (physicalR) + " R, " + juce::String (unprocessed) + " dry dBFS");
     if (! undo.undo() || usesPhysicalStage (*edit) || hasStageSource (*source)
         || energyDb (device.capture (*edit).output, 0, &legacy.output) > -90.f)
         return Result::fail ("undo migration restores legacy audio");
@@ -551,11 +553,12 @@ Result verifyPhysicalStage()
     mics.addChild (writeMic ("right", "Main R", right), -1, nullptr);
     root.setProperty ("microphoneMix", true, nullptr);
     auto pair = device.capture (*edit);
-    if (energyDb (pair.output, 0) < -40 || energyDb (pair.output, 1) < -40)
-        return Result::fail ("hosted microphone pair");
+    const auto pairL = energyDb (pair.output, 0), pairR = energyDb (pair.output, 1);
+    if (std::min (pairL, pairR) < unprocessed - 18.f || std::abs (pairL - pairR) > .5f)
+        return Result::fail ("hosted microphone pair: " + juce::String (pairL) + " L, " + juce::String (pairR) + " R dBFS");
     mics.getChild (1).setProperty ("solo", true, nullptr);
     auto solo = device.capture (*edit);
-    if (energyDb (solo.output, 0) > -100 || energyDb (solo.output, 1) < -40)
+    if (energyDb (solo.output, 0) > -100 || energyDb (solo.output, 1) < unprocessed - 18.f)
         return Result::fail ("microphone solo must replace the original dry output");
     mics.getChild (1).setProperty ("mute", true, nullptr);
     auto muted = device.capture (*edit);

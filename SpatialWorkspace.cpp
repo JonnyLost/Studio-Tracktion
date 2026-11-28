@@ -1757,6 +1757,8 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
                                #endif
                               };
         if (floatStage.isVisible()) toolbar (area, { { &floatStage, 124 } });
+        const bool showMapFirst = isPhysicalScene (scene()) && area.getWidth() < m.span (650);
+        const auto priorityMap = showMapFirst ? area.removeFromTop (mapHeight() + extra) : Rectangle<int>();
         const auto top = area.removeFromTop (toolbarHeight (area.getWidth(), controls));
         if (bounds)
         {
@@ -1803,7 +1805,8 @@ int SpatialWorkspace::layoutWorkspace (int width, bool bounds, int extra)
             return region.getY() - startY + gap;
         };
         const int inspectionHeight = layoutInspector (area.withWidth (columns ? inspectorWidth : area.getWidth()), false);
-        auto row = area.removeFromTop ((columns ? jmax (mapHeight(), inspectionHeight) : mapHeight()) + extra);
+        auto row = showMapFirst ? priorityMap
+            : area.removeFromTop ((columns ? jmax (mapHeight(), inspectionHeight) : mapHeight()) + extra);
         const auto layoutRoster = [&] (Rectangle<int> sidebar)
         {
             if (! bounds) return;
@@ -1941,7 +1944,9 @@ StageWindow::StageWindow() : DocumentWindow ("Studio Stage", colours::canvas, Do
     setContentOwned (new Content, true);
     setResizable (true, false);
     setResizeLimits (575, 390, 1800, 1200);
-    centreWithSize (960, 625);
+    const auto screen = Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    const auto fit = screen != nullptr ? screen->userArea.reduced (14) : Rectangle<int> (960, 625);
+    centreWithSize (jmin (960, fit.getWidth()), jmin (625, fit.getHeight()));
 }
 
 SpatialWorkspace& StageWindow::workspace() { return static_cast<Content*> (getContentComponent())->workspace; }
