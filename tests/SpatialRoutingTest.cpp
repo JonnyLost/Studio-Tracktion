@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
+#include "../StudioSpatialEffect.h"
 #include <limits>
 
 namespace studio::spatial
@@ -275,6 +276,99 @@ Result verifySignal()
     return Result::ok();
 }
 
+Result verifySourceInsert()
+{
+    if (valuesOf(decodeSource("2 1 2")) != valuesOf(SourceParameters{})
+        || valuesOf(decodeSource("1 0 1 0 0 1 1 0 0 0 1 1 1 0 trailing")) != valuesOf(SourceParameters{}))
+        return Result::fail("invalid source settings must fall back to neutral");
+    for(const auto& preset:sourcePresets())
+        if(valuesOf(decodeSource(encodeSource(preset.parameters)))!=valuesOf(preset.parameters))
+            return Result::fail("source preset serialization");
+
+    te::Engine engine("Studio source insert tests",{},std::make_unique<OfflineEngine>());
+    registerPlugins(engine);
+    engine.getPluginManager().createBuiltInType<DryPiano>();
+    HostedDevice device(engine);
+    const juce::TemporaryFile temporary(".tracktionedit");
+    auto edit=te::createEmptyEdit(engine,temporary.getFile());
+    if(!edit)return Result::fail("source insert edit");
+    auto track=edit->insertNewAudioTrack(te::TrackInsertPoint::getEndOfTracks(*edit),nullptr);
+    if(!track)return Result::fail("source insert track");
+    const auto trackId=track->itemID;
+    track->getOutput().setOutputToDefaultDevice(false);
+    auto instrument=edit->getPluginCache().createNewPlugin(DryPiano::xmlTypeName,{});
+    auto effect=edit->getPluginCache().createNewPlugin(SourcePlugin::xmlTypeName,{});
+    auto* spatial=dynamic_cast<SourcePlugin*>(effect.get());
+    if(!instrument||!spatial)return Result::fail("source insert registration");
+    track->pluginList.insertPlugin(instrument,0,nullptr);
+    auto clip=track->insertMIDIClip({{},te::TimePosition::fromSeconds(1.4)},nullptr);
+    if(!clip)return Result::fail("source insert MIDI fixture");
+    clip->getSequence().addNote(60,te::BeatPosition::fromBeats(.5),te::BeatDuration::fromBeats(.2),96,0,nullptr);
+    edit->getMasterVolumePlugin()->setVolumeDb(0);
+    track->getVolumePlugin()->setVolumeDb(0);
+    auto dry=device.capture(*edit);
+    track->pluginList.insertPlugin(effect,track->pluginList.indexOf(track->getVolumePlugin()),nullptr);
+    if(track->pluginList.indexOf(spatial)<0)return Result::fail("source insert placement");
+    const auto pluginId=spatial->itemID;
+    auto neutral=device.capture(*edit);
+    if(energyDb(neutral.output,0,&dry.output)>-95||energyDb(neutral.output,1,&dry.output)>-95)
+        return Result::fail("neutral insert transparency through hosted device");
+
+    auto p=SourceParameters{};p.direction.angle=-90;p.direction.timing=0;p.direction.shadow=0;
+    spatial->beginGesture("Test source positioning");spatial->setParameters(p);spatial->endGesture();
+    auto left=device.capture(*edit);
+    if(std::abs((energyDb(left.output,0)-energyDb(left.output,1))-4.f)>.3f)
+        return Result::fail("native insert audible left ear difference");
+    auto& undo=edit->getUndoManager();
+    if(!undo.undo()||valuesOf(spatial->parameters())!=valuesOf(SourceParameters{}))
+        return Result::fail("undo source settings");
+    if(!undo.redo()||valuesOf(spatial->parameters())!=valuesOf(p))
+        return Result::fail("redo source settings");
+
+    // Actual editor sliders and preset selector address the attached instance.
+    {
+        SourceWindow window([&]{return spatial;});
+        auto* content=window.getContentComponent();
+        juce::Slider* distance=nullptr;juce::ComboBox* preset=nullptr;
+        for(int i=0;content&&i<content->getNumChildComponents();++i)
+        {
+            auto* child=content->getChildComponent(i);
+            if(auto* slider=dynamic_cast<juce::Slider*>(child);slider&&slider->getName()=="Distance")distance=slider;
+            if(auto* combo=dynamic_cast<juce::ComboBox*>(child))preset=combo;
+        }
+        if(!distance||!preset)return Result::fail("editor controls missing");
+        distance->setValue(50,juce::sendNotificationSync);
+        if(std::abs(spatial->parameters().distance-.5f)>.001f)
+            return Result::fail("editor distance binding");
+        preset->setSelectedId(4,juce::sendNotificationSync);
+        if(valuesOf(spatial->parameters())!=valuesOf(sourcePresets()[3].parameters))
+            return Result::fail("editor preset binding");
+        window.setVisible(false);
+    }
+    spatial->beginGesture("Test live source parameter");spatial->setParameters(p);spatial->endGesture();
+    auto right=p;right.direction.angle=90;
+    auto live=device.capture(*edit,[&]{spatial->setParameters(right);});
+    if(std::abs((energyDb(live.output,1)-energyDb(live.output,0))-4.f)>.5f)
+        return Result::fail("source parameter publication during playback");
+    if(hasRoomSend(*track)||roomReturnTrack(*edit)!=nullptr)
+        return Result::fail("source insert changed Stage routing");
+    if(!te::EditFileOperations(*edit).writeToFile(temporary.getFile(),false))
+        return Result::fail("save source insert");
+    clip=nullptr;instrument=nullptr;effect=nullptr;track=nullptr;spatial=nullptr;
+    edit.reset();edit=te::loadEditFromFile(engine,temporary.getFile());
+    if(!edit)return Result::fail("reopen source insert");
+    auto* restored=te::findAudioTrackForID(*edit,trackId);
+    if(!restored)return Result::fail("reopen source track");
+    for(auto* plugin:restored->pluginList.getPlugins())
+        if(plugin->itemID==pluginId)spatial=dynamic_cast<SourcePlugin*>(plugin);
+    if(!spatial||valuesOf(spatial->parameters())!=valuesOf(right))
+        return Result::fail("restored native spatial type and settings");
+    auto reopened=device.capture(*edit);
+    if(std::abs((energyDb(reopened.output,1)-energyDb(reopened.output,0))-4.f)>.3f)
+        return Result::fail("restored source processing");
+    return Result::ok();
+}
+
 int countReturns (tracktion::Edit& edit)
 {
     int count = 0;
@@ -381,8 +475,9 @@ int runSpatialRoutingTest()
 {
     auto result = verify();
     if (result.wasOk()) result = verifySignal();
+    if (result.wasOk()) result = verifySourceInsert();
     if (result.failed()) fprintf (stderr, "Studio spatial routing test failed: %s\n", result.getErrorMessage().toRawUTF8());
-    else fprintf (stdout, "Tracktion room routing, audible stereo wet signal, meters, depth, solo, bypass, and project reopen passed.\n");
+    else fprintf (stdout, "Tracktion room routing, audible stereo wet signal, meters, depth, solo, bypass, project reopen, native source insert and editor passed.\n");
     return result.wasOk() ? 0 : 1;
 }
 }
