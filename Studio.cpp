@@ -34,6 +34,7 @@ using namespace tracktion::literals;
 #include "ArticulationPalette.h"
 #include "SpatialWorkspace.h"
 #include "SpatialRouting.h"
+#include "StudioSpatialEffect.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
@@ -607,7 +608,7 @@ public:
         workspaceBody.addChildComponent (instrumentWorkspace);
         static_cast<StudioPluginWindows&> (engine.getUIBehaviour()).openNative = [this] (te::Plugin& plug)
         {
-            return showNativeInstrument (plug);
+            return showSpatialEffect (plug) || showNativeInstrument (plug);
         };
         instrumentWorkspace.onLayout = [this] { resized(); };
         instrumentWorkspace.onExpand = [this] { setDockMode (DockMode::expanded); };
@@ -927,7 +928,8 @@ public:
         stop.setTooltip ("Stop playback or keep the current recording");
         stop.onClick = [this]
         {
-            stopOstinato("Audition stopped.");
+            spatialEffectWindow.reset();
+        stopOstinato("Audition stopped.");
             if (edit == nullptr) return;
             if (edit->getTransport().isRecording())
                 toggleRecordKeepingTake();
@@ -2365,6 +2367,7 @@ private:
     std::unique_ptr<te::Edit> edit;
     std::unique_ptr<EditComponent> editor;
     std::unique_ptr<studio::AuditionKeyboardWindow> midiKeyboardWindow;
+    std::unique_ptr<studio::spatial::SourceWindow> spatialEffectWindow;
     studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
@@ -4714,6 +4717,7 @@ private:
             return;
         }
 
+        spatialEffectWindow.reset();
         stopOstinato("Audition stopped for project change.");
         if (edit != nullptr)
         {
@@ -5206,6 +5210,29 @@ private:
     void rememberInstrumentWorkspace()
     {
         instrumentWorkspace.saveSession (workspace == Workspace::instrumentEditor || instrumentWorkspace.isFloating(), dockMode);
+    }
+
+    bool showSpatialEffect (te::Plugin& plug)
+    {
+        if (edit == nullptr || &plug.edit != edit.get()
+            || dynamic_cast<studio::spatial::SourcePlugin*> (&plug) == nullptr) return false;
+        auto* track = dynamic_cast<te::AudioTrack*> (plug.getOwnerTrack());
+        if (track == nullptr) return false;
+        const auto trackId = track->itemID, pluginId = plug.itemID;
+        const auto generation = projectGeneration;
+        spatialEffectWindow.reset();
+        spatialEffectWindow = std::make_unique<studio::spatial::SourceWindow> (
+            [safe = SafePointer<StudioView> (this), generation, trackId, pluginId]() -> studio::spatial::SourcePlugin*
+            {
+                if (safe == nullptr || safe->edit == nullptr || safe->projectGeneration != generation
+                    || safe->busy || safe->ariaReviewPending || safe->edit->getTransport().isRecording()) return nullptr;
+                auto* target = safe->trackById (trackId);
+                if (target == nullptr || target->isFrozen (te::Track::anyFreeze)) return nullptr;
+                for (auto* p : target->pluginList.getPlugins())
+                    if (p->itemID == pluginId) return dynamic_cast<studio::spatial::SourcePlugin*> (p);
+                return nullptr;
+            });
+        return true;
     }
 
     bool showNativeInstrument (te::Plugin& plug)
@@ -6210,6 +6237,8 @@ private:
         else if (instrument && plugin->getName().containsIgnoreCase ("ARIA Player"))
             status << " Choose the patch in Channel > Open Instrument.";
         pluginStatus (status);
+        if (dynamic_cast<studio::spatial::SourcePlugin*> (plugin.get()) != nullptr)
+            showSpatialEffect (*plugin);
         if (instrument && (! libraryOpen || workspace == Workspace::instrumentEditor || addNew)
             && workflowTrack() == track) showNativeInstrument (*plugin);
     }
@@ -6358,7 +6387,7 @@ private:
                     for (auto* current : target.pluginList.getPlugins())
                         if (current->itemID == pluginId)
                         {
-                            if (! studio.showNativeInstrument (*current)) current->showWindowExplicitly();
+                            if (! studio.showSpatialEffect (*current) && ! studio.showNativeInstrument (*current)) current->showWindowExplicitly();
                             break;
                         }
                 }));
@@ -6421,12 +6450,21 @@ private:
         const std::pair<const char*, const char*> builtIns[] {
             { "Equaliser", te::EqualiserPlugin::xmlTypeName },
             { "Compressor", te::CompressorPlugin::xmlTypeName },
-            { "Delay", te::DelayPlugin::xmlTypeName }
+            { "Delay", te::DelayPlugin::xmlTypeName },
+            { "Studio Spatial", studio::spatial::SourcePlugin::xmlTypeName }
         };
         for (const auto& [label, type] : builtIns)
-            effects.addItem (label, trackMenuAction (id, [type] (StudioView& studio, te::AudioTrack& target)
+            effects.addItem (label, String (type) != studio::spatial::SourcePlugin::xmlTypeName
+                                    || ! studio::spatial::isRoomReturn (track), false,
+                trackMenuAction (id, [type] (StudioView& studio, te::AudioTrack& target)
             {
                 if (! studio.canInsertPlugin()) return;
+                if (String (type) == studio::spatial::SourcePlugin::xmlTypeName
+                    && (studio::spatial::isRoomReturn (target) || target.edit.getTransport().isPlaying()))
+                {
+                    studio.pluginStatus ("Stop playback and select a regular audio or instrument track.");
+                    return;
+                }
                 studio.commitPlugin (target.edit.getPluginCache().createNewPlugin (type, {}), target.itemID, false, false);
             }));
         PopupMenu units;
