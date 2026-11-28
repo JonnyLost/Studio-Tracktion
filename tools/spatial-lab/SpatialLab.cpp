@@ -144,6 +144,7 @@ struct Input
     const Channels& data;
     std::array<std::array<float,block>,2> scratch{};
     long position=0;
+    UInt32 count=0;
     bool badTimestamp=false;
 };
 OSStatus inputCallback(void* ref,AudioUnitRenderActionFlags*,const AudioTimeStamp* time,
@@ -154,8 +155,11 @@ OSStatus inputCallback(void* ref,AudioUnitRenderActionFlags*,const AudioTimeStam
         return kAudioUnitErr_InvalidPropertyValue;
     // Fail rather than silently misalign if a host/plug-in changes the timeline.
     if(!time||!(time->mFlags&kAudioTimeStampSampleTimeValid)||
-       !std::isfinite(time->mSampleTime)||std::abs(time->mSampleTime-double(s.position))>0.01)
+       !std::isfinite(time->mSampleTime)||time->mSampleTime<double(s.position)||
+       time->mSampleTime+frames>double(s.position)+s.count||
+       std::abs(time->mSampleTime-std::round(time->mSampleTime))>0.01)
     {s.badTimestamp=true;return kAudioUnitErr_InvalidPropertyValue;}
+    const auto offset=long(std::llround(time->mSampleTime));
     for(UInt32 ch=0;ch<buffers->mNumberBuffers;++ch)
     {
         auto& b=buffers->mBuffers[ch];
@@ -165,7 +169,7 @@ OSStatus inputCallback(void* ref,AudioUnitRenderActionFlags*,const AudioTimeStam
         auto* dst=static_cast<float*>(b.mData);
         for(UInt32 j=0;j<frames;++j)
         {
-            auto k=s.position+long(j);
+            auto k=offset+long(j);
             dst[j]=k>=0&&size_t(k)<s.data[ch].size()?s.data[ch][size_t(k)]:0.0f;
         }
         b.mDataByteSize=frames*sizeof(float);
@@ -230,7 +234,11 @@ struct Unit
                 throw std::runtime_error("Missing parameter info "+std::to_string(id));
             std::string name(info.name,strnlen(info.name,sizeof(info.name)));
             if(info.flags&kAudioUnitParameterFlag_HasCFNameString)name=cfText(info.cfNameString);
-            if((info.flags&kAudioUnitParameterFlag_CFNameRelease)&&info.cfNameString)CFRelease(info.cfNameString);
+            if(info.flags&kAudioUnitParameterFlag_CFNameRelease)
+            {
+                if((info.flags&kAudioUnitParameterFlag_HasCFNameString)&&info.cfNameString)CFRelease(info.cfNameString);
+                if(info.unit==kAudioUnitParameterUnit_CustomUnit&&info.unitName)CFRelease(info.unitName);
+            }
             result.push_back({id,name,info.minValue,info.maxValue,info.defaultValue,UInt32(info.flags),UInt32(info.unit)});
         }
         std::sort(result.begin(),result.end(),[](auto a,auto b){return a.id<b.id;});
@@ -253,7 +261,7 @@ struct Unit
         UInt32 size=sizeof(f);
         auto status=AudioUnitGetProperty(au,kAudioUnitProperty_ParameterStringFromValue,kAudioUnitScope_Global,0,&f,&size);
         auto text=status==noErr?cfText(f.outString):std::string();
-        if(f.outString)CFRelease(f.outString);
+        if(status==noErr&&f.outString)CFRelease(f.outString);
         return text;
     }
     std::vector<Preset> presets()
@@ -287,7 +295,7 @@ struct Unit
         {
             UInt32 n=UInt32(std::min<size_t>(block,frames-pos));
             AudioTimeStamp time{};time.mSampleTime=double(pos);time.mFlags=kAudioTimeStampSampleTimeValid;
-            source.position=long(pos);
+            source.position=long(pos);source.count=n;
             TwoBuffers storage{2,{{1,n*UInt32(sizeof(float)),result[0].data()+pos},
                                  {1,n*UInt32(sizeof(float)),result[1].data()+pos}}};
             auto* buffers=reinterpret_cast<AudioBufferList*>(&storage);
@@ -562,11 +570,30 @@ int run(const fs::path& dir)
     std::cout<<"Completed "<<completed<<"/"<<cases.size()<<" cases; failures "<<failures<<".\n";
     return failures?2:0;
 }
+int hostSmoke()
+{
+    AudioComponentDescription d{};
+    d.componentType=kAudioUnitType_Effect;
+    d.componentSubType=kAudioUnitSubType_LowPassFilter;
+    d.componentManufacturer=kAudioUnitManufacturer_Apple;
+    auto component=AudioComponentFindNext(nullptr,&d);
+    if(!component){std::cout<<"System low-pass AU unavailable; host smoke skipped\n";return 77;}
+    Case c{"smoke","impulse","dual",48000,1.25,{}};
+    auto data=signal(c);Input source{data};
+    Unit u(component);u.prepare(48000,2,source);
+    auto v=u.render(source);
+    auto l=measure(v[0],12000,48000),r=measure(v[1],12000,48000);
+    require(l.peak>1e-8&&r.peak>1e-8,"System AU produced no signal");
+    require(l.first>=12000&&r.first>=12000,"Unexpected output before excitation");
+    std::cout<<"System Audio Unit offline host smoke passed\n";
+    return 0;
+}
 int main(int argc,char** argv)
 {
     try
     {
         if(argc==2&&std::string(argv[1])=="--self-test"){selfTest();return 0;}
+        if(argc==2&&std::string(argv[1])=="--host-smoke")return hostSmoke();
         if(argc!=2){std::cerr<<"Usage: spatial-lab OUTPUT_DIRECTORY | --self-test\n";return 64;}
         return run(fs::path(argv[1]));
     }
