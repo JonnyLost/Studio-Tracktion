@@ -221,7 +221,7 @@ class SourceEditor final : public Component,private Timer
 public:
     explicit SourceEditor(SourceWindow::Resolve r):resolve(std::move(r))
     {
-        addAndMakeVisible(preset);preset.setTextWhenNothingSelected("Custom settings");
+        addAndMakeVisible(preset);preset.setName("Spatial preset");preset.setTextWhenNothingSelected("Custom settings");
         int id=1;for(const auto& p:sourcePresets())preset.addItem(p.name,id++);
         preset.onChange=[this]
         {
@@ -244,6 +244,18 @@ public:
         {
             edit([this](auto& p){p.mono=mono.getToggleState()?1.f:0.f;},"Spatial mono check");
         };
+        addAndMakeVisible(room);room.setName("Reflection room");
+        int roomId=1;for(const auto& r:early::rooms)room.addItem(r.name,roomId++);
+        room.setTooltip("Local early reflection geometry, not the shared Stage Room Return");
+        room.onChange=[this]{if(room.getSelectedId()>0)edit([this](auto& p){p.reflections.room=float(room.getSelectedId()-1);},"Reflection room");};
+        addAndMakeVisible(earlyLabel);earlyLabel.setText("Early reflections",dontSendNotification);
+        addAndMakeVisible(earlyAmount);earlyAmount.setName("Early reflections");
+        earlyAmount.setSliderStyle(Slider::LinearHorizontal);earlyAmount.setRange(0,100,1);
+        earlyAmount.setTextBoxStyle(Slider::TextBoxRight,false,78,23);earlyAmount.setTextValueSuffix(" %");
+        earlyAmount.setDoubleClickReturnValue(true,0);
+        earlyAmount.onDragStart=[this]{begin("Adjust early reflections");};
+        earlyAmount.onDragEnd=[this]{finish();};
+        earlyAmount.onValueChange=[this]{edit([this](auto& p){p.reflections.amount=float(earlyAmount.getValue())/100.f;},"Adjust early reflections");};
         addAndMakeVisible(pad);
         pad.begin=[this]{begin("Position source");};
         pad.end=[this]{finish();};
@@ -273,12 +285,12 @@ public:
                 },"Adjust "+String(controls[i].name));
             };
         }
-        setSize(720,530);appearanceChanged();refresh();startTimerHz(20);
+        setSize(720,565);appearanceChanged();refresh();startTimerHz(20);
     }
     void appearanceChanged()
     {
         for(auto& label:labels)label.setFont(uiFont(12.f));
-        status.setFont(uiFont(11.f));
+        status.setFont(uiFont(11.f));earlyLabel.setFont(uiFont(12.f));
         resized();repaint();
     }
     void paint(Graphics& g) override
@@ -297,6 +309,10 @@ public:
         bypass.setBounds(bar.removeFromRight(92).reduced(2));
         preset.setBounds(bar.reduced(2));
         status.setBounds(a.removeFromBottom(30));
+        auto reflectionsRow=a.removeFromBottom(32).reduced(3,2);
+        room.setBounds(reflectionsRow.removeFromRight(reflectionsRow.getWidth()/2).reduced(3,0));
+        earlyLabel.setBounds(reflectionsRow.removeFromLeft(jmin(appearance.span(126),reflectionsRow.getWidth()/2)));
+        earlyAmount.setBounds(reflectionsRow);
         pad.setBounds(a.removeFromTop(jlimit(105,185,a.getHeight()/2)));
         a.removeFromTop(5);
         const int height=jmax(26,a.getHeight()/6);
@@ -316,7 +332,7 @@ public:
 private:
     SourceWindow::Resolve resolve;
     ComboBox preset;TextButton reset{"Reset"};ToggleButton mono{"Mono check"},bypass{"Bypass"};
-    PositionPad pad;Label status;
+    PositionPad pad;Label status,earlyLabel;ComboBox room;Slider earlyAmount;
     std::array<Slider,12> sliders;
     std::array<Label,12> labels;
     bool gesture=false;
@@ -345,7 +361,7 @@ private:
         auto* p=resolve();
         const bool available=p!=nullptr;
         preset.setEnabled(available);reset.setEnabled(available);mono.setEnabled(available);bypass.setEnabled(available);
-        pad.setEnabled(available);
+        pad.setEnabled(available);room.setEnabled(available);earlyAmount.setEnabled(available);
         for(auto& slider:sliders)slider.setEnabled(available);
         if(!p)
         {
@@ -366,13 +382,16 @@ private:
             for(size_t i=0;i<sourcePresets().size();++i)
                 if(v==valuesOf(sourcePresets()[i].parameters))matched=int(i+1);
             preset.setSelectedId(matched,dontSendNotification);
+            room.setSelectedId(int(raw.reflections.room)+1,dontSendNotification);
+            if(!earlyAmount.hasKeyboardFocus(true))earlyAmount.setValue(raw.reflections.amount*100,dontSendNotification);
         }
         mono.setToggleState(raw.mono>=.5f,dontSendNotification);
         bypass.setToggleState(!p->isEnabled(),dontSendNotification);
         const auto peaks=p->peaks();
         const auto db=[](float gain){return String(Decibels::gainToDecibels(gain,-90.f),1);};
         status.setText(p->isEnabled() ? "Output  L "+db(peaks.left)+" dB   R "+db(peaks.right)
-                       +" dB  |  Perceptual distance; no room processing"
+                       +" dB  |  "+(raw.reflections.amount==0?String("Early reflections off"):
+                           p->reflectionsAvailable()?String("Local early reflections"):String("Reflections inactive / not prepared"))
                        : String("Bypassed | Settings retained"),dontSendNotification);
     }
 };
@@ -382,8 +401,8 @@ SourceWindow::SourceWindow(Resolve resolve)
 {
     setUsingNativeTitleBar(true);
     setContentOwned(new SourceEditor(std::move(resolve)),true);
-    setResizable(true,false);setResizeLimits(610,470,1400,900);
-    centreWithSize(720,530);setVisible(true);
+    setResizable(true,false);setResizeLimits(610,505,1400,900);
+    centreWithSize(720,565);setVisible(true);
 }
 void SourceWindow::appearanceChanged()
 {
