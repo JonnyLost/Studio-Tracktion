@@ -105,7 +105,7 @@ public:
 
     std::size_t memoryBytes() const { return bytes.load(); }
 
-    bool isBypassed() const { return publication.back().load() != 0.0f; }
+    bool isBypassed() const { return bypassed.load(); }
 
     void setCheck (bool enable)
     {
@@ -122,7 +122,7 @@ public:
 
 private:
     static_assert (std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
-    static constexpr size_t parameterCount = roomLineCount * 7 + roomEarlyTaps * 2 + 5;
+    static constexpr size_t parameterCount = sizeof (RoomPlan) / sizeof (float);
     using PlanScalars = std::array<float, parameterCount>;
     static_assert (sizeof (RoomPlan) == sizeof (PlanScalars));
     std::array<std::atomic<float>, parameterCount> publication {};
@@ -130,7 +130,7 @@ private:
     std::atomic<std::size_t> bytes { 0 };
     unsigned acceptedRevision = 0;
     std::atomic<float> inputPeak { 0.0f }, wetPeak { 0.0f };
-    std::atomic<bool> checkEnabled { false };
+    std::atomic<bool> checkEnabled { false }, bypassed { false };
     float meterTime = 14400.0f;
     RoomReverb reverb;
 
@@ -150,6 +150,7 @@ private:
     {
         const auto xml = parseXML (state.getProperty (roomProperty).toString());
         const auto plan = makeRoomPlan (xml != nullptr ? readRoom (ValueTree::fromXml (*xml)) : Room());
+        bypassed.store (plan.bypass != 0);
         const auto values = std::bit_cast<PlanScalars> (plan);
         // Single writer on the settings thread. The render reader keeps its
         // last complete plan if a new plan overlaps its bounded scalar read.

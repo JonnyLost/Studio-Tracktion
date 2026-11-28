@@ -8,7 +8,7 @@
 namespace studio::spatial
 {
 inline constexpr float roomCheckBoostDb = 12.0f;
-inline constexpr std::size_t roomLineCount = 8, roomEarlyTaps = 12;
+inline constexpr std::size_t roomLineCount = 16, roomEarlyTaps = 12;
 
 struct RoomPeaks { float input = 0.0f, wet = 0.0f; };
 
@@ -27,10 +27,13 @@ struct RoomPlan
     RoomGeometry geometry;
     std::array<std::array<float, roomLineCount>, 6> feedback {};
     std::array<float, roomEarlyTaps> reflectionGain {};
-    float early = 0.0f, late = 0.0f, level = 0.0f, bypass = 0.0f;
+    float early = 0, late = 0, level = 0, bypass = 0;
+    float mode = 0, diffusion = 1, buildup = 1, motion = .00028f, motionRate = 1;
+    float width = 1, lowEq = 1, highEq = 1, mix = 1, standalone = 0;
 };
 
-RoomPlan makeRoomPlan (Room);
+enum class RoomMode { legacy, stage, effect };
+RoomPlan makeRoomPlan (Room, RoomMode = RoomMode::legacy);
 
 class RoomReverb
 {
@@ -42,15 +45,16 @@ public:
     void setPlan (const RoomPlan&) noexcept;
     void setCheckEnabled (bool) noexcept;
     RoomPeaks process (float* left, float* right, int count) noexcept;
+    int activeLines() const noexcept { return lines; }
     std::size_t allocatedBytes() const noexcept;
 
 private:
     struct Ring
     {
         std::vector<float> samples;
-        std::size_t cursor = 0, mask = 0;
+        std::size_t cursor = 0, mask = 0, written = 0;
         void prepare (std::size_t);
-        void clear();
+        void clear() noexcept;
         float read (float delay) const noexcept;
         void push (float) noexcept;
     };
@@ -60,7 +64,12 @@ private:
     double rate = 48000;
     float smooth = 0.001f, controlSmooth = 0.014f;
     int geometryStep = 0, geometryFrames = 0, controlFrame = 0;
-    int quietFrames = 0;
+    int quietFrames = 0, lines = 8, mode = 0;
+    float crossfade = 1, outputMix = 1, stereoWidth = 1, motionDepth = .00028f, motionSpeed = 1;
+    float diffusionAmount = 1, build = 1, equalLow = 1, equalHigh = 1;
+    std::array<std::array<float, 2>, 2> eqState {};
+    std::array<float, 2> eqPoles {};
+    void switchNetwork() noexcept;
     bool checkEnabled = false, sleeping = true, settling = false;
     RoomPlan target;
     RoomGeometry from, to;
@@ -71,8 +80,8 @@ private:
     Coefficients feedback {};
     std::array<float, roomEarlyTaps> reflectionGain {};
     std::array<Ring, 2> inputHistory;
-    std::array<std::array<Ring, 3>, 2> diffusers;
-    std::array<std::array<float, 3>, 2> diffuserDelays {};
+    std::array<std::array<Ring, 5>, 2> diffusers;
+    std::array<std::array<float, 5>, 2> diffuserDelays {};
     float early = 0, late = 0, gain = 0, targetGain = 0, inputGain = 1;
 
     void updateOutputTarget() noexcept;

@@ -21,6 +21,13 @@ inline juce::ValueTree writeRoom (Room r, const juce::String& name)
      .setProperty ("ceiling", (int) r.ceiling, nullptr).setProperty ("early", r.early, nullptr)
      .setProperty ("late", r.late, nullptr).setProperty ("gain", r.gain, nullptr).setProperty ("bypass", r.bypass, nullptr)
      .setProperty ("preDelayMs", r.preDelayMs, nullptr);
+    const auto& a = r.shape;
+    v.setProperty ("decayScale", a.decay, nullptr).setProperty ("sizeScale", a.size, nullptr)
+     .setProperty ("attack", a.attack, nullptr).setProperty ("diffusion", a.diffusion, nullptr)
+     .setProperty ("density", a.density, nullptr).setProperty ("motionDepth", a.motionDepthMs, nullptr)
+     .setProperty ("motionRate", a.motionRate, nullptr).setProperty ("stereoWidth", a.width, nullptr)
+     .setProperty ("lowEq", a.lowEq, nullptr).setProperty ("highEq", a.highEq, nullptr)
+     .setProperty ("mix", a.mix, nullptr).setProperty ("quality", (int) a.quality, nullptr);
     for (int i = 0; i < 6; ++i) v.setProperty ("band" + juce::String (i), r.decayTrim[(size_t) i], nullptr);
     return v;
 }
@@ -37,6 +44,13 @@ inline Room readRoom (const juce::ValueTree& v)
     r.early = (float) v.getProperty ("early", r.early); r.late = (float) v.getProperty ("late", r.late);
     r.preDelayMs = (float) v.getProperty ("preDelayMs", r.preDelayMs);
     r.gain = (float) v.getProperty ("gain", r.gain); r.bypass = (bool) v.getProperty ("bypass", r.bypass);
+    auto& a = r.shape;
+    a.decay = (float) v.getProperty ("decayScale", a.decay); a.size = (float) v.getProperty ("sizeScale", a.size);
+    a.attack = (float) v.getProperty ("attack", a.attack); a.diffusion = (float) v.getProperty ("diffusion", a.diffusion);
+    a.density = (float) v.getProperty ("density", a.density); a.motionDepthMs = (float) v.getProperty ("motionDepth", a.motionDepthMs);
+    a.motionRate = (float) v.getProperty ("motionRate", a.motionRate); a.width = (float) v.getProperty ("stereoWidth", a.width);
+    a.lowEq = (float) v.getProperty ("lowEq", a.lowEq); a.highEq = (float) v.getProperty ("highEq", a.highEq);
+    a.mix = (float) v.getProperty ("mix", a.mix); a.quality = (Quality) (int) v.getProperty ("quality", (int) a.quality);
     for (int i = 0; i < 6; ++i) r.decayTrim[(size_t) i] = (float) v.getProperty ("band" + juce::String (i), 1.0f);
     return validate (r);
 }
