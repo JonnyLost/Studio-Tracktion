@@ -26,12 +26,21 @@ SpatialField::SpatialField (const char* title, double min, double max, double in
 
 void SpatialField::set (double value) { number.setValue (value, dontSendNotification); }
 float SpatialField::get() const { return (float) number.getValue(); }
+void SpatialField::setControlStyle (Slider::SliderStyle style)
+{
+    number.setSliderStyle (style);
+    resized();
+}
 void SpatialField::resized()
 {
     const auto& m = appearance;
     auto area = getLocalBounds().reduced (m.px (3), m.px (2));
     label.setBounds (area.removeFromTop (m.line (12, 1)));
-    number.setTextBoxStyle (Slider::TextBoxLeft, false, jmin (m.span (104), area.getWidth() * 2 / 3), m.line (13, 2));
+    const bool graphical = number.getSliderStyle() != Slider::IncDecButtons;
+    label.setJustificationType (graphical ? Justification::centred : Justification::centredLeft);
+    label.setFont (uiFont (12.0f));
+    number.setTextBoxStyle (graphical ? Slider::TextBoxBelow : Slider::TextBoxLeft, false,
+        jmax (1, jmin (m.span (104), graphical ? area.getWidth() : area.getWidth() * 2 / 3)), m.line (13, 2));
     number.setBounds (area);
 }
 
@@ -276,15 +285,32 @@ void SpatialMap::paint (Graphics& g)
         g.setColour (colours::divider);
         g.drawRoundedRectangle (area, (float) m.px (5), 1.f);
         const auto stage = physicalStageArea();
-        g.setColour (colours::control);
-        g.fillRoundedRectangle (stage, (float) m.px (7));
-        g.setColour (dropTarget ? colours::focus : colours::divider);
-        g.drawRoundedRectangle (stage, (float) m.px (7), 1.3f);
-        g.setColour (colours::secondary.withAlpha (.35f));
-        for (float depth : { .25f, .5f, .75f })
+        // Curved guides do not change physical projection or hit testing.
+        g.setGradientFill (ColourGradient (colours::control.brighter (.14f), stage.getCentreX(), stage.getBottom(),
+                                            colours::panel, stage.getCentreX(), stage.getY(), false));
+        g.fillRoundedRectangle (stage, (float) m.px (8));
+        g.setColour (dropTarget ? colours::focus : colours::divider.withAlpha (.65f));
+        g.drawRoundedRectangle (stage, (float) m.px (8), 1.1f);
+        for (float radius : { .24f, .46f, .68f, .90f })
         {
-            const auto y = stage.getBottom() - stage.getHeight() * depth;
-            g.drawHorizontalLine (roundToInt (y), stage.getX() + m.px (3), stage.getRight() - m.px (3));
+            Path arc;
+            for (int i = 0; i <= 64; ++i)
+            {
+                const float angle = float (i) * std::numbers::pi_v<float> / 64.f;
+                const Point<float> p { stage.getCentreX() + std::cos (angle) * stage.getWidth() * .48f * radius,
+                    stage.getBottom() - std::sin (angle) * stage.getHeight() * .94f * radius };
+                if (i == 0) arc.startNewSubPath (p); else arc.lineTo (p);
+            }
+            g.setColour (colours::secondary.withAlpha (.42f));
+            g.strokePath (arc, PathStrokeType (1.15f));
+        }
+        g.setColour (colours::secondary.withAlpha (.2f));
+        g.drawVerticalLine (roundToInt (stage.getCentreX()), stage.getY(), stage.getBottom());
+        if (! overview)
+        {
+            g.setFont (uiFont (10.f));
+            g.setColour (colours::secondary);
+            g.drawFittedText ("UPSTAGE", stage.toNearestInt().removeFromTop (m.line (10, 2)), Justification::centred, 1);
         }
     }
     else if (micMode) paintSeating (g, area);
@@ -346,15 +372,19 @@ void SpatialMap::paint (Graphics& g)
             g.fillPath (polar);
             g.setColour (tint);
             g.drawLine ({ point, point + direction * (radius * 2.1f) }, (float) m.px (2));
-            Path diamond;
-            diamond.addQuadrilateral (point.x, point.y - radius, point.x + radius, point.y,
-                                      point.x, point.y + radius, point.x - radius, point.y);
-            g.fillPath (diamond);
+            Path body;
+            body.addRoundedRectangle (Rectangle<float> (radius * .88f, radius * 1.35f).withCentre ({0.f, -radius * .22f}), radius * .36f);
+            body.addRoundedRectangle (-radius * .18f, radius * .35f, radius * .36f, radius * .65f, radius * .1f);
+            body.applyTransform (AffineTransform::rotation (azimuth).translated (point.x, point.y));
+            g.setColour (colours::well);
+            g.fillPath (body);
+            g.setColour (active ? colours::focus : tint);
+            g.strokePath (body, PathStrokeType (active ? 2.f : 1.5f));
         }
         else
         {
             const auto family = (size_t) jlimit (0, 5, marker.section);
-            const float radius = (float) m.px (11);
+            const float radius = (float) m.px (markers.size() > 48 ? 11 : markers.size() > 24 ? 13 : 16);
             const auto tile = Rectangle<float> (2 * radius, 2 * radius).withCentre (point);
             const auto accent = stageColours[family];
             g.setColour (accent.interpolatedWith (colours::well, micMode ? 0.83f : 0.68f));
@@ -366,16 +396,16 @@ void SpatialMap::paint (Graphics& g)
             g.setColour (accent.withAlpha (micMode ? 0.55f : 1.0f));
             drawInstrumentIcon(g,tile.reduced((float)m.px(3)),instrumentIcon(marker.name),accent);
         }
-        if (active || (! micMode && showTrackLabels && markers.size() <= 24))
+        if (active || (marker.microphone && markers.size() <= 24) || (! micMode && showTrackLabels && markers.size() <= 24))
         {
             const int labelWidth = m.span (active ? 125 : 88);
             const auto left = jlimit (0, jmax (0, getWidth() - labelWidth), roundToInt (point.x) - labelWidth / 2);
             g.setFont (uiFont (10.5f, active ? Font::bold : Font::plain));
             g.setColour (active ? colours::focus : colours::text);
             const int labelHeight = m.line (10, 2);
-            int labelY = roundToInt (point.y) + m.px (13);
+            int labelY = roundToInt (point.y) + m.px (18);
             if (labelY + labelHeight > roundToInt (area.getBottom()))
-                labelY = roundToInt (point.y) - m.px (15) - labelHeight;
+                labelY = roundToInt (point.y) - m.px (19) - labelHeight;
             const auto label = Rectangle<int> (left, labelY, labelWidth, labelHeight);
             g.setColour (colours::well);
             if (active) g.fillRoundedRectangle (label.toFloat(), (float) m.px (3));
