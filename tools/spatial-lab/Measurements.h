@@ -15,7 +15,7 @@ inline Timing timing(const std::vector<float>& l,const std::vector<float>& r,siz
 {
     if(l.size()!=r.size()||rate<=0||onset>=l.size())return {};
     const int maxLag=int(std::ceil(rate*.003));
-    const auto begin=onset>size_t(maxLag)?onset-size_t(maxLag):0;
+    const auto begin=onset>size_t(maxLag*2)?onset-size_t(maxLag*2):0;
     const auto end=std::min(l.size(),onset+size_t(rate*.025));
     if(end<=begin+size_t(maxLag*2))return {};
     std::vector<double> scores(size_t(maxLag*2+1),-2);
@@ -34,7 +34,7 @@ inline Timing timing(const std::vector<float>& l,const std::vector<float>& r,siz
     if(*it<.2||k==0||k+1==scores.size())return {};
     double offset=0;
     const double den=scores[k-1]-2*scores[k]+scores[k+1];
-    if(den<-1e-12)offset=std::clamp(.5*(scores[k-1]-scores[k+1])/den,-.5,.5);
+    if(scores[k-1]>=-1&&scores[k+1]>=-1&&den<-1e-12)offset=std::clamp(.5*(scores[k-1]-scores[k+1])/den,-.5,.5);
     return {(double(k)-maxLag+offset)*1000/rate,*it};
 }
 struct Decay {double t20=nan(),r2=nan(),endDb=nan();};
