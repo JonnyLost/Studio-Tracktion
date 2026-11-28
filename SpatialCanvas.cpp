@@ -29,6 +29,8 @@ float SpatialField::get() const { return (float) number.getValue(); }
 void SpatialField::setControlStyle (Slider::SliderStyle style)
 {
     number.setSliderStyle (style);
+    if (style == Slider::LinearVertical) number.getProperties().set ("studioFader", true);
+    else number.getProperties().remove ("studioFader");
     resized();
 }
 void SpatialField::resized()
