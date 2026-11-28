@@ -18,19 +18,21 @@ ParameterValues valuesOf(SourceParameters raw) noexcept
 {
     const auto p=source::validate(raw);
     return {p.distance,p.width,p.tiltDb,p.outputDb,p.amount,p.air,p.distanceWidth,p.mono,
-            p.direction.angle,p.direction.timing,p.direction.level,p.direction.shadow,p.direction.focus};
+            p.direction.angle,p.direction.timing,p.direction.level,p.direction.shadow,p.direction.focus,
+            p.reflections.amount,p.reflections.room};
 }
 SourceParameters parametersOf(ParameterValues v) noexcept
 {
     SourceParameters p{v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7]};
     p.direction={v[8],v[9],v[10],v[11],v[12]};
+    p.reflections={v[13],v[14]};
     return source::validate(p);
 }
 String encodeSource(SourceParameters p)
 {
     std::ostringstream out;
     out.imbue(std::locale::classic());
-    out<<std::setprecision(std::numeric_limits<float>::max_digits10)<<"1";
+    out<<std::setprecision(std::numeric_limits<float>::max_digits10)<<"2";
     for(auto value:valuesOf(p))out<<' '<<value;
     return String(out.str());
 }
@@ -39,9 +41,10 @@ SourceParameters decodeSource(const String& text)
     if(text.isEmpty()||text.length()>512)return {};
     std::istringstream in(text.toStdString());in.imbue(std::locale::classic());
     int version=0;
-    if(!(in>>version)||version!=1)return {};
-    ParameterValues v{};
-    for(auto& value:v)if(!(in>>value)||!std::isfinite(value))return {};
+    if(!(in>>version)||(version!=1&&version!=2))return {};
+    auto v=valuesOf(SourceParameters{});
+    const size_t fields=version==1?13:v.size();
+    for(size_t i=0;i<fields;++i)if(!(in>>v[i])||!std::isfinite(v[i]))return {};
     in>>std::ws;
     if(!in.eof())return {};
     return parametersOf(v);
@@ -103,13 +106,15 @@ void SourcePlugin::initialise(const te::PluginInitialisationInfo& info)
     rate=info.sampleRate;accepted=1;
     ParameterValues v{};unsigned seq=0;
     const bool coherent=read(v,seq);
-    active=dsp.prepare(rate,coherent?parametersOf(v):SourceParameters{});
+    const auto p=coherent?parametersOf(v):SourceParameters{};
+    active=dsp.prepare(rate,p);
+    earlyReady.store(active&&reflections.prepare(rate,early::makePlan(rate,p.direction.angle,p.distance,p.reflections)));
     if(coherent&&active)accepted=seq;
     peakL.store(0);peakR.store(0);
 }
 void SourcePlugin::deinitialise()
 {
-    active=false;peakL.store(0);peakR.store(0);
+    active=false;earlyReady.store(false);peakL.store(0);peakR.store(0);
 }
 source::Peaks SourcePlugin::peaks() const noexcept
 {
@@ -126,11 +131,20 @@ void SourcePlugin::applyToBuffer(const te::PluginRenderContext& c)
         ParameterValues v{};unsigned seq=0;
         // Rate-specific coefficient math only once per changed, coherent
         // block snapshot, not per sample. Bounded, no allocations or locks.
-        if(read(v,seq)&&seq!=accepted&&dsp.setPlan(source::makePlan(rate,parametersOf(v))))
-            accepted=seq;
+        if(read(v,seq)&&seq!=accepted)
+        {
+            const auto p=parametersOf(v);
+            if(dsp.setPlan(source::makePlan(rate,p)))
+            {
+                if(earlyReady.load(std::memory_order_relaxed))
+                    reflections.setPlan(early::makePlan(rate,p.direction.angle,p.distance,p.reflections));
+                accepted=seq;
+            }
+        }
     }
     const auto result=dsp.process(b->getWritePointer(0,c.bufferStartSample),
-                                  b->getWritePointer(1,c.bufferStartSample),c.bufferNumSamples);
+                                  b->getWritePointer(1,c.bufferStartSample),c.bufferNumSamples,
+                                  earlyReady.load(std::memory_order_relaxed)?&reflections:nullptr);
     const float fall=1.f/(1.f+float(c.bufferNumSamples)/float(.3*rate));
     peakL.store(std::max(result.left,fall*peakL.load(std::memory_order_relaxed)),std::memory_order_relaxed);
     peakR.store(std::max(result.right,fall*peakR.load(std::memory_order_relaxed)),std::memory_order_relaxed);
