@@ -29,6 +29,8 @@ public:
     bool canBeAddedToClip() override { return false; }
     bool canBeAddedToRack() override { return false; }
     bool noTail() override { return false; }
+    double getTailLength() const override { return .4; }
+    void reset() override;
     bool producesAudioWhenNoAudioInput() override { return true; }
     bool reflectionsAvailable() const noexcept { return earlyReady.load(std::memory_order_relaxed); }
     int getNumOutputChannelsGivenInputs(int n) override { return juce::jmax(2,n); }
