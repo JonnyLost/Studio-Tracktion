@@ -8,12 +8,12 @@ if [ "$(uname -s)" != Darwin ]; then
   exit 1
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)" || exit 1
-WORK="$(mktemp -d "$HOME/Desktop/Studio-Spatial-Lab-XXXXXX")" || exit 1
+WORK="$(mktemp -d "$HOME/Desktop/Studio-Spatial-Lab-L2-XXXXXX")" || exit 1
 BUILD="$(mktemp -d "${TMPDIR:-/tmp}/studio-spatial-lab-build.XXXXXX")" || exit 1
 trap 'rm -rf "$BUILD"' EXIT
 (
   set -e
-  echo "Studio Spatial Laboratory L1"
+  echo "Studio Spatial Laboratory L2"
   sw_vers
   uname -m
   echo "Compiling standalone native AU host..."
