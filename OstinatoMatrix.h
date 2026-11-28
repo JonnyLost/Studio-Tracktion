@@ -475,7 +475,8 @@ private:
         addChoice("Unassigned",{});
         for(const auto& t:tracks)addChoice(String::fromUTF8(t.name.c_str()),t.id);
         if(tracks.empty())menu.addItem("Create an instrument track in Studio first",false,false,[]{});
-        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor).withTargetScreenArea(juce::Rectangle<int>(juce::Desktop::getMousePosition(),juce::Point<int>(1,1))));
+        const auto pos=juce::Desktop::getMousePosition();
+        menu.showMenuAsync(PopupMenu::Options().withTargetComponent(anchor).withTargetScreenArea(juce::Rectangle<int>(pos.x,pos.y,1,1)));
     }
     bool assignTrack(std::uint32_t id,const std::string& target)
     {
