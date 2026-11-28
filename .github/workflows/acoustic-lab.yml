@@ -1,0 +1,31 @@
+name: Acoustic laboratory L3
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/studio-acoustic-lab-*']
+    paths: ['tools/acoustic-lab/**', 'SpatialReverb.*', 'SpatialModel.h', '.github/workflows/acoustic-lab.yml']
+  pull_request:
+    branches: ['feature/studio-native-spatial-*', 'feature/studio-acoustic-*']
+    paths: ['tools/acoustic-lab/**', 'SpatialReverb.*', 'SpatialModel.h', '.github/workflows/acoustic-lab.yml']
+permissions:
+  contents: read
+jobs:
+  laboratory:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audio format, probe and decay regression
+        run: python3 tools/acoustic-lab/test_acoustic_lab.py
+      - name: Render current native engine
+        run: |
+          bash tools/acoustic-lab/run.sh generate "$RUNNER_TEMP/acoustic-lab"
+          bash tools/acoustic-lab/run.sh baseline "$RUNNER_TEMP/acoustic-lab"
+          python3 -c 'import pathlib,sys; sys.path.insert(0,"tools/acoustic-lab"); import acoustic_lab as lab; p=next(pathlib.Path(sys.argv[1]).glob("studio_*_M1.wav")); row,env=lab.metrics(p.read_bytes(),1); assert row["energy"]>0 and row["relative_onset_ms"]>=0 and row["rt60_t20_s"]>0; print(row)' "$RUNNER_TEMP/acoustic-lab/renders"
