@@ -64,7 +64,7 @@ inline Plan makePlan(double rate,Parameters raw) noexcept
 inline bool validPlan(const Plan& p,double rate) noexcept
 {
     auto in=[](float x,float a,float b){return std::isfinite(x)&&x>=a&&x<=b;};
-    if(!supported(rate)||p.rate!=rate||!in(p.pole,0,1)||!in(p.focus,0,.5f))return false;
+    if(!supported(rate)||p.rate!=rate||!in(p.pole,.01f,.65f)||!in(p.focus,0,.5f))return false;
     const auto maxDelay=float(rate*headRadius/speedOfSound*(pi/2+1)*2)+.001f;
     for(auto e:p.ears)
         if(!in(e.delay,0,maxDelay)||!in(e.gain,.39f,1)||!in(e.shelf,.19f,1))return false;
@@ -94,7 +94,9 @@ public:
         const float l=clean(left),r=clean(right);
         // Optional symmetrical narrowing steers a stereo pair toward a
         // common point source. Off by default to preserve stereo material.
-        const float x=l+current.focus*(r-l),y=r+current.focus*(l-r);
+        const float mid=.5f*(l+r);
+        const float x=current.focus==.5f?mid:l+current.focus*(r-l);
+        const float y=current.focus==.5f?mid:r+current.focus*(l-r);
         left=ear(0,x);right=ear(1,y);
         cursor=(cursor+1)&(historySize-1);
     }
