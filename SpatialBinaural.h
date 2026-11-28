@@ -84,13 +84,25 @@ public:
     bool setPlan(Plan p) noexcept
     {
         if(!ready||!validPlan(p,target.rate))return false;
-        target=p;return true;
+        target=p;settling=true;return true;
     }
-    void reset() noexcept {current=target;state={};cursor=0;}
+    void reset() noexcept {current=target;state={};cursor=0;settling=false;}
     void frame(float& left,float& right) noexcept
     {
         if(!ready)return;
-        move(current.focus,target.focus);move(current.pole,target.pole);
+        if(settling)
+        {
+            settling=false;
+            move(current.focus,target.focus);move(current.pole,target.pole);
+            for(std::size_t i=0;i<current.ears.size();++i)
+            {
+                auto& ear=current.ears[i];
+                const auto targetEar=target.ears[i];
+                move(ear.delay,targetEar.delay);
+                move(ear.gain,targetEar.gain);
+                move(ear.shelf,targetEar.shelf);
+            }
+        }
         const float l=clean(left),r=clean(right);
         // Optional symmetrical narrowing steers a stereo pair toward a
         // common point source. Off by default to preserve stereo material.
@@ -107,13 +119,14 @@ private:
     Plan current,target;
     std::size_t cursor=0;
     float smooth=.001f;
-    bool ready=false;
+    bool ready=false,settling=false;
     static float clean(float x) noexcept
     {return std::isfinite(x)&&std::abs(x)>=1e-25f?std::clamp(x,-1e6f,1e6f):0;}
-    void move(float& v,float t) const noexcept
+    void move(float& v,float t) noexcept
     {
         const float d=t-v;
-        v=std::abs(d)<1e-6f?t:v+smooth*d;
+        if(std::abs(d)<1e-6f)v=t;
+        else {v+=smooth*d;settling=true;}
     }
     static float low(float x,float& z,float a) noexcept
     {
@@ -123,8 +136,6 @@ private:
     float ear(std::size_t i,float x) noexcept
     {
         auto& e=current.ears[i];auto& s=state[i];
-        const auto t=target.ears[i];
-        move(e.delay,t.delay);move(e.gain,t.gain);move(e.shelf,t.shelf);
         s.ring[cursor]=x;
         const auto whole=std::size_t(e.delay);
         const float fraction=e.delay-float(whole);

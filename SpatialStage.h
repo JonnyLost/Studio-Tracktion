@@ -226,7 +226,7 @@ inline Plan makePlan (double rate, Settings raw)
         const auto gain = source::gain (mic.gain) / std::sqrt (float (count));
         capsule.left = gain * std::sqrt (.5f * (1 - mic.pan));
         capsule.right = gain * std::sqrt (.5f * (1 + mic.pan));
-        const auto tap = [&] (Point arrival, Point departure, float level, float cutoff)
+        const auto tap = [&] (Point arrival, Point departure, float level, float cutoff, bool reflection)
         {
             const auto length = early::length (arrival, receiver);
             const auto seconds = std::max (0., (length - origin) / speed) + delay;
@@ -234,13 +234,14 @@ inline Plan makePlan (double rate, Settings raw)
             const auto ray = radiation (setup, s, departure);
             const auto polar = polarGain (mic.pattern, directionCosine (receiver, arrival, mic.azimuth, mic.elevation));
             return CapsuleTap { float (seconds * rate), level * polar * distanceGain (length) * ray.low,
-                source::coefficient (rate, cutoff / (1 + .053 * length)), ray.high / ray.low };
+                source::coefficient (rate, cutoff / (1 + .053 * length)),
+                ray.high / ray.low * (reflection ? .23f : float (std::exp (-.012 * length))) };
         };
-        capsule.direct = tap (s, receiver, source::gain (setup.directDb), 17000.f);
+        capsule.direct = tap (s, receiver, source::gain (setup.directDb), 17000.f, false);
         if (setup.early * room.early > 0)
             for (size_t k = 0; k < paths.size(); ++k)
                 capsule.reflections[k] = tap (paths[k], mirror[k],
-                    .19f * setup.early * room.early * surfaces[k].reflection, surfaces[k].cutoff);
+                    .19f * setup.early * room.early * surfaces[k].reflection, surfaces[k].cutoff, true);
     }
     return plan;
 }

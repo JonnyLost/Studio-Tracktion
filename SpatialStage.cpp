@@ -78,7 +78,8 @@ float Renderer::read (const std::vector<float>& history, float delay) const noex
 {
     const auto whole = size_t (delay);
     const auto pos = cursor - whole;
-    return std::lerp (history[pos & mask], history[(pos - 1) & mask], delay - float (whole));
+    const auto previous = history[pos & mask];
+    return previous + (delay - float (whole)) * (history[(pos - 1) & mask] - previous);
 }
 
 std::array<float, 2> Renderer::render (Bank& bank) noexcept
@@ -130,8 +131,6 @@ std::array<float, microphoneLimit> Renderer::process (float* left, float* right,
         mid[cursor] = mono;
         side[cursor] = .5f * (dryL - dryR);
         float l = dryL, r = dryR;
-        direct.process (&l, &r, 1);
-        reflections.frame (mono, l, r);
 
         const auto aim = [this] (float& value, bool target)
         {
@@ -140,6 +139,13 @@ std::array<float, microphoneLimit> Renderer::process (float* left, float* right,
         };
         aim (perspective, targetPerspective);
         aim (bypass, targetBypass);
+        if (perspective < 1)
+        {
+            direct.processFrame (l, r);
+            reflections.frame (mono, l, r);
+        }
+        else
+            reflections.historyFrame (mono);
         if (perspective > 0)
         {
             if (fade == 0 && pending)
