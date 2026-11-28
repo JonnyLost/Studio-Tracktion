@@ -736,6 +736,7 @@ target_sources(Studio PRIVATE Studio.cpp OstinatoCore.h OstinatoLibrary.h Ostina
     InstrumentLibrary.cpp InstrumentLibrary.h InstrumentImportWindow.cpp InstrumentImportWindow.h
     StudioSynth.cpp SynthEditor.cpp InstrumentWorkspace.cpp InstrumentPerformance.cpp AtelierInstrumentEditor.cpp AtelierInstrumentEditor.h
     SpatialModel.h SpatialState.h SpatialReverb.cpp SpatialReverb.h SpatialRouting.cpp SpatialRouting.h
+    StudioSpatialEffect.cpp StudioSpatialEffect.h SpatialSource.h SpatialBinaural.h
     SpatialCanvas.cpp SpatialWorkspace.cpp SpatialWorkspace.h StagePresentation.h
     StudioEnvironments.cpp StudioEnvironments.h EnvironmentSelection.h
     FilmScoringWorkspace.h FilmScoringCore.h FilmScoringState.h
