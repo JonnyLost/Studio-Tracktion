@@ -2,6 +2,7 @@
 #include "../SpatialRouting.h"
 #include "../SpatialState.h"
 #include "../StudioSpatialEffect.h"
+#include "../StudioReverbEffect.h"
 #include <limits>
 
 namespace studio::spatial
@@ -489,6 +490,147 @@ juce::Result verify()
         return Result::fail ("undo route removal");
     return Result::ok();
 }
+Result verifyPhysicalStage()
+{
+    te::Engine engine ("Studio physical Stage tests", {}, std::make_unique<OfflineEngine>());
+    registerPlugins (engine);
+    engine.getPluginManager().createBuiltInType<DryPiano>();
+    HostedDevice device (engine);
+    const juce::TemporaryFile session (".tracktionedit"), rendered (".wav");
+    auto edit = te::createEmptyEdit (engine, session.getFile());
+    auto source = edit->insertNewAudioTrack (te::TrackInsertPoint::getEndOfTracks (*edit), nullptr);
+    if (source == nullptr) return Result::fail ("physical source track");
+    source->getOutput().setOutputToDefaultDevice (false);
+    auto instrument = edit->getPluginCache().createNewPlugin (DryPiano::xmlTypeName, {});
+    source->pluginList.insertPlugin (instrument, 0, nullptr);
+    auto clip = source->insertMIDIClip ({ {}, te::TimePosition::fromSeconds (1.4) }, nullptr);
+    if (clip == nullptr) return Result::fail ("physical MIDI fixture");
+    clip->getSequence().addNote (60, te::BeatPosition::fromBeats (.5), te::BeatDuration::fromBeats (.2), 96, 0, nullptr);
+    const auto sourceId = source->itemID;
+    edit->getMasterVolumePlugin()->setVolumeDb (0);
+    source->getVolumePlugin()->setVolumeDb (0);
+    Room room;
+    room.bypass = true;
+    auto root = juce::ValueTree (sceneType).setProperty ("version", version, nullptr);
+    root.addChild (writeRoom (room, "Hosted fixture"), -1, nullptr);
+    edit->state.addChild (root, -1, nullptr);
+    auto seat = writeSeat (sourceId.toString(), { { -.6f, .57f }, Section::strings, -8 });
+    source->state.addChild (seat, -1, nullptr);
+    auto original = device.capture (*edit);
+    if (const auto result = setRoomSend (*source, true, { -.6f, .57f }, -8, room); result.failed()) return result;
+    auto legacy = device.capture (*edit);
+    auto& undo = edit->getUndoManager();
+    undo.beginNewTransaction ("Adopt physical Stage");
+    if (const auto result = adoptPhysicalStage (*edit); result.failed()) return result;
+    undo.beginNewTransaction();
+    if (! hasStageSource (*source) || ! usesPhysicalStage (*edit) || ! seat.hasProperty ("xMetres"))
+        return Result::fail ("physical migration and stable seat identity");
+    auto physical = device.capture (*edit);
+    if (energyDb (physical.output, 0, &legacy.output) < -55.f ||
+        energyDb (physical.output, 0) <= energyDb (physical.output, 1) ||
+        energyDb (physical.output, 0) < -35)
+        return Result::fail ("physical direct path must be audible, distinct and left-biased");
+    if (! undo.undo() || usesPhysicalStage (*edit) || hasStageSource (*source)
+        || energyDb (device.capture (*edit).output, 0, &legacy.output) > -90.f)
+        return Result::fail ("undo migration restores legacy audio");
+    if (! undo.redo() || ! usesPhysicalStage (*edit) || ! hasStageSource (*source))
+        return Result::fail ("redo physical migration");
+
+    root.setProperty ("stageBypass", true, nullptr);
+    if (energyDb (device.capture (*edit).output, 0, &original.output) > -90.f)
+        return Result::fail ("Stage bypass restores the single dry path");
+    root.setProperty ("stageBypass", false, nullptr);
+    auto mics = root.getOrCreateChildWithName (microphonesType, nullptr);
+    Mic left;
+    left.pattern = Pattern::omni;
+    left.pan = -1;
+    Mic right = left;
+    right.pan = 1;
+    right.delay = 13;
+    mics.addChild (writeMic ("left", "Main L", left), -1, nullptr);
+    mics.addChild (writeMic ("right", "Main R", right), -1, nullptr);
+    root.setProperty ("microphoneMix", true, nullptr);
+    auto pair = device.capture (*edit);
+    if (energyDb (pair.output, 0) < -40 || energyDb (pair.output, 1) < -40)
+        return Result::fail ("hosted microphone pair");
+    mics.getChild (1).setProperty ("solo", true, nullptr);
+    auto solo = device.capture (*edit);
+    if (energyDb (solo.output, 0) > -100 || energyDb (solo.output, 1) < -40)
+        return Result::fail ("microphone solo must replace the original dry output");
+    mics.getChild (1).setProperty ("mute", true, nullptr);
+    auto muted = device.capture (*edit);
+    if (energyDb (muted.output, 0) > -100 || energyDb (muted.output, 1) > -100)
+        return Result::fail ("microphone mute must silence the direct and local reflection paths");
+    mics.getChild (1).setProperty ("solo", false, nullptr).setProperty ("mute", false, nullptr);
+    room.bypass = false;
+    room.gain = -6;
+    root.removeChild (root.getChildWithName (roomType), nullptr);
+    root.addChild (writeRoom (room, "Hosted fixture"), -1, nullptr);
+    auto expected = device.capture (*edit);
+    if (! expected.room || expected.room->wetPeak < .001f || ! expected.room->reachesMaster)
+        return Result::fail ("managed shared late-field contribution");
+    source->getVolumePlugin()->setVolumeDb (-12.f);
+    auto lowered = device.capture (*edit);
+    if (std::abs (energyDb (expected.output, 1) - energyDb (lowered.output, 1) - 12.f) > .8f)
+        return Result::fail ("physical Stage track fader must control the direct and wet paths");
+    source->getVolumePlugin()->setVolumeDb (0.f);
+
+    te::Renderer::Parameters params (*edit);
+    juce::WavAudioFormat wave;
+    params.audioFormat = &wave;
+    params.destFile = rendered.getFile();
+    params.sampleRateForAudio = testRate;
+    params.blockSizeForAudio = blockSize;
+    params.bitDepth = 24;
+    params.time = { {}, te::TimePosition::fromSeconds (3.0) };
+    params.canRenderInMono = false;
+    params.useMasterPlugins = true;
+    auto file = te::Renderer::renderToFile ("Studio Stage export test", params);
+    std::unique_ptr<juce::AudioFormatReader> reader (wave.createReaderFor (file.createInputStream().release(), true));
+    if (reader == nullptr || reader->numChannels != 2 || reader->lengthInSamples < 2 * testRate)
+        return Result::fail ("offline Stage WAV capture");
+    AudioBuffer<float> exported (2, int (reader->lengthInSamples));
+    if (! reader->read (&exported, 0, exported.getNumSamples(), 0, true, true)
+        || exported.getMagnitude (1, testRate, testRate) < .00012f)
+        return Result::fail ("offline export must include the late tail beyond the dry phrase");
+    const auto liveRms = energyDb (expected.output, 1);
+    AudioBuffer<float> span (2, expected.output.getNumSamples());
+    for (int ch = 0; ch < 2; ++ch) span.copyFrom (ch, 0, exported, ch, 0, span.getNumSamples());
+    const auto offlineRms = energyDb (span, 1);
+    if (std::abs (liveRms - offlineRms) > 1.2f)
+        return Result::fail ("offline and hosted Stage RMS diverged: " + juce::String (liveRms) + " vs " + juce::String (offlineRms));
+
+    auto effect = edit->getPluginCache().createNewPlugin (ReverbPlugin::xmlTypeName, {});
+    auto* reverb = dynamic_cast<ReverbPlugin*> (effect.get());
+    if (reverb == nullptr) return Result::fail ("native reverb registered");
+    reverb->setRoom (room);
+    auto fxRoom = room;
+    fxRoom.shape.mix = 0;
+    fxRoom.shape.quality = Quality::high;
+    reverb->setRoom (fxRoom);
+    source->pluginList.insertPlugin (effect, 1, nullptr);
+    if (! te::EditFileOperations (*edit).writeToFile (session.getFile(), false))
+        return Result::fail ("save physical Stage");
+    source = nullptr; clip = nullptr; instrument = nullptr; effect = nullptr;
+    edit.reset();
+    edit = te::loadEditFromFile (engine, session.getFile());
+    if (edit == nullptr) return Result::fail ("reopen physical Stage");
+    auto* restored = te::findAudioTrackForID (*edit, sourceId);
+    if (restored == nullptr || ! hasStageSource (*restored) || ! usesPhysicalStage (*edit))
+        return Result::fail ("restore physical source and Stage scene");
+    auto* reopened = dynamic_cast<ReverbPlugin*> (restored->pluginList[1]);
+    if (reopened == nullptr || reopened->room().shape.quality != Quality::high
+        || reopened->room().shape.mix != 0 || energyDb (device.capture (*edit).output, 1, &expected.output) > -75)
+        return Result::fail ("restored microphone audio and reverb parameters");
+    edit->deleteTrack (restored);
+    if (energyDb (device.capture (*edit).output, 1) > -100)
+        return Result::fail ("deleted source leaked audio into the room");
+    std::printf ("Physical Stage hosted %.2f dBFS, offline %.2f dBFS, tail at 1–2 s %.6f FS.\n",
+                 double (liveRms), double (offlineRms), double (exported.getMagnitude (1, testRate, testRate)));
+    return Result::ok();
+}
+
+
 }
 
 int runSpatialRoutingTest()
@@ -496,8 +638,9 @@ int runSpatialRoutingTest()
     auto result = verify();
     if (result.wasOk()) result = verifySignal();
     if (result.wasOk()) result = verifySourceInsert();
+    if (result.wasOk()) result = verifyPhysicalStage();
     if (result.failed()) fprintf (stderr, "Studio spatial routing test failed: %s\n", result.getErrorMessage().toRawUTF8());
-    else fprintf (stdout, "Tracktion room routing, audible stereo wet signal, meters, depth, solo, bypass, project reopen, native source insert and editor passed.\n");
+    else fprintf (stdout, "Tracktion room routing, audible stereo wet signal, meters, depth, solo, bypass, project reopen, native inserts, physical Stage, microphone mixer and offline export passed.\n");
     return result.wasOk() ? 0 : 1;
 }
 }

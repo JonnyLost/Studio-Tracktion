@@ -2,9 +2,15 @@ name: Spatial source DSP
 on:
   workflow_dispatch:
   push:
-    branches: ['feature/studio-native-spatial-*']
+    branches: ['feature/studio-native-spatial-*', 'feature/studio-complete-algorithmic-stage']
     paths:
       - 'SpatialSource.h'
+      - 'SpatialStage.cpp'
+      - 'SpatialStage.h'
+      - 'SpatialModel.h'
+      - 'SpatialReverb.cpp'
+      - 'SpatialReverb.h'
+      - 'tests/SpatialStageTests.cpp'
       - 'SpatialBinaural.h'
       - 'SpatialEarlyReflections.h'
       - 'tests/SpatialEarlyReflectionTests.cpp'
@@ -15,6 +21,12 @@ on:
     branches: ['feature/studio-spatial-lab-*', 'feature/studio-native-spatial-*', 'feature/studio-acoustic-*']
     paths:
       - 'SpatialSource.h'
+      - 'SpatialStage.cpp'
+      - 'SpatialStage.h'
+      - 'SpatialModel.h'
+      - 'SpatialReverb.cpp'
+      - 'SpatialReverb.h'
+      - 'tests/SpatialStageTests.cpp'
       - 'SpatialBinaural.h'
       - 'SpatialEarlyReflections.h'
       - 'tests/SpatialEarlyReflectionTests.cpp'
@@ -44,6 +56,11 @@ jobs:
           "$RUNNER_TEMP/spatial-binaural" | tee "$RUNNER_TEMP/spatial-binaural-response.txt"
           clang++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror tests/SpatialEarlyReflectionTests.cpp -o "$RUNNER_TEMP/spatial-early"
           "$RUNNER_TEMP/spatial-early" | tee "$RUNNER_TEMP/spatial-early-response.txt"
+          clang++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror tests/SpatialStageTests.cpp SpatialStage.cpp SpatialReverb.cpp -o "$RUNNER_TEMP/physical-stage"
+          "$RUNNER_TEMP/physical-stage" | tee "$RUNNER_TEMP/physical-stage-impulse.csv"
+          mkdir -p "$RUNNER_TEMP/stage-listening"
+          "$RUNNER_TEMP/physical-stage" --listening "$RUNNER_TEMP/stage-listening"
+          "$RUNNER_TEMP/physical-stage" --bench > "$RUNNER_TEMP/physical-stage-benchmark.csv"
         shell: bash
       - name: Address and undefined-behavior sanitizer tests
         run: |
@@ -53,6 +70,8 @@ jobs:
           "$RUNNER_TEMP/spatial-binaural-sanitized"
           clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialEarlyReflectionTests.cpp -o "$RUNNER_TEMP/spatial-early-sanitized"
           "$RUNNER_TEMP/spatial-early-sanitized"
+          clang++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer tests/SpatialStageTests.cpp SpatialStage.cpp SpatialReverb.cpp -o "$RUNNER_TEMP/physical-stage-sanitized"
+          "$RUNNER_TEMP/physical-stage-sanitized"
       - uses: actions/upload-artifact@v4
         with:
           name: spatial-source-response-${{ matrix.os }}
@@ -60,3 +79,6 @@ jobs:
             ${{ runner.temp }}/spatial-source-response.txt
             ${{ runner.temp }}/spatial-binaural-response.txt
             ${{ runner.temp }}/spatial-early-response.txt
+            ${{ runner.temp }}/physical-stage-impulse.csv
+            ${{ runner.temp }}/physical-stage-benchmark.csv
+            ${{ runner.temp }}/stage-listening/*.wav
