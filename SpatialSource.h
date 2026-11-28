@@ -182,11 +182,14 @@ private:
     {
         advance();
         const float dryL=l,dryR=r,cross=.5f*(1-current.width);
-        const auto wl=l+cross*(r-l),wr=r+cross*(l-r);
+        const float inputMid=.5f*(l+r);
+        const auto wl=current.width==0?inputMid:l+cross*(r-l);
+        const auto wr=current.width==0?inputMid:r+cross*(l-r);
         l=(dryL+current.amount*(filter(wl,state[0])-dryL))*current.output;
         r=(dryR+current.amount*(filter(wr,state[1])-dryR))*current.output;
         const float mid=.5f*(l+r);
-        l=clean(l+current.mono*(mid-l));r=clean(r+current.mono*(mid-r));
+        if(current.mono==1){l=r=clean(mid);}
+        else {l=clean(l+current.mono*(mid-l));r=clean(r+current.mono*(mid-r));}
     }
 };
 }
