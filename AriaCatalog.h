@@ -4,9 +4,24 @@
 #include <juce_core/juce_core.h>
 #include <functional>
 #include <map>
+#include <vector>
 
 namespace studio::aria
 {
+// Literal evidence only; a readable definition is not a verified player mapping.
+struct SwitchHint
+{
+    juce::String label;
+    int note=-1;
+    juce::File definition;
+    juce::int64 modified=0,size=0;
+    bool current() const
+    {
+        return note>=0&&note<=127&&definition.existsAsFile()&&!definition.isSymbolicLink()
+            &&definition.getSize()==size&&definition.getLastModificationTime().toMilliseconds()==modified;
+    }
+};
+
 struct Patch
 {
     juce::String id, name, library, family, kind, health, midiRange;
@@ -17,6 +32,13 @@ struct Patch
     bool present = true;
     int literalSamples = 0, missingSamples = 0;
     juce::String libraryVersion;
+    std::vector<SwitchHint> switchHints;
+    bool mappingInspected=false;
+    bool sourceCurrent() const
+    {
+        return present&&source.existsAsFile()&&!source.isSymbolicLink()&&source.getSize()==size
+            &&source.getLastModificationTime().toMilliseconds()==modified;
+    }
 };
 
 struct Preset

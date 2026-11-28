@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - integration/studio-0.2-complete-stage-instruments
       - integration/studio-0.2-m44-consolidated
       - feature/studio-ostinato-matrix-o3
       - feature/studio-ostinato-routing-o4
@@ -17,6 +18,13 @@ on:
       - 'feature/studio-native-spatial-*'
       - feature/studio-complete-algorithmic-stage
       - feature/studio-stage-interface-s2
+      - feature/studio-universal-articulation-catalog-m45
+      - feature/studio-instrument-designer-m46
+      - feature/studio-instrument-mapping-m47
+      - feature/studio-universal-instrument-view-m48
+      - feature/studio-library-reconciliation-m49
+      - feature/studio-articulation-sequencing-m50
+      - feature/studio-cross-library-translation-m51
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -59,6 +67,7 @@ on:
       - feature/studio-theme-isolation-m43
   pull_request:
     branches:
+      - integration/studio-0.2-complete-stage-instruments
       - feature/studio-complete-algorithmic-stage
       - feature/studio-stage-interface-s2
       - feature/studio-ostinato-polyrhythm-o2
@@ -72,6 +81,14 @@ on:
       - feature/studio-ostinato-midi-print-o10
       - feature/studio-acoustic-atlas-s1
       - 'feature/studio-native-spatial-*'
+      - integration/studio-0.2-m44-consolidated
+      - feature/studio-universal-articulation-catalog-m45
+      - feature/studio-instrument-designer-m46
+      - feature/studio-instrument-mapping-m47
+      - feature/studio-universal-instrument-view-m48
+      - feature/studio-library-reconciliation-m49
+      - feature/studio-articulation-sequencing-m50
+      - feature/studio-cross-library-translation-m51
       - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
@@ -146,7 +163,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 55
     env:
-      STUDIO_CONFIG: ${{ github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated' && 'Release' || 'Debug' }}
+      STUDIO_CONFIG: ${{ (github.ref == 'refs/heads/integration/studio-0.2-m44-consolidated' || github.ref == 'refs/heads/integration/studio-0.2-complete-stage-instruments') && 'Release' || 'Debug' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -199,7 +216,7 @@ jobs:
             -DTRACKTION_ROOT="$RUNNER_TEMP/tracktion-engine" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
-          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioOstinatoCoreTests StudioAriaCatalogTests StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
+          cmake --build build --config "$STUDIO_CONFIG" --target Studio StudioUniversalInstrumentCatalogTests StudioInstrumentProfileTests StudioOstinatoCoreTests StudioAriaCatalogTests StudioEnvironmentTests StudioMidiFocusPolicyTests StudioKeyboardNoteStateTests StudioKeyboardPerformanceStateTests StudioGeneralMidiBankTests StudioMilestoneTests StudioSpatialTests StudioAcousticComparison StudioSamplerEngineTests StudioSamplerStreamingTests StudioSamplerPerformanceTests StudioSfzParserTests StudioSfzPlaybackTests StudioSoundBankTests StudioExsParserTests StudioSamplerArticulationTests StudioSamplerMappingTests StudioSynthValidation StudioSeatingModelTests StudioFilmScoringTests StudioFilmCueSheetTests StudioFilmPictureSyncTests StudioFilmCueDeliveryTests StudioFilmStemDeliveryTests --parallel 4
           test "$(lipo -archs build/Studio_artefacts/$STUDIO_CONFIG/Studio.app/Contents/MacOS/Studio)" = x86_64
       - name: Test Studio and render interface review
         env:
@@ -313,11 +330,34 @@ jobs:
           name: Studio-M44-Intel-preview
           path: ${{ runner.temp }}/Studio-M44-Intel-preview.zip
           if-no-files-found: error
+      - name: Package complete Stage and Instrument Designer Intel Release
+        id: complete-studio-package
+        if: github.ref == 'refs/heads/integration/studio-0.2-complete-stage-instruments'
+        shell: bash
+        run: |
+          archive=Studio-0.2-Complete-Intel
+          if [[ -f assets/Studio.png ]]; then
+            export STUDIO_ICON_FILE=assets/Studio.png
+          else
+            archive=Studio-0.2-Complete-Intel-preview
+            echo "::warning::Approved Studio icon missing; preview only."
+          fi
+          tools/package-intel-studio.sh build/Studio_artefacts/Release/Studio.app "$RUNNER_TEMP/$archive.zip"
+          shasum -a 256 "$RUNNER_TEMP/$archive.zip" > "$RUNNER_TEMP/$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.complete-studio-package.outputs.archive != ''
+        with:
+          name: ${{ steps.complete-studio-package.outputs.archive }}
+          path: |
+            ${{ runner.temp }}/${{ steps.complete-studio-package.outputs.archive }}.zip
+            ${{ runner.temp }}/${{ steps.complete-studio-package.outputs.archive }}.sha256
+          if-no-files-found: error
       - name: Package Intel Studio application
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated' && github.ref != 'refs/heads/integration/studio-0.2-complete-stage-instruments'
         run: ditto -c -k --sequesterRsrc --keepParent build/Studio_artefacts/$STUDIO_CONFIG/Studio.app "$RUNNER_TEMP/Studio-M13-Intel.zip"
       - uses: actions/upload-artifact@v4
-        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated'
+        if: github.ref != 'refs/heads/integration/studio-0.2-integrated-alpha' && github.ref != 'refs/heads/integration/studio-0.2-m44-consolidated' && github.ref != 'refs/heads/integration/studio-0.2-complete-stage-instruments'
         with:
           name: Studio-M13-Intel-app
           path: ${{ runner.temp }}/Studio-M13-Intel.zip

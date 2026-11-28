@@ -25,6 +25,11 @@ using namespace tracktion::literals;
 #include "OstinatoPrint.h"
 #include "OstinatoConductingInput.h"
 #include "StudioInstrumentIcons.h"
+#include "InstrumentDesigner.h"
+#include "UniversalInstrumentView.h"
+#include "InstrumentTranslationPlan.h"
+#include "InstrumentTranslationReview.h"
+#include "InstrumentLearnInput.h"
 #include "StudioActivities.h"
 #include "WorkflowCommands.h"
 #include "MidiPerformanceFocus.h"
@@ -36,6 +41,7 @@ using namespace tracktion::literals;
 #include "SpatialRouting.h"
 #include "StudioSpatialEffect.h"
 #include "StudioReverbEffect.h"
+#include "SpatialState.h"
 #include "StudioEnvironments.h"
 #include "SamplerEditor.h"
 #include "SamplerReviewCapture.h"
@@ -536,6 +542,8 @@ public:
         for (auto* readout : { &bars, &position, &tempo, &meter })
             readout->onContextMenu = [this] { showTransportOptions(); };
         addChildComponent (performance);
+        addChildComponent (universalStrip);
+        configureUniversalSurface(universalStrip);
         addChildComponent (articulationStrip);
         performance.onOpenEditor = [this] (te::Plugin& plugin)
         {
@@ -854,6 +862,8 @@ public:
         workspaceBody.addChildComponent (piano);
         piano.setVisible (false);
         piano.onMidiChanged = [this] { if (editor != nullptr) editor->repaint(); };
+        piano.performanceProfile=[this](te::MidiClip& clip){return performanceProfileFor(clip);};
+        piano.canWritePerformance=[this]{return canEditRegions()&&edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!chaseStarting&&!performanceWrite;};
         piano.onNoteDrawn = [this] (te::MidiClip& clip, te::BeatPosition beat, int pitch)
         {
             if (! articulation.isShowing() && ! articulationStrip.isShowing()) return;
@@ -925,7 +935,7 @@ public:
             stopOstinato("Audition stopped for arrangement playback.");
             piano.silencePreview();
             if (edit != nullptr && ! edit->getTransport().isPlaying() && ! edit->getTransport().isRecording())
-                EngineHelpers::togglePlay (*edit);
+                startWithPerformanceChase();
         };
         stop.setTooltip ("Stop playback or keep the current recording");
         stop.onClick = [this]
@@ -934,6 +944,7 @@ public:
             reverbWindow.reset();
         stopOstinato("Audition stopped.");
             if (edit == nullptr) return;
+            if(chaseStarting){cancelPerformanceChase();return;}
             if (edit->getTransport().isRecording())
                 toggleRecordKeepingTake();
             else if (edit->getTransport().isPlaying())
@@ -998,6 +1009,11 @@ public:
         stopOstinato("Audition stopped.");
         if(ostinatoWindow)ostinatoWindow->setLookAndFeel(nullptr);
         ostinatoWindow.reset();
+        cancelPerformanceChase();
+        releaseUniversalNote();
+        universalWindow.reset();
+        designerWindow.reset();
+        designerLearnInput.detach();
         if (monitorWindow != nullptr)
         {
             monitorWindow->clearContentComponent();
@@ -1301,9 +1317,9 @@ public:
         if (environmentWelcome.isVisible()) return environmentWelcome.keyPressed (key);
         if (handleAppearanceKey (key)
             || ((articulation.isShowing() || articulationStrip.isShowing()) && articulation.keyPressed (key))) return true;
-        if (key == KeyPress::spaceKey && play.isEnabled())
+        if (key == KeyPress::spaceKey && (play.isEnabled()||chaseStarting))
         {
-            if (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording()))
+            if (chaseStarting || (edit != nullptr && (edit->getTransport().isPlaying() || edit->getTransport().isRecording())))
                 stop.onClick();
             else play.onClick();
             return true;
@@ -1646,6 +1662,9 @@ public:
         if (monitorWindow) studio::retintStudioComponent(*monitorWindow, previous);
         if (articulationWindow) studio::retintStudioComponent(*articulationWindow, previous);
         if(ostinatoWindow){studio::retintStudioComponent(*ostinatoWindow,previous);ostinatoWindow->setBackgroundColour(studio::colours::canvas);ostinatoWindow->editor().appearanceChanged();}
+        if (designerWindow) { studio::retintStudioComponent(*designerWindow, previous); designerWindow->appearanceChanged(); }
+        if (universalWindow) studio::retintStudioComponent(*universalWindow, previous);
+        universalStrip.repaint();
         dockedKeyboard.refreshTheme();
         keyboardDockSurround.repaint();
         if (midiKeyboardWindow)
@@ -1704,6 +1723,8 @@ public:
         instrumentWorkspace.appearanceChanged();
         if (articulationWindow != nullptr) articulationWindow->fitPalette();
         if(ostinatoWindow)ostinatoWindow->editor().appearanceChanged();
+        if (designerWindow) designerWindow->appearanceChanged();
+        if (universalWindow) universalWindow->panel().resized();
         fitFloatingMonitor();
         if (edit != nullptr)
             for (auto* track : te::getAudioTracks (*edit))
@@ -1962,6 +1983,10 @@ public:
             if (safe != nullptr) safe->resources.onOpen();
         });
         menu.addSubMenu ("Diagnostics", diagnostics);
+        menu.addItem ("Instrument Designer...", [safe] { if (safe != nullptr) safe->showInstrumentDesigner(); });
+        menu.addItem ("Use Saved Instrument Profile...", [safe] { if (safe != nullptr) safe->chooseUniversalProfile(); });
+        menu.addItem ("Universal Instrument View...", universalAvailable, false, [safe] { if (safe != nullptr) safe->showUniversalInstrument(); });
+        menu.addItem ("Detach Instrument Profile", [safe] { if (safe != nullptr) safe->detachUniversalProfile(); });
         PopupMenu activities;
         populateActivityMenu (activities);
         menu.addSubMenu ("Musical Workspaces", activities);
@@ -2005,7 +2030,7 @@ public:
         mTransportMeter, mTransportCapture, mTransportReset, mTransportCompact, mTransportComfortable,
         mTransportLarge, mCompact, mSplit, mExpanded,
         mPerformanceFull, mPerformanceArticulation, mPerformanceNone,
-        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mOstinato
+        mAboutStudio, mKeyboardHelp, mSettings, mAtelier, mOpenSelectedInstrument, mRooms, mVirtualMics, mInstrumentDesigner, mUseInstrumentProfile, mUniversalInstrument, mDetachInstrumentProfile, mArmPerformanceWrite, mCancelPerformanceWrite, mTranslateInstrumentProfile, mOstinato
     };
 
     PopupMenu applicationMenu (int index)
@@ -2124,7 +2149,19 @@ public:
                 add (mMidiMonitor, "MIDI Monitor");
                 add (mResources, "Resource Inspector");
                 break;
-            case 8: // Help
+            case 8: // Instruments
+                add (mBrowser, "Instrument Browser");
+                add (mInstrumentDesigner, "Instrument Designer...");
+                add (mUseInstrumentProfile, "Use Saved Instrument Profile...", workflowTrack()!=nullptr);
+                add (mTranslateInstrumentProfile, "Translate Instrument Performance...", canTranslateInstrument());
+                add (mUniversalInstrument, "Universal Instrument View...", universalAvailable);
+                add (mArmPerformanceWrite, "Arm Performance Write on Selected MIDI Clip", performanceWrite.has_value()||canArmPerformanceWrite(), performanceWrite.has_value());
+                add (mCancelPerformanceWrite, "Discard Pending Performance Write", performanceWrite.has_value());
+                add (mDetachInstrumentProfile, "Detach Instrument Profile", workflowTrack()!=nullptr && workflowTrack()->state.hasProperty("studioUniversalInstrument"));
+                add (mOpenSelectedInstrument, "Open Selected Instrument", canRunWorkflowCommand (studio::WorkflowCommand::instrument));
+                add (mPluginManager, "Plug-in Manager...");
+                break;
+            case 9: // Help
                 add (mAboutStudio, "About Studio...");
                 add (mKeyboardHelp, "Find and Run Commands...  (Shift-Command-P)");
                 break;
@@ -2196,6 +2233,13 @@ public:
             case mAudioSettings: invoke (audioSettings); break;
             case mPluginManager: invoke (plugins); break;
             case mSettings: showStudioSettings(); break;
+            case mInstrumentDesigner: showInstrumentDesigner(); break;
+            case mUseInstrumentProfile: chooseUniversalProfile(); break;
+            case mUniversalInstrument: showUniversalInstrument(); break;
+            case mDetachInstrumentProfile: detachUniversalProfile(); break;
+            case mArmPerformanceWrite: togglePerformanceWrite(); break;
+            case mCancelPerformanceWrite: discardPerformanceWrite(); break;
+            case mTranslateInstrumentProfile: chooseInstrumentTranslation(); break;
             case mAtelier:
                 if (auto* target = workflowTrack())
                     if (auto* inst = studio::findInstrument (*target))
@@ -2372,6 +2416,26 @@ private:
     studio::StudioEnvironmentWelcome environmentWelcome { engine.getPropertyStorage().getPropertiesFile() };
     ComboBox performanceMode;
     studio::InstrumentPerformance performance;
+    studio::designer::UniversalSurface universalStrip{true};
+    std::unique_ptr<studio::designer::UniversalWindow> universalWindow;
+    struct UniversalTrackState { String serialized; std::optional<studio::designer::Attachment> attachment; studio::designer::LiveValues values; };
+    std::map<String,UniversalTrackState> universalStates;
+    te::EditItemID universalTrack, universalPlugin;
+    String universalSnapshot;
+    bool universalAvailable=false;
+    std::function<void()> universalRelease;
+    unsigned universalPulse=0;
+    struct CapturedPerformancePoint {String element;double beat;int value;};
+    struct PerformanceWrite {
+        te::EditItemID track,clip;
+        String snapshot;
+        std::vector<CapturedPerformancePoint> points;
+        bool played=false;
+    };
+    std::optional<PerformanceWrite> performanceWrite;
+    bool chaseStarting=false;
+    unsigned chaseGeneration=0;
+    std::vector<std::function<void()>> chaseReleases;
     studio::InstrumentWorkspace instrumentWorkspace { engine.getPropertyStorage().getPropertiesFile() };
     te::SelectionManager selection { engine };
     std::unique_ptr<te::Edit> edit;
@@ -2380,6 +2444,8 @@ private:
     std::unique_ptr<studio::spatial::SourceWindow> spatialEffectWindow;
     std::unique_ptr<studio::spatial::ReverbWindow> reverbWindow;
     std::unique_ptr<studio::spatial::StageWindow> stageWindow;
+    studio::designer::LearnInput designerLearnInput;
+    std::unique_ptr<studio::designer::DesignerWindow> designerWindow;
     studio::AtelierKeyboardDockSurround keyboardDockSurround;
     studio::AuditionKeyboardPanel dockedKeyboard;
     bool keyboardDocked = false;
@@ -2676,6 +2742,7 @@ private:
 
     void layoutPerformance (Rectangle<int>& area)
     {
+        universalStrip.setVisible(false);
         // Mixer, Picture and docked Cinematic Atelier need the dock height
         // for their own console. The right Inspector remains available.
         const bool dockedAtelier = workspace == Workspace::instrumentEditor
@@ -2689,6 +2756,13 @@ private:
         const auto& m = studio::appearance;
         const auto mode = (studio::PerformanceMode) performanceMode.getSelectedId();
         const bool visible = edit != nullptr && mode != studio::PerformanceMode::hidden;
+        if (visible && universalAvailable && workspace != Workspace::articulations)
+        {
+            universalStrip.setVisible(true);
+            universalStrip.setBounds(area.removeFromBottom(jmin(area.getHeight(),m.control(66))));
+            performance.setVisible(false);articulationStrip.setVisible(false);
+            return;
+        }
         // The full mapping editor already displays these same actions.
         const bool stageNeedsHeight = getHeight() <= 700 && workspace == Workspace::stage;
         const bool showStrip = visible && workspace != Workspace::articulations && ! stageNeedsHeight;
@@ -4087,6 +4161,7 @@ private:
         // A loaded project must remain editable while its ARIA slots are checked.
         piano.setEditingEnabled (ready && ! recording);
         const bool playing = edit != nullptr && edit->getTransport().isPlaying();
+        updatePerformanceWrite(playing,recording);
         const bool transportReady = ready && studio::transportSettled (*edit) && ! recentlyStoppedRecording();
         music.refresh (transportReady);
         cycleButton.setEnabled (transportReady);
@@ -4099,9 +4174,9 @@ private:
         exportMidi.setEnabled (transportReady && ! playing);
         exportWav.setEnabled (canStartAudioExport() && ! filmWorkspace.isRendering());
         rewind.setEnabled (transportReady);
-        play.setEnabled (transportReady || (ready && recording));
+        play.setEnabled (!chaseStarting && (transportReady || (ready && recording)));
         play.setToggleState (playing && ! recording, dontSendNotification);
-        stop.setEnabled (ready && (playing || recording || ostinatoCursor != nullptr));
+        stop.setEnabled (ready && (playing || recording || ostinatoCursor != nullptr || chaseStarting));
         record.setEnabled (ready && (recording || (transportReady && ! edit->getTransport().looping)));
         record.setToggleState (recording, dontSendNotification);
         zoom.setEnabled (ready);
@@ -4200,6 +4275,7 @@ private:
                 workspace == Workspace::instrumentEditor || instrumentWorkspace.isFloating());
             refreshInstrumentWorkflow (tracks, selectedMidiClips.size() == 1 ? selectedMidiClips.getFirst() : nullptr);
             auto* context = workflowTrack();
+            refreshUniversalInstrument();
             if (performance.isVisible()) performance.refresh (context, transportReady);
             if (inspectorOpen)
             {
@@ -4425,6 +4501,7 @@ private:
         stopOstinato("Audition stopped for recording.");
         if (edit == nullptr)
             return;
+        if(chaseStarting||performanceWrite){message.setText("Finish or discard Performance Write before recording a MIDI/audio take.",dontSendNotification);return;}
         // A held piano-roll audition must release before record is engaged,
         // so no preview note or trailing note-off leaks into a new take.
         piano.silencePreview();
@@ -4465,6 +4542,11 @@ private:
 
     bool canWriteProject()
     {
+        if(performanceWrite&&!performanceWrite->points.empty())
+        {
+            if(edit&&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&canEditRegions())finishPerformanceWrite();
+            if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop playback to save pending Performance Write.",dontSendNotification);return false;}
+        }
         if (! ariaReviewPending)
             return true;
 
@@ -4697,6 +4779,7 @@ private:
 
     void loadProject (const File& file, bool create, std::optional<studio::environments::TemplateId> templateId = std::nullopt)
     {
+        if(performanceWrite&&!performanceWrite->points.empty()){message.setText("Stop and commit or discard Performance Write before changing projects.",dontSendNotification);return;}
         std::vector<OriginalAriaState> pendingOriginalStates;
         bool backupAvailable = true;
         if (! create)
@@ -4735,6 +4818,14 @@ private:
         spatialEffectWindow.reset();
         reverbWindow.reset();
         stopOstinato("Audition stopped for project change.");
+        cancelPerformanceChase();
+        releaseUniversalNote();
+        performanceWrite.reset();
+        universalStates.clear();universalTrack={};universalPlugin={};universalSnapshot.clear();universalAvailable=false;
+        universalStrip.setProfile({},{});
+        if(universalWindow) universalWindow->panel().setProfile({},{});
+        if (designerWindow) designerWindow->designer().cancelLive();
+        designerLearnInput.detach();
         if (edit != nullptr)
         {
             edit->getTransport().stop (false, false);
@@ -5342,6 +5433,7 @@ private:
                 }
                 safe->ariaCatalog = std::move (finished->catalog);
                 safe->browser.setAriaCatalog (safe->ariaCatalog);
+                if(safe->designerWindow)safe->designerWindow->designer().setInstalledCatalog(safe->ariaCatalog);
                 safe->pluginStatus (cancelled ? "Scan saved. Select Resume interrupted scan to continue."
                                               : "ARIA catalog updated.");
                 AlertWindow::showMessageBoxAsync (MessageBoxIconType::InfoIcon, "ARIA discovery",
@@ -5937,8 +6029,12 @@ private:
             if (! busy)
                 if (auto* selected = trackById (id))
                     if (auto* instrument = studio::findInstrument (*selected))
+                    {
+                        if (selected->state.hasProperty("studioUniversalInstrument") && workflowTrack()==selected)
+                        { refreshUniversalInstrument(); if(universalAvailable){showUniversalInstrument();return;} }
                         if (! showFullAtelierInstrument (*instrument))
                             showNativeInstrument (*instrument);
+                    }
         };
         trackActions.openArticulations = [this] (te::EditItemID id)
         {
@@ -6958,6 +7054,494 @@ private:
         refreshOstinato();ostinatoWindow->setVisible(true);ostinatoWindow->toFront(true);
     }
 
+    static te::ExternalPlugin* universalHosted(te::AudioTrack* track)
+    {
+        if(track==nullptr)return nullptr;
+        te::Plugin* found=nullptr;
+        for(auto* plugin:track->pluginList)
+            if(studio::isInstrumentPlugin(*plugin)){if(found!=nullptr)return nullptr;found=plugin;}
+        return dynamic_cast<te::ExternalPlugin*>(found);
+    }
+    std::optional<studio::designer::Profile> performanceProfileFor(te::MidiClip& clip)
+    {
+        auto* track=clip.getAudioTrack();auto* hosted=universalHosted(track);
+        if(!track||!hosted)return {};
+        auto attachment=studio::designer::Attachment::parse(track->state.getProperty("studioUniversalInstrument").toString());
+        if(!attachment||!attachment->matches(hosted->itemID.toString(),hosted->desc.createIdentifierString(),hosted->desc.version))return {};
+        return attachment->profile;
+    }
+    te::MidiClip* performanceClip(te::EditItemID trackId,te::EditItemID clipId)
+    {
+        if(auto* track=trackById(trackId))
+            for(auto* c:track->getClips())if(c->itemID==clipId)return dynamic_cast<te::MidiClip*>(c);
+        return nullptr;
+    }
+    bool canArmPerformanceWrite()
+    {
+        if(!edit||!canEditRegions()||edit->getTransport().isPlaying()||edit->getTransport().isRecording()||edit->getTransport().looping||chaseStarting)return false;
+        auto selected=selection.getItemsOfType<te::MidiClip>();
+        if(selected.size()!=1)return false;
+        auto* c=selected.getFirst();
+        return c->getAudioTrack()==workflowTrack()&&studio::designer::supportedPerformanceClip(*c)&&performanceProfileFor(*c).has_value();
+    }
+    void togglePerformanceWrite()
+    {
+        if(performanceWrite)
+        {
+            if(edit&&edit->getTransport().isPlaying()){message.setText("Stop playback to commit Performance Write.",dontSendNotification);return;}
+            if(performanceWrite->points.empty()){discardPerformanceWrite();return;}
+            finishPerformanceWrite();return;
+        }
+        if(!canArmPerformanceWrite()){message.setText("Select one linear profiled MIDI clip and disable cycle before arming.",dontSendNotification);return;}
+        auto* c=selection.getItemsOfType<te::MidiClip>().getFirst();
+        performanceWrite=PerformanceWrite{c->getAudioTrack()->itemID,c->itemID,c->getAudioTrack()->state.getProperty("studioUniversalInstrument").toString(),{},false};
+        message.setText("Performance Write armed — play and use the instrument controls, then Stop.",dontSendNotification);
+    }
+    void discardPerformanceWrite()
+    {
+        performanceWrite.reset();message.setText("Pending Performance Write discarded.",dontSendNotification);
+    }
+    void capturePerformancePoint(const studio::designer::Element& e,int value)
+    {
+        if(!performanceWrite||!edit||!edit->getTransport().isPlaying()||edit->getTransport().isRecording()||edit->getTransport().looping)return;
+        auto& take=*performanceWrite;
+        if(take.track!=universalTrack||take.snapshot!=universalSnapshot)return;
+        auto* c=performanceClip(take.track,take.clip);if(!c||!studio::designer::supportedPerformanceClip(*c))return;
+        auto position=edit->getTransport().getPosition();
+        if(position<c->getPosition().getStart()||position>=c->getPosition().getEnd())return;
+        const auto beat=c->getContentBeatAtTime(position).inBeats();
+        if(!studio::designer::fits(*c,beat))return;
+        if(take.points.size()>=16384)return;
+        // Coalesce repeated moves on the same control within 1/96 beat.
+        if(!take.points.empty())
+        {
+            auto& last=take.points.back();
+            if(last.element==e.id&&std::abs(last.beat-beat)<1.0/96.0&&e.binding.type!="note"){last={e.id,beat,value};return;}
+        }
+        take.points.push_back({e.id,beat,value});take.played=true;
+    }
+    void updatePerformanceWrite(bool playing,bool recording)
+    {
+        if(!performanceWrite||!edit)return;
+        if(playing&&!recording)performanceWrite->played=true;
+        if(!playing&&!recording&&!chaseStarting&&performanceWrite->played&&canEditRegions())finishPerformanceWrite();
+    }
+    void finishPerformanceWrite()
+    {
+        using namespace studio::designer;
+        if(!performanceWrite||!edit||edit->getTransport().isPlaying()||edit->getTransport().isRecording()||!canEditRegions())return;
+        auto take=std::move(*performanceWrite);performanceWrite.reset();
+        auto* c=performanceClip(take.track,take.clip);auto* t=trackById(take.track);
+        if(!c||!t||t->state.getProperty("studioUniversalInstrument").toString()!=take.snapshot||!supportedPerformanceClip(*c))
+        {message.setText("Performance Write target changed — pending events were not inserted.",dontSendNotification);return;}
+        auto p=performanceProfileFor(*c);if(!p)return;
+        auto* undo=c->getUndoManager();if(undo)undo->beginNewTransaction("Record instrument performance");
+        int written=0,rejected=0;
+        for(const auto& point:take.points)
+        {
+            auto e=std::find_if(p->elements.begin(),p->elements.end(),[&](const auto& item){return item.id==point.element;});
+            if(e!=p->elements.end()&&writePerformance(*c,*p,*e,point.beat,point.value,undo).wasOk())++written;else ++rejected;
+        }
+        if(undo)undo->beginNewTransaction();
+        piano.refresh();message.setText("Performance Write: "+String(written)+" events saved, "+String(rejected)+" skipped.",dontSendNotification);
+    }
+    void cancelPerformanceChase()
+    {
+        ++chaseGeneration;chaseStarting=false;
+        for(auto& release:chaseReleases)release();
+        chaseReleases.clear();
+    }
+    void startWithPerformanceChase()
+    {
+        using namespace studio::designer;
+        if(!edit||busy||chaseStarting||edit->getTransport().isPlaying()||edit->getTransport().isRecording())return;
+        const auto pos=edit->getTransport().getPosition();
+        const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        releaseUniversalNote();
+        if(!ariaReviewPending&&!pendingPlugin.has_value()&&edit->getCurrentPlaybackContext()!=nullptr)
+            for(auto* track:te::getAudioTracks(*edit))
+            {
+                auto* hosted=universalHosted(track);
+                if(!hosted||!hosted->isEnabled()||!hosted->getAudioPluginInstance()||track->isFrozen(te::Track::anyFreeze))continue;
+                auto a=Attachment::parse(track->state.getProperty("studioUniversalInstrument").toString());
+                if(!a||!a->matches(hosted->itemID.toString(),hosted->desc.createIdentifierString(),hosted->desc.version))continue;
+                const auto& p=a->profile;
+                struct Prior{te::TimePosition time;NamedPoint point;};
+                std::map<String,Prior> prior;
+                for(auto* base:track->getClips())
+                    if(auto* c=dynamic_cast<te::MidiClip*>(base);c&&supportedPerformanceClip(*c))
+                        for(const auto& point:namedPoints(*c))
+                        {
+                            if(!fits(*c,point.beat))continue;
+                            const auto time=c->getTimeOfContentBeat(te::BeatPosition::fromBeats(point.beat));
+                            if(time>pos)continue;
+                            const auto ch=c->getMidiChannel().getChannelNumber();
+                            auto* e=matchingElement(p,point,ch);if(!e)continue;
+                            const auto key=String(ch)+":"+(e->kind=="articulation"?"art":point.type+":"+String(point.number));
+                            auto it=prior.find(key);
+                            if(it==prior.end()||it->second.time<=time)prior.insert_or_assign(key,Prior{time,point});
+                        }
+                for(const auto& [key,previous]:prior)
+                {
+                    if(previous.time>=pos)continue; // native sequence owns exact start events
+                    const auto& point=previous.point;
+                    const Element* element=nullptr;
+                    for(const auto& e:p.elements)if(e.id==point.state["studioPerformanceElement"].toString()){element=&e;break;}
+                    if(!element)continue;
+                    auto b=element->binding;b.value=point.value;
+                    auto midi=auditionMessage(b,p.channel);if(!midi)continue;
+                    track->injectLiveMidiMessage(*midi,{});
+                    if(b.type=="note")
+                    {
+                        const auto tid=track->itemID,pid=hosted->itemID;
+                        auto off=releaseMessage(b,p.channel);
+                        if(off)chaseReleases.push_back([safe,tid,pid,generation,off=*off]{
+                            if(safe!=nullptr&&safe->designerTarget(tid,pid,generation,true)!=nullptr)
+                                if(auto* original=safe->trackById(tid))original->injectLiveMidiMessage(off,{});
+                        });
+                    }
+                }
+            }
+        if(chaseReleases.empty()){EngineHelpers::togglePlay(*edit);return;}
+        chaseStarting=true;const auto revision=++chaseGeneration;
+        Timer::callAfterDelay(100,[safe,generation,revision,pos]{
+            if(safe==nullptr||safe->chaseGeneration!=revision)return;
+            safe->cancelPerformanceChase();
+            if(safe->edit&&safe->projectGeneration==generation&&!safe->busy
+                &&!safe->edit->getTransport().isPlaying()&&!safe->edit->getTransport().isRecording()
+                &&safe->edit->getTransport().getPosition()==pos)
+                EngineHelpers::togglePlay(*safe->edit);
+        });
+    }
+
+    void releaseUniversalNote()
+    {
+        ++universalPulse;
+        if(universalRelease){auto release=std::move(universalRelease);universalRelease={};release();}
+    }
+    bool universalContextValid(bool allowPlaying=true)
+    {
+        auto* t=workflowTrack();
+        auto* hosted=universalHosted(t);
+        return edit!=nullptr&&t!=nullptr&&t->itemID==universalTrack&&hosted!=nullptr&&hosted->itemID==universalPlugin
+            &&t->state.getProperty("studioUniversalInstrument").toString()==universalSnapshot
+            &&!busy&&!ariaReviewPending&&!pendingPlugin.has_value()&&!t->isFrozen(te::Track::anyFreeze)
+            &&hosted->isEnabled()&&hosted->getAudioPluginInstance()!=nullptr
+            &&!edit->getTransport().isRecording()&&(allowPlaying||!edit->getTransport().isPlaying())
+            &&edit->getCurrentPlaybackContext()!=nullptr;
+    }
+    void refreshUniversalInstrument()
+    {
+        auto* track=workflowTrack();auto* hosted=universalHosted(track);
+        const auto tid=track!=nullptr?track->itemID:te::EditItemID{};
+        const auto pid=hosted!=nullptr?hosted->itemID:te::EditItemID{};
+        const auto serialized=track!=nullptr?track->state.getProperty("studioUniversalInstrument").toString():String();
+        if(track!=nullptr&&serialized.isEmpty())universalStates.erase(tid.toString());
+        auto* state=track!=nullptr&&!serialized.isEmpty()?&universalStates[tid.toString()]:nullptr;
+        if(state&&state->serialized!=serialized){state->serialized=serialized;state->attachment=studio::designer::Attachment::parse(serialized);state->values={};}
+        const bool available=state&&state->attachment&&hosted&&state->attachment->matches(pid.toString(),hosted->desc.createIdentifierString(),hosted->desc.version);
+        const bool changed=tid!=universalTrack||pid!=universalPlugin||serialized!=universalSnapshot||available!=universalAvailable;
+        if(changed){releaseUniversalNote();universalTrack=tid;universalPlugin=pid;universalSnapshot=serialized;universalAvailable=available;}
+        const auto key=available?tid.toString()+":"+pid.toString():String();
+        const auto profile=available?std::optional<studio::designer::Profile>(state->attachment->profile):std::nullopt;
+        universalStrip.setProfile(key,profile,performanceMode.getSelectedId()==2);
+        if(universalWindow)universalWindow->panel().setProfile(key,profile);
+        const bool enabled=available&&universalContextValid();
+        const bool mixerEnabled=available&&track&&!track->isFrozen(te::Track::anyFreeze)&&!busy&&!ariaReviewPending&&edit&&!edit->getTransport().isRecording();
+        auto* vp=track!=nullptr?track->getVolumePlugin():nullptr;
+        const studio::designer::LiveValues empty;
+        const auto& values=available?state->values:empty;
+        const auto seat=track?track->state.getChildWithName(studio::spatial::seatType):ValueTree{};
+        const bool roomEnabled=mixerEnabled&&seat.isValid()&&studio::spatial::hasRoomSend(*track);
+        const auto trim=seat.isValid()?studio::spatial::readSeat(seat).sendTrim:-60.0f;
+        universalStrip.refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
+        if(universalWindow)universalWindow->panel().refresh(values,enabled,mixerEnabled&&vp,vp?vp->getVolumeDb():0.0,vp?vp->getPan():0.0,roomEnabled,trim);
+        if(changed){piano.refreshPerformanceLane();resized();}
+    }
+    void configureUniversalSurface(studio::designer::UniversalSurface& surface)
+    {
+        surface.openFull=[this]{showUniversalInstrument();};
+        surface.openDesigner=[this]{showInstrumentDesigner();};
+        surface.openMixer=[this]{showWorkspace(Workspace::mix);};
+        surface.openRooms=[this]{showWorkspace(Workspace::rooms);};
+        surface.openOriginal=[this]{if(auto* t=workflowTrack())if(auto* p=universalHosted(t))p->showWindowExplicitly();};
+        surface.mixerChange=[this](bool volume,double value){
+            auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin)return;
+            if(auto* p=t->getVolumePlugin()){if(volume)p->setVolumeDb((float)value);else p->setPan((float)value);}
+        };
+        surface.roomChange=[this](double value){
+            auto* t=workflowTrack();if(!universalAvailable||!t||t->itemID!=universalTrack||!edit||busy||ariaReviewPending
+                ||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isRecording()||t->state.getProperty("studioUniversalInstrument").toString()!=universalSnapshot
+                ||universalHosted(t)==nullptr||universalHosted(t)->itemID!=universalPlugin||!studio::spatial::hasRoomSend(*t))return;
+            auto tree=t->state.getChildWithName(studio::spatial::seatType);if(!tree.isValid())return;
+            auto seat=studio::spatial::readSeat(tree);seat.sendTrim=juce::jlimit(-60.0f,0.0f,(float)value);
+            tree.setProperty("trim",seat.sendTrim,&edit->getUndoManager());
+            studio::spatial::updateRoomSend(*t,seat.position,seat.sendTrim);
+        };
+        surface.perform=[this](const String& id,int value){performUniversal(id,value);};
+    }
+    void performUniversal(const String& id,int value)
+    {
+        if(!universalAvailable||!universalContextValid())return;
+        auto found=universalStates.find(universalTrack.toString());if(found==universalStates.end()||!found->second.attachment)return;
+        auto& state=found->second;const auto& p=state.attachment->profile;
+        auto item=std::find_if(p.elements.begin(),p.elements.end(),[&](const auto& e){return e.id==id;});
+        if(item==p.elements.end())return;
+        auto b=item->binding;b.value=value;
+        auto midi=studio::designer::auditionMessage(b,p.channel);if(!midi)return;
+        auto* target=trackById(universalTrack);if(!target)return;
+        if(b.type=="note")
+        {
+            releaseUniversalNote();
+            const auto trackId=universalTrack,pluginId=universalPlugin;
+            const auto generation=projectGeneration;
+            const Component::SafePointer<StudioView> safe(this);
+            const auto off=studio::designer::releaseMessage(b,p.channel);
+            if(off)universalRelease=[safe,trackId,pluginId,generation,off=*off]{
+                if(safe!=nullptr&&safe->designerTarget(trackId,pluginId,generation,true)!=nullptr)
+                    if(auto* original=safe->trackById(trackId))original->injectLiveMidiMessage(off,{});
+            };
+            const auto pulse=universalPulse;
+            Timer::callAfterDelay(120,[safe,pulse]{if(safe!=nullptr&&safe->universalPulse==pulse)safe->releaseUniversalNote();});
+        }
+        target->injectLiveMidiMessage(*midi,{});
+        capturePerformancePoint(*item,value);
+        state.values.applied(*item,p.channel,value);
+        refreshUniversalInstrument();
+    }
+    void showUniversalInstrument()
+    {
+        refreshUniversalInstrument();
+        if(!universalAvailable)return;
+        if(!universalWindow){universalWindow=std::make_unique<studio::designer::UniversalWindow>();configureUniversalSurface(universalWindow->panel());}
+        refreshUniversalInstrument();universalWindow->setVisible(true);universalWindow->toFront(true);
+    }
+    static juce::Array<te::MidiClip*> translationClips(te::AudioTrack& track)
+    {
+        juce::Array<te::MidiClip*> clips;
+        for(auto* c:track.getClips())if(auto* midi=dynamic_cast<te::MidiClip*>(c))clips.add(midi);
+        return clips;
+    }
+    static bool hasNamedPerformance(te::AudioTrack& track)
+    {
+        for(auto* clip:translationClips(track))
+        {
+            if(!clip->hasValidSequence())continue;
+            for(auto* n:clip->getSequence().getNotes())if(studio::designer::isNamedEvent(n->state))return true;
+            for(auto* c:clip->getSequence().getControllerEvents())if(studio::designer::isNamedEvent(c->state))return true;
+        }
+        return false;
+    }
+    bool canTranslateInstrument()
+    {
+        auto* t=workflowTrack();
+        return t&&edit&&canEditRegions()&&!ariaReviewPending&&!pendingPlugin.has_value()&&!performanceWrite&&!chaseStarting
+            &&!edit->getTransport().isPlaying()&&!edit->getTransport().isRecording()&&!t->isFrozen(te::Track::anyFreeze)
+            &&universalHosted(t)!=nullptr&&t->state.hasProperty("studioUniversalInstrument");
+    }
+    void chooseInstrumentTranslation()
+    {
+        using namespace studio::designer;
+        if(!canTranslateInstrument())return;
+        auto* t=workflowTrack();auto* hosted=universalHosted(t);
+        const auto sourceXml=t->state.getProperty("studioUniversalInstrument").toString();
+        const auto source=Attachment::parse(sourceXml);
+        if(!source){message.setText("The source profile snapshot is missing or invalid.",dontSendNotification);return;}
+        auto profiles=ProfileStore(ProfileStore::localDirectory()).list();
+        PopupMenu menu;int count=0;
+        for(const auto& p:profiles)
+        {
+            ++count;
+            const bool compatible=p.instrument==source->profile.instrument&&p.pluginId==hosted->desc.createIdentifierString()
+                &&p.pluginVersion==hosted->desc.version&&p.patch.trim().isNotEmpty();
+            menu.addItem(count,p.name+" — "+p.library+" / "+p.patch,compatible);
+        }
+        if(profiles.empty()){message.setText("Create and save a destination profile first.",dontSendNotification);return;}
+        const auto trackId=t->itemID,pluginId=hosted->itemID;
+        const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        menu.showMenuAsync(PopupMenu::Options(),[safe,profiles,trackId,pluginId,generation,sourceXml](int chosen){
+            if(safe==nullptr||chosen<=0||chosen>(int)profiles.size()||!safe->canTranslateInstrument()
+                ||!safe->designerTarget(trackId,pluginId,generation))return;
+            auto* target=safe->trackById(trackId);
+            if(!target||target->state.getProperty("studioUniversalInstrument").toString()!=sourceXml)return;
+            const auto source=Attachment::parse(sourceXml);if(!source)return;
+            const auto p=profiles[(size_t)chosen-1];
+            auto plan=planTranslation(translationClips(*target),source->profile,p);
+            const auto expected=plan.fingerprint;
+            const auto expectedReport=plan.report();
+            String report="SOURCE: "+source->profile.name+" / "+source->profile.library+" / "+source->profile.patch+
+                "\nDESTINATION: "+p.name+" / "+p.library+" / "+p.patch+
+                "\nMIDI channel "+String(p.channel)+", slot "+String(p.slot)+"\n\n"+
+                "Review every mapping. Matching semantic IDs do not prove that muted, solo or other patch variants sound equivalent. "
+                "Confirm the destination patch is already loaded and auditioned. The original plug-in is not restored by Undo. "
+                "Ordinary notes and untagged controllers are not translated. Their meaning may differ in the new library. "
+                "Save a separate project copy before changing instruments.\n\n"+expectedReport;
+            DialogWindow::LaunchOptions options;
+            options.dialogTitle="Studio — Review instrument translation";
+            options.dialogBackgroundColour=studio::colours::canvas;
+            options.useNativeTitleBar=true;options.escapeKeyTriggersCloseButton=true;options.resizable=true;
+            options.content.setOwned(new TranslationReview(report,plan.ready(),
+                [safe,trackId,pluginId,generation,sourceXml,p,expected,expectedReport]{
+                    if(safe==nullptr||!safe->canTranslateInstrument())return;
+                    auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+                    auto* target=safe->trackById(trackId);
+                    if(!hosted||!target||target->state.getProperty("studioUniversalInstrument").toString()!=sourceXml
+                        ||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version)return;
+                    const auto source=Attachment::parse(sourceXml);if(!source)return;
+                    auto current=planTranslation(translationClips(*target),source->profile,p);
+                    if(!current.ready()||current.fingerprint!=expected||current.report()!=expectedReport)
+                    {safe->message.setText("Translation preview changed. Review again; no edits were made.",dontSendNotification);return;}
+                    const auto xml=Attachment{p,pluginId.toString()}.serialise();if(xml.isEmpty())return;
+                    safe->releaseUniversalNote();
+                    auto& undo=safe->edit->getUndoManager();
+                    if(auto result=applyTranslation(current,p,undo);result.failed())
+                    {safe->message.setText(result.getErrorMessage(),dontSendNotification);return;}
+                    target->state.setProperty("studioUniversalInstrument",xml,&undo);
+                    undo.beginNewTransaction();
+                    safe->universalStates.erase(trackId.toString());
+                    safe->refreshUniversalInstrument();safe->piano.refresh();
+                    safe->message.setText("Translated "+String((int)current.events.size())+" named events. Undo restores the original MIDI and profile, not the plug-in.",dontSendNotification);
+                }));
+            options.content->setSize(jmax(420,jmin(780,safe->getWidth()-40)),jmax(300,jmin(540,safe->getHeight()-70)));
+            options.launchAsync();
+        });
+    }
+    void detachUniversalProfile()
+    {
+        auto* t=workflowTrack();if(!t||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||performanceWrite||chaseStarting)return;
+        if(hasNamedPerformance(*t)){message.setText("This track has named MIDI events. Keep the source profile or use Translate Instrument Performance.",dontSendNotification);return;}
+        releaseUniversalNote();edit->getUndoManager().beginNewTransaction("Detach instrument profile");
+        t->state.removeProperty("studioUniversalInstrument",&edit->getUndoManager());
+        refreshUniversalInstrument();
+    }
+    void chooseUniversalProfile()
+    {
+        auto* t=workflowTrack();auto* hosted=universalHosted(t);
+        if(!t||!hosted||!canEditRegions()||t->isFrozen(te::Track::anyFreeze)||edit->getTransport().isPlaying()){message.setText("Select a stopped hosted instrument track first.",dontSendNotification);return;}
+        const auto profiles=studio::designer::ProfileStore(studio::designer::ProfileStore::localDirectory()).list();
+        PopupMenu menu;int index=0;
+        for(const auto& p:profiles)
+        {
+            ++index;const bool matches=p.pluginId==hosted->desc.createIdentifierString()&&p.pluginVersion==hosted->desc.version&&p.patch.trim().isNotEmpty();
+            menu.addItem(index,p.name+" — "+p.patch,matches);
+        }
+        if(profiles.empty()){message.setText("Save an instrument profile in Instrument Designer first.",dontSendNotification);return;}
+        const auto trackId=t->itemID,pluginId=hosted->itemID;const auto generation=projectGeneration;
+        const Component::SafePointer<StudioView> safe(this);
+        menu.showMenuAsync(PopupMenu::Options(),[safe,profiles,trackId,pluginId,generation](int result){
+            if(safe==nullptr||result<=0||result>(int)profiles.size())return;
+            const auto p=profiles[(size_t)result-1];
+            if(safe->designerTarget(trackId,pluginId,generation)==nullptr)return;
+            String warning;
+            if(p.catalogPatchId.isNotEmpty())
+            {
+                const auto& patches=safe->ariaCatalog.patches();const auto found=patches.find(p.catalogPatchId);
+                if(found==patches.end()||!found->second.sourceCurrent()||p.catalogStamp!=studio::designer::patchStamp(found->second))
+                    warning="\n\nThe linked local definition is missing or changed. Existing user mappings have not been modified; verify them before use.";
+                else if(std::any_of(found->second.switchHints.begin(),found->second.switchHints.end(),[](const auto& h){return !h.current();}))
+                    warning="\n\nAn included definition has changed. Re-scan and verify your mappings before use.";
+            }
+            AlertWindow::showOkCancelBox(MessageBoxIconType::QuestionIcon,"Use instrument profile",
+                "Confirm the original instrument contains "+p.patch+" on MIDI channel "+String(p.channel)+", slot "+String(p.slot)+". Studio will save a project-local copy of the profile. No patch is loaded or changed."+warning,
+                "Use profile","Cancel",safe.getComponent(),ModalCallbackFunction::create([safe,p,trackId,pluginId,generation](int ok){
+                    if(!ok||safe==nullptr)return;
+                    auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+                    if(!hosted||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version)return;
+                    auto* target=safe->trackById(trackId);if(!target)return;
+                    const auto xml=studio::designer::Attachment{p,pluginId.toString()}.serialise();if(xml.isEmpty())return;
+                    if(safe->performanceWrite||safe->chaseStarting)return;
+                    if(hasNamedPerformance(*target))
+                    {
+                        auto old=studio::designer::Attachment::parse(target->state.getProperty("studioUniversalInstrument").toString());
+                        if(!old||old->profile!=p)
+                        {safe->message.setText("Named MIDI events exist. Use Translate Instrument Performance to change profiles.",dontSendNotification);return;}
+                    }
+                    safe->releaseUniversalNote();safe->edit->getUndoManager().beginNewTransaction("Use instrument profile");
+                    target->state.setProperty("studioUniversalInstrument",xml,&safe->edit->getUndoManager());
+                    safe->refreshUniversalInstrument();
+                }));
+        });
+    }
+
+    // Resolve the original single hosted instrument, not whichever track
+    // happens to be selected when a modal callback returns.
+    te::ExternalPlugin* designerTarget(te::EditItemID trackId,te::EditItemID pluginId,uint64 generation,bool forRelease=false)
+    {
+        if(edit==nullptr||generation!=projectGeneration)return nullptr;
+        auto* track=trackById(trackId);
+        if(track==nullptr)return nullptr;
+        te::Plugin* found=nullptr;
+        for(auto* plugin:track->pluginList)
+            if(studio::isInstrumentPlugin(*plugin))
+            {
+                if(found!=nullptr)return nullptr;
+                found=plugin;
+            }
+        auto* hosted=dynamic_cast<te::ExternalPlugin*>(found);
+        if(hosted==nullptr||hosted->itemID!=pluginId||hosted->getAudioPluginInstance()==nullptr)return nullptr;
+        if(!forRelease && (busy||ariaReviewPending||pendingPlugin.has_value()||workflowTrack()!=track
+            ||track->isFrozen(te::Track::anyFreeze)||!hosted->isEnabled()
+            ||edit->getTransport().isPlaying()||edit->getTransport().isRecording()
+            ||edit->getCurrentPlaybackContext()==nullptr))return nullptr;
+        return hosted;
+    }
+
+    void showInstrumentDesigner()
+    {
+        studio::designer::SourceContext context;
+        te::EditItemID trackId,pluginId;
+        if (auto* track = workflowTrack())
+        {
+            trackId=track->itemID;context.track=track->getName();
+            if(auto* external=dynamic_cast<te::ExternalPlugin*>(studio::findInstrument(*track)))
+            {
+                pluginId=external->itemID;
+                context.pluginId=external->desc.createIdentifierString();
+                context.pluginVersion=external->desc.version;
+            }
+        }
+        if(designerWindow==nullptr)designerWindow=std::make_unique<studio::designer::DesignerWindow>(context);
+        auto& panel=designerWindow->designer();
+        panel.cancelLive();
+        panel.setInstalledCatalog(ariaCatalog);
+        panel.openLibraryScanner=[this]{if(designerWindow)showAriaCatalogMenu(designerWindow->designer());};
+        const Component::SafePointer<StudioView> safe(this);
+        const auto generation=projectGeneration;
+        panel.beginLearn=[safe,trackId,pluginId,generation]{
+            if(safe==nullptr||safe->designerTarget(trackId,pluginId,generation)==nullptr)return false;
+            return safe->designerLearnInput.attach(*safe->edit,trackId,safe->engine.getDeviceManager());
+        };
+        panel.pollLearn=[safe,trackId,pluginId,generation]() -> std::optional<studio::designer::Binding>{
+            if(safe==nullptr)return {};
+            if(safe->designerTarget(trackId,pluginId,generation)==nullptr){safe->designerLearnInput.detach();return {};}
+            return safe->designerLearnInput.poll();
+        };
+        panel.endLearn=[safe]{if(safe!=nullptr)safe->designerLearnInput.detach();};
+        panel.sendAudition=[safe,trackId,pluginId,generation](const studio::designer::Profile& p,const studio::designer::Binding& b,std::function<void()>& release){
+            if(safe==nullptr)return Result::fail("Studio is closing.");
+            auto* hosted=safe->designerTarget(trackId,pluginId,generation);
+            if(hosted==nullptr)return Result::fail("Reopen Instrument Designer on the selected stopped instrument track.");
+            if(p.pluginId.isEmpty()||p.pluginId!=hosted->desc.createIdentifierString()||p.pluginVersion!=hosted->desc.version||p.patch.trim().isEmpty())
+                return Result::fail("Profile plug-in identity/version or patch name is missing or different. Create a profile from this instrument.");
+            auto midi=studio::designer::auditionMessage(b,p.channel);
+            if(!midi)return Result::fail("Unsupported or invalid MIDI assignment.");
+            auto* track=safe->trackById(trackId);
+            if(track==nullptr)return Result::fail("The original track was removed.");
+            if(auto off=studio::designer::releaseMessage(b,p.channel))
+                release=[safe,trackId,pluginId,generation,off=*off]{
+                    if(safe!=nullptr&&safe->designerTarget(trackId,pluginId,generation,true)!=nullptr)
+                        if(auto* original=safe->trackById(trackId))original->injectLiveMidiMessage(off,{});
+                };
+            track->injectLiveMidiMessage(*midi,{});
+            return Result::ok();
+        };
+        designerWindow->open(std::move(context));
+    }
+
     void showStudioSettings()
     {
         DialogWindow::LaunchOptions options;
@@ -7918,9 +8502,35 @@ int StudioView::runInterfaceReview (const File& output)
     }
     // Each macOS menu category must expose at least one real command; keep
     // menu generation platform-neutral so Linux CI can verify its structure.
-    for (int category = 0; category < 9; ++category)
+    for (int category = 0; category < 10; ++category)
         if (applicationMenu (category).getNumItems() == 0)
             return fail ("native application menu has no commands");
+    {
+        auto folder=File::getSpecialLocation(File::tempDirectory).getNonexistentChildFile("StudioDesignerReview","",false);
+        studio::designer::DesignerPanel designer({},folder);
+        const bool verified=designer.verifyDesigner();
+        folder.deleteRecursively();
+        if(!verified) return fail("instrument designer profile creation and recall");
+    }
+    {
+        using namespace studio::designer;
+        Profile p;p.instrument="flutes.concert-flute";p.name="Fixture flute";
+        Element a{Uuid().toString(),"wind.flutter-tongue","Flutter","articulation","button",true,true,Binding{"note",0,40,100}};
+        Element c{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        Element extra{Uuid().toString(),"release","Release","control","knob",false,true,Binding{}};
+        p.elements={a,c,extra};
+        UniversalSurface compact(true),full(false);compact.setSize(480,66);full.setSize(660,300);
+        compact.setProfile("fixture",p);full.setProfile("fixture",p);
+        if(compact.visibleElementCount()!=2||full.visibleElementCount()!=3)return fail("universal layout visibility");
+        LiveValues values;int messages=0;
+        compact.perform=[&](const String& id,int value){if(id==c.id){values.applied(c,p.channel,value);++messages;}};
+        compact.refresh(values,true,false,0,0);full.refresh(values,true,false,0,0);
+        if(messages!=0||!compact.exercise(c.id,91))return fail("universal control action");
+        full.refresh(values,true,false,0,0);
+        if(messages!=1||full.displayedValue(c.id)!=91||full.exercise(extra.id,0))return fail("universal shared state or unassigned guard");
+        compact.setProfile("fixture",p,true);
+        if(compact.visibleElementCount()!=1)return fail("universal articulation-only mode");
+    }
     constexpr std::array names { "First Violins", "Violas", "Cellos", "Flute", "Clarinet", "French Horn", "Timpani", "Piano" };
     auto existing = te::getAudioTracks (*edit);
     for (size_t i = 0; i < names.size(); ++i)
@@ -8303,6 +8913,44 @@ int StudioView::runInterfaceReview (const File& output)
     setSize (1280, 800);
     auto* clip = dynamic_cast<te::MidiClip*> (tracks[0]->getClips()[0]);
     if (clip == nullptr) return fail ("fixture MIDI clip");
+    {
+        using namespace studio::designer;
+        clip->setMidiChannel(te::MidiChannel(1));
+        Profile p;p.instrument="bowed-strings.violin";
+        Element art{Uuid().toString(),"bowed.pizzicato","Pizzicato","articulation","button",true,true,Binding{"note",0,24,100}};
+        Element cc{Uuid().toString(),"dynamics","Dynamics","control","fader",true,true,Binding{"cc",0,1,64}};
+        p.elements={art,cc};
+        auto* undo=clip->getUndoManager();if(undo)undo->beginNewTransaction("M50 fixture");
+        const auto beat=clip->getContentBeatAtTime(clip->getPosition().getStart()).inBeats()+0.25;
+        if(writePerformance(*clip,p,art,beat,100,undo).failed()||writePerformance(*clip,p,cc,beat+0.5,95,undo).failed())return fail("write native named MIDI");
+        const auto points=namedPoints(*clip);
+        if(points.size()!=2||points[0].number!=24||points[1].value!=95||!matchingElement(p,points[0],1))return fail("named MIDI metadata and chase match");
+        auto other=art;other.id=Uuid().toString();
+        if(writePerformance(*clip,p,other,beat,100,undo).wasOk())return fail("reject overlapping keyswitch");
+        if(undo)undo->beginNewTransaction();
+        auto destination=p.duplicate();destination.elements[0].id=Uuid().toString();
+        destination.elements[0].binding={"note",0,27,90};
+        destination.elements[1].id=Uuid().toString();destination.elements[1].binding={"cc",0,11,80};
+        juce::Array<te::MidiClip*> candidates{clip};
+        const auto before=clip->state.toXmlString();
+        auto plan=planTranslation(candidates,p,destination);
+        if(!plan.ready()||plan.events.size()!=2||clip->state.toXmlString()!=before)return fail("dry-run translation is non-mutating");
+        auto invalid=destination;invalid.elements[0].binding.number=60; // fixture includes middle C
+        if(planTranslation(candidates,p,invalid).ready())return fail("reject ordinary note at destination switch");
+        if(!undo||applyTranslation(plan,destination,*undo).failed())return fail("apply native translation");
+        undo->beginNewTransaction();
+        auto translated=namedPoints(*clip);
+        if(translated.size()!=2||translated[0].number!=27||translated[0].value!=90||translated[1].number!=11||translated[1].value!=95
+           ||!matchingElement(destination,translated[0],1)||!matchingElement(destination,translated[1],1))return fail("translated note and expression values");
+        if(!undo->undo())return fail("undo native translation");
+        auto restored=namedPoints(*clip);
+        if(restored.size()!=2||restored[0].number!=24||restored[1].number!=1||!matchingElement(p,restored[0],1))return fail("restore original named MIDI");
+        if(!undo->redo())return fail("redo native translation");
+        translated=namedPoints(*clip);
+        if(translated.size()!=2||translated[0].number!=27)return fail("redo translated MIDI");
+        if(!removeNamed(*clip,translated[0].state,undo)||!removeNamed(*clip,translated[1].state,undo)||!namedPoints(*clip).empty())return fail("remove named events");
+        if(undo)undo->beginNewTransaction();
+    }
     selection.selectOnly (clip);
     piano.setClip (clip);
     setDockMode (DockMode::split);
@@ -8383,7 +9031,7 @@ public:
     Component::SafePointer<StudioView> target;
     StringArray getMenuBarNames() override
     {
-        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Help" };
+        return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Instruments", "Help" };
     }
     PopupMenu getMenuForIndex (int index, const String&) override
     {
