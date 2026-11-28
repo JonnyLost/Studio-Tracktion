@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SpatialRouting.h"
+#include "StudioSpatialEffect.h"
 #include "SpatialReverb.h"
 #include "SpatialState.h"
 #include <atomic>
@@ -374,6 +375,7 @@ bool stopped (te::Edit& edit)
 void registerPlugins (te::Engine& engine)
 {
     engine.getPluginManager().createBuiltInType<RoomPlugin>();
+    engine.getPluginManager().createBuiltInType<SourcePlugin>();
     engine.getPluginManager().createBuiltInType<StagePanPlugin>();
     engine.getPluginManager().createBuiltInType<RoomSendPlugin>();
 }

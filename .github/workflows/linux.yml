@@ -14,6 +14,7 @@ on:
       - feature/studio-ostinato-library-o9
       - feature/studio-ostinato-midi-print-o10
       - feature/studio-acoustic-atlas-s1
+      - 'feature/studio-native-spatial-*'
       - integration/studio-0.2-integrated-alpha
       - feature/studio-postintegration-composer-workflow-m6
       - feature/studio-keyboard-live-playback-feedback-m10
@@ -66,6 +67,7 @@ on:
       - feature/studio-ostinato-library-o9
       - feature/studio-ostinato-midi-print-o10
       - feature/studio-acoustic-atlas-s1
+      - 'feature/studio-native-spatial-*'
       - feature/studio-theme-isolation-m43
       - feature/studio-cream-ruler-m42
       - feature/studio-deep-black-m41
