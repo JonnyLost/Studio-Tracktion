@@ -851,6 +851,11 @@ if(BUILD_TESTING)
     target_link_libraries(StudioSpatialTests PRIVATE juce::juce_data_structures)
     add_test(NAME StudioSpatialModel COMMAND StudioSpatialTests)
 
+    add_executable(StudioSpatialSourceTests tests/SpatialSourceTests.cpp SpatialSource.h)
+    target_compile_features(StudioSpatialSourceTests PRIVATE cxx_std_17)
+    add_dependencies(Studio StudioSpatialSourceTests)
+    add_test(NAME StudioSpatialSource COMMAND StudioSpatialSourceTests)
+
     add_executable(StudioSeatingAtlasTests tests/SeatingAtlasTests.cpp Seating/SeatingAtlas.h)
     target_compile_features(StudioSeatingAtlasTests PRIVATE cxx_std_20)
     target_compile_definitions(StudioSeatingAtlasTests PRIVATE JUCE_USE_CURL=0)
