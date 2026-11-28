@@ -2,7 +2,9 @@
 // Original offline reference measurement host. No plug-in code or resources bundled.
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include "Measurements.h"
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -118,9 +120,9 @@ double correlation(const Channels& v)
     return l>1e-20&&r>1e-20?lr/std::sqrt(l*r):std::numeric_limits<double>::quiet_NaN();
 }
 // Coherent multitone amplitude estimate, 1-second steady-state interval.
-double tone(const std::vector<float>& v,int rate,double hz)
+double tone(const std::vector<float>& v,int rate,double hz,double settle=.25)
 {
-    const size_t start=size_t(rate*.75),n=size_t(rate);
+    const size_t start=size_t(rate*(settle+.5)),n=size_t(rate);
     if(start+n>v.size())throw std::runtime_error("Tone interval outside render");
     double re=0,im=0;
     for(size_t i=0;i<n;++i)
@@ -177,10 +179,50 @@ OSStatus inputCallback(void* ref,AudioUnitRenderActionFlags*,const AudioTimeStam
     return noErr;
 }
 
+struct HostClock
+{
+    double bpm=120,rate=48000;
+    std::atomic<long> sample{0};
+    std::atomic<unsigned> beatCalls{0},musicCalls{0},transportCalls{0};
+    std::atomic<bool> changed{true};
+    double beat()const{return double(sample.load(std::memory_order_relaxed))*bpm/(60*rate);}
+    static OSStatus tempo(void* p,Float64* beat,Float64* bpm)
+    {
+        auto& h=*static_cast<HostClock*>(p);++h.beatCalls;
+        if(beat)*beat=h.beat();if(bpm)*bpm=h.bpm;return noErr;
+    }
+    static OSStatus musical(void* p,UInt32* offset,Float32* numerator,UInt32* denominator,Float64* downbeat)
+    {
+        auto& h=*static_cast<HostClock*>(p);++h.musicCalls;
+        const double b=h.beat();
+        if(offset)*offset=UInt32(std::max(0.0,std::round((std::ceil(b)-b)*60*h.rate/h.bpm)));
+        if(numerator)*numerator=4;if(denominator)*denominator=4;
+        if(downbeat)*downbeat=std::floor(b/4)*4;
+        return noErr;
+    }
+    static OSStatus transport(void* p,Boolean* playing,Boolean* changed,Float64* sample,Boolean* cycling,Float64* start,Float64* end)
+    {
+        auto& h=*static_cast<HostClock*>(p);++h.transportCalls;
+        if(playing)*playing=true;
+        const bool wasChanged=h.changed.exchange(false);
+        if(changed)*changed=wasChanged;
+        if(sample)*sample=double(h.sample.load(std::memory_order_relaxed));
+        if(cycling)*cycling=false;if(start)*start=0;if(end)*end=0;
+        return noErr;
+    }
+    static OSStatus transport2(void* p,Boolean* playing,Boolean* recording,Boolean* changed,Float64* sample,Boolean* cycling,Float64* start,Float64* end)
+    {
+        if(recording)*recording=false;
+        return transport(p,playing,changed,sample,cycling,start,end);
+    }
+};
 struct Unit
 {
     AudioUnit au=nullptr;
     bool initialized=false;
+    HostClock clock;
+    OSStatus clockStatus=-1;
+    bool clockRequested=false;
     explicit Unit(AudioComponent c)
     {
         check(AudioComponentInstanceNew(c,&au),"Instantiate Audio Unit");
@@ -199,12 +241,22 @@ struct Unit
         f.mBytesPerPacket=4;f.mFramesPerPacket=1;f.mBytesPerFrame=4;
         f.mChannelsPerFrame=ch;f.mBitsPerChannel=32;return f;
     }
-    void prepare(int rate,UInt32 channels,Input& source)
+    void prepare(int rate,UInt32 channels,Input& source,double bpm=0)
     {
         auto in=format(rate,channels),out=format(rate,2);
         set(kAudioUnitProperty_StreamFormat,kAudioUnitScope_Input,0,in);
         set(kAudioUnitProperty_StreamFormat,kAudioUnitScope_Output,0,out);
         set(kAudioUnitProperty_MaximumFramesPerSlice,kAudioUnitScope_Global,0,block);
+        if(bpm>0)
+        {
+            clockRequested=true;clock.bpm=bpm;clock.rate=rate;
+            HostCallbackInfo info{};
+            info.hostUserData=&clock;info.beatAndTempoProc=HostClock::tempo;
+            info.musicalTimeLocationProc=HostClock::musical;
+            info.transportStateProc=HostClock::transport;
+            info.transportStateProc2=HostClock::transport2;
+            clockStatus=AudioUnitSetProperty(au,kAudioUnitProperty_HostCallbacks,kAudioUnitScope_Global,0,&info,sizeof(info));
+        }
         AURenderCallbackStruct cb{inputCallback,&source};
         set(kAudioUnitProperty_SetRenderCallback,kAudioUnitScope_Input,0,cb);
         check(AudioUnitInitialize(au),"Initialize Audio Unit");initialized=true;
@@ -296,6 +348,7 @@ struct Unit
             UInt32 n=UInt32(std::min<size_t>(block,frames-pos));
             AudioTimeStamp time{};time.mSampleTime=double(pos);time.mFlags=kAudioTimeStampSampleTimeValid;
             source.position=long(pos);source.count=n;
+            clock.sample.store(long(pos),std::memory_order_relaxed);
             TwoBuffers storage{2,{{1,n*UInt32(sizeof(float)),result[0].data()+pos},
                                  {1,n*UInt32(sizeof(float)),result[1].data()+pos}}};
             auto* buffers=reinterpret_cast<AudioBufferList*>(&storage);
@@ -322,15 +375,18 @@ struct Case
     int rate=48000;
     double seconds=1.25;
     Values settings;
+    double settle=.25,bpm=0;
 };
 Channels signal(const Case& c)
 {
-    size_t n=size_t(std::ceil(c.seconds*c.rate)),start=size_t(c.rate*.25);
+    size_t n=size_t(std::ceil(c.seconds*c.rate)),start=size_t(c.rate*c.settle);
     Channels data(c.routing=="mono"?1:2,std::vector<float>(n));
     for(size_t i=start;i<n;++i)
     {
         double t=double(i-start)/c.rate,x=0;
         if(c.signal=="impulse")x=i==start?amplitude:0;
+        else if(c.signal=="carrier"&&t<6.0)
+            x=amplitude*std::sin(2*pi*440*t)*std::min({1.0,t/.02,(6.0-t)/.02});
         else if(c.signal=="tones"&&t<2.0)
         {
             for(double hz:tones)x+=amplitude/double(tones.size())*std::sin(2*pi*hz*t);
@@ -350,63 +406,82 @@ Channels signal(const Case& c)
 }
 std::vector<Case> plan()
 {
-    // These are controlled normalized values, not assumed physical units or
-    // purported internal defaults/neutral positions.
-    const Values dry{{0,0},{1,.5f},{2,.5f},{3,.5f},{4,.5f},{5,.5f},
+    // From L1's formatted public controls: pan coupling 0 = 0%,
+    // .5 = 100%, 1 = 200%; Far .8 displays 0.00. Keep actual
+    // readbacks; a formatted value alone is not proof of signal isolation.
+    const Values dry{{0,.8f},{1,.5f},{2,.5f},{3,.5f},{4,.5f},{5,.5f},
                      {10,.5f},{11,.5f},{12,.5f},{13,.5f},{15,1},{16,0},{17,.5f},
                      {18,0},{30,0},{38,0},{39,0},{40,0},{41,0},{42,0},{43,0}};
     std::vector<Case> out;
     auto add=[&](std::string name,Values changes={},std::string sig="impulse",
-                 std::string routing="mono",double seconds=1.25,int rate=48000)
+                 std::string routing="mono",double after=1,int rate=48000,double bpm=120,double settle=2)
     {
         auto v=dry;for(auto [id,value]:changes)v[id]=value;
-        out.push_back({std::move(name),std::move(sig),std::move(routing),rate,seconds,std::move(v)});
+        out.push_back({std::move(name),std::move(sig),std::move(routing),rate,settle+after,std::move(v),settle,bpm});
     };
-    out.push_back({"default_impulse","impulse","mono",48000,8,{}});
-    out.push_back({"default_sweep","sweep","mono",48000,5,{}});
     add("amount_zero",{{15,0}});
-    for(int i=0;i<=8;++i)add("pan_"+std::to_string(i),{{3,float(i)/8}});
-    for(int i=0;i<=4;++i)
+    for(int i=0;i<=20;++i)
     {
-        float v=float(i)/4;
-        add("far_"+std::to_string(i),{{0,v}});
-        add("far_tones_"+std::to_string(i),{{0,v}},"tones","mono",2.5);
-        add("width_left_"+std::to_string(i),{{1,v}},"impulse","left");
-        add("width_right_"+std::to_string(i),{{1,v}},"impulse","right");
-        add("tilt_"+std::to_string(i),{{2,v}},"tones","mono",2.5);
+        add("distance_tones_"+std::to_string(i),{{0,float(i)/20}},"tones","mono",2.25);
+        if(i%2==0)add("distance_impulse_"+std::to_string(i),{{0,float(i)/20}});
     }
-    for(auto id:{4u,5u,17u})for(int endpoint=0;endpoint<=1;++endpoint)
-        for(int side=0;side<=1;++side)
-            add("coupling_"+std::to_string(id)+"_"+std::to_string(endpoint)+"_"+std::to_string(side),
-                {{id,float(endpoint)},{3,float(side)}});
-    for(int side=0;side<=1;++side)
-        add("pan_tones_"+std::to_string(side),{{3,float(side)}},"tones","mono",2.5);
-    add("mono_check",{{16,1},{3,0}},"impulse","left");
-    add("dry_sweep",{},"sweep","mono",2.5);
-    add("dry_sweep_left",{{3,0}},"sweep","mono",2.5);
-    add("dry_sweep_right",{{3,1}},"sweep","mono",2.5);
-    for(int i=0;i<=4;++i)
-        add("reverb_distance_"+std::to_string(i),{{18,1},{0,float(i)/4}},"impulse","mono",8);
+    // Turn off level and spectral coupling; vary timing independently.
+    // Use identical 2 s settling and fresh instances for three rates.
+    for(int rate:{44100,48000,96000})for(int i=0;i<=4;++i)
+        for(int k=0;k<=2;++k)
+            add("timing_"+std::to_string(rate)+"_"+std::to_string(i)+"_"+std::to_string(k),
+                {{3,float(i)/4},{4,float(k)/2},{5,0},{17,0}},"impulse","mono",1,rate);
+    for(int i=0;i<=2;++i)for(int side=0;side<=1;++side)
+    {
+        add("spectral_"+std::to_string(i)+"_"+std::to_string(side),
+            {{3,float(side)},{4,0},{5,float(i)/2},{17,0}},"tones","mono",2.25);
+        add("level_"+std::to_string(i)+"_"+std::to_string(side),
+            {{3,float(side)},{4,0},{5,0},{17,float(i)/2}},"tones","mono",2.25);
+    }
+    for(int rate:{44100,48000,96000})for(int side=0;side<=1;++side)
+        add("timing_repeat_"+std::to_string(rate)+"_"+std::to_string(side),
+            {{3,float(side)},{4,.5f},{5,0},{17,0}},"impulse","mono",1,rate);
+    // Check initial settling independently of sample rate and repeatability.
+    for(int rate:{44100,48000,96000})
+        add("timing_short_settle_"+std::to_string(rate),{{3,0},{4,.5f},{5,0},{17,0}},
+            "impulse","mono",1,rate,120,.25);
+    // Public L1 strings confirmed these five normalized selector points.
+    for(int room=0;room<5;++room)
+    {
+        float v=float(room)/4;
+        for(int repeat=0;repeat<2;++repeat)
+            add("room_"+std::to_string(room)+"_normal_"+std::to_string(repeat),
+                {{18,1},{19,1},{20,.5f},{23,v}},"impulse","mono",14);
+        add("room_"+std::to_string(room)+"_long",
+            {{18,1},{19,1},{20,1},{23,v}},"impulse","mono",36);
+    }
     for(int i=0;i<=2;++i)
-        add("reverb_decay_"+std::to_string(i),{{18,1},{20,float(i)/2},{19,1}},"impulse","mono",12);
-    for(auto id:{24u,25u,26u})for(int endpoint=0;endpoint<=1;++endpoint)
-        add("distance_coupling_"+std::to_string(id)+"_"+std::to_string(endpoint),
-            {{18,1},{0,1},{id,float(endpoint)}},"impulse",id==24?"left":"mono",8);
-    // Tempo-sync and modulation are deliberately deferred; no host transport
-    // callbacks are supplied. Test only delay-enabled, explicitly labelled.
-    add("delay_enabled_default_sync",{{30,1}},"impulse","mono",8);
-    for(int rate:{44100,96000})
+        add("predelay_manual_"+std::to_string(i),{{18,1},{19,1},{20,0},{28,.25f},{27,float(i)/2}},
+            "impulse","mono",5);
+    for(double bpm:{60.,120.,180.})
     {
-        add("center_"+std::to_string(rate),{},"impulse","mono",1.25,rate);
-        add("left_"+std::to_string(rate),{{3,0}},"impulse","mono",1.25,rate);
-        add("right_"+std::to_string(rate),{{3,1}},"impulse","mono",1.25,rate);
+        // Explicit wet delay and free/quarter-note modes rather than relying
+        // on the previous L1 defaults. Compare against dry impulse.
+        const auto label=std::to_string(int(bpm));
+        add("delay_free_"+label,{{30,1},{31,1},{32,0},{33,.5f},{34,0}},
+            "impulse","mono",5,48000,bpm);
+        add("delay_quarter_"+label,{{30,1},{31,1},{32,1},{34,0}},
+            "impulse","mono",5,48000,bpm);
+        add("predelay_sync_"+label,{{18,1},{19,1},{20,0},{28,.75f}},
+            "impulse","mono",5,48000,bpm);
+        add("lfo_pan_sync_"+label,{{6,0},{7,.9f},{8,.5f},{10,1}},
+            "carrier","mono",6.25,48000,bpm);
     }
+    add("lfo_pan_free",{{6,0},{7,0},{9,.5f},{10,1}},"carrier","mono",6.25);
+    add("lfo_gain_free",{{6,0},{7,0},{9,.5f},{12,1}},"carrier","mono",6.25);
+    add("lfo_control",{},"carrier","mono",6.25);
     return out;
 }
 void require(bool test,const char* why){if(!test)throw std::runtime_error(why);}
 void selfTest()
 {
     auto cases=plan();std::map<std::string,int> names;
+    require(cases.size()==132,"L2 case count");
     for(const auto& c:cases)
     {
         require(++names[c.name]==1,"duplicate case");
@@ -421,6 +496,20 @@ void selfTest()
     require(std::abs(correlation({data[0],data[0]})-1)<1e-9,"correlation");
     c.signal="tones";c.seconds=2.5;data=signal(c);
     require(std::abs(tone(data[0],48000,1000)-amplitude/6)<1e-6,"multitone estimate");
+    std::vector<float> a(9600,0),b(9600,0);
+    a[2400]=.25f;b[2424]=.25f;
+    auto t=lab::timing(a,b,2400,48000);
+    require(std::abs(t.lag-.5)<1e-6&&t.score>.999,"positive relative timing");
+    require(std::abs(lab::timing(b,a,2400,48000).lag+.5)<1e-6,"negative relative timing");
+    require(std::isnan(lab::timing(a,std::vector<float>(9600),2400,48000).lag),"silent timing undefined");
+    std::vector<float> tail(480000);
+    for(size_t i=0;i<tail.size();++i)tail[i]=float(std::exp(-std::log(1000.)*double(i)/48000/2));
+    auto d=lab::decay(tail,tail,0,48000);
+    require(std::abs(d.t20-2)<.02&&d.r2>.999,"synthetic decay estimate");
+    require(std::abs(lab::rmsWindow(std::vector<float>(10,.5f),0,10)-.5)<1e-9,"RMS envelope");
+    HostClock host;host.rate=48000;host.bpm=120;host.sample=24000;
+    Float64 beat=0,tempo=0;HostClock::tempo(&host,&beat,&tempo);
+    require(beat==1&&tempo==120&&host.beatCalls==1,"host tempo");
     auto dir=fs::temp_directory_path()/("studio-lab-self-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(dir);
     try
@@ -473,16 +562,17 @@ int run(const fs::path& dir)
     auto component=locate();
     fs::create_directories(dir/"audio");fs::create_directories(dir/"input");
     auto manifest=output(dir/"manifest.txt");
-    manifest<<"Studio Spatial Laboratory L1\nReference: aufx @s22 Aubn, Panagement 2.8.0\n"
-            <<"Offline planar Float32 AUv2, 512 maximum frames, no device I/O or host tempo callbacks.\n"
-            <<"All source signals start at 0.25 seconds. Impulses peak at 0.25 (-12.04 dBFS).\n"
-            <<"Each case uses a fresh instance; initial 0.25 s silence permits smoothing, not guaranteed steady state.\n"
+    manifest<<"Studio Spatial Laboratory L2\nReference: aufx @s22 Aubn, Panagement 2.8.0\n"
+            <<"Offline planar Float32 AUv2, 512 maximum frames, no device I/O; attempted host tempo/transport callbacks.\n"
+            <<"Source starts at per-case settle_s (usually 2 s); impulse amplitude 0.25 (-12.04 dBFS).\n"
+            <<"Fresh instance per case. Long settling and repeats are diagnostics, not proof of steady state.\n"
             <<"Normalized control values are requests, not physical units. No source code or preset state blobs exported.\n"
             <<"Onset is first sample >= max(1e-8, channel peak * 0.001), absolute in file; not a verified ITD estimate.\n"
             <<"Early/late energy is split at 50 ms after excitation (impulses only); finite render window.\n"
-            <<"Tone amplitudes use coherent 1-second window 0.75–1.75 s; no assumption of linearity.\n"
+            <<"Tone amplitudes use coherent 1-second window beginning 0.5 s after excitation.\n"
             <<"Preset snapshots report actual readback, not internal state. Formatted display values may be empty.\n"
-            <<"Delay case uses its default sync value; without tempo callbacks no sync claim.\n"
+            <<"Host callback registration status and counts recorded; zero calls or silent output are not evidence of sync.\n"
+            <<"Timing correlation: signed right-minus-left, +/-3 ms search; filtering can bias. T20 is extrapolated finite-window stereo decay; high residual tail or poor fit limits interpretation.\n"
             <<"Reported render wall time is offline and includes host overhead, not DAW CPU load.\n";
     auto paramsFile=output(dir/"parameters.csv");
     paramsFile<<"id,name,minimum,default,maximum,flags,unit,actual,display\n";
@@ -525,6 +615,10 @@ int run(const fs::path& dir)
     auto values=output(dir/"case_parameters.csv");values<<"case,id,requested,actual_before,actual_after,display_after\n";
     auto spectra=output(dir/"tones.csv");spectra<<"case,frequency_hz,input_amplitude,output_l,output_r\n";
     auto errors=output(dir/"errors.csv");errors<<"case,error\n";
+    auto conditions=output(dir/"conditions.csv");conditions<<"case,settle_s,bpm,host_callback_status,beat_calls,musical_calls,transport_calls\n";
+    auto timingFile=output(dir/"timing.csv");timingFile<<"case,lag_right_minus_left_ms,correlation_score\n";
+    auto decayFile=output(dir/"decay.csv");decayFile<<"case,t20_extrapolated_s,fit_r2,last_second_energy_db\n";
+    auto envelope=output(dir/"envelope.csv");envelope<<"case,time_from_excitation_s,rms_l,rms_r\n";
     auto cases=plan();size_t completed=0;
     for(auto& c:cases)
     {
@@ -532,9 +626,9 @@ int run(const fs::path& dir)
         try
         {
             auto input=signal(c);
-            auto key=std::to_string(c.rate)+"_"+c.signal+"_"+c.routing+"_"+std::to_string(input.front().size())+".wav";
+            auto key=std::to_string(c.rate)+"_"+c.signal+"_"+c.routing+"_"+std::to_string(input.front().size())+"_"+std::to_string(size_t(c.rate*c.settle))+".wav";
             if(!fs::exists(dir/"input"/key))wav(dir/"input"/key,input,c.rate);
-            Input source{input};Unit u(component);u.prepare(c.rate,UInt32(input.size()),source);
+            Input source{input};Unit u(component);u.prepare(c.rate,UInt32(input.size()),source,c.bpm);
             u.apply(c.settings);
             Values before;
             for(auto& p:params)before[p.id]=u.read(p.id);
@@ -545,7 +639,27 @@ int run(const fs::path& dir)
             auto start=std::chrono::steady_clock::now();
             auto rendered=u.render(source);
             double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
-            auto l=measure(rendered[0],size_t(c.rate*.25),c.rate),r=measure(rendered[1],size_t(c.rate*.25),c.rate);
+            const auto onset=size_t(c.rate*c.settle);
+            auto l=measure(rendered[0],onset,c.rate),r=measure(rendered[1],onset,c.rate);
+            conditions<<csv(c.name)<<','<<c.settle<<','<<c.bpm<<','<<u.clockStatus<<','
+                      <<u.clock.beatCalls.load()<<','<<u.clock.musicCalls.load()<<','<<u.clock.transportCalls.load()<<'\n';
+            if(c.name.rfind("timing_",0)==0)
+            {
+                auto t=lab::timing(rendered[0],rendered[1],onset,c.rate);
+                timingFile<<csv(c.name)<<','<<t.lag<<','<<t.score<<'\n';
+            }
+            if(c.name.rfind("room_",0)==0)
+            {
+                auto d=lab::decay(rendered[0],rendered[1],onset,c.rate);
+                decayFile<<csv(c.name)<<','<<d.t20<<','<<d.r2<<','<<d.endDb<<'\n';
+            }
+            if(c.signal=="carrier"||c.name.rfind("delay_",0)==0||c.name.rfind("predelay_",0)==0)
+            {
+                const auto step=size_t(c.rate/100);
+                for(size_t i=onset;i+step<=rendered[0].size();i+=step)
+                    envelope<<csv(c.name)<<','<<double(i-onset)/c.rate<<','
+                            <<lab::rmsWindow(rendered[0],i,step)<<','<<lab::rmsWindow(rendered[1],i,step)<<'\n';
+            }
             auto file=c.name+".wav";wav(dir/"audio"/file,rendered,c.rate);
             for(auto& p:params)
             {
@@ -554,7 +668,7 @@ int run(const fs::path& dir)
                 values<<','<<before.at(p.id)<<','<<v<<','<<csv(u.formatted(p.id,v))<<'\n';
             }
             if(c.signal=="tones")for(auto hz:tones)
-                spectra<<csv(c.name)<<','<<hz<<','<<tone(input[0],c.rate,hz)<<','<<tone(rendered[0],c.rate,hz)<<','<<tone(rendered[1],c.rate,hz)<<'\n';
+                spectra<<csv(c.name)<<','<<hz<<','<<tone(input[0],c.rate,hz,c.settle)<<','<<tone(rendered[0],c.rate,hz,c.settle)<<','<<tone(rendered[1],c.rate,hz,c.settle)<<'\n';
             measurements<<csv(c.name)<<','<<c.signal<<','<<c.routing<<','<<c.rate<<','<<input.front().size()
                 <<','<<csv("input/"+key)<<','<<csv("audio/"+file)<<','<<l.peak<<','<<r.peak<<','<<l.rms<<','<<r.rms
                 <<','<<l.first<<','<<r.first<<','<<l.peakIndex<<','<<r.peakIndex<<','<<l.energy<<','<<r.energy<<',';
