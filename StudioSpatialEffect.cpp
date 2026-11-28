@@ -216,6 +216,16 @@ public:
                 edit([&](auto& p){p=sourcePresets()[size_t(selected-1)].parameters;},"Spatial preset");
         };
         addAndMakeVisible(reset);reset.onClick=[this]{edit([](auto& p){p={};},"Reset Studio Spatial");};
+        addAndMakeVisible(bypass);bypass.onClick=[this]
+        {
+            if(auto* p=resolve())
+            {
+                p->beginGesture("Bypass Studio Spatial");
+                p->setEnabled(!bypass.getToggleState());
+                p->endGesture();
+            }
+            refresh();
+        };
         addAndMakeVisible(mono);mono.onClick=[this]
         {
             edit([this](auto& p){p.mono=mono.getToggleState()?1.f:0.f;},"Spatial mono check");
@@ -270,6 +280,7 @@ public:
         auto bar=a.removeFromTop(30);
         reset.setBounds(bar.removeFromRight(92).reduced(2));
         mono.setBounds(bar.removeFromRight(132).reduced(2));
+        bypass.setBounds(bar.removeFromRight(92).reduced(2));
         preset.setBounds(bar.reduced(2));
         status.setBounds(a.removeFromBottom(30));
         pad.setBounds(a.removeFromTop(jlimit(105,185,a.getHeight()/2)));
@@ -290,7 +301,7 @@ public:
     }
 private:
     SourceWindow::Resolve resolve;
-    ComboBox preset;TextButton reset{"Reset"};ToggleButton mono{"Mono check"};
+    ComboBox preset;TextButton reset{"Reset"};ToggleButton mono{"Mono check"},bypass{"Bypass"};
     PositionPad pad;Label status;
     std::array<Slider,12> sliders;
     std::array<Label,12> labels;
@@ -319,7 +330,7 @@ private:
     {
         auto* p=resolve();
         const bool available=p!=nullptr;
-        preset.setEnabled(available);reset.setEnabled(available);mono.setEnabled(available);
+        preset.setEnabled(available);reset.setEnabled(available);mono.setEnabled(available);bypass.setEnabled(available);
         pad.setEnabled(available);
         for(auto& slider:sliders)slider.setEnabled(available);
         if(!p)
@@ -343,10 +354,12 @@ private:
             preset.setSelectedId(matched,dontSendNotification);
         }
         mono.setToggleState(raw.mono>=.5f,dontSendNotification);
+        bypass.setToggleState(!p->isEnabled(),dontSendNotification);
         const auto peaks=p->peaks();
         const auto db=[](float gain){return String(Decibels::gainToDecibels(gain,-90.f),1);};
-        status.setText("Output  L "+db(peaks.left)+" dB   R "+db(peaks.right)
-                       +" dB  |  Perceptual distance; no room processing",dontSendNotification);
+        status.setText(p->isEnabled() ? "Output  L "+db(peaks.left)+" dB   R "+db(peaks.right)
+                       +" dB  |  Perceptual distance; no room processing"
+                       : String("Bypassed | Settings retained"),dontSendNotification);
     }
 };
 }
